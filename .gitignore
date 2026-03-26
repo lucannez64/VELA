@@ -1,0 +1,42 @@
+# Embedded git repos (developed independently)
+libVELA/cyclo/
+libVELA/vela-crypto/
+
+# Rust build outputs
+desktopVELA/src-tauri/target/
+serverVELA/target/
+
+# Vite build output
+desktopVELA/dist/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Environment files (keep .env.example)
+**/.env
+
+# IDE and editor files
+**/.idea/
+**/*.swp
+**/*.swo
+**/*~
+**/.vscode/
+
+# OS files
+**/.DS_Store
+**/Thumbs.db
+
+# Cache directories
+.ruff_cache/
+.opencode/node_modules/
+.opencode/*.db
+.opencode/*.db-shm
+.opencode/*.db-wal
+
+# Logs
+**/*.log
+
+# pnpm lock files (use bun.lock instead)
+**/pnpm-lock.yaml

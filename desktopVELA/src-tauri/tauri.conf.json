@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VELA",
+  "version": "0.1.0",
+  "identifier": "com.vela.vault",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "VELA",
+        "width": 1024,
+        "height": 720,
+        "minWidth": 820,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": false,
+        "center": true,
+        "visible": true
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "id": "main-tray"
+    },
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://localhost:* http://localhost:*; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

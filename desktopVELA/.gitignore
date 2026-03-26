@@ -1,0 +1,8 @@
+# Build output
+dist/
+
+# Lock files (we use bun.lock)
+bun.lockb
+package-lock.json
+pnpm-lock.yaml
+yarn.lock

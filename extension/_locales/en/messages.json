@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "VELA Password Manager",
+    "description": "Name of the extension."
+  },
+  "extensionDescription": {
+    "message": "Secure password management with zero-knowledge architecture",
+    "description": "Description of the extension."
+  },
+  "commandOpenPopup": {
+    "message": "Open VELA",
+    "description": "Description for the keyboard shortcut to open the popup."
+  }
+}

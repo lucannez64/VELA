@@ -1,0 +1,85 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "102.0",
+  "default_locale": "en",
+  "name": "__MSG_extensionName__",
+  "short_name": "VELA",
+  "description": "__MSG_extensionDescription__",
+  "version": "1.0.0",
+  "author": "VELA Team",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "96": "icons/icon96.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*", "file:///*"],
+      "exclude_matches": ["*://*/*.xml*", "file:///*.xml*"],
+      "js": ["src/shared/autofill-utils.js", "src/content/content-script.js"],
+      "css": ["src/content/content-styles.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "background": {
+    "service_worker": "src/background/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    },
+    "default_title": "__MSG_extensionName__",
+    "default_popup": "src/popup/popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "clipboardRead",
+    "clipboardWrite",
+    "storage",
+    "tabs",
+    "nativeMessaging",
+    "alarms",
+    "contextMenus",
+    "idle",
+    "scripting",
+    "webNavigation",
+    "webRequest",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/content/content-script.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "linux": "Ctrl+Shift+U",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "__MSG_commandOpenPopup__"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "vela@vela.app",
+      "strict_min_version": "109.0"
+    }
+  }
+}

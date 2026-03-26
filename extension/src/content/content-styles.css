@@ -1,0 +1,926 @@
+/* ================================================================
+   VELA AUTOFILL — CONTENT STYLES
+   Dark theme matching VELA Desktop (Space Grotesk / Manrope / JetBrains Mono)
+   All selectors prefixed with .vela- to avoid conflicts
+   ================================================================ */
+
+/* ── Design tokens ── */
+:root {
+  --vela-primary:          #73db9a;
+  --vela-primary-dim:      #1c8f56;
+  --vela-primary-on:       #00391d;
+  --vela-surface:          #121416;
+  --vela-surface-low:      #1a1c1e;
+  --vela-surface-c:        #1e2022;
+  --vela-surface-high:     #282a2c;
+  --vela-surface-highest:  #333537;
+  --vela-text:             #e2e2e5;
+  --vela-text-muted:       #c4c7c7;
+  --vela-text-faint:       #8e9192;
+  --vela-border:           #444748;
+  --vela-border-subtle:    #2a2c2e;
+  --vela-error:            #ffb4ab;
+  --vela-radius:           12px;
+  --vela-radius-sm:        8px;
+  --vela-shadow:           0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+  --vela-shadow-sm:        0 4px 16px rgba(0,0,0,0.4);
+  --vela-font-head:        'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --vela-font:             'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+  --vela-font-mono:        'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, monospace;
+}
+
+/* ── Field Icon (shield button inside input) ── */
+.vela-field-icon {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--vela-primary);
+  background: rgba(115, 219, 154, 0.12);
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  pointer-events: all;
+}
+
+.vela-field-icon:hover {
+  background: rgba(115, 219, 154, 0.22);
+  box-shadow: 0 0 8px rgba(115, 219, 154, 0.25);
+}
+
+.vela-field-icon:focus-visible {
+  outline: 2px solid var(--vela-primary);
+  outline-offset: 2px;
+}
+
+/* ── Inline Dropdown ── */
+.vela-inline-dropdown {
+  all: initial;
+  box-sizing: border-box;
+  font-family: var(--vela-font);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--vela-text);
+  background: var(--vela-surface-low);
+  border: 1px solid var(--vela-border);
+  border-radius: var(--vela-radius);
+  box-shadow: var(--vela-shadow);
+  padding: 6px;
+  min-width: 260px;
+  max-width: 360px;
+  overflow: hidden;
+}
+
+.vela-dd-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid var(--vela-border-subtle);
+  margin-bottom: 4px;
+}
+
+.vela-dd-logo {
+  color: var(--vela-primary);
+  display: flex;
+  align-items: center;
+}
+
+.vela-dd-title {
+  font-family: var(--vela-font-head);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--vela-text-muted);
+}
+
+.vela-dd-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  color: var(--vela-text-muted);
+  font-size: 13px;
+}
+
+.vela-dd-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--vela-border);
+  border-top-color: var(--vela-primary);
+  border-radius: 50%;
+  animation: vela-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.vela-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--vela-radius-sm);
+  cursor: pointer;
+  transition: background 0.12s;
+  user-select: none;
+}
+
+.vela-dd-item:hover {
+  background: var(--vela-surface-high);
+}
+
+.vela-dd-item:active {
+  background: var(--vela-surface-highest);
+}
+
+.vela-dd-item-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--vela-primary) 0%, var(--vela-primary-dim) 100%);
+  color: var(--vela-primary-on);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--vela-font-head);
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.vela-dd-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vela-dd-item-name {
+  font-weight: 600;
+  color: var(--vela-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vela-dd-item-user {
+  font-size: 12px;
+  color: var(--vela-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.vela-dd-item-fill-hint {
+  font-size: 11px;
+  color: var(--vela-primary);
+  opacity: 0;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-family: var(--vela-font-head);
+}
+
+.vela-dd-item:hover .vela-dd-item-fill-hint,
+.vela-dd-item--selected .vela-dd-item-fill-hint {
+  opacity: 1;
+}
+
+.vela-dd-item--selected {
+  background: rgba(115, 219, 154, 0.1);
+  outline: 1.5px solid var(--vela-primary);
+  outline-offset: -1.5px;
+}
+
+.vela-dd-divider {
+  height: 1px;
+  background: var(--vela-border-subtle);
+  margin: 4px 4px;
+}
+
+.vela-dd-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--vela-text-faint);
+  padding: 4px 10px 2px;
+  font-family: var(--vela-font-head);
+}
+
+.vela-dd-empty {
+  padding: 10px 10px 8px;
+  color: var(--vela-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.vela-dd-action-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--vela-radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vela-primary);
+  transition: background 0.12s;
+  font-family: var(--vela-font);
+}
+
+.vela-dd-action-btn:hover {
+  background: rgba(115, 219, 154, 0.1);
+}
+
+.vela-dd-action-btn:active {
+  background: rgba(115, 219, 154, 0.18);
+}
+
+.vela-dd-action-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* ── Overlay / Modal Base ── */
+.vela-overlay {
+  all: initial;
+  box-sizing: border-box;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--vela-font);
+  animation: vela-overlay-in 0.15s ease-out;
+}
+
+.vela-modal {
+  background: var(--vela-surface-c);
+  border: 1px solid var(--vela-border);
+  border-radius: 16px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: var(--vela-shadow);
+  box-sizing: border-box;
+  color: var(--vela-text);
+  font-family: var(--vela-font);
+}
+
+.vela-modal::-webkit-scrollbar { width: 4px; }
+.vela-modal::-webkit-scrollbar-track { background: transparent; }
+.vela-modal::-webkit-scrollbar-thumb { background: var(--vela-border); border-radius: 4px; }
+
+.vela-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.vela-modal-logo {
+  color: var(--vela-primary);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.vela-modal-title {
+  flex: 1;
+  font-family: var(--vela-font-head);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--vela-text);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.vela-modal-close {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--vela-text-muted);
+  transition: background 0.12s, color 0.12s;
+}
+
+.vela-modal-close:hover {
+  background: var(--vela-surface-high);
+  color: var(--vela-text);
+}
+
+.vela-modal-subtitle {
+  font-size: 13px;
+  color: var(--vela-text-muted);
+  margin: -8px 0 16px;
+  line-height: 1.5;
+}
+
+.vela-modal-site-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--vela-surface-high);
+  border: 1px solid var(--vela-border-subtle);
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+
+.vela-modal-site-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--vela-primary) 0%, var(--vela-primary-dim) 100%);
+  color: var(--vela-primary-on);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--vela-font-head);
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.vela-modal-site-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--vela-text);
+}
+
+.vela-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+/* ── Save to Vault Form ── */
+.vela-save-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.vela-save-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vela-save-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vela-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: var(--vela-font-head);
+}
+
+.vela-save-input {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: var(--vela-font);
+  color: var(--vela-text);
+  background: var(--vela-surface-high);
+  border: 1.5px solid var(--vela-border);
+  border-radius: 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.vela-save-input::placeholder {
+  color: var(--vela-text-faint);
+}
+
+.vela-save-input:focus {
+  border-color: var(--vela-primary);
+  box-shadow: 0 0 0 3px rgba(115, 219, 154, 0.15);
+  outline: none;
+}
+
+.vela-save-input.vela-input-error {
+  border-color: var(--vela-error);
+  box-shadow: 0 0 0 3px rgba(255, 180, 171, 0.15);
+}
+
+.vela-save-pw-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.vela-save-pw-wrap .vela-save-input {
+  padding-right: 72px;
+  flex: 1;
+}
+
+.vela-save-pw-toggle,
+.vela-save-pw-gen {
+  all: unset;
+  box-sizing: border-box;
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--vela-text-muted);
+  transition: background 0.12s, color 0.12s;
+}
+
+.vela-save-pw-toggle:hover,
+.vela-save-pw-gen:hover {
+  background: var(--vela-surface-highest);
+  color: var(--vela-primary);
+}
+
+.vela-save-pw-toggle { right: 36px; }
+.vela-save-pw-gen    { right: 4px; }
+
+/* ── Account Picker Modal ── */
+.vela-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vela-account-item {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--vela-border);
+  background: var(--vela-surface-high);
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.vela-account-item:hover {
+  background: var(--vela-surface-highest);
+  border-color: var(--vela-primary);
+  box-shadow: 0 0 0 1px rgba(115, 219, 154, 0.2);
+}
+
+.vela-account-item:active {
+  background: var(--vela-surface-highest);
+}
+
+.vela-account-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, var(--vela-primary) 0%, var(--vela-primary-dim) 100%);
+  color: var(--vela-primary-on);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--vela-font-head);
+  font-weight: 700;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.vela-account-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vela-account-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--vela-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vela-account-user {
+  font-size: 12px;
+  color: var(--vela-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.vela-account-arrow {
+  font-size: 16px;
+  color: var(--vela-primary);
+  flex-shrink: 0;
+}
+
+/* ── Password Generator ── */
+.vela-gen-modal {
+  max-width: 440px;
+}
+
+.vela-gen-preview-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--vela-surface-high);
+  border: 1.5px solid var(--vela-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.vela-gen-preview {
+  flex: 1;
+  font-family: var(--vela-font-mono);
+  font-size: 13px;
+  color: var(--vela-primary);
+  word-break: break-all;
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+}
+
+.vela-gen-preview-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.vela-gen-icon-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--vela-text-muted);
+  transition: background 0.12s, color 0.12s;
+}
+
+.vela-gen-icon-btn:hover {
+  background: rgba(115, 219, 154, 0.12);
+  color: var(--vela-primary);
+}
+
+.vela-gen-strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.vela-strength-bar-track {
+  flex: 1;
+  height: 4px;
+  background: var(--vela-border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.vela-strength-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.vela-strength-label {
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 62px;
+  text-align: right;
+  font-family: var(--vela-font-head);
+}
+
+.vela-gen-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.vela-gen-option-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.vela-gen-length-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.vela-gen-option-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vela-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: var(--vela-font-head);
+}
+
+.vela-gen-length-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vela-gen-slider {
+  flex: 1;
+  height: 4px;
+  accent-color: var(--vela-primary);
+  cursor: pointer;
+}
+
+.vela-gen-length-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--vela-primary);
+  min-width: 28px;
+  text-align: right;
+  font-family: var(--vela-font-mono);
+}
+
+.vela-gen-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--vela-text);
+  flex: 1;
+  min-width: 140px;
+  user-select: none;
+}
+
+.vela-gen-checkbox {
+  display: none;
+}
+
+.vela-gen-checkbox-custom {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--vela-border);
+  background: var(--vela-surface-high);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.12s, border-color 0.12s;
+  position: relative;
+}
+
+.vela-gen-checkbox:checked + .vela-gen-checkbox-custom {
+  background: var(--vela-primary);
+  border-color: var(--vela-primary);
+}
+
+.vela-gen-checkbox:checked + .vela-gen-checkbox-custom::after {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 9px;
+  border: 2px solid var(--vela-primary-on);
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+/* ── Buttons ── */
+.vela-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, box-shadow 0.12s, opacity 0.12s, transform 0.1s;
+  font-family: var(--vela-font);
+}
+
+.vela-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.vela-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.vela-btn-primary {
+  background: linear-gradient(135deg, var(--vela-primary) 0%, var(--vela-primary-dim) 100%);
+  color: var(--vela-primary-on);
+}
+
+.vela-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 0 16px rgba(115, 219, 154, 0.3);
+  opacity: 0.92;
+}
+
+.vela-btn-ghost {
+  color: var(--vela-text-muted);
+  background: transparent;
+}
+
+.vela-btn-ghost:hover:not(:disabled) {
+  background: var(--vela-surface-high);
+  color: var(--vela-text);
+}
+
+/* ── Save Bar (top-of-page notification) ── */
+.vela-save-bar {
+  all: initial;
+  box-sizing: border-box;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2147483647;
+  font-family: var(--vela-font);
+}
+
+.vela-save-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--vela-surface-low);
+  border-bottom: 1px solid var(--vela-border);
+  color: var(--vela-text);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+.vela-save-bar-logo {
+  color: var(--vela-primary);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.vela-save-bar-text {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--vela-text);
+}
+
+.vela-save-bar-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.vela-save-bar-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 13px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-family: var(--vela-font);
+}
+
+.vela-save-bar-never {
+  color: var(--vela-error);
+  background: transparent;
+}
+
+.vela-save-bar-never:hover {
+  background: rgba(255, 180, 171, 0.1);
+}
+
+.vela-save-bar-dismiss {
+  color: var(--vela-text-muted);
+  background: transparent;
+}
+
+.vela-save-bar-dismiss:hover {
+  background: var(--vela-surface-high);
+}
+
+.vela-save-bar-save {
+  background: linear-gradient(135deg, var(--vela-primary) 0%, var(--vela-primary-dim) 100%);
+  color: var(--vela-primary-on);
+}
+
+.vela-save-bar-save:hover {
+  box-shadow: 0 0 10px rgba(115, 219, 154, 0.3);
+  opacity: 0.9;
+}
+
+.vela-save-bar-close {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--vela-text-muted);
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.vela-save-bar-close:hover {
+  background: var(--vela-surface-high);
+  color: var(--vela-text);
+}
+
+/* ── Toast ── */
+.vela-toast {
+  all: initial;
+  box-sizing: border-box;
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--vela-surface-highest);
+  color: var(--vela-text);
+  border: 1px solid var(--vela-border);
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-family: var(--vela-font);
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 2147483647;
+  box-shadow: var(--vela-shadow);
+  transition: opacity 0.3s ease;
+  white-space: nowrap;
+  animation: vela-toast-in 0.2s ease-out;
+}
+
+.vela-toast-error {
+  background: rgba(255, 180, 171, 0.12);
+  border-color: rgba(255, 180, 171, 0.3);
+  color: var(--vela-error);
+}
+
+/* ── Animations ── */
+@keyframes vela-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes vela-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes vela-autofill-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes vela-autofill-slide-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes vela-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.vela-autofill-animate-fade-in {
+  animation: vela-autofill-fade-in 0.18s ease-out;
+}
+
+.vela-autofill-animate-slide-up {
+  animation: vela-autofill-slide-up 0.18s ease-out;
+}

@@ -1,0 +1,65 @@
+[package]
+name = "vela-server"
+version = "0.1.0"
+edition = "2021"
+description = "VELA Protocol v2.0 – API server (Axum/Postgres/Redis)"
+
+[[bin]]
+name = "vela-server"
+path = "src/main.rs"
+
+[dependencies]
+# ── Crypto library ─────────────────────────────────────────────────────────────
+vela-crypto = { path = "../../libVELA/vela-crypto" }
+
+# ── Web framework ──────────────────────────────────────────────────────────────
+axum              = { version = "0.7", features = ["macros", "multipart"] }
+tokio             = { version = "1",   features = ["full"] }
+tower             = "0.4"
+tower-http        = { version = "0.5", features = ["trace", "cors", "limit"] }
+
+# ── Database ───────────────────────────────────────────────────────────────────
+sqlx = { version = "0.8", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+] }
+
+# ── Redis ──────────────────────────────────────────────────────────────────────
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+
+# ── PASETO v4 public tokens ────────────────────────────────────────────────────
+pasetors = { version = "0.6", default-features = false, features = ["v4", "paserk", "std"] }
+
+# ── Serialization ──────────────────────────────────────────────────────────────
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# ── UUID ───────────────────────────────────────────────────────────────────────
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# ── Time ───────────────────────────────────────────────────────────────────────
+chrono = { version = "0.4", features = ["serde"] }
+
+# ── Encoding ───────────────────────────────────────────────────────────────────
+base64 = "0.22"
+hex    = "0.4"
+
+# ── Randomness ─────────────────────────────────────────────────────────────────
+rand = "0.8"
+
+# ── Error handling ─────────────────────────────────────────────────────────────
+thiserror = "1"
+anyhow    = "1"
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+dotenvy = "0.15"
+
+# ── Observability ──────────────────────────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+axum-test = "19"

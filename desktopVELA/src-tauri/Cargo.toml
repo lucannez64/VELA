@@ -1,0 +1,67 @@
+[package]
+name = "vela-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["tray-icon", "image-png"] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-global-shortcut = "2.0"
+tauri-plugin-notification = "2.0"
+tauri-plugin-clipboard-manager = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+parking_lot = "0.12"
+once_cell = "1.19"
+anyhow = "1.0"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+zeroize = { version = "1", features = ["derive"] }
+vela-crypto = { path = "../../libVELA/vela-crypto" }
+bincode = "1.3"
+directories = "5"
+data-encoding = "2"
+subtle = "2"
+paseto = "2"
+url = "2"
+base64 = "0.22"
+urlencoding = "2"
+hex = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
+    "Win32_System_Threading",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Authentication_Identity",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+incremental = true
+opt-level = 0
+debug = true
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = false

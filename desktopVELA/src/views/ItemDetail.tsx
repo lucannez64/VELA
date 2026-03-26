@@ -1,0 +1,346 @@
+import { useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { useApp, VaultItem } from '../context/AppContext';
+
+interface Props {
+  item: VaultItem;
+  onEdit?: () => void;
+}
+
+export default function ItemDetail({ item, onEdit }: Props) {
+  const { setSelectedItem, showToast } = useApp();
+  const [showPassword, setShowPassword] = useState(false);
+  const [showCardNumber, setShowCardNumber] = useState(false);
+  const [showCVV, setShowCVV] = useState(false);
+  const [showCardPin, setShowCardPin] = useState(false);
+  const [totpTimeLeft, setTotpTimeLeft] = useState(30);
+  const [totpCode, setTotpCode] = useState('--- ---');
+
+  useEffect(() => {
+    setShowPassword(false);
+  }, [item.id]);
+
+  useEffect(() => {
+    const generateTOTP = async () => {
+      if (!item.totp) return;
+      try {
+        const result = await invoke<{ code: string; remaining_secs: number }>('generate_totp', { secret: item.totp });
+        setTotpCode(result.code.slice(0, 3) + ' ' + result.code.slice(3));
+        setTotpTimeLeft(result.remaining_secs);
+      } catch (e) {
+        console.error('Failed to generate TOTP:', e);
+      }
+    };
+
+    generateTOTP();
+    const interval = setInterval(generateTOTP, 1000);
+    return () => clearInterval(interval);
+  }, [item.totp]);
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`${label} copied`, 'success');
+    } catch (e) {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showToast(`${label} copied`, 'success');
+      } catch (fallbackError) {
+        showToast('Failed to copy', 'error');
+      }
+    }
+  };
+
+  const handleDelete = async () => {
+    if (confirm('Are you sure you want to delete this item?')) {
+      try {
+        await invoke('delete_item', { id: item.id });
+        setSelectedItem(null);
+        showToast('Item deleted', 'success');
+      } catch (e) {
+        showToast('Failed to delete', 'error');
+      }
+    }
+  };
+
+  const getIcon = () => {
+    switch (item.item_type) {
+      case 'login': return 'key';
+      case 'creditCard': return 'credit_card';
+      case 'secureNote': return 'note';
+      default: return 'shield';
+    }
+  };
+
+  return (
+    <div className="flex-1 bg-surface-container-lowest overflow-y-auto">
+      <div className="max-w-3xl mx-auto py-12 px-10">
+        <div className="flex items-start justify-between mb-12">
+          <div className="flex items-center gap-6">
+            <button onClick={() => setSelectedItem(null)} className="text-on-surface-variant hover:text-primary transition-colors">
+              <span className="material-symbols-outlined">arrow_back</span>
+            </button>
+            <div className="w-20 h-20 rounded-2xl bg-surface-bright flex items-center justify-center shadow-2xl relative">
+              <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>{getIcon()}</span>
+              <div className="absolute -bottom-2 -right-2 bg-secondary text-on-secondary px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">SECURE</div>
+            </div>
+            <div>
+              <h1 className="font-headline text-4xl font-bold tracking-tight mb-1">{item.name}</h1>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-primary"></span>
+                <p className="text-on-surface-variant font-label text-xs tracking-wider uppercase">Zero-Knowledge {item.item_type}</p>
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <button className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
+              <span className="material-symbols-outlined text-xl">star</span>
+            </button>
+            <button 
+              onClick={onEdit}
+              className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
+              <span className="material-symbols-outlined text-xl">edit</span>
+            </button>
+            <button className="px-5 h-10 rounded-full flex items-center gap-2 bg-primary text-on-primary font-bold text-sm glow-button transition-all">
+              <span className="material-symbols-outlined text-sm">share</span>
+              Share Access
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {item.username && (
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Username</label>
+              <div className="flex items-center justify-between">
+                <span className="text-on-surface text-lg font-medium">{item.username}</span>
+                <button 
+                  onClick={() => copyToClipboard(item.username!, 'Username')}
+                  className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                >
+                  <span className="material-symbols-outlined text-xl">content_copy</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {item.password && (
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Password</label>
+              <div className="flex items-center justify-between">
+                <span className={`text-on-surface text-2xl tracking-[0.3em] font-mono leading-none pt-1 ${!showPassword ? '' : 'text-primary'}`}>
+                  {showPassword ? item.password : '••••••••••••'}
+                </span>
+                <div className="flex gap-1">
+                  <button 
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                  >
+                    <span className="material-symbols-outlined text-xl">{showPassword ? 'visibility_off' : 'visibility'}</span>
+                  </button>
+                  <button 
+                    onClick={() => item.password && copyToClipboard(item.password, 'Password')}
+                    className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                  >
+                    <span className="material-symbols-outlined text-xl">content_copy</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {item.totp && (
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 col-span-1 md:col-span-2">
+              <div className="flex items-center justify-between mb-4">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500">
+                  TOTP (2FA) <span className="ml-2 text-primary">ACTIVE</span>
+                </label>
+                <span className="text-[10px] text-slate-500 font-mono">EXPIRES IN {totpTimeLeft}S</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-baseline gap-4">
+                  <span className="text-on-surface text-4xl font-mono tracking-widest font-light">{totpCode}</span>
+                </div>
+                <button 
+                  onClick={() => copyToClipboard(totpCode.replace(' ', ''), 'Code')}
+                  className="px-4 py-2 bg-surface-container-highest rounded-lg flex items-center gap-2 hover:bg-surface-bright transition-colors text-sm font-medium"
+                >
+                  <span className="material-symbols-outlined text-sm">content_copy</span>
+                  Copy Code
+                </button>
+              </div>
+              <div className="mt-6 h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-primary rounded-full transition-all duration-1000" 
+                  style={{ width: `${(totpTimeLeft / 30) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {item.url && (
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Website</label>
+              <div className="flex items-center justify-between">
+                <a 
+                  href={item.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-on-surface hover:text-primary transition-colors text-sm flex items-center gap-2 underline decoration-outline-variant underline-offset-4"
+                >
+                  {item.url}
+                  <span className="material-symbols-outlined text-xs">open_in_new</span>
+                </a>
+                <button 
+                  onClick={() => copyToClipboard(item.url!, 'URL')}
+                  className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-500"
+                >
+                  <span className="material-symbols-outlined text-xl">content_copy</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {item.card_number && (
+            <>
+              {item.cardholder_name && (
+                <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Cardholder Name</label>
+                  <div className="flex items-center justify-between">
+                    <span className="text-on-surface text-lg font-medium">{item.cardholder_name}</span>
+                    <button 
+                      onClick={() => copyToClipboard(item.cardholder_name!, 'Cardholder name')}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                    >
+                      <span className="material-symbols-outlined text-xl">content_copy</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Card Number</label>
+                <div className="flex items-center justify-between">
+                  <span className="text-on-surface text-xl font-mono tracking-wider">
+                    {showCardNumber ? item.card_number : `•••• •••• •••• ${item.card_number?.slice(-4)}`}
+                  </span>
+                  <div className="flex gap-1">
+                    <button 
+                      onClick={() => setShowCardNumber(!showCardNumber)}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                    >
+                      <span className="material-symbols-outlined text-xl">{showCardNumber ? 'visibility_off' : 'visibility'}</span>
+                    </button>
+                    <button 
+                      onClick={() => copyToClipboard(item.card_number!, 'Card number')}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                    >
+                      <span className="material-symbols-outlined text-xl">content_copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Expiry</label>
+                  <div className="flex items-center justify-between">
+                    <span className="text-on-surface font-mono">{item.card_exp || '—'}</span>
+                    {item.card_exp && (
+                      <button 
+                        onClick={() => copyToClipboard(item.card_exp!, 'Expiry')}
+                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                      >
+                        <span className="material-symbols-outlined text-xl">content_copy</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">CVV</label>
+                  <div className="flex items-center justify-between">
+                    <span className="text-on-surface font-mono">{showCVV ? item.card_cvv : '•••'}</span>
+                    <div className="flex gap-1">
+                      <button 
+                        onClick={() => setShowCVV(!showCVV)}
+                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                      >
+                        <span className="material-symbols-outlined text-xl">{showCVV ? 'visibility_off' : 'visibility'}</span>
+                      </button>
+                      {item.card_cvv && (
+                        <button 
+                          onClick={() => copyToClipboard(item.card_cvv!, 'CVV')}
+                          className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                        >
+                          <span className="material-symbols-outlined text-xl">content_copy</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {item.card_pin && (
+                <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">PIN</label>
+                  <div className="flex items-center justify-between">
+                    <span className="text-on-surface font-mono">{showCardPin ? item.card_pin : '••••'}</span>
+                    <div className="flex gap-1">
+                      <button 
+                        onClick={() => setShowCardPin(!showCardPin)}
+                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                      >
+                        <span className="material-symbols-outlined text-xl">{showCardPin ? 'visibility_off' : 'visibility'}</span>
+                      </button>
+                      <button 
+                        onClick={() => copyToClipboard(item.card_pin!, 'PIN')}
+                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                      >
+                        <span className="material-symbols-outlined text-xl">content_copy</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {item.secure_note_content && (
+          <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Secure Note</label>
+            <p className="text-on-surface whitespace-pre-wrap font-mono">{item.secure_note_content}</p>
+          </div>
+        )}
+
+        <div className="mt-12 pt-8 border-t border-outline-variant/10 flex justify-between items-center">
+          <button 
+            onClick={handleDelete}
+            className="px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm mr-2">delete</span>
+            Delete
+          </button>
+          <div className="flex flex-wrap gap-8">
+            <div className="flex flex-col">
+              <span className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 mb-1">Last Modified</span>
+              <span className="text-xs text-on-surface">{new Date(item.updated_at).toLocaleDateString()}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 mb-1">Encryption</span>
+              <span className="text-xs text-secondary font-mono">AES-256-GCM</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

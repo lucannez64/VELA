@@ -1,0 +1,21 @@
+use serde::{Deserialize, Serialize};
+use crate::vault::VaultItem;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutofillRequest {
+    pub domain: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutofillResponse {
+    pub items: Vec<VaultItem>,
+    pub requires_biometric: bool,
+}
+
+#[tauri::command]
+pub async fn handle_autofill_request(request: AutofillRequest) -> Result<AutofillResponse, String> {
+    Ok(AutofillResponse {
+        items: vec![],
+        requires_biometric: true,
+    })
+}
