@@ -1,0 +1,47 @@
+[package]
+name = "vela-crypto"
+version = "0.1.0"
+edition = "2021"
+description = "VELA core cryptographic library: Hybrid KEM, AEAD, KDF, Shamir SSS, Path ORAM"
+license = "MIT OR Apache-2.0"
+build = "build.rs"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+wasm = ["getrandom/js"]
+
+[dependencies]
+# Hybrid KEM
+ml-kem         = { version = "0.3.0-rc.0", features = ["getrandom"] }
+x25519-dalek   = { version = "2", features = ["static_secrets"] }
+hkdf           = "0.12"
+sha2           = "0.10"
+
+# AEAD
+chacha20poly1305 = { version = "0.11.0-rc.3" }
+
+# KDF
+blake3         = { version = "1", features = ["traits-preview"] }
+
+# Hybrid signing (ML-DSA-87 + Ed25519)
+# fips204 chosen over ml-dsa (RustCrypto) due to RUSTSEC-2025-0144 in ml-dsa ≤0.0.4
+fips204        = "0.4"
+ed25519-dalek  = { version = "2", features = ["rand_core"] }
+
+# Utilities
+rand           = "0.8"
+rand_core      = { version = "0.6", features = ["getrandom"] }
+getrandom      = { version = "0.2" }
+zeroize        = { version = "1", features = ["derive"] }
+thiserror      = "1"
+
+[dev-dependencies]
+hex            = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

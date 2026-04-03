@@ -1,0 +1,13 @@
+[package]
+name = "ntt_shim"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+tfhe-ntt = { version = "0.7.0", features = ["std"] }
+
+[profile.release]
+panic = "abort"

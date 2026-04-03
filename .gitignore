@@ -1,10 +1,9 @@
-# Embedded git repos (developed independently)
-libVELA/cyclo/
-libVELA/vela-crypto/
 
 # Rust build outputs
 desktopVELA/src-tauri/target/
 serverVELA/target/
+libVELA/vela-crypto/target/
+libVELA/cyclo/ntt_shim/target/
 
 # Vite build output
 desktopVELA/dist/

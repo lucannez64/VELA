@@ -970,18 +970,20 @@ fn urls_match(current_url: &str, stored_url: &str) -> bool {
     let (current_host, current_port) = extract_host_and_port(&current_lower);
     let (stored_host, stored_port) = extract_host_and_port(&stored_lower);
 
-    if current_host != stored_host {
-        return false;
-    }
-
+    // Handle port mismatch
     if let (Some(cp), Some(sp)) = (current_port, stored_port) {
         if cp != sp {
             return false;
         }
     }
 
-    if is_ip_address(&current_host) {
+    // Exact match - return early
+    if current_host == stored_host {
         return true;
+    }
+
+    if is_ip_address(&current_host) {
+        return false;
     }
 
     let current_parts: Vec<&str> = current_host.split('.').collect();
@@ -999,14 +1001,17 @@ fn urls_match(current_url: &str, stored_url: &str) -> bool {
         return stored_host == current_host;
     }
 
-    let stored_is_subdomain_of_current =
-        current_parts[current_parts.len() - stored_parts.len()..] == stored_parts[..];
+    // Check if current domain ends with stored domain (stored can be parent of current)
+    // e.g., stored="eduid.ch" should match current="epfl.login.eduid.ch"
+    let current_ends_with_stored = current_parts.len() >= stored_parts.len()
+        && current_parts[current_parts.len() - stored_parts.len()..] == stored_parts[..];
 
-    if !stored_is_subdomain_of_current {
+    if !current_ends_with_stored {
         return false;
     }
 
-    stored_parts.len() >= current_parts.len() - 1
+    // Ensure stored domain has at least 2 parts (e.g., "eduid.ch", not just "ch")
+    stored_parts.len() >= 2
 }
 
 fn extract_host_and_port(url: &str) -> (String, Option<u16>) {

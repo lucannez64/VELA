@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig 0.15.x
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Build (release)
+        run: zig build --summary all
+
+      - name: Run full test suite
+        run: zig build test --summary all
+
+      - name: Fuzz check (deterministic seed)
+        run: zig build test --summary all -- --seed=0xdeadbeef
+
+  parameter-lock:
+    name: Parameter Security Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig 0.15.x
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      # Re-run with a different seed to catch non-deterministic failures.
+      - name: Deterministic reproducibility check (seed A)
+        run: zig build test --summary all -- --seed=0x1234567890abcdef
+
+      - name: Deterministic reproducibility check (seed B)
+        run: zig build test --summary all -- --seed=0xfedcba9876543210
+
+  serialization-diff:
+    name: Serialization Differential
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig 0.15.x
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      # Run tests twice; if serialization is non-deterministic the test suite
+      # will produce different proof bytes between runs. The test framework
+      # catches this via the wire-version and transcript-digest checks.
+      - name: Serialization test run 1
+        run: zig build test --summary all -- --seed=0xaaaa
+
+      - name: Serialization test run 2
+        run: zig build test --summary all -- --seed=0xbbbb

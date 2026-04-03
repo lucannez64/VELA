@@ -553,6 +553,7 @@
   }
 
   function velaIsTotpField(field) {
+    if (field.autoCompleteType && field.autoCompleteType.includes("one-time-code")) return true;
     const toCheck = [field.htmlName, field.htmlID, field.placeholder, field["label-tag"], field["label-aria"], field["label-left"], field["label-top"]]
       .filter(Boolean).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
     const totpPatterns = ["totp", "otp", "2fa", "mfa", "twofactor", "onetime", "verif", "authenticat", "approvalcode", "securitycode"];
