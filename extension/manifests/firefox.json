@@ -1,0 +1,79 @@
+{
+  "manifest_version": 3,
+  "default_locale": "en",
+  "name": "__MSG_extensionName__",
+  "short_name": "VELA",
+  "description": "__MSG_extensionDescription__",
+  "version": "1.0.0",
+  "author": "VELA Team",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "96": "icons/icon96.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*", "file:///*"],
+      "exclude_matches": ["*://*/*.xml*", "file:///*.xml*"],
+      "js": ["shared/browser-polyfill.js", "shared/autofill-utils.js", "content/content-script.js"],
+      "css": ["content/content-styles.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "background": {
+    "scripts": ["background/background.js"]
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    },
+    "default_title": "__MSG_extensionName__",
+    "default_popup": "popup/popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "clipboardRead",
+    "clipboardWrite",
+    "storage",
+    "tabs",
+    "nativeMessaging",
+    "alarms",
+    "contextMenus",
+    "scripting",
+    "webNavigation",
+    "webRequest",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/content-script.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "linux": "Ctrl+Shift+U",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "__MSG_commandOpenPopup__"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "vela@vela.app",
+      "strict_min_version": "109.0"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "vela-desktop",
+  "description": "VELA Desktop Password Manager Native Messaging Host",
+  "path": "/usr/bin/vela-native-messaging-host",
+  "type": "stdio",
+  "allowed_extensions": ["vela@vela.app"]
+}

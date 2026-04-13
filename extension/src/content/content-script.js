@@ -72,13 +72,11 @@
     "source", "track", "param", "map", "area"
   ]);
 
-  // Core state
   let pageDetails = null;
   let mutationObserver = null;
   let observedShadowRoots = new WeakSet();
   let lastLocationHref = globalThis.location.href;
 
-  // Inline autofill state
   let velaActiveField = null;
   let velaDropdownEl = null;
   let velaFieldIconEl = null;
@@ -90,6 +88,12 @@
   let velaGenOptions = { length: 20, uppercase: true, lowercase: true, numbers: true, symbols: true };
   let velaSelectedIndex = -1;
   let velaHoveredField = null;
+
+  function getBrowserAPI() {
+    if (typeof browser !== "undefined" && browser.runtime) return browser;
+    if (typeof chrome !== "undefined" && chrome.runtime) return chrome;
+    return null;
+  }
 
   function init() {
     setupMutationObserver();
@@ -118,6 +122,9 @@
   }
 
   function setupMessageListeners() {
+    const api = getBrowserAPI();
+    if (!api) return;
+
     const handleMessage = (message, sender, sendResponse) => {
       const { command } = message;
       switch (command) {
@@ -158,16 +165,14 @@
       }
     };
 
-    if (typeof browser !== "undefined" && browser.runtime?.onMessage) {
-      browser.runtime.onMessage.addListener(handleMessage);
-    } else if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
-      chrome.runtime.onMessage.addListener(handleMessage);
-    }
+    api.runtime.onMessage.addListener(handleMessage);
   }
 
   function setupDisconnectAction() {
     try {
-      const port = chrome.runtime.connect({ name: "injected-script" });
+      const api = getBrowserAPI();
+      if (!api) return;
+      const port = api.runtime.connect({ name: "injected-script" });
       port.onDisconnect.addListener(() => destroy());
     } catch (e) {}
   }
@@ -291,10 +296,10 @@
   function getShadowRoot(node) {
     if (!nodeIsElement(node)) return null;
     if (node.shadowRoot) return node.shadowRoot;
-    if (chrome.dom?.openOrClosedShadowRoot) {
+    if (typeof chrome !== "undefined" && chrome.dom?.openOrClosedShadowRoot) {
       try { return chrome.dom.openOrClosedShadowRoot(node); } catch (e) { return null; }
     }
-    return node.openOrClosedShadowRoot || null;
+    return null;
   }
 
   function isNodeFormFieldElement(node) {
@@ -508,9 +513,7 @@
     const script = { script: [], properties: {} };
     const passwordFields = loadPasswordFields(pageDetails, false);
 
-    // May be a TOTP-only page (no password field visible yet)
     if (!passwordFields || !passwordFields.length) {
-      // Try TOTP-only fill
       if (login.totp) {
         const totpField = pageDetails.fields.find((f) => f.viewable && velaIsTotpField(f));
         if (totpField) {
@@ -518,7 +521,6 @@
           return script;
         }
       }
-      // Split-flow (e.g. Google/GitHub): only username step visible — fill it
       if (login.username) {
         const textField = pageDetails.fields.find((f) =>
           f.viewable && ["text", "email", "tel", "url"].includes(f.type || "text")
@@ -540,7 +542,6 @@
       filledFields[passwordFields[0].opid] = passwordFields[0];
       script.script.push({ opid: passwordFields[0].opid, action: "fill", value: login.password });
     }
-    // Fill TOTP if the login has a current TOTP code and a TOTP field is present
     if (login.totp) {
       const totpField = pageDetails.fields.find(
         (f) => f.viewable && velaIsTotpField(f) && !filledFields[f.opid]
@@ -591,10 +592,9 @@
     if (usernameFields.length > 1) {
       const pwIdx = pageDetails.fields.indexOf(passwordField);
       const before = usernameFields.filter((f) => pageDetails.fields.indexOf(f) < pwIdx);
-      if (before.length) return before[before.length - 1]; // closest before password
+      if (before.length) return before[before.length - 1];
       return usernameFields[0];
     }
-    // Last resort: find any visible text field immediately before the password field
     const pwIdx = pageDetails.fields.indexOf(passwordField);
     for (let i = pwIdx - 1; i >= 0; i--) {
       const f = pageDetails.fields[i];
@@ -622,7 +622,6 @@
         if (!element) {
           const fieldIndex = parseInt(op.opid.replace("__", ""), 10);
           if (!isNaN(fieldIndex)) {
-            // Use the same selector as queryAutofillFields so the index matches
             const excludedTypes = ["hidden","submit","reset","button","image","file","search","url","date","time","datetime","datetime-local","week","color","range"];
             let q = "input:not([data-bwignore]):not([data-vela-ui])";
             excludedTypes.forEach((t) => { q += `:not([type="${t}"])`; });
@@ -651,7 +650,6 @@
       if (type === "checkbox") {
         element.checked = value === "true" || value === "✓";
       } else {
-        // Use native setter to trigger React/Vue/etc reactivity
         const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
         if (nativeInputValueSetter) {
           nativeInputValueSetter.call(element, value);
@@ -720,10 +718,8 @@
     const type = (el.type || "text").toLowerCase();
     if (type === "password") return true;
     if (!["text", "email", "tel", "url"].includes(type)) return false;
-    // Check autocomplete
     const ac = (el.autocomplete || "").toLowerCase();
     if (["username", "email", "current-password", "new-password"].includes(ac)) return true;
-    // Fuzzy match against field attributes
     const attrs = [el.name, el.id, el.placeholder, el.getAttribute("aria-label"), el.getAttribute("title")]
       .filter(Boolean).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
     const patterns = ["user", "email", "login", "account", "mail", "identifier", "phone", "signin", "username"];
@@ -737,7 +733,6 @@
     if (!form) return false;
     const pwFields = form.querySelectorAll("input[type='password']");
     if (pwFields.length >= 2) return true;
-    // Check for registration signals
     const formHtml = form.innerHTML.toLowerCase();
     return ["confirm", "repeat", "retype", "register", "signup", "sign_up", "create.account"].some((s) => formHtml.includes(s));
   }
@@ -749,15 +744,12 @@
     velaActiveField = el;
     velaCurrentLogins = null;
 
-    // Show loading state immediately
     velaShowDropdown(el, null, false);
 
-    // Inject icon only if hover didn't already do it for this field
     if (velaHoveredField !== el) {
       velaInjectFieldIcon(el);
     }
 
-    // Fetch logins from vault
     try {
       const resp = await sendExtensionMessage("getAvailableLogins", { url: location.href });
       velaCurrentLogins = resp && resp.logins ? resp.logins : [];
@@ -765,7 +757,6 @@
       velaCurrentLogins = [];
     }
 
-    // Field may have changed while we fetched
     if (velaActiveField !== el) return;
 
     const isNewPw = velaIsNewPasswordField(el);
@@ -782,15 +773,12 @@
     }, 200);
   }
 
-  // --- Hover trigger (shows icon without dropdown, like Bitwarden) ---
-
   function velaOnMouseOver(e) {
     const el = e.target;
     if (!velaIsAutofillable(el)) return;
-    if (velaActiveField === el) return; // Focus already handling it
-    if (velaHoveredField === el) return; // Already showing icon for this field
+    if (velaActiveField === el) return;
+    if (velaHoveredField === el) return;
     velaHoveredField = el;
-    // Remove icon for any previous hovered field (if different)
     if (!velaActiveField) velaRemoveFieldIcon();
     velaInjectFieldIcon(el);
   }
@@ -799,18 +787,13 @@
     const el = e.target;
     if (velaHoveredField !== el) return;
     const relatedTarget = e.relatedTarget;
-    // Keep icon if moving into the icon button itself
     if (relatedTarget && velaFieldIconEl && (velaFieldIconEl === relatedTarget || velaFieldIconEl.contains(relatedTarget))) return;
-    // Keep icon if field is focused
     if (velaActiveField === el) return;
     velaHoveredField = null;
     velaRemoveFieldIcon();
   }
 
-  // --- Keyboard navigation ---
-
   function velaOnKeyDown(e) {
-    // Escape always closes dropdown
     if (e.key === "Escape" && velaDropdownEl) {
       e.stopPropagation();
       velaHideDropdown();
@@ -891,7 +874,6 @@
         if (velaCurrentLogins !== null) {
           velaShowDropdown(field, velaCurrentLogins, velaIsNewPasswordField(field));
         } else {
-          // Hovered but not focused yet — show loading then fetch
           velaShowDropdown(field, null, false);
           sendExtensionMessage("getAvailableLogins", { url: location.href }).then((resp) => {
             velaCurrentLogins = resp && resp.logins ? resp.logins : [];
@@ -906,7 +888,6 @@
       }
     });
 
-    // Position absolutely over the field
     const rect = field.getBoundingClientRect();
     const scrollX = window.scrollX || window.pageXOffset;
     const scrollY = window.scrollY || window.pageYOffset;
@@ -939,7 +920,6 @@
     dd.className = "vela-inline-dropdown vela-autofill-animate-slide-up";
 
     if (logins === null) {
-      // Loading
       dd.innerHTML = `
         <div class="vela-dd-header">
           <span class="vela-dd-logo">${velaShieldSvg(14)}</span>
@@ -995,7 +975,6 @@
     velaSelectedIndex = -1;
     velaPositionDropdown(field);
 
-    // Wire up interactions
     dd.querySelectorAll("[data-vela-login-id]").forEach((item) => {
       item.addEventListener("click", () => {
         const loginId = item.getAttribute("data-vela-login-id");
@@ -1052,7 +1031,6 @@
     const scrollY = window.scrollY || window.pageYOffset;
     const ddWidth = Math.max(rect.width, 260);
 
-    // Calculate left, clamp to viewport
     let left = rect.left + scrollX;
     const maxLeft = scrollX + window.innerWidth - ddWidth - 8;
     if (left > maxLeft) left = maxLeft;
@@ -1076,7 +1054,7 @@
     velaSelectedIndex = -1;
   }
 
-  // --- Account Picker Modal (for triggerAutofill with multiple accounts) ---
+  // --- Account Picker Modal ---
 
   function velaShowAccountPickerModal(logins) {
     velaRemoveModal("vela-account-picker-modal");
@@ -1141,7 +1119,6 @@
     const pwValue = pwFields[0].value;
     if (!pwValue) return;
 
-    // Find username field
     const allInputs = Array.from(form.querySelectorAll("input:not([type='password']):not([type='hidden']):not([data-vela-ui])"));
     let userValue = "";
     for (const inp of allInputs) {
@@ -1153,7 +1130,6 @@
     const isRegistration = pwFields.length >= 2;
     const creds = { username: userValue, password: pwValue, isRegistration };
 
-    // Check never-save blocklist and vault before showing save bar
     const domain = velaExtractDomain(location.href);
     Promise.all([
       getLoginsForPage(location.href),
@@ -1167,7 +1143,7 @@
     });
   }
 
-  // --- Save Bar (top-of-page notification) ---
+  // --- Save Bar ---
 
   function velaShowSaveBar(username, password, isRegistration) {
     velaHideSaveBar();
@@ -1205,7 +1181,6 @@
     bar.querySelector("[data-vela-action='dismiss']").addEventListener("click", velaHideSaveBar);
     bar.querySelector("[data-vela-action='close']").addEventListener("click", velaHideSaveBar);
 
-    // Auto-dismiss after 20s
     setTimeout(velaHideSaveBar, 20000);
   }
 
@@ -1395,7 +1370,6 @@
           </div>
         </div>`;
 
-      // Wire up controls
       const close = () => { overlay.remove(); velaGenModal = null; };
       overlay.querySelector(".vela-modal-close").addEventListener("click", close);
       overlay.querySelectorAll("[data-vela-action='close']").forEach((b) => b.addEventListener("click", close));
@@ -1423,7 +1397,6 @@
       overlay.querySelectorAll(".vela-gen-checkbox").forEach((cb) => {
         cb.addEventListener("change", () => {
           opts[cb.dataset.opt] = cb.checked;
-          // Ensure at least one is selected
           if (!opts.uppercase && !opts.lowercase && !opts.numbers && !opts.symbols) {
             opts[cb.dataset.opt] = true;
             cb.checked = true;
@@ -1440,9 +1413,8 @@
           onUseCb(currentPassword);
         } else if (targetField) {
           fillElement(targetField, currentPassword);
-          targetField.type = "text"; // Briefly show the generated password
+          targetField.type = "text";
           setTimeout(() => { targetField.type = "password"; }, 1500);
-          // Trigger save bar
           setTimeout(() => {
             const form = targetField.form || targetField.closest("form");
             if (form) {
@@ -1469,22 +1441,19 @@
     if (uppercase) sets.push("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     if (lowercase) sets.push("abcdefghijklmnopqrstuvwxyz");
     if (numbers) sets.push("0123456789");
-    if (symbols) sets.push("!@#$%^&*()-_=+[]{}|;:,.<>?");
+    if (symbols) sets.push("!@#$%^&*()-_=+[]{}|;:,.< >?");
 
     const allChars = sets.join("") || "abcdefghijklmnopqrstuvwxyz";
     const buf = new Uint32Array(length + sets.length);
     crypto.getRandomValues(buf);
 
-    // Guarantee at least one char from each set
     const result = [];
     sets.forEach((set, i) => result.push(set[buf[i] % set.length]));
 
-    // Fill rest
     for (let i = sets.length; i < length; i++) {
       result.push(allChars[buf[i] % allChars.length]);
     }
 
-    // Fisher-Yates shuffle using extra random values
     const shuffle = new Uint32Array(result.length);
     crypto.getRandomValues(shuffle);
     for (let i = result.length - 1; i > 0; i--) {
@@ -1520,13 +1489,15 @@
       <span class="vela-strength-label" style="color:${level.color}">${level.label}</span>`;
   }
 
-  // --- Never-save blocklist (chrome.storage.local) ---
+  // --- Never-save blocklist ---
 
   function velaIsNeverSave(domain) {
+    const api = getBrowserAPI();
+    if (!api) return Promise.resolve(false);
+
     return new Promise((resolve) => {
       try {
-        const runtime = typeof browser !== "undefined" ? browser : chrome;
-        runtime.storage.local.get("velaNeverSaveDomains", (data) => {
+        api.storage.local.get("velaNeverSaveDomains", (data) => {
           const domains = (data && data.velaNeverSaveDomains) || [];
           resolve(domains.includes(domain));
         });
@@ -1537,13 +1508,15 @@
   }
 
   function velaAddNeverSave(domain) {
+    const api = getBrowserAPI();
+    if (!api) return;
+
     try {
-      const runtime = typeof browser !== "undefined" ? browser : chrome;
-      runtime.storage.local.get("velaNeverSaveDomains", (data) => {
+      api.storage.local.get("velaNeverSaveDomains", (data) => {
         const domains = (data && data.velaNeverSaveDomains) || [];
         if (!domains.includes(domain)) {
           domains.push(domain);
-          runtime.storage.local.set({ velaNeverSaveDomains: domains });
+          api.storage.local.set({ velaNeverSaveDomains: domains });
         }
       });
     } catch (_) {}

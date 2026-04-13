@@ -1,5 +1,11 @@
+if (typeof browser === "undefined") {
+  try { importScripts("../shared/browser-polyfill.js"); } catch (e) {}
+}
+
 const AUTOFILL_PORT = "injected-script";
 const NATIVEMessaging_PORT = "vela-desktop";
+
+const { runtime, tabs, contextMenus, commands, action } = browser;
 
 let desktopConnection = null;
 let activeTabId = null;
@@ -93,7 +99,7 @@ function init() {
 }
 
 function setupConnectionListeners() {
-  chrome.runtime.onConnect.addListener((port) => {
+  runtime.onConnect.addListener((port) => {
     if (port.name === AUTOFILL_PORT) {
       setupAutofillPortListeners(port);
     }
@@ -109,34 +115,34 @@ function setupAutofillPortListeners(port) {
   });
 }
 
-function setupContextMenus() {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "vela-autofill",
-      title: "Auto-fill with VELA",
-      contexts: ["all"]
-    });
+async function setupContextMenus() {
+  await contextMenus.removeAll();
 
-    chrome.contextMenus.create({
-      id: "vela-copy-username",
-      title: "Copy Username",
-      contexts: ["all"]
-    });
-
-    chrome.contextMenus.create({
-      id: "vela-copy-password",
-      title: "Copy Password",
-      contexts: ["all"]
-    });
-
-    chrome.contextMenus.create({
-      id: "vela-open-vault",
-      title: "Open VELA Vault",
-      contexts: ["all"]
-    });
+  await contextMenus.create({
+    id: "vela-autofill",
+    title: "Auto-fill with VELA",
+    contexts: ["all"]
   });
 
-  chrome.contextMenus.onClicked.addListener((info, tab) => {
+  await contextMenus.create({
+    id: "vela-copy-username",
+    title: "Copy Username",
+    contexts: ["all"]
+  });
+
+  await contextMenus.create({
+    id: "vela-copy-password",
+    title: "Copy Password",
+    contexts: ["all"]
+  });
+
+  await contextMenus.create({
+    id: "vela-open-vault",
+    title: "Open VELA Vault",
+    contexts: ["all"]
+  });
+
+  contextMenus.onClicked.addListener((info, tab) => {
     handleContextMenuClick(info, tab);
   });
 }
@@ -159,7 +165,7 @@ function handleContextMenuClick(info, tab) {
 }
 
 function setupMessageListeners() {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleExtensionMessage(message, sender, sendResponse);
     return true;
   });
@@ -199,7 +205,7 @@ function handleExtensionMessage(message, sender, sendResponse) {
 }
 
 function setupCommandListeners() {
-  chrome.commands.onCommand.addListener((command, tab) => {
+  commands.onCommand.addListener((command, tab) => {
     switch (command) {
       case "_execute_action":
         openPopup();
@@ -228,12 +234,15 @@ async function handleFillForm(data, sender, sendResponse) {
     const tabId = sender.tab?.id || activeTabId;
 
     if (tabId) {
-      chrome.tabs.sendMessage(tabId, {
-        command: "performFill",
-        fillScript
-      }, (response) => {
+      try {
+        const response = await tabs.sendMessage(tabId, {
+          command: "performFill",
+          fillScript
+        });
         sendResponse(response || { success: false });
-      });
+      } catch {
+        sendResponse({ success: false });
+      }
     } else {
       sendResponse({ success: false, error: "No tab found" });
     }
@@ -325,18 +334,25 @@ async function handleTriggerAutofillWithLogin(data, sender, sendResponse) {
   const { login } = data;
   if (!login) { sendResponse({ success: false }); return; }
 
-  // Use sender tab if available, otherwise query active tab
-  const tabId = sender?.tab?.id || await new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      resolve(tabs && tabs.length ? tabs[0].id : null);
-    });
-  });
+  const tabId = sender?.tab?.id || await getActiveTabId();
 
   if (!tabId) { sendResponse({ success: false, error: "No tab found" }); return; }
 
-  chrome.tabs.sendMessage(tabId, { command: "fillWithLogin", login }, (response) => {
+  try {
+    const response = await tabs.sendMessage(tabId, { command: "fillWithLogin", login });
     sendResponse(response || { success: true });
-  });
+  } catch {
+    sendResponse({ success: false });
+  }
+}
+
+async function getActiveTabId() {
+  try {
+    const queryTabs = await tabs.query({ active: true, currentWindow: true });
+    return queryTabs && queryTabs.length ? queryTabs[0].id : null;
+  } catch {
+    return null;
+  }
 }
 
 async function handleSaveCredentials(data, sendResponse) {
@@ -354,7 +370,6 @@ async function handleSaveCredentials(data, sendResponse) {
     if (response && (response.success || response.msg_type === "SaveCredentialsResponse")) {
       sendResponse({ success: true });
     } else {
-      // Fallback to native messaging
       const nativeResp = await sendNativeMessage({ action: "saveCredentials", ...data });
       sendResponse(nativeResp || { success: false });
     }
@@ -368,27 +383,27 @@ function checkDesktopConnection(sendResponse) {
     sendResponse({ connected: true });
     return true;
   }
-  
+
   console.log("[VELA] Checking desktop connection...");
-  
+
   let resultReceived = false;
-  
+
   const checkResult = (response) => {
     if (resultReceived) return;
-    
+
     const connected = isConnectedResponse(response);
     console.log("[VELA] Connection check response:", JSON.stringify(response), "connected:", connected);
-    
+
     if (connected) {
       resultReceived = true;
       desktopConnection = { disconnected: false };
       sendResponse({ connected: true });
     }
   };
-  
+
   checkHttpConnection().then(checkResult);
   sendNativeMessage({ action: "ping" }).then(checkResult);
-  
+
   setTimeout(() => {
     if (!resultReceived) {
       resultReceived = true;
@@ -397,7 +412,7 @@ function checkDesktopConnection(sendResponse) {
       sendResponse({ connected: false });
     }
   }, 3000);
-  
+
   return true;
 }
 
@@ -414,15 +429,15 @@ async function checkHttpConnection() {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000);
-    
+
     const response = await fetch("http://localhost:14597/ping", {
       method: "GET",
       signal: controller.signal
     });
-    
+
     clearTimeout(timeoutId);
     console.log("[VELA] HTTP response status:", response.status);
-    
+
     if (response.ok) {
       const data = await response.json().catch(() => ({}));
       console.log("[VELA] HTTP response data:", JSON.stringify(data));
@@ -437,43 +452,23 @@ async function checkHttpConnection() {
 
 function sendNativeMessage(message) {
   console.log("[VELA] Trying native messaging...");
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
       console.log("[VELA] Native messaging timeout");
       resolve({ success: false, error: "Native messaging timeout" });
     }, 10000);
 
-    const tryNativeMessaging = () => {
-      try {
-        const runtime = typeof browser !== "undefined" ? browser.runtime : chrome.runtime;
-        const sendNative = runtime?.sendNativeMessage?.bind(runtime);
-        
-        if (sendNative) {
-          sendNative("vela-desktop", message, (response) => {
-            clearTimeout(timeoutId);
-            console.log("[VELA] Native messaging response:", JSON.stringify(response));
-            if (runtime.lastError) {
-              console.log("[VELA] Native messaging error:", runtime.lastError.message);
-              resolve({ success: false, error: runtime.lastError.message });
-            } else {
-              resolve(response || { success: false });
-            }
-          });
-          return true;
-        }
-      } catch (error) {
-        console.log("[VELA] Native messaging exception:", error.message);
-      }
-      return false;
-    };
-
-    if (!tryNativeMessaging()) {
-      console.log("[VELA] Native messaging not available, trying HTTP...");
-      clearTimeout(timeoutId);
-      sendHttpMessage(message).then(resolve).catch(() => {
-        resolve({ success: false, error: "Communication failed" });
+    runtime.sendNativeMessage(NATIVEMessaging_PORT, message)
+      .then((response) => {
+        clearTimeout(timeoutId);
+        console.log("[VELA] Native messaging response:", JSON.stringify(response));
+        resolve(response || { success: false });
+      })
+      .catch((error) => {
+        clearTimeout(timeoutId);
+        console.log("[VELA] Native messaging error:", error.message);
+        resolve({ success: false, error: error.message });
       });
-    }
   });
 }
 
@@ -482,17 +477,17 @@ async function sendHttpMessage(message) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
-    
+
     const response = await fetch("http://localhost:14597/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(message),
       signal: controller.signal
     });
-    
+
     clearTimeout(timeoutId);
     console.log("[VELA] HTTP POST response status:", response.status);
-    
+
     if (response.ok) {
       const data = await response.json().catch(() => ({ success: true }));
       console.log("[VELA] HTTP POST response data:", JSON.stringify(data));
@@ -523,36 +518,45 @@ function handleAutofillMessage(message, port) {
   }
 }
 
-function triggerAutofill(tabId) {
-  chrome.tabs.sendMessage(tabId, { command: "triggerAutofill" }, (response) => {
-  });
+async function triggerAutofill(tabId) {
+  try {
+    await tabs.sendMessage(tabId, { command: "triggerAutofill" });
+  } catch {}
 }
 
-function copyUsername(tabId) {
-  chrome.tabs.sendMessage(tabId, { command: "copyUsername" }, (response) => {
-  });
+async function copyUsername(tabId) {
+  try {
+    await tabs.sendMessage(tabId, { command: "copyUsername" });
+  } catch {}
 }
 
-function copyPassword(tabId) {
-  chrome.tabs.sendMessage(tabId, { command: "copyPassword" }, (response) => {
-  });
+async function copyPassword(tabId) {
+  try {
+    await tabs.sendMessage(tabId, { command: "copyPassword" });
+  } catch {}
 }
 
-function openVault() {
-  chrome.action.openPopup();
+async function openVault() {
+  try {
+    await action.openPopup();
+  } catch {
+    await tabs.create({ url: "popup/popup.html" });
+  }
 }
 
-function openPopup() {
-  chrome.action.openPopup().catch(() => {
-    chrome.tabs.create({ url: "src/popup/popup.html" });
-  });
+async function openPopup() {
+  try {
+    await action.openPopup();
+  } catch {
+    await tabs.create({ url: "popup/popup.html" });
+  }
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+runtime.onInstalled.addListener(() => {
   init();
 });
 
-chrome.runtime.onStartup.addListener(() => {
+runtime.onStartup.addListener(() => {
   init();
 });
 

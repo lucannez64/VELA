@@ -1,6 +1,6 @@
 # VELA Browser Extension
 
-A secure password manager browser extension with zero-knowledge architecture. Works with both Firefox and Chrome-based browsers using Manifest V3.
+A secure password manager browser extension with zero-knowledge architecture. Works with Chrome, Firefox, and all their forks using Manifest V3.
 
 ## Features
 
@@ -8,14 +8,11 @@ A secure password manager browser extension with zero-knowledge architecture. Wo
 - **Biometric Authentication**: Unlock with Windows Hello, Touch ID, or Face ID
 - **Native Desktop Integration**: Communicates securely with the VELA desktop application
 - **Smart Autofill**: Automatically fills login credentials on websites
-- **Cross-Platform**: Works on Chrome, Edge, Firefox, and other Chromium-based browsers
+- **Cross-Platform**: Works on Chrome, Edge, Brave, Thorium, Helium, Firefox, Zen, Waterfox, and more
 
 ## Architecture
 
-The extension uses the same proven algorithms as Bitwarden for:
-- DOM element detection and autofill
-- Domain matching for credential lookup
-- Form field identification
+The extension uses `webextension-polyfill` for cross-browser API compatibility. The build system produces browser-specific distributions from a single source tree.
 
 ### Directory Structure
 
@@ -23,8 +20,21 @@ The extension uses the same proven algorithms as Bitwarden for:
 extension/
 ├── _locales/              # Localization files
 │   └── en/
-│       └── messages.json  # English translations
+│       └── messages.json
 ├── icons/                 # Extension icons
+├── manifests/             # Browser-specific manifest templates
+│   ├── chrome.json
+│   └── firefox.json
+├── native-messaging/      # Native messaging hosts
+│   ├── chromium/
+│   │   └── manifest.json
+│   ├── firefox/
+│   │   └── manifest.json
+│   ├── register-host.sh          # All Chromium browsers (Linux/macOS)
+│   ├── register-host.bat         # All Chromium browsers (Windows)
+│   ├── register-firefox-host.sh  # All Gecko browsers (Linux/macOS)
+│   ├── register-firefox-host.bat # All Gecko browsers (Windows)
+│   └── vela-native-messaging-host.py
 ├── src/
 │   ├── background/        # Service worker (background.js)
 │   ├── content/           # Content scripts for autofill
@@ -35,73 +45,106 @@ extension/
 │   │   └── popup.js
 │   └── shared/            # Shared utilities (Bitwarden algorithms)
 │       └── autofill-utils.js
-├── native-messaging/      # Native messaging host
-│   ├── chrome/
-│   │   └── manifest.json
-│   └── vela-native-messaging-host.py
-└── manifest.json         # Extension manifest (MV3)
+├── dist/                  # Build output (generated)
+│   ├── chrome/            # Chrome + all Chromium forks
+│   └── firefox/           # Firefox + all Gecko forks
+├── build.js               # Build script
+└── package.json
+```
+
+## Build
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) (also works with Node.js)
+
+### Install Dependencies
+
+```bash
+bun install
+```
+
+### Build for All Browsers
+
+```bash
+bun run build
+```
+
+This produces two builds:
+- `dist/chrome/` — for Chrome, Edge, Brave, Thorium, Helium, Vivaldi, Opera, Arc, and any Chromium fork
+- `dist/firefox/` — for Firefox, Zen Browser, Waterfox, Floorp, LibreWolf, and any Gecko fork
+
+### Build for a Single Browser
+
+```bash
+bun run build:chrome
+bun run build:firefox
 ```
 
 ## Installation
 
-### Chrome / Edge (Chromium-based)
+### Chromium-based Browsers (Chrome, Edge, Brave, Thorium, Helium, etc.)
 
-1. Open Chrome/Edge and go to `chrome://extensions/`
-2. Enable "Developer mode" (toggle in top right)
-3. Click "Load unpacked"
-4. Select the `extension` folder
-5. The VELA icon should appear in your toolbar
+1. Run `bun run build:chrome`
+2. Open your browser's extensions page:
+   - Chrome: `chrome://extensions/`
+   - Edge: `edge://extensions/`
+   - Brave: `brave://extensions/`
+   - Thorium: `thorium://extensions/`
+   - Helium: `helium://extensions/`
+3. Enable "Developer mode"
+4. Click "Load unpacked"
+5. Select the `extension/dist/chrome` folder
 
-### Firefox
+### Gecko-based Browsers (Firefox, Zen, Waterfox, Floorp, etc.)
 
-1. Open Firefox and go to `about:debugging#/runtime/this-firefox`
-2. Click "Load Temporary Add-on"
-3. Navigate to the `extension` folder and select `manifest.json`
-4. Click "Open" to install temporarily
+1. Run `bun run build:firefox`
+2. Open your browser's debugging page:
+   - Firefox: `about:debugging#/runtime/this-firefox`
+   - Zen: `about:debugging#/runtime/this-firefox`
+   - Waterfox: `about:debugging#/runtime/this-waterfox`
+3. Click "Load Temporary Add-on"
+4. Navigate to `extension/dist/firefox` and select `manifest.json`
 
 ### Native Messaging Setup
 
-For the extension to communicate with the VELA desktop app:
+Native messaging is **optional** — the extension communicates with the desktop app over HTTP (`localhost:14597`) by default. Register native messaging for a more reliable fallback.
 
-#### Windows
+#### All Chromium Browsers
 
-1. Copy the `native-messaging` folder to your installation directory
-2. For Chrome, add a registry key:
-   ```
-   HKEY_LOCAL_MACHINE\SOFTWARE\Google\Chrome\NativeMessagingHosts\vela-desktop
-   ```
-   Set its value to the path of `native-messaging/chrome/manifest.json`
+```bash
+# Linux / macOS
+chmod +x native-messaging/register-host.sh native-messaging/vela-native-messaging-host.py
+./native-messaging/register-host.sh
+```
 
-#### macOS / Linux
+On Windows, run `native-messaging\register-host.bat`.
 
-1. Copy `vela-native-messaging-host.py` to a secure location
-2. Make it executable: `chmod +x vela-native-messaging-host.py`
-3. Create a config file at `~/.config/vela/native-messaging-host.json`:
-   ```json
-   {
-     "description": "VELA Native Messaging Host",
-     "path": "/path/to/vela-native-messaging-host.py",
-     "type": "stdio"
-   }
-   ```
+This registers for: Chrome, Edge, Brave, Thorium, Helium, Vivaldi, Opera, Arc.
+
+#### All Gecko Browsers
+
+```bash
+# Linux / macOS
+chmod +x native-messaging/register-firefox-host.sh native-messaging/vela-native-messaging-host.py
+./native-messaging/register-firefox-host.sh
+```
+
+On Windows, run `native-messaging\register-firefox-host.bat`.
+
+This registers for: Firefox, Zen Browser, Waterfox, Floorp, LibreWolf.
 
 ## Development
 
-### Building from Source
+1. Install dependencies: `bun install`
+2. Build: `bun run build`
+3. Load the appropriate `dist/<browser>/` folder in your browser
+4. Edit files in `src/`, rebuild, and reload the extension to test
 
-The extension is written in pure JavaScript with no build step required for basic usage. To test changes:
-
-1. Make changes to the source files
-2. Go to `chrome://extensions/`
-3. Click the refresh icon on the VELA extension card
-
-### Testing
+### Testing Native Messaging
 
 ```bash
-# Run the Python native messaging host test
 python3 native-messaging/vela-native-messaging-host.py
-
-# Test with a simple ping
 echo -e "Content-Length: 16\n\n{\"action\":\"ping\"}" | python3 native-messaging/vela-native-messaging-host.py
 ```
 
@@ -112,30 +155,46 @@ echo -e "Content-Length: 16\n\n{\"action\":\"ping\"}" | python3 native-messaging
 - Native messaging uses process isolation to prevent injection attacks
 - No data is stored in the extension itself; all vault data stays in the desktop app
 
-## Algorithms
+## Browser Compatibility
 
-The extension uses Bitwarden's proven algorithms for:
+### Supported Browsers
 
-### Domain Matching
-- Exact domain matching (e.g., `login.example.com`)
-- Subdomain matching (e.g., `*.example.com`)
-- Handles special cases like `www` prefix and IP addresses
+The `dist/chrome/` build works with **any Chromium-based browser**. The `dist/firefox/` build works with **any Gecko-based browser**.
 
-### DOM Element Detection
-- Queries form elements including Shadow DOM
-- Uses multiple heuristics for field identification:
-  - HTML attributes (name, id, class, title)
-  - Autocomplete attributes
-  - Label associations
-  - Position relative to other fields
-- Filters out non-login fields (search, captcha, etc.)
+| Browser | Build | Notes |
+|---|---|---|
+| Google Chrome | `dist/chrome/` | Full support |
+| Microsoft Edge | `dist/chrome/` | Full support |
+| Brave | `dist/chrome/` | Full support |
+| Thorium | `dist/chrome/` | Full support, same registry as Chrome |
+| Helium | `dist/chrome/` | Full support |
+| Vivaldi | `dist/chrome/` | Full support |
+| Opera | `dist/chrome/` | Full support |
+| Arc | `dist/chrome/` | Full support |
+| Firefox | `dist/firefox/` | Full support |
+| Zen Browser | `dist/firefox/` | Full support, uses `~/.zen/` config |
+| Waterfox | `dist/firefox/` | Full support |
+| Floorp | `dist/firefox/` | Full support |
+| LibreWolf | `dist/firefox/` | Full support |
 
-### Field Classification
-- Password fields (type="password")
-- Username fields (text, email, tel)
-- TOTP/2FA fields
-- Credit card fields
-- Identity fields
+### Native Messaging: Chromium Forks
+
+All Chromium forks use the same native messaging protocol. The `chrome-extension://*` wildcard in the host manifest covers every Chromium-based browser. Each fork reads the host manifest from its own config directory — the registration scripts handle all known paths.
+
+### Native Messaging: Gecko Forks
+
+Zen Browser, Waterfox, Floorp, and LibreWolf use the same native messaging protocol as Firefox. They match by extension ID (`vela@vela.app`) via `allowed_extensions`. Each fork reads from its own profile config directory — the registration scripts handle all known paths.
+
+### Feature Differences
+
+| Feature | Chromium | Gecko |
+|---|---|---|
+| Service Worker | Yes | No (uses background scripts) |
+| `chrome.dom.openOrClosedShadowRoot` | Yes | No (falls back to open shadow roots only) |
+| `chrome.action.openPopup` | Yes | No (falls back to opening popup as tab) |
+| `idle` permission | Yes | No (removed from Gecko manifest) |
+| `wasm-unsafe-eval` CSP | Yes | No (removed from Gecko manifest) |
+| Native Messaging scheme | `chrome-extension://` | `moz-extension://` |
 
 ## License
 
