@@ -1,5 +1,6 @@
 //! GET /vault/chunk/:id  — download one encrypted ORAM blob.
 //! PUT /vault/chunk/:id  — upload / create one encrypted ORAM blob.
+//! DELETE /vault/chunk/:id — remove an encrypted ORAM blob.
 //!
 //! ## PUT semantics
 //!
@@ -9,6 +10,13 @@
 //! * On success, the server increments `version` and stores the new `lamport_clock`
 //!   and `last_writer` supplied by the client in the request body.
 //! * New chunks (first upload): `If-Match: 0` signals creation intent.
+//!
+//! ## DELETE semantics
+//!
+//! * Requires `If-Match: <version>` header for optimistic concurrency.
+//! * Returns `409 Conflict` if the stored version has advanced since the
+//!   client's last fetch.
+//! * On success, returns `200` with the deleted chunk's last version number.
 //!
 //! ## Chunk size enforcement
 //!
@@ -181,4 +189,73 @@ pub async fn put_chunk(
     );
 
     Ok((StatusCode::OK, resp_headers, Json(serde_json::json!({ "version": new_version }))))
+}
+
+// ─── DELETE /vault/chunk/:id ──────────────────────────────────────────────────
+
+pub async fn delete_chunk(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    session: AuthSession,
+    headers_in: HeaderMap,
+) -> Result<impl IntoResponse> {
+    let if_match: i64 = headers_in
+        .get("if-match")
+        .or_else(|| headers_in.get("If-Match"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
+
+    let result = sqlx::query_scalar::<_, i64>(
+        r#"
+        DELETE FROM vault_chunks
+         WHERE chunk_id = $1
+           AND user_id  = $2
+           AND version  = $3
+     RETURNING version
+        "#,
+    )
+    .bind(id)
+    .bind(session.user_id)
+    .bind(if_match)
+    .fetch_optional(&state.db)
+    .await?;
+
+    match result {
+        Some(deleted_version) => {
+            tracing::info!(
+                chunk_id = %id,
+                user_id = %session.user_id,
+                version = deleted_version,
+                "vault chunk deleted"
+            );
+
+            let mut resp_headers = HeaderMap::new();
+            maybe_append_new_token(&mut resp_headers, &session);
+
+            Ok((
+                StatusCode::OK,
+                resp_headers,
+                Json(serde_json::json!({ "deleted": true, "version": deleted_version })),
+            ))
+        }
+        None => {
+            let exists: bool = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+            )
+            .bind(id)
+            .bind(session.user_id)
+            .fetch_one(&state.db)
+            .await?
+                > 0;
+
+            if exists {
+                Err(AppError::Conflict(
+                    "version mismatch — re-sync before deleting".into(),
+                ))
+            } else {
+                Err(AppError::NotFound(format!("chunk {id} not found")))
+            }
+        }
+    }
 }

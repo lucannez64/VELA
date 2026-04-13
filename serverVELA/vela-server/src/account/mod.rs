@@ -37,6 +37,8 @@
 //! 5 registrations per hour per IP (Redis sliding window, 3600 s window).
 //! This is enforced before any DB work to prevent abuse.
 
+pub mod delete;
+
 use axum::{
     extract::{ConnectInfo, State},
     Json,
@@ -81,10 +83,9 @@ pub async fn post_register(
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>> {
     let ip = addr.ip().to_string();
-    let mut redis = state.redis.clone();
 
     // ── Rate limit: 5 registrations / hour per IP ─────────────────────────
-    rate_limit::check(&mut redis, &format!("rl:register:ip:{ip}"), 5, 3600).await?;
+    rate_limit::check(&state.store, &format!("rl:register:ip:{ip}"), 5, 3600)?;
 
     // ── Decode and validate key material ──────────────────────────────────
     let hybrid_ek = decode_b64_exact(&body.hybrid_ek, HYBRID_EK_LEN, "hybrid_ek")?;

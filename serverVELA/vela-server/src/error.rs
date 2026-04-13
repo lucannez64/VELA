@@ -45,29 +45,32 @@ pub enum AppError {
     // ── Infrastructure pass-through ───────────────────────────────────────────
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
-
-    #[error("redis error: {0}")]
-    Redis(#[from] redis::RedisError),
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, message) = match &self {
-            AppError::BadRequest(m)     => (StatusCode::BAD_REQUEST,            "bad_request",         m.clone()),
-            AppError::Unauthorized(m)   => (StatusCode::UNAUTHORIZED,           "unauthorized",        m.clone()),
-            AppError::Forbidden(m)      => (StatusCode::FORBIDDEN,              "forbidden",           m.clone()),
-            AppError::NotFound(m)       => (StatusCode::NOT_FOUND,              "not_found",           m.clone()),
-            AppError::Conflict(m)       => (StatusCode::CONFLICT,               "version_conflict",    m.clone()),
-            AppError::Unprocessable(m)  => (StatusCode::UNPROCESSABLE_ENTITY,   "unprocessable",       m.clone()),
-            AppError::RateLimited(m)    => (StatusCode::TOO_MANY_REQUESTS,      "rate_limited",        m.clone()),
-            AppError::Internal(m)       => (StatusCode::INTERNAL_SERVER_ERROR,  "internal_error",      m.clone()),
-            AppError::Database(e)       => {
-                tracing::error!(error = %e, "database error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "database_error", "database error".into())
+            AppError::BadRequest(m) => (StatusCode::BAD_REQUEST, "bad_request", m.clone()),
+            AppError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, "unauthorized", m.clone()),
+            AppError::Forbidden(m) => (StatusCode::FORBIDDEN, "forbidden", m.clone()),
+            AppError::NotFound(m) => (StatusCode::NOT_FOUND, "not_found", m.clone()),
+            AppError::Conflict(m) => (StatusCode::CONFLICT, "version_conflict", m.clone()),
+            AppError::Unprocessable(m) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable", m.clone())
             }
-            AppError::Redis(e)          => {
-                tracing::error!(error = %e, "redis error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "cache_error", "cache error".into())
+            AppError::RateLimited(m) => (StatusCode::TOO_MANY_REQUESTS, "rate_limited", m.clone()),
+            AppError::Internal(m) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                m.clone(),
+            ),
+            AppError::Database(e) => {
+                tracing::error!(error = %e, "database error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "database_error",
+                    "database error".into(),
+                )
             }
         };
 

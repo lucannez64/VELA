@@ -1,23 +1,11 @@
 //! VELA Protocol v2.0 — API Server
 //!
-//! Entry point: loads config, connects to Postgres + Redis, runs migrations,
-//! and starts the Axum HTTP server.
+//! Entry point: loads config, connects to Postgres, opens the sled embedded
+//! database, runs migrations, and starts the Axum HTTP server.
 
 use std::{net::SocketAddr, sync::Arc};
 
-mod account;
-mod auth;
-mod config;
-mod db;
-mod device;
-mod error;
-mod middleware;
-mod rate_limit;
-mod recovery;
-mod routes;
-mod share;
-mod state;
-mod vault;
+use vela_server::{config, db, routes, share, state, store};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -39,16 +27,39 @@ async fn main() -> anyhow::Result<()> {
     db::migrate(&pool).await?;
     tracing::info!("database migrations applied");
 
-    // ── Redis ─────────────────────────────────────────────────────────────────
-    let redis_client = redis::Client::open(config.redis_url.as_str())?;
-    let redis_mgr = redis::aio::ConnectionManager::new(redis_client).await?;
-    tracing::info!(url = %config.redis_url, "redis connected");
+    // ── Embedded store (sled) ─────────────────────────────────────────────────
+    let kv = store::Store::open(&config.sled_path)?;
+    tracing::info!(path = %config.sled_path, "sled embedded store opened");
 
     // ── State ─────────────────────────────────────────────────────────────────
-    let state = Arc::new(state::AppStateInner::new(pool, redis_mgr, config.clone())?);
+    let state = Arc::new(state::AppStateInner::new(pool, kv, config.clone())?);
+
+    // ── Background tasks ──────────────────────────────────────────────────────
+    {
+        let bg_pool = state.db.clone();
+        tokio::spawn(async move {
+            share::inbox_cleanup_task(bg_pool).await;
+        });
+    }
+    {
+        let bg_store = state.store.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                match bg_store.cleanup_expired() {
+                    Ok(n) => {
+                        if n > 0 {
+                            tracing::info!(removed = n, "sled expired-key cleanup");
+                        }
+                    }
+                    Err(e) => tracing::error!(error = %e, "sled cleanup error"),
+                }
+            }
+        });
+    }
 
     // ── Router ────────────────────────────────────────────────────────────────
-    let app = routes::build(state)
+    let app = routes::build(state.clone())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             config.max_body_bytes,
         ));

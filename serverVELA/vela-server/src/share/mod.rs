@@ -31,6 +31,11 @@ use crate::{
 const MAX_CAPSULE_BYTES: usize = 1024 * 1024; // 1 MiB
 const DEFAULT_INBOX_LIMIT: i64 = 50;
 const MAX_INBOX_LIMIT:     i64 = 200;
+const MAX_INBOX_ITEMS_PER_USER: i64 = 500;
+
+/// Inbox items older than this are eligible for automatic purge.
+/// Set to 30 days (matches spec §5.3 conflict copy retention period).
+pub const INBOX_TTL_SECS: i64 = 30 * 24 * 60 * 60;
 
 // ── POST /share/send ──────────────────────────────────────────────────────────
 
@@ -61,6 +66,20 @@ pub async fn post_send(
 
     if !recipient_exists.unwrap_or(false) {
         return Err(AppError::NotFound("recipient user not found".into()));
+    }
+
+    // ── Enforce inbox size limit ──────────────────────────────────────────────
+    let inbox_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = $1",
+    )
+    .bind(body.recipient_user_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if inbox_count >= MAX_INBOX_ITEMS_PER_USER {
+        return Err(AppError::Conflict(format!(
+            "recipient inbox is full ({MAX_INBOX_ITEMS_PER_USER} items)"
+        )));
     }
 
     // ── Decode and size-check capsule ─────────────────────────────────────────
@@ -236,4 +255,40 @@ pub async fn delete_inbox_item(
     maybe_append_new_token(&mut headers, &session);
 
     Ok((headers, StatusCode::NO_CONTENT))
+}
+
+// ── Background inbox cleanup ──────────────────────────────────────────────────
+
+/// Periodically purges expired share inbox items (older than `INBOX_TTL_SECS`).
+/// Runs every 6 hours. Logs the number of purged rows.
+pub async fn inbox_cleanup_task(pool: sqlx::PgPool) {
+    use chrono::Utc;
+
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(6 * 60 * 60));
+
+    loop {
+        interval.tick().await;
+
+        let cutoff = Utc::now() - chrono::Duration::seconds(INBOX_TTL_SECS);
+
+        match sqlx::query(
+            "DELETE FROM share_inbox WHERE created_at < $1",
+        )
+        .bind(cutoff)
+        .execute(&pool)
+        .await
+        {
+            Ok(result) => {
+                if result.rows_affected() > 0 {
+                    tracing::info!(
+                        purged = result.rows_affected(),
+                        "inbox cleanup: expired share items removed"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "inbox cleanup task failed");
+            }
+        }
+    }
 }

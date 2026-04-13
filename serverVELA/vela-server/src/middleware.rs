@@ -6,7 +6,7 @@
 //! every authenticated route.  It:
 //!   1. Validates the PASETO v4 public token signature.
 //!   2. Checks the `exp` / `nbf` / `hcap` claims.
-//!   3. Verifies the JTI is not in the Redis revocation set.
+//!   3. Verifies the JTI is not in the sled revocation set.
 //!   4. Runs the 300 req/min per-JTI rate limit.
 //!   5. Optionally renews the token (issued when <5 min remain on current token)
 //!      via the `X-New-Token` response header.
@@ -16,7 +16,6 @@ use axum::{
     http::{request::Parts, HeaderMap, HeaderValue},
 };
 use chrono::Utc;
-use redis::AsyncCommands;
 
 use crate::{
     auth::token::TokenService,
@@ -65,46 +64,35 @@ impl FromRequestParts<AppState> for AuthSession {
         }
 
         // ── 4. JTI and device revocation check ──────────────────────────────
-        let mut redis = state.redis.clone();
+        let store = &state.store;
 
-        // Check JTI-level revocation (logout / explicit revoke).
-        let jti_revoked: bool = redis
-            .exists(format!("jti:revoked:{}", claims.jti))
-            .await
-            .map_err(AppError::Redis)?;
+        let jti_revoked = store
+            .exists(&format!("jti:revoked:{}", claims.jti))?;
         if jti_revoked {
             return Err(AppError::Unauthorized("token has been revoked".into()));
         }
 
-        // Check device-level revocation (device revoke cascade).
-        let device_revoked: bool = redis
-            .exists(format!("device:revoked:{}", claims.device_id))
-            .await
-            .map_err(AppError::Redis)?;
+        let device_revoked = store
+            .exists(&format!("device:revoked:{}", claims.device_id))?;
         if device_revoked {
             return Err(AppError::Unauthorized("device has been revoked".into()));
         }
 
         // ── 5. Per-JTI rate limit (300 req/min) ──────────────────────────────
-        rate_limit::authenticated_by_jti(&mut redis, &claims.jti).await?;
+        rate_limit::authenticated_by_jti(store, &claims.jti)?;
 
         // ── 6. Token renewal (if expiry is ≤5 min away) ──────────────────────
         let renewal_threshold = claims.exp - chrono::Duration::minutes(5);
         let new_token = if now >= renewal_threshold {
-            // Revoke the old JTI and issue a fresh token carrying a new jti
-            // but the same hard_cap so the overall session cap is preserved.
             let remaining_secs = (claims.hard_cap - now).num_seconds().max(0) as u64;
             let old_ttl_secs   = (claims.exp - now).num_seconds().max(0) as u64;
 
             if old_ttl_secs > 0 {
-                let _: () = redis
-                    .set_ex(
-                        format!("jti:revoked:{}", claims.jti),
-                        1_u8,
-                        old_ttl_secs,
-                    )
-                    .await
-                    .map_err(AppError::Redis)?;
+                let _ = store.set_ex(
+                    &format!("jti:revoked:{}", claims.jti),
+                    &[1u8],
+                    old_ttl_secs,
+                );
             }
 
             if remaining_secs > 0 {
@@ -113,13 +101,11 @@ impl FromRequestParts<AppState> for AuthSession {
                     claims.device_id,
                     Some(claims.hard_cap),
                 )?;
-                // Track the fresh JTI so device revocation can kill it.
                 let _ = rate_limit::track_device_jti(
-                    &mut redis,
+                    store,
                     &claims.device_id.to_string(),
                     &new_jti,
-                )
-                .await;
+                );
                 Some(refreshed)
             } else {
                 None

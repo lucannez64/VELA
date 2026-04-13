@@ -26,7 +26,7 @@
 //!
 //! ## Flow
 //!
-//! 1. Consume challenge nonce from Redis.
+//! 1. Consume challenge nonce from sled.
 //! 2. Verify enrolling device's Cyclo proof (Device A must be active).
 //! 3. Verify Device A's hybrid signature over Device B's `hybrid_vk`.
 //! 4. Insert Device B into the `devices` table.
@@ -36,7 +36,6 @@
 
 use axum::{extract::State, Json};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -87,15 +86,10 @@ pub async fn post_enroll(
     State(state): State<AppState>,
     Json(body): Json<EnrollRequest>,
 ) -> Result<Json<EnrollResponse>> {
-    let mut redis = state.redis.clone();
-
     // ── 1. Consume challenge nonce ────────────────────────────────────────────
     let challenge_key = format!("challenge:{}", body.challenge);
-    let consumed: i64 = redis
-        .del(&challenge_key)
-        .await
-        .map_err(AppError::Redis)?;
-    if consumed == 0 {
+    let consumed = state.store.get_del(&challenge_key)?;
+    if consumed.is_none() {
         return Err(AppError::Unauthorized(
             "challenge not found or already used".into(),
         ));

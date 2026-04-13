@@ -2,28 +2,16 @@
 //!
 //! Marks a device as revoked and invalidates all active JTIs for that device.
 //!
-//! ## Request body
-//!
-//! ```json
-//! { "target_device_id": "<uuid>" }
-//! ```
-//!
-//! The revoking session must belong to the same user as the target device.
-//! A device can revoke itself (logout) or any sibling device.
-//!
 //! ## Cascade (SPEC §6)
 //!
 //! 1. Mark the device as revoked in PostgreSQL.
 //! 2. Call `rate_limit::revoke_all_device_jtis` which enumerates the
-//!    `device:jtis:{id}` Redis Set (populated on every token issuance) and
-//!    writes `jti:revoked:{jti}` for each entry — giving the middleware exact,
-//!    per-token revocation with no grace period.
-//! 3. Write a `device:revoked:{id}` sentinel as a backstop for any JTIs
-//!    issued concurrently or before Redis tracking was in place.
+//!    `device:jtis:{id}` sled set (populated on every token issuance) and
+//!    writes `jti:revoked:{jti}` for each entry.
+//! 3. Write a `device:revoked:{id}` sentinel as a backstop.
 
 use axum::{extract::State, Json};
 use chrono::Utc;
-use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -81,21 +69,18 @@ pub async fn post_revoke(
     .execute(&state.db)
     .await?;
 
-    let mut redis = state.redis.clone();
     let device_id_str = body.target_device_id.to_string();
 
     // ── Revoke every tracked JTI for the device (SPEC §6 cascade) ────────────
-    // Enumerates the device:jtis:{id} set and writes jti:revoked:{jti} for each.
-    rate_limit::revoke_all_device_jtis(&mut redis, &device_id_str).await?;
+    rate_limit::revoke_all_device_jtis(&state.store, &device_id_str)?;
 
     // ── Write device-revoked sentinel as a backstop ───────────────────────────
-    // Catches any JTIs that were issued before tracking began (e.g. after a
-    // Redis flush) or issued concurrently with this revocation request.
     let sentinel_key = format!("device:revoked:{}", body.target_device_id);
-    let _: () = redis
-        .set_ex(&sentinel_key, 1_u8, rate_limit::TOKEN_MAX_LIFETIME_SECS)
-        .await
-        .map_err(AppError::Redis)?;
+    state.store.set_ex(
+        &sentinel_key,
+        &[1u8],
+        rate_limit::TOKEN_MAX_LIFETIME_SECS,
+    )?;
 
     tracing::info!(
         target_device = %body.target_device_id,

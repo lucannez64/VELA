@@ -43,32 +43,38 @@ pub async fn get_capsule(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<CapsuleResponse>)> {
-    // ── Fetch capsule for this device ─────────────────────────────────────
+    // ── Atomically fetch + clear capsule (one-time download) ──────────────
+    // Uses UPDATE ... RETURNING so that concurrent requests cannot both read
+    // the capsule before it is nulled.  The first request to hit this query
+    // wins; all others see NULL and get 404.
     #[derive(sqlx::FromRow)]
     struct Row { rms_capsule: Option<Vec<u8>> }
 
     let row = sqlx::query_as::<_, Row>(
-        "SELECT rms_capsule FROM devices WHERE id = $1 AND user_id = $2 AND revoked = FALSE",
+        r#"
+        UPDATE devices
+           SET rms_capsule = NULL
+         WHERE id = $1
+           AND user_id = $2
+           AND revoked = FALSE
+           AND rms_capsule IS NOT NULL
+     RETURNING rms_capsule
+        "#,
     )
     .bind(session.device_id)
     .bind(session.user_id)
     .fetch_optional(&state.db)
     .await?
-    .ok_or_else(|| AppError::NotFound("device not found or revoked".into()))?;
+    .ok_or_else(|| AppError::NotFound(
+        "no capsule available — device may be the first device, \
+         or the capsule has already been downloaded".into(),
+    ))?;
 
     let capsule_bytes = row.rms_capsule
         .ok_or_else(|| AppError::NotFound(
             "no capsule available — device may be the first device, \
              or the capsule has already been downloaded".into(),
         ))?;
-
-    // ── Clear the capsule (one-time download) ─────────────────────────────
-    sqlx::query(
-        "UPDATE devices SET rms_capsule = NULL WHERE id = $1",
-    )
-    .bind(session.device_id)
-    .execute(&state.db)
-    .await?;
 
     tracing::info!(
         device_id = %session.device_id,

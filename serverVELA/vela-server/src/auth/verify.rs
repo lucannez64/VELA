@@ -2,24 +2,12 @@
 //!
 //! Accepts a Cyclo ZKP proof and returns a PASETO v4 session token.
 //!
-//! ## Request body
-//!
-//! ```json
-//! {
-//!   "device_id":      "<uuid>",
-//!   "challenge":      "<base64 32-byte nonce>",
-//!   "committed_hash": "<hex 32-byte BLAKE3(sk ‖ challenge)>",
-//!   "proof":          "<base64 Cyclo proof bytes>"
-//! }
-//! ```
-//!
 //! ## Verification flow
 //!
-//! 1. Consume the challenge nonce from Redis (single-use, 60 s TTL).
+//! 1. Consume the challenge nonce from sled (single-use, 60 s TTL).
 //! 2. Look up the device's `cyclo_pk` (128 × u64 LE) from PostgreSQL.
 //! 3. Decode `committed_hash` → 4 × u64 LE.
-//! 4. Call `vela_crypto::cyclo::verify(pub_inputs, proof)` where
-//!    `pub_inputs = cyclo_pk_u64s ‖ hash_u64s`.
+//! 4. Call `vela_crypto::cyclo::verify(pub_inputs, proof)`.
 //! 5. On success, issue a PASETO v4 token and reset the failure streak.
 //!
 //! ## Rate limits (SPEC §6)
@@ -33,7 +21,6 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
@@ -66,20 +53,16 @@ pub async fn post_verify(
     Json(body): Json<VerifyRequest>,
 ) -> Result<Json<VerifyResponse>> {
     let ip = addr.ip().to_string();
-    let mut redis = state.redis.clone();
     let device_id_str = body.device_id.to_string();
 
     // ── Rate limits (IP, per-device backoff) ──────────────────────────────────
-    rate_limit::verify_by_ip(&mut redis, &ip).await?;
-    rate_limit::check_verify_backoff(&mut redis, &device_id_str).await?;
+    rate_limit::verify_by_ip(&state.store, &ip)?;
+    rate_limit::check_verify_backoff(&state.store, &device_id_str)?;
 
     // ── Consume the challenge nonce (single-use) ──────────────────────────────
     let challenge_key = format!("challenge:{}", body.challenge);
-    let consumed: i64 = redis
-        .del(&challenge_key)
-        .await
-        .map_err(AppError::Redis)?;
-    if consumed == 0 {
+    let consumed = state.store.get_del(&challenge_key)?;
+    if consumed.is_none() {
         return Err(AppError::Unauthorized(
             "challenge not found or already used".into(),
         ));
@@ -99,8 +82,6 @@ pub async fn post_verify(
     .ok_or_else(|| AppError::Unauthorized("device not found or revoked".into()))?;
 
     // ── Build Cyclo public inputs ─────────────────────────────────────────────
-    // cyclo_pk is stored as 128 × u64 in little-endian byte order (1024 bytes).
-    // committed_hash is 32 bytes → 4 × u64 LE.
     let cyclo_pk_u64s = le_bytes_to_u64_slice(&device.cyclo_pk)
         .ok_or_else(|| AppError::Internal("corrupt cyclo_pk in database".into()))?;
 
@@ -129,20 +110,18 @@ pub async fn post_verify(
     })?;
 
     if !ok {
-        // Record failure, apply backoff, check 5/min per-device limit.
-        let _ = rate_limit::record_verify_failure(&mut redis, &device_id_str).await;
-        rate_limit::verify_fail_by_device(&mut redis, &device_id_str).await?;
+        let _ = rate_limit::record_verify_failure(&state.store, &device_id_str);
+        rate_limit::verify_fail_by_device(&state.store, &device_id_str)?;
         return Err(AppError::Unauthorized("Cyclo proof verification failed".into()));
     }
 
     // ── Success ───────────────────────────────────────────────────────────────
-    rate_limit::reset_verify_streak(&mut redis, &device_id_str).await?;
+    rate_limit::reset_verify_streak(&state.store, &device_id_str)?;
 
     let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
     let (token, jti) = ts.issue(device.user_id, device.id, None)?;
 
-    // Register the new JTI so device revocation can enumerate and kill it.
-    rate_limit::track_device_jti(&mut redis, &device_id_str, &jti).await?;
+    rate_limit::track_device_jti(&state.store, &device_id_str, &jti)?;
 
     Ok(Json(VerifyResponse { token }))
 }

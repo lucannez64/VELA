@@ -2,11 +2,15 @@
 name = "vela-server"
 version = "0.1.0"
 edition = "2021"
-description = "VELA Protocol v2.0 – API server (Axum/Postgres/Redis)"
+description = "VELA Protocol v2.0 – API server (Axum/Stoolap/sled)"
 
 [[bin]]
 name = "vela-server"
 path = "src/main.rs"
+
+[lib]
+name = "vela_server"
+path = "src/lib.rs"
 
 [dependencies]
 # ── Crypto library ─────────────────────────────────────────────────────────────
@@ -19,16 +23,10 @@ tower             = "0.4"
 tower-http        = { version = "0.5", features = ["trace", "cors", "limit"] }
 
 # ── Database ───────────────────────────────────────────────────────────────────
-sqlx = { version = "0.8", features = [
-    "runtime-tokio-rustls",
-    "postgres",
-    "uuid",
-    "chrono",
-    "json",
-] }
+stoolap = "0.4"
 
-# ── Redis ──────────────────────────────────────────────────────────────────────
-redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+# ── Embedded KV store ─────────────────────────────────────────────────────────
+sled = "0.34"
 
 # ── PASETO v4 public tokens ────────────────────────────────────────────────────
 pasetors = { version = "0.6", default-features = false, features = ["v4", "paserk", "std"] }
@@ -49,6 +47,7 @@ hex    = "0.4"
 
 # ── Randomness ─────────────────────────────────────────────────────────────────
 rand = "0.8"
+blake3 = "1"
 
 # ── Error handling ─────────────────────────────────────────────────────────────
 thiserror = "1"
@@ -62,4 +61,4 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
-axum-test = "19"
+tower = { version = "0.4", features = ["util"] }

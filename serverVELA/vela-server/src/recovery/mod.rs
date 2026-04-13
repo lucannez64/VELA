@@ -11,19 +11,16 @@
 //!
 //! ## Endpoints
 //!
-//! | Method | Route             | Description                              |
-//! |--------|-------------------|------------------------------------------|
-//! | PUT    | /recovery/share   | Store (or replace) Share 2 for this user |
-//! | GET    | /recovery/share   | Retrieve Share 2 for this user           |
-//! | DELETE | /recovery/share   | Wipe Share 2 (e.g. on account deletion)  |
-//!
-//! All three require a valid PASETO v4 session token.
-//!
-//! ## Security note
-//!
-//! The server stores the share as an opaque blob.  Even a full server
-//! compromise does not allow recovery of the RMS — the attacker would also
-//! need the user's physical FIDO2 hardware key.
+//! | Method | Route                | Description                                    |
+//! |--------|----------------------|------------------------------------------------|
+//! | PUT    | /recovery/share      | Store (or replace) Share 2 for this user       |
+//! | GET    | /recovery/share      | Retrieve Share 2 for this user                 |
+//! | DELETE | /recovery/share      | Wipe Share 2 (e.g. on account deletion)        |
+//! | POST   | /recovery/initiate   | Get a challenge nonce for recovery              |
+//! | POST   | /recovery/recover    | Retrieve Share 2 using challenge + proof        |
+
+pub mod initiate;
+pub mod recover;
 
 use axum::{
     extract::State,
@@ -50,6 +47,10 @@ const MAX_SHARE_BYTES: usize = 4096;
 pub struct PutShareRequest {
     /// Base64-encoded encrypted Share 2 blob.
     pub share: String,
+    /// Base64-encoded BLAKE3 hash of the recovery authorization preimage.
+    /// The preimage is derived from the user's FIDO2 credential client-side.
+    /// Required for `POST /recovery/recover` to verify identity during recovery.
+    pub auth_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -73,10 +74,28 @@ pub async fn put_share(
         )));
     }
 
+    let auth_hash_bytes: Option<Vec<u8>> = match &body.auth_hash {
+        Some(h) => {
+            let bytes = B64
+                .decode(h)
+                .map_err(|_| {
+                    AppError::BadRequest("auth_hash is not valid base64".into())
+                })?;
+            if bytes.len() != 32 {
+                return Err(AppError::BadRequest(
+                    "auth_hash must be exactly 32 bytes (BLAKE3)".into(),
+                ));
+            }
+            Some(bytes)
+        }
+        None => None,
+    };
+
     sqlx::query(
-        "UPDATE users SET recovery_share = $1 WHERE id = $2",
+        "UPDATE users SET recovery_share = $1, recovery_auth_hash = $2 WHERE id = $3",
     )
     .bind(&share_bytes)
+    .bind(&auth_hash_bytes)
     .bind(session.user_id)
     .execute(&state.db)
     .await?;
@@ -131,7 +150,7 @@ pub async fn delete_share(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, StatusCode)> {
-    sqlx::query("UPDATE users SET recovery_share = NULL WHERE id = $1")
+    sqlx::query("UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = $1")
         .bind(session.user_id)
         .execute(&state.db)
         .await?;
