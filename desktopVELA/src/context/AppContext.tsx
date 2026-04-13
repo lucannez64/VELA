@@ -83,7 +83,7 @@ export function toBackendItem(item: VaultItem): object {
         item_type: 'login',
         url: item.url || '',
         username: item.username || '',
-        pass: item.password || '',
+        password: item.password || '',
         totp: item.totp || null,
         notes: item.notes || null,
       };

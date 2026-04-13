@@ -34,7 +34,8 @@ fn create_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = create_tray_menu(app)?;
 
-    let icon = app.default_window_icon().cloned().unwrap();
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+        .map_err(|e| tauri::Error::from(e))?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(icon)

@@ -419,7 +419,367 @@ pub mod tpm {
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+pub mod tpm {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    const TPM_KEY_FILE: &str = "rms.tpm";
+    const TPM_CONTEXT_FILE: &str = "tpm_context";
+    const TPM_PERSISTENT_HANDLE: &str = "0x81000001";
+
+    fn get_data_dir() -> std::path::PathBuf {
+        let project_dirs = directories::ProjectDirs::from("com", "vela", "VELA")
+            .expect("Failed to get project directories");
+        let data_dir = project_dirs.data_dir().join("vela");
+        std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
+        data_dir
+    }
+
+    fn get_sealed_blob_path() -> PathBuf {
+        get_data_dir().join(TPM_KEY_FILE)
+    }
+
+    fn get_tpm_context_path() -> PathBuf {
+        get_data_dir().join(TPM_CONTEXT_FILE)
+    }
+
+    fn check_tpm_device() -> bool {
+        std::path::Path::new("/dev/tpm0").exists() || std::path::Path::new("/dev/tpmrm0").exists()
+    }
+
+    fn check_tpm2_tools() -> bool {
+        Command::new("tpm2_getcap")
+            .args(["properties-fixed"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    pub fn is_tpm_available() -> bool {
+        if !check_tpm_device() {
+            tracing::debug!("TPM device not found (/dev/tpm0 or /dev/tpmrm0)");
+            return false;
+        }
+        if !check_tpm2_tools() {
+            tracing::debug!("tpm2-tools not available or TPM not ready");
+            return false;
+        }
+        true
+    }
+
+    pub fn is_tpm_key_available() -> bool {
+        if !is_tpm_available() {
+            return false;
+        }
+        let sealed_path = get_sealed_blob_path();
+        sealed_path.exists()
+    }
+
+    fn create_primary_key() -> anyhow::Result<PathBuf> {
+        let context_path = get_tpm_context_path();
+        let output = Command::new("tpm2_createprimary")
+            .args([
+                "-c",
+                context_path.to_str().unwrap(),
+                "-g",
+                "sha256",
+                "-G",
+                "ecc",
+            ])
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                tracing::debug!("TPM primary key created");
+                Ok(context_path)
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                anyhow::bail!("Failed to create TPM primary key: {}", stderr);
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to execute tpm2_createprimary: {}", e);
+            }
+        }
+    }
+
+    pub fn store_in_tpm(key: &[u8; 32]) -> anyhow::Result<()> {
+        if !is_tpm_available() {
+            anyhow::bail!("TPM 2.0 not available");
+        }
+
+        let context_path = create_primary_key()?;
+        let sealed_path = get_sealed_blob_path();
+
+        let temp_input = get_data_dir().join("tpm_input.tmp");
+        std::fs::write(&temp_input, key)?;
+
+        let output = Command::new("tpm2_create")
+            .args([
+                "-C",
+                context_path.to_str().unwrap(),
+                "-i",
+                temp_input.to_str().unwrap(),
+                "-u",
+                sealed_path.with_extension("pub").to_str().unwrap(),
+                "-r",
+                sealed_path.with_extension("priv").to_str().unwrap(),
+            ])
+            .output();
+
+        let _ = std::fs::remove_file(&temp_input);
+
+        match output {
+            Ok(o) if o.status.success() => {
+                std::fs::write(&sealed_path, b"sealed")?;
+                tracing::info!("RMS sealed to TPM 2.0 successfully");
+                Ok(())
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                anyhow::bail!("Failed to seal data to TPM: {}", stderr);
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to execute tpm2_create: {}", e);
+            }
+        }
+    }
+
+    pub fn retrieve_from_tpm() -> anyhow::Result<[u8; 32]> {
+        if !is_tpm_available() {
+            anyhow::bail!("TPM 2.0 not available");
+        }
+
+        let sealed_path = get_sealed_blob_path();
+        let pub_path = sealed_path.with_extension("pub");
+        let priv_path = sealed_path.with_extension("priv");
+
+        if !pub_path.exists() || !priv_path.exists() {
+            anyhow::bail!("TPM sealed key files not found");
+        }
+
+        let context_path = create_primary_key()?;
+
+        let load_output = Command::new("tpm2_load")
+            .args([
+                "-C",
+                context_path.to_str().unwrap(),
+                "-u",
+                pub_path.to_str().unwrap(),
+                "-r",
+                priv_path.to_str().unwrap(),
+                "-c",
+                get_data_dir().join("loaded_key.ctx").to_str().unwrap(),
+            ])
+            .output();
+
+        match load_output {
+            Ok(o) if !o.status.success() => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                anyhow::bail!("Failed to load TPM key: {}", stderr);
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to execute tpm2_load: {}", e);
+            }
+            _ => {}
+        }
+
+        let unseal_output = Command::new("tpm2_unseal")
+            .args([
+                "-c",
+                get_data_dir().join("loaded_key.ctx").to_str().unwrap(),
+                "-o",
+                get_data_dir().join("tpm_output.tmp").to_str().unwrap(),
+            ])
+            .output();
+
+        let loaded_ctx = get_data_dir().join("loaded_key.ctx");
+        let _ = std::fs::remove_file(&loaded_ctx);
+
+        match unseal_output {
+            Ok(o) if o.status.success() => {
+                let output_path = get_data_dir().join("tpm_output.tmp");
+                let data = std::fs::read(&output_path)?;
+                let _ = std::fs::remove_file(&output_path);
+
+                if data.len() != 32 {
+                    anyhow::bail!("TPM unsealed key is not 32 bytes");
+                }
+
+                let mut result = [0u8; 32];
+                result.copy_from_slice(&data);
+
+                tracing::info!("RMS unsealed from TPM 2.0 successfully");
+                Ok(result)
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                anyhow::bail!("Failed to unseal TPM key: {}", stderr);
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to execute tpm2_unseal: {}", e);
+            }
+        }
+    }
+
+    pub fn delete_tpm_key() -> anyhow::Result<()> {
+        let sealed_path = get_sealed_blob_path();
+        let pub_path = sealed_path.with_extension("pub");
+        let priv_path = sealed_path.with_extension("priv");
+        let context_path = get_tpm_context_path();
+        let loaded_ctx = get_data_dir().join("loaded_key.ctx");
+
+        for path in [sealed_path, pub_path, priv_path, context_path, loaded_ctx] {
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+        }
+
+        tracing::info!("TPM sealed key deleted");
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_check_tpm_device() {
+            let _ = check_tpm_device();
+        }
+
+        #[test]
+        fn test_is_tpm_available() {
+            let available = is_tpm_available();
+            if std::env::var("CI").is_ok() {
+                assert!(!available, "TPM should not be available in CI");
+            }
+        }
+    }
+
+    pub mod fallback {
+        use super::*;
+
+        fn get_fallback_key_path() -> PathBuf {
+            get_data_dir().join("rms_software.enc")
+        }
+
+        pub fn is_fallback_available() -> bool {
+            get_fallback_key_path().exists()
+        }
+
+        pub fn store_with_password(key: &[u8; 32], password: &str) -> anyhow::Result<()> {
+            use rand::RngCore;
+            use vela_crypto::{aead::encrypt, kdf};
+
+            let mut salt = [0u8; 16];
+            rand::rngs::OsRng.fill_bytes(&mut salt);
+
+            let key_material = kdf::derive("vela fallback key v1", password.as_bytes());
+            let derived_key = kdf::derive("vela fallback encryption v1", key_material.as_bytes());
+            let ciphertext = encrypt(derived_key.as_bytes(), key)?;
+
+            let mut blob = Vec::with_capacity(16 + ciphertext.len());
+            blob.extend_from_slice(&salt);
+            blob.extend_from_slice(&ciphertext);
+
+            let path = get_fallback_key_path();
+            std::fs::write(&path, &blob)?;
+
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+
+            tracing::info!("Key stored with software encryption");
+            Ok(())
+        }
+
+        pub fn retrieve_with_password(password: &str) -> anyhow::Result<[u8; 32]> {
+            use vela_crypto::{aead::decrypt, kdf};
+
+            let path = get_fallback_key_path();
+            let blob = std::fs::read(&path)?;
+
+            if blob.len() < 48 {
+                anyhow::bail!("Fallback key file too small");
+            }
+
+            let salt = &blob[0..16];
+            let ciphertext = &blob[16..];
+
+            let key_material = kdf::derive("vela fallback key v1", password.as_bytes());
+            let derived_key = kdf::derive("vela fallback encryption v1", key_material.as_bytes());
+            let decrypted = decrypt(derived_key.as_bytes(), ciphertext)?;
+
+            if decrypted.len() < 32 {
+                anyhow::bail!("Decrypted data too short");
+            }
+
+            let mut result = [0u8; 32];
+            result.copy_from_slice(&decrypted[..32]);
+
+            tracing::info!("Key retrieved from software encryption");
+            Ok(result)
+        }
+
+        pub fn delete_fallback() -> anyhow::Result<()> {
+            let path = get_fallback_key_path();
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+            Ok(())
+        }
+    }
+
+    pub mod fprint {
+        use std::process::Command;
+
+        pub fn is_fprint_available() -> bool {
+            Command::new("fprintd-list")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+
+        pub fn has_enrolled_fingers() -> bool {
+            let output = Command::new("fprintd-list").output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    let stdout = String::from_utf8_lossy(&o.stdout);
+                    stdout
+                        .lines()
+                        .any(|line| line.contains("has enrolled fingers"))
+                }
+                _ => false,
+            }
+        }
+
+        pub fn verify() -> anyhow::Result<()> {
+            let output = Command::new("fprintd-verify").output();
+
+            match output {
+                Ok(o) if o.status.success() => {
+                    let stdout = String::from_utf8_lossy(&o.stdout);
+                    if stdout.contains("Verify result: verify-match") {
+                        tracing::info!("Fingerprint verification successful");
+                        Ok(())
+                    } else {
+                        anyhow::bail!("Fingerprint did not match")
+                    }
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    anyhow::bail!("Fingerprint verification failed: {}", stderr.trim())
+                }
+                Err(e) => {
+                    anyhow::bail!("Failed to run fprintd-verify: {}", e)
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub mod tpm {
     pub fn is_tpm_available() -> bool {
         false

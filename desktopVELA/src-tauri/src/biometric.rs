@@ -30,6 +30,9 @@ pub enum BiometricProvider {
     WindowsHello,
     TouchId,
     MasterPassword,
+    LinuxTpm,
+    LinuxFprint,
+    LinuxSecretService,
     None,
 }
 
@@ -256,11 +259,120 @@ pub mod windows_biometric {
     }
 }
 
-#[cfg(not(windows))]
-pub mod default_biometric {
+#[cfg(target_os = "linux")]
+pub mod linux_biometric {
     use super::*;
+    use crate::device::tpm;
+    use std::collections::HashMap;
+
+    const SECRET_SERVICE_LABEL: &str = "VELA_RMS";
+
+    fn retrieve_rms_from_any_source() -> Option<[u8; 32]> {
+        if tpm::is_tpm_available() && tpm::is_tpm_key_available() {
+            if let Ok(rms) = tpm::retrieve_from_tpm() {
+                tracing::info!("RMS unsealed from TPM 2.0 successfully");
+                return Some(rms);
+            }
+            tracing::warn!("TPM retrieval failed, trying Secret Service");
+        }
+
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                    Ok(ss) => match ss.get_default_collection().await {
+                        Ok(collection) => {
+                            let mut attrs = HashMap::new();
+                            attrs.insert("label", SECRET_SERVICE_LABEL);
+                            match collection.search_items(attrs).await {
+                                Ok(items) => {
+                                    if let Some(item) = items.first() {
+                                        match item.get_secret().await {
+                                            Ok(secret) => {
+                                                if secret.len() >= 32 {
+                                                    let mut rms = [0u8; 32];
+                                                    rms.copy_from_slice(&secret[..32]);
+                                                    tracing::info!("RMS retrieved from Secret Service");
+                                                    return Some(rms);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("Failed to get secret from Secret Service: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to search Secret Service: {}", e);
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    },
+                    Err(_) => {}
+                }
+                None
+            })
+        })
+    }
+
+    fn check_secret_service_sync() -> bool {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
+                    .await
+                    .is_ok()
+            })
+        })
+    }
 
     pub fn check_availability() -> BiometricEnrollmentStatus {
+        if tpm::fprint::is_fprint_available() && tpm::fprint::has_enrolled_fingers() {
+            return BiometricEnrollmentStatus {
+                enrolled: true,
+                provider: BiometricProvider::LinuxFprint,
+            };
+        }
+
+        if tpm::is_tpm_key_available() {
+            return BiometricEnrollmentStatus {
+                enrolled: true,
+                provider: BiometricProvider::LinuxTpm,
+            };
+        }
+
+        if check_secret_service_sync() {
+            let enrolled = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                        Ok(ss) => match ss.get_default_collection().await {
+                            Ok(collection) => {
+                                let mut attrs = HashMap::new();
+                                attrs.insert("label", SECRET_SERVICE_LABEL);
+                                let search = collection.search_items(attrs).await;
+                                search.map(|items| !items.is_empty()).unwrap_or(false)
+                            }
+                            Err(_) => false,
+                        },
+                        Err(_) => false,
+                    }
+                })
+            });
+
+            if enrolled {
+                return BiometricEnrollmentStatus {
+                    enrolled: true,
+                    provider: BiometricProvider::LinuxSecretService,
+                };
+            }
+        }
+
+        if tpm::fallback::is_fallback_available() {
+            return BiometricEnrollmentStatus {
+                enrolled: true,
+                provider: BiometricProvider::MasterPassword,
+            };
+        }
+
         BiometricEnrollmentStatus {
             enrolled: false,
             provider: BiometricProvider::None,
@@ -268,20 +380,178 @@ pub mod default_biometric {
     }
 
     pub fn authenticate() -> BiometricAuthResult {
+        if tpm::fprint::is_fprint_available() && tpm::fprint::has_enrolled_fingers() {
+            match tpm::fprint::verify() {
+                Ok(()) => {
+                    if let Some(rms) = retrieve_rms_from_any_source() {
+                        let _ = CACHED_RMS.set(rms);
+                        return BiometricAuthResult {
+                            success: true,
+                            error_message: None,
+                            retry_count: None,
+                            uses_password: false,
+                        };
+                    }
+                    return BiometricAuthResult {
+                        success: false,
+                        error_message: Some("Fingerprint matched but no vault data found".to_string()),
+                        retry_count: None,
+                        uses_password: false,
+                    };
+                }
+                Err(e) => {
+                    return BiometricAuthResult {
+                        success: false,
+                        error_message: Some(format!("Fingerprint verification failed: {}", e)),
+                        retry_count: None,
+                        uses_password: false,
+                    };
+                }
+            }
+        }
+
         BiometricAuthResult {
             success: false,
-            error_message: Some("No biometrics available on this platform".to_string()),
+            error_message: Some("No biometric available. Please use master password.".to_string()),
             retry_count: None,
             uses_password: false,
         }
     }
 
-    pub fn store_rms(_rms: &[u8; 32]) -> anyhow::Result<()> {
-        Ok(())
+    pub fn store_rms(rms: &[u8; 32]) -> anyhow::Result<()> {
+        if tpm::is_tpm_available() {
+            match tpm::store_in_tpm(rms) {
+                Ok(_) => {
+                    tracing::info!("RMS stored in TPM 2.0");
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!("TPM storage failed, trying Secret Service: {}", e);
+                }
+            }
+        }
+
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                    Ok(ss) => match ss.get_default_collection().await {
+                        Ok(collection) => {
+                            let mut attrs = HashMap::new();
+                            attrs.insert("label", SECRET_SERVICE_LABEL);
+                            attrs.insert("application", "vela-desktop");
+
+                            match collection
+                                .create_item("VELA Root Master Seed", attrs, rms, true, "application/vnd.vela.rms")
+                                .await
+                            {
+                                Ok(_) => {
+                                    tracing::info!(
+                                        "RMS stored in Secret Service (GNOME Keyring/KWallet)"
+                                    );
+                                    return Ok(());
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Secret Service storage failed: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to get default collection: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to connect to Secret Service: {}", e);
+                    }
+                }
+
+                Err(anyhow::anyhow!(
+                    "No secure storage available on Linux. Please install tpm2-tools for TPM support, \
+                     or ensure GNOME Keyring/KWallet is running for Secret Service support."
+                ))
+            })
+        })
     }
 
     pub fn has_stored_rms() -> bool {
-        false
+        if tpm::is_tpm_key_available() {
+            return true;
+        }
+
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                    Ok(ss) => match ss.get_default_collection().await {
+                        Ok(collection) => {
+                            let mut attrs = HashMap::new();
+                            attrs.insert("label", SECRET_SERVICE_LABEL);
+                            match collection.search_items(attrs).await {
+                                Ok(items) => {
+                                    if !items.is_empty() {
+                                        return true;
+                                    }
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                        Err(_) => {}
+                    },
+                    Err(_) => {}
+                }
+                false
+            })
+        }) || tpm::fallback::is_fallback_available()
+    }
+
+    pub fn delete_stored_rms() -> anyhow::Result<()> {
+        let _ = tpm::delete_tpm_key();
+
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                    Ok(ss) => match ss.get_default_collection().await {
+                        Ok(collection) => {
+                            let mut attrs = HashMap::new();
+                            attrs.insert("label", SECRET_SERVICE_LABEL);
+                            if let Ok(items) = collection.search_items(attrs).await {
+                                for item in items {
+                                    let _ = item.delete().await;
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    },
+                    Err(_) => {}
+                }
+            })
+        });
+
+        let _ = tpm::fallback::delete_fallback();
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub mod linux_password {
+    use super::*;
+    use crate::device::tpm;
+
+    pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
+        if tpm::is_tpm_available() {
+            return tpm::store_in_tpm(rms);
+        }
+        tpm::fallback::store_with_password(rms, password)
+    }
+
+    pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
+        if tpm::is_tpm_key_available() {
+            return tpm::retrieve_from_tpm().ok();
+        }
+
+        if tpm::fallback::is_fallback_available() {
+            return tpm::fallback::retrieve_with_password(password).ok();
+        }
+
+        None
     }
 }
 
@@ -290,9 +560,23 @@ pub fn check_enrollment() -> BiometricEnrollmentStatus {
     {
         windows_biometric::check_availability()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        default_biometric::check_availability()
+        BiometricEnrollmentStatus {
+            enrolled: crate::device::tpm::is_tpm_key_available(),
+            provider: BiometricProvider::TouchId,
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_biometric::check_availability()
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        BiometricEnrollmentStatus {
+            enrolled: false,
+            provider: BiometricProvider::None,
+        }
     }
 }
 
@@ -301,9 +585,18 @@ pub fn authenticate() -> BiometricAuthResult {
     {
         windows_biometric::authenticate()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        default_biometric::authenticate()
+        linux_biometric::authenticate()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        BiometricAuthResult {
+            success: false,
+            error_message: Some("No biometrics available on this platform".to_string()),
+            retry_count: None,
+            uses_password: false,
+        }
     }
 }
 
@@ -312,9 +605,18 @@ pub fn store_rms(rms: &[u8; 32]) -> anyhow::Result<()> {
     {
         windows_biometric::store_rms(rms)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        default_biometric::store_rms(rms)
+        crate::device::tpm::store_in_tpm(rms)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_biometric::store_rms(rms)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = rms;
+        Ok(())
     }
 }
 
@@ -323,9 +625,17 @@ pub fn has_stored_rms() -> bool {
     {
         windows_biometric::has_stored_rms()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        default_biometric::has_stored_rms()
+        crate::device::tpm::is_tpm_key_available()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_biometric::has_stored_rms()
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        false
     }
 }
 
@@ -334,7 +644,15 @@ pub fn delete_stored_rms() -> anyhow::Result<()> {
     {
         windows_biometric::delete_stored_rms()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::device::tpm::delete_tpm_key()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_biometric::delete_stored_rms()
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         Ok(())
     }
@@ -486,13 +804,84 @@ pub mod windows_password {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub mod default_password {
-    pub fn store_password_encrypted(_rms: &[u8; 32], _password: &str) -> anyhow::Result<()> {
+    use super::*;
+
+    const PASSWORD_FILE: &str = "password_recovery.bin";
+
+    fn password_file_path() -> std::path::PathBuf {
+        let project_dirs = directories::ProjectDirs::from("com", "vela", "VELA")
+            .expect("Failed to determine data directory");
+        let data_dir = project_dirs.data_dir().join("vela");
+        std::fs::create_dir_all(&data_dir).ok();
+        data_dir.join(PASSWORD_FILE)
+    }
+
+    pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
+        let mut salt = [0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut salt);
+
+        let key = derive_key_from_password(password, &salt);
+        let ciphertext = encrypt(&key, rms)?;
+
+        let mut blob = Vec::with_capacity(16 + ciphertext.len());
+        blob.extend_from_slice(&salt);
+        blob.extend_from_slice(&ciphertext);
+
+        let path = password_file_path();
+        std::fs::write(&path, &blob)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
+        tracing::info!(
+            "Stored password-encrypted RMS to file ({} bytes)",
+            blob.len()
+        );
         Ok(())
     }
 
-    pub fn authenticate_with_password(_password: &str) -> Option<[u8; 32]> {
+    pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
+        let path = password_file_path();
+        let blob = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("Failed to read password file: {}", e);
+                return None;
+            }
+        };
+
+        if blob.len() < 48 {
+            tracing::warn!("Password file too small: {} bytes", blob.len());
+            return None;
+        }
+
+        let salt = &blob[0..16];
+        let ciphertext = &blob[16..];
+
+        let key = derive_key_from_password(password, salt);
+        let decrypted = match decrypt(&key, ciphertext) {
+            Ok(d) => d,
+            Err(_) => {
+                tracing::warn!("Decryption failed - wrong password");
+                return None;
+            }
+        };
+
+        if decrypted.len() >= 32 {
+            let mut rms = [0u8; 32];
+            rms.copy_from_slice(&decrypted[..32]);
+
+            if CACHED_RMS.set(rms).is_ok() || CACHED_RMS.get().is_some() {
+                tracing::info!("Password authentication successful");
+                return CACHED_RMS.get().copied();
+            }
+        }
+
+        tracing::warn!("Decrypted data too short: {} bytes", decrypted.len());
         None
     }
 }
@@ -502,7 +891,11 @@ pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Resul
     {
         windows_password::store_password_encrypted(rms, password)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_password::store_password_encrypted(rms, password)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         default_password::store_password_encrypted(rms, password)
     }
@@ -513,7 +906,11 @@ pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
     {
         windows_password::authenticate_with_password(password)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_password::authenticate_with_password(password)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         default_password::authenticate_with_password(password)
     }

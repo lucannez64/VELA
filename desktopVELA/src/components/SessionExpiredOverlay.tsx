@@ -8,6 +8,7 @@ interface Props {
 export default function SessionExpiredOverlay({ onReauth }: Props) {
   const [biometricAvailable, setBiometricAvailable] = useState<boolean | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -78,16 +79,26 @@ export default function SessionExpiredOverlay({ onReauth }: Props) {
           <h2 className="font-headline text-2xl font-bold text-on-surface mb-2">Session expired</h2>
           <p className="text-on-surface-variant mb-4">Enter your master password to continue</p>
           
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handlePasswordAuth()}
-            placeholder="Master password"
-            className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 mb-4"
-            disabled={isAuthenticating}
-            autoFocus
-          />
+          <div className="relative">
+            <input
+              type={passwordVisible ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handlePasswordAuth()}
+              placeholder="Master password"
+              className="w-full px-4 py-3 pr-12 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 mb-4"
+              disabled={isAuthenticating}
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPasswordVisible(v => !v); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors mb-4"
+              tabIndex={-1}
+            >
+              <span className="material-symbols-outlined text-xl">{passwordVisible ? 'visibility_off' : 'visibility'}</span>
+            </button>
+          </div>
           
           {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
           

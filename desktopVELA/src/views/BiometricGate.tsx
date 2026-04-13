@@ -10,6 +10,7 @@ export default function BiometricGate({ onUnlock }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [password, setPassword] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState(true);
 
@@ -131,15 +132,25 @@ export default function BiometricGate({ onUnlock }: Props) {
           </div>
 
           <div className="w-full space-y-4">
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && triggerPasswordAuth()}
-              placeholder="Enter your master password"
-              className="w-full px-4 py-3 bg-surface-container rounded-xl border border-outline-variant focus:border-primary outline-none text-on-surface placeholder:text-on-surface-variant/50"
-              disabled={isAuthenticating || isLocked}
-            />
+            <div className="relative">
+              <input
+                type={passwordVisible ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && triggerPasswordAuth()}
+                placeholder="Enter your master password"
+                className="w-full px-4 py-3 pr-12 bg-surface-container rounded-xl border border-outline-variant focus:border-primary outline-none text-on-surface placeholder:text-on-surface-variant/50"
+                disabled={isAuthenticating || isLocked}
+              />
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPasswordVisible(v => !v); }}
+                style={{ zIndex: 1 }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-xl">{passwordVisible ? 'visibility_off' : 'visibility'}</span>
+              </button>
+            </div>
             
             {error && (
               <p className="text-red-400 text-sm text-center">
@@ -171,10 +182,25 @@ export default function BiometricGate({ onUnlock }: Props) {
           )}
         </section>
 
-        <footer className="text-center">
+        <footer className="text-center space-y-3">
           <p className="font-body text-xs text-on-surface-variant/40 italic">
             Securely encrypted with Post-Quantum AES-256
           </p>
+          <button
+            onClick={async () => {
+              if (confirm('This will PERMANENTLY DELETE all vault data and credentials. Are you sure?')) {
+                try {
+                  await invoke('reset_vault');
+                  window.location.reload();
+                } catch (e) {
+                  alert('Reset failed: ' + String(e) + '\n\nPlease close the app and try again.');
+                }
+              }
+            }}
+            className="text-xs text-on-surface-variant/40 hover:text-red-400/60 underline transition-colors"
+          >
+            Can't access your vault? Reset
+          </button>
         </footer>
       </main>
     );

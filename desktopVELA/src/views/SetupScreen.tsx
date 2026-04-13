@@ -20,6 +20,7 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
   const [showTrustedContact, setShowTrustedContact] = useState(false);
   const [masterPassword, setMasterPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState<boolean | null>(null);
   const [biometricError, setBiometricError] = useState('');
@@ -251,26 +252,46 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
           <div className="space-y-4 text-left">
             <div>
               <label className="block text-sm text-on-surface-variant mb-2">Master Password</label>
+              <div className="relative">
               <input
-                type="password"
+                type={passwordVisible ? 'text' : 'password'}
                 value={masterPassword}
                 onChange={(e) => setMasterPassword(e.target.value)}
                 placeholder="Enter master password (min 8 characters)"
-                className="w-full px-4 py-3 bg-surface-container rounded-xl border border-outline-variant focus:border-primary outline-none text-on-surface placeholder:text-on-surface-variant/50"
+                className="w-full px-4 py-3 pr-12 bg-surface-container rounded-xl border border-outline-variant focus:border-primary outline-none text-on-surface placeholder:text-on-surface-variant/50"
                 disabled={isEnrolling}
               />
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPasswordVisible(v => !v); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors"
+                tabIndex={-1}
+              >
+                <span className="material-symbols-outlined text-xl">{passwordVisible ? 'visibility_off' : 'visibility'}</span>
+              </button>
+              </div>
             </div>
             
             <div>
               <label className="block text-sm text-on-surface-variant mb-2">Confirm Password</label>
+              <div className="relative">
               <input
-                type="password"
+                type={passwordVisible ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm your password"
-                className="w-full px-4 py-3 bg-surface-container rounded-xl border border-outline-variant focus:border-primary outline-none text-on-surface placeholder:text-on-surface-variant/50"
+                className="w-full px-4 py-3 pr-12 bg-surface-container rounded-xl border border-outline-variant focus:border-primary outline-none text-on-surface placeholder:text-on-surface-variant/50"
                 disabled={isEnrolling}
               />
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPasswordVisible(v => !v); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors"
+                tabIndex={-1}
+              >
+                <span className="material-symbols-outlined text-xl">{passwordVisible ? 'visibility_off' : 'visibility'}</span>
+              </button>
+              </div>
             </div>
 
             {passwordError && (
