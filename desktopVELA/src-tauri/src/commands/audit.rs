@@ -94,6 +94,19 @@ fn get_device_name() -> String {
     }
 }
 
+pub fn record_audit_event(state: &AppState, action: AuditAction) {
+    let mut log = load_audit_log(state).unwrap_or_default();
+    let device_name = get_device_name();
+    let entry = AuditEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        timestamp: chrono::Utc::now(),
+        action,
+        subject: AuditSubject::Device { device_name },
+    };
+    log.add_entry(entry);
+    let _ = save_audit_log(state, &log);
+}
+
 fn load_audit_log(state: &AppState) -> Option<AuditLog> {
     let crypto = state.crypto.read();
     let crypto = crypto.as_ref()?;

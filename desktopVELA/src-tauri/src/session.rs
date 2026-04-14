@@ -101,6 +101,10 @@ impl Session {
         self.session_token.as_deref()
     }
 
+    pub fn set_server_token(&mut self, token: String) {
+        self.session_token = Some(token);
+    }
+
     pub fn get_device_id(&self) -> Option<&str> {
         self.device_id.as_deref()
     }

@@ -1,8 +1,12 @@
+use crate::api::{ApiClient, RegisterRequest, VerifyRequest};
 use crate::biometric;
-use crate::crypto::Crypto;
+use crate::commands::audit::{AuditAction, record_audit_event};
+use crate::crypto::{self, Crypto};
 use crate::device::DeviceInfo;
 use crate::session::{LockState, SessionStatus};
 use crate::AppState;
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use sha2::Digest;
 use tauri::{command, State};
 use std::sync::Arc;
 
@@ -25,6 +29,64 @@ fn get_device_name() -> String {
     {
         std::env::var("HOSTNAME").unwrap_or_else(|_| "Desktop".to_string())
     }
+}
+
+async fn authenticate_with_server(
+    state: &Arc<AppState>,
+    device_id: &str,
+    _device_name: &str,
+    cyclo_pk: &[u8],
+    cyclo_sk: &[u8],
+) -> Result<String, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+
+    let challenge_resp = client.get_challenge()
+        .await
+        .map_err(|e| format!("Failed to get challenge: {}", e))?;
+
+    let challenge_bytes = B64.decode(&challenge_resp.challenge)
+        .map_err(|e| format!("Invalid challenge format: {}", e))?;
+
+    let (proof, committed_hash_hex) = crypto::create_auth_proof(cyclo_pk, cyclo_sk, &challenge_bytes, device_id)
+        .map_err(|e| format!("Failed to create auth proof: {}", e))?;
+
+    let verify_resp = client.verify_proof(&VerifyRequest {
+        device_id: device_id.to_string(),
+        challenge: challenge_resp.challenge,
+        committed_hash: committed_hash_hex,
+        proof,
+    })
+    .await
+    .map_err(|e| format!("Failed to verify proof: {}", e))?;
+
+    Ok(verify_resp.token)
+}
+
+/// Registers this device with the server and returns the server-assigned device_id.
+async fn register_with_server(
+    state: &Arc<AppState>,
+    _device_name: &str,
+) -> Result<String, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+
+    let identity = crypto::generate_identity_keypair()?;
+
+    let register_req = RegisterRequest {
+        hybrid_ek: B64.encode(&identity.hybrid_ek),
+        hybrid_vk: B64.encode(&identity.hybrid_vk),
+        cyclo_pk: B64.encode(&identity.cyclo_pk),
+    };
+
+    let register_resp = client.register_account(&register_req)
+        .await
+        .map_err(|e| format!("Failed to register account: {}", e))?;
+
+    state.store.save_identity_keys(&identity.hybrid_ek, &identity.hybrid_vk, &identity.cyclo_pk, &identity.cyclo_sk, &identity.hybrid_sk)
+        .map_err(|e| format!("Failed to save identity keys: {}", e))?;
+
+    Ok(register_resp.device_id)
 }
 
 #[command]
@@ -50,6 +112,7 @@ pub async fn get_session_status(state: State<'_, Arc<AppState>>) -> Result<Sessi
 
 #[command]
 pub async fn lock_session(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    record_audit_event(&state, AuditAction::VaultLocked);
     let mut session = state.session.write();
     session.lock();
     
@@ -84,20 +147,48 @@ pub async fn unlock_session(
     let vault = state.store.load_vault(&crypto)
         .map_err(|e| format!("Failed to load vault: {}", e))?;
     
-    let (device_id, device_name) = get_device_info();
+    let (local_device_id, device_name) = get_device_info();
+    let device_id = state.store.load_device_id()
+        .ok()
+        .unwrap_or_else(|| local_device_id.clone());
     let user_id = format!("user-{}", &device_id[..8]);
-    
-    let mut session = state.session.write();
-    session.unlock(device_id.clone(), user_id.clone(), 15 * 60);
-    
-    let mut crypto_state = state.crypto.write();
-    *crypto_state = Some(crypto);
-    
-    let mut vault_state = state.vault.write();
-    *vault_state = vault;
-    
-    state.store.save_device_id(&device_id).ok();
-    
+
+    if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
+        match authenticate_with_server(
+            &state,
+            &device_id,
+            &device_name,
+            &identity_keys.cyclo_pk,
+            &identity_keys.cyclo_sk,
+        ).await {
+            Ok(token) => {
+                {
+                    let mut session = state.session.write();
+                    session.set_server_token(token);
+                }
+                tracing::info!("Server authentication successful");
+            }
+            Err(e) => {
+                tracing::warn!("Server authentication failed (non-fatal): {}", e);
+            }
+        }
+    }
+
+    {
+        let mut session = state.session.write();
+        session.unlock(device_id.clone(), user_id.clone(), 15 * 60);
+    }
+    {
+        let mut crypto_state = state.crypto.write();
+        *crypto_state = Some(crypto);
+    }
+    {
+        let mut vault_state = state.vault.write();
+        *vault_state = vault;
+    }
+
+    record_audit_event(&state, AuditAction::VaultUnlocked);
+
     Ok(SessionStatus {
         active: true,
         session_time_remaining_secs: 15 * 60,
@@ -121,6 +212,7 @@ pub async fn unlock_session_with_password(
         })?;
     
     tracing::info!("Password authenticated, creating crypto");
+    tracing::info!("Retrieved RMS: hash={:x}", sha2::Sha256::digest(&rms));
     let crypto = Crypto::new(&rms);
     
     tracing::info!("Loading vault");
@@ -139,21 +231,47 @@ pub async fn unlock_session_with_password(
             format!("Failed to load vault: {}", e)
         })?;
     
-    let (device_id, device_name) = get_device_info();
+    let (local_device_id, device_name) = get_device_info();
+    let device_id = state.store.load_device_id()
+        .ok()
+        .unwrap_or_else(|| local_device_id.clone());
     let user_id = format!("user-{}", &device_id[..8]);
-    
+
     tracing::info!("Vault loaded, unlocking session");
-    let mut session = state.session.write();
-    session.unlock(device_id.clone(), user_id.clone(), 15 * 60);
-    
-    let mut crypto_state = state.crypto.write();
-    *crypto_state = Some(crypto);
-    
-    let mut vault_state = state.vault.write();
-    *vault_state = vault;
-    
-    state.store.save_device_id(&device_id).ok();
-    
+    {
+        let mut session = state.session.write();
+        session.unlock(device_id.clone(), user_id.clone(), 15 * 60);
+    }
+    {
+        let mut crypto_state = state.crypto.write();
+        *crypto_state = Some(crypto);
+    }
+    {
+        let mut vault_state = state.vault.write();
+        *vault_state = vault;
+    }
+
+    if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
+        match authenticate_with_server(
+            &state,
+            &device_id,
+            &device_name,
+            &identity_keys.cyclo_pk,
+            &identity_keys.cyclo_sk,
+        ).await {
+            Ok(token) => {
+                let mut session = state.session.write();
+                session.set_server_token(token);
+                tracing::info!("Server authentication successful (password unlock)");
+            }
+            Err(e) => {
+                tracing::warn!("Server authentication failed after password unlock (non-fatal): {}", e);
+            }
+        }
+    }
+
+    record_audit_event(&state, AuditAction::VaultUnlocked);
+
     tracing::info!("Session unlocked successfully");
     Ok(SessionStatus {
         active: true,
@@ -183,18 +301,56 @@ pub async fn create_vault(
     state.store.save_vault(&vault, &crypto)
         .map_err(|e| format!("Failed to create vault: {}", e))?;
     
-    let (device_id, _device_name) = get_device_info();
+    let (local_device_id, device_name) = get_device_info();
+
+    let device_id = match register_with_server(&state, &device_name).await {
+        Ok(server_device_id) => {
+            tracing::info!("Server registration successful, device_id={}", server_device_id);
+            server_device_id
+        }
+        Err(e) => {
+            tracing::warn!("Server registration failed (non-fatal): {}", e);
+            local_device_id
+        }
+    };
     let user_id = format!("user-{}", &device_id[..8]);
-    
-    let mut crypto_state = state.crypto.write();
-    *crypto_state = Some(crypto);
-    
-    let mut session = state.session.write();
-    session.unlock(device_id, user_id, 15 * 60);
-    
-    let mut vault_state = state.vault.write();
-    *vault_state = vault;
-    
+
+    state.store.save_device_id(&device_id).ok();
+
+    if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
+        match authenticate_with_server(
+            &state,
+            &device_id,
+            &device_name,
+            &identity_keys.cyclo_pk,
+            &identity_keys.cyclo_sk,
+        ).await {
+            Ok(token) => {
+                let mut session = state.session.write();
+                session.set_server_token(token);
+                tracing::info!("Server authentication successful (vault creation)");
+            }
+            Err(e) => {
+                tracing::warn!("Server authentication after registration failed (non-fatal): {}", e);
+            }
+        }
+    }
+
+    {
+        let mut crypto_state = state.crypto.write();
+        *crypto_state = Some(crypto);
+    }
+    {
+        let mut session = state.session.write();
+        session.unlock(device_id, user_id, 15 * 60);
+    }
+    {
+        let mut vault_state = state.vault.write();
+        *vault_state = vault;
+    }
+
+    record_audit_event(&state, AuditAction::VaultCreated);
+
     Ok(())
 }
 
@@ -206,7 +362,7 @@ pub async fn create_vault_with_password(
     tracing::info!("Creating vault with password");
     
     let rms = Crypto::generate_rms();
-    tracing::info!("Generated RMS");
+    tracing::info!("Generated RMS: hash={:x}", sha2::Sha256::digest(&rms));
     
     biometric::delete_stored_rms()
         .map_err(|e| {
@@ -236,17 +392,55 @@ pub async fn create_vault_with_password(
         tracing::error!("vault.enc NOT found after save!");
     }
     
-    let (device_id, _device_name) = get_device_info();
+    let (local_device_id, device_name) = get_device_info();
+
+    let device_id = match register_with_server(&state, &device_name).await {
+        Ok(server_device_id) => {
+            tracing::info!("Server registration successful, device_id={}", server_device_id);
+            server_device_id
+        }
+        Err(e) => {
+            tracing::warn!("Server registration failed (non-fatal): {}", e);
+            local_device_id
+        }
+    };
     let user_id = format!("user-{}", &device_id[..8]);
+
+    state.store.save_device_id(&device_id).ok();
+
+    if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
+        match authenticate_with_server(
+            &state,
+            &device_id,
+            &device_name,
+            &identity_keys.cyclo_pk,
+            &identity_keys.cyclo_sk,
+        ).await {
+            Ok(token) => {
+                let mut session = state.session.write();
+                session.set_server_token(token);
+                tracing::info!("Server authentication successful (password vault creation)");
+            }
+            Err(e) => {
+                tracing::warn!("Server authentication after registration failed (non-fatal): {}", e);
+            }
+        }
+    }
     
-    let mut crypto_state = state.crypto.write();
-    *crypto_state = Some(crypto);
+    {
+        let mut crypto_state = state.crypto.write();
+        *crypto_state = Some(crypto);
+    }
+    {
+        let mut session = state.session.write();
+        session.unlock(device_id.clone(), user_id, 15 * 60);
+    }
+    {
+        let mut vault_state = state.vault.write();
+        *vault_state = vault;
+    }
     
-    let mut session = state.session.write();
-    session.unlock(device_id, user_id, 15 * 60);
-    
-    let mut vault_state = state.vault.write();
-    *vault_state = vault;
+    record_audit_event(&state, AuditAction::VaultCreated);
     
     tracing::info!("Vault created and session unlocked");
     Ok(())
