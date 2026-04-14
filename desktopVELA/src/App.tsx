@@ -31,7 +31,28 @@ function AppContent() {
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [conflicts, setConflicts] = useState<any[]>([]);
-  const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView } = useApp();
+  const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, settings } = useApp();
+  const [syncing, setSyncing] = useState(false);
+
+  const doSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const result = await invoke<{ last_synced: string | null; conflicts: string[]; error: string | null }>('trigger_sync');
+      await loadItems();
+      if (result.error) {
+        showToast(result.error, 'info');
+      } else if (result.conflicts.length > 0) {
+        showToast(`${result.conflicts.length} conflict(s) detected`, 'error');
+      } else {
+        showToast('Vault synced', 'success');
+      }
+    } catch (e) {
+      showToast('Sync failed: ' + String(e), 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const refreshSession = async () => {
     try {
@@ -78,6 +99,9 @@ function AppContent() {
         
         if (sessionStatus?.active) {
           await loadItems();
+          if (settings?.sync_on_startup) {
+            doSync();
+          }
         }
       } catch (e) {
         console.error('Init failed:', e);
@@ -99,7 +123,7 @@ function AppContent() {
     });
 
     const unlistenSync = listen('trigger-sync', () => {
-      showToast('Syncing vault...', 'info');
+      doSync();
     });
 
     return () => {
@@ -128,6 +152,16 @@ function AppContent() {
 
     return () => clearInterval(interval);
   }, [session?.active, setSession]);
+
+  useEffect(() => {
+    if (!session?.active) return;
+    const syncMinutes = settings?.background_sync_minutes ?? 5;
+    if (syncMinutes <= 0) return;
+    const interval = setInterval(() => {
+      doSync();
+    }, syncMinutes * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [session?.active, settings?.background_sync_minutes]);
 
   useEffect(() => {
     if (session?.session_time_remaining_secs === 0 && session?.active) {
@@ -211,7 +245,7 @@ function AppContent() {
               />
             )
           )}
-          {currentView === 'devices' && <DevicesScreen />}
+          {currentView === 'devices' && <DevicesScreen onItemsChanged={loadItems} />}
           {currentView === 'sharing' && <SharingScreen />}
           {currentView === 'audit' && <AuditLogScreen />}
           {currentView === 'breachMonitor' && <BreachMonitorScreen />}

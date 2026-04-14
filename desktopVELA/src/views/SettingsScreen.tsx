@@ -7,6 +7,21 @@ export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncNow = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('trigger_sync');
+      showToast('Vault synced', 'success');
+    } catch (e) {
+      showToast('Sync failed', 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     loadSettings();
@@ -168,8 +183,8 @@ export default function SettingsScreen() {
                 <label className="font-body font-medium text-on-surface">Last synced</label>
                 <p className="text-sm text-on-surface-variant">Most recent sync time</p>
               </div>
-              <button className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors">
-                Sync now
+              <button onClick={handleSyncNow} disabled={syncing} className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors disabled:opacity-50">
+                {syncing ? 'Syncing...' : 'Sync now'}
               </button>
             </div>
           </div>
