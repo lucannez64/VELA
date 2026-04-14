@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useApp } from '../context/AppContext';
+import { useApp, VaultItem } from '../context/AppContext';
 
 interface Share {
   id: string;
@@ -15,10 +15,10 @@ interface Share {
 }
 
 export default function SharingScreen() {
-  const { showToast } = useApp();
+  const { showToast, items } = useApp();
   const [shares, setShares] = useState<Share[]>([]);
   const [activeTab, setActiveTab] = useState<'received' | 'sent'>('received');
-  const [_showShareModal, _setShowShareModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   useEffect(() => {
     loadShares();
@@ -53,6 +53,16 @@ export default function SharingScreen() {
     }
   };
 
+  const handleRevokeSent = async (shareId: string) => {
+    try {
+      await invoke('delete_share', { shareId });
+      showToast('Access revoked', 'success');
+      loadShares();
+    } catch (e) {
+      showToast('Failed to revoke access', 'error');
+    }
+  };
+
   const filteredShares = shares.filter(s => s.direction === activeTab);
 
   const getIcon = (type: string) => {
@@ -70,8 +80,19 @@ export default function SharingScreen() {
 
   return (
     <div className="flex-1 p-8 overflow-y-auto">
-      <h1 className="font-headline text-3xl font-bold text-on-surface mb-2">Sharing</h1>
-      <p className="text-on-surface-variant mb-8">Securely share vault items with other VELA users</p>
+      <div className="flex justify-between items-center mb-2">
+        <div>
+          <h1 className="font-headline text-3xl font-bold text-on-surface mb-2">Sharing</h1>
+          <p className="text-on-surface-variant">Securely share vault items with other VELA users</p>
+        </div>
+        <button
+          onClick={() => setShowShareModal(true)}
+          className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors"
+        >
+          <span className="material-symbols-outlined">share</span>
+          Share item
+        </button>
+      </div>
 
       <div className="flex gap-4 mb-6">
         <button
@@ -173,7 +194,10 @@ export default function SharingScreen() {
                         <p className="text-sm text-on-surface-variant">{formatDate(share.shared_at)}</p>
                       </div>
                     </div>
-                    <button className="px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg text-sm transition-colors">
+                    <button 
+                      onClick={() => handleRevokeSent(share.id)}
+                      className="px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg text-sm transition-colors"
+                    >
                       Revoke access
                     </button>
                   </div>
@@ -183,6 +207,106 @@ export default function SharingScreen() {
           )}
         </div>
       )}
+
+      {showShareModal && (
+        <ShareModal
+          items={items}
+          onClose={() => setShowShareModal(false)}
+          onShared={() => { setShowShareModal(false); loadShares(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ShareModal({ items, onClose, onShared }: { items: VaultItem[]; onClose: () => void; onShared: () => void }) {
+  const { showToast } = useApp();
+  const [selectedItemId, setSelectedItemId] = useState('');
+  const [recipient, setRecipient] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const shareableItems = items.filter(i => !i.shared);
+
+  const handleSend = async () => {
+    if (!selectedItemId || !recipient.trim()) {
+      showToast('Select an item and enter a recipient', 'error');
+      return;
+    }
+    setSending(true);
+    try {
+      await invoke('send_share', {
+        request: {
+          item_id: selectedItemId,
+          recipient: recipient.trim(),
+          allow_edit: false,
+          notify_on_accept: true,
+        },
+      });
+      showToast('Item shared', 'success');
+      onShared();
+    } catch (e) {
+      showToast('Failed to share item: ' + String(e), 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={onClose}>
+      <div 
+        className="bg-surface-container rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <span className="material-symbols-outlined text-primary">share</span>
+          </div>
+          <h2 className="font-headline text-xl font-bold text-on-surface">Share vault item</h2>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="font-label text-xs uppercase tracking-widest text-slate-500 block mb-2">Item</label>
+            <select 
+              value={selectedItemId}
+              onChange={e => setSelectedItemId(e.target.value)}
+              className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              <option value="">Select an item...</option>
+              {shareableItems.map(item => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="font-label text-xs uppercase tracking-widest text-slate-500 block mb-2">Recipient (User ID)</label>
+            <input
+              type="text"
+              value={recipient}
+              onChange={e => setRecipient(e.target.value)}
+              placeholder="Enter recipient's VELA user ID"
+              className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-4 mt-6">
+          <button 
+            onClick={onClose}
+            className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={handleSend}
+            disabled={sending || !selectedItemId || !recipient.trim()}
+            className="flex-1 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {sending ? 'Sharing...' : 'Share'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
