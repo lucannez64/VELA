@@ -25,16 +25,16 @@ pub fn open_and_init(db_path: &str) -> anyhow::Result<Database> {
 fn init_schema(db: &Database) -> anyhow::Result<()> {
     db.execute(
         "CREATE TABLE IF NOT EXISTS users (
-            id         TEXT PRIMARY KEY,
-            recovery_share TEXT,
+            id              TEXT UNIQUE NOT NULL,
+            recovery_share  TEXT,
             recovery_auth_hash TEXT,
-            created_at TIMESTAMP NOT NULL
+            created_at      TIMESTAMP NOT NULL
         )",
         (),
     )?;
     db.execute(
         "CREATE TABLE IF NOT EXISTS devices (
-            id          TEXT PRIMARY KEY,
+            id          TEXT UNIQUE NOT NULL,
             user_id     TEXT NOT NULL,
             hybrid_ek   TEXT NOT NULL,
             hybrid_vk   TEXT NOT NULL,
@@ -50,7 +50,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     db.execute(
         "CREATE TABLE IF NOT EXISTS vault_chunks (
-            chunk_id      TEXT PRIMARY KEY,
+            chunk_id      TEXT UNIQUE NOT NULL,
             user_id       TEXT NOT NULL,
             version       INTEGER NOT NULL DEFAULT 1,
             lamport_clock INTEGER NOT NULL DEFAULT 0,
@@ -63,7 +63,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     db.execute(
         "CREATE TABLE IF NOT EXISTS share_inbox (
-            id                TEXT PRIMARY KEY,
+            id                TEXT UNIQUE NOT NULL,
             sender_user_id    TEXT NOT NULL,
             recipient_user_id TEXT NOT NULL,
             capsule           TEXT NOT NULL,
