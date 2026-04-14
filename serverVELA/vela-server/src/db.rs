@@ -124,7 +124,7 @@ pub struct DeviceRow {
 
 #[derive(Debug)]
 pub struct ChunkManifestRow {
-    pub chunk_id: Uuid,
+    pub chunk_id: String,
     pub version: i64,
     pub lamport_clock: i64,
     pub last_writer: Option<Uuid>,
@@ -132,7 +132,7 @@ pub struct ChunkManifestRow {
 
 #[derive(Debug)]
 pub struct ChunkRow {
-    pub chunk_id: Uuid,
+    pub chunk_id: String,
     pub user_id: Uuid,
     pub version: i64,
     pub lamport_clock: i64,
@@ -239,7 +239,7 @@ pub fn parse_device_row(row: &ResultRow) -> Result<DeviceRow, AppError> {
 
 pub fn parse_chunk_manifest_row(row: &ResultRow) -> Result<ChunkManifestRow, AppError> {
     Ok(ChunkManifestRow {
-        chunk_id: uuid_from(row, 0)?,
+        chunk_id: text_from(row, 0)?,
         version: int_from(row, 1)?,
         lamport_clock: int_from(row, 2)?,
         last_writer: opt_uuid_from(row, 3)?,
@@ -248,7 +248,7 @@ pub fn parse_chunk_manifest_row(row: &ResultRow) -> Result<ChunkManifestRow, App
 
 pub fn parse_chunk_row(row: &ResultRow) -> Result<ChunkRow, AppError> {
     Ok(ChunkRow {
-        chunk_id: uuid_from(row, 0)?,
+        chunk_id: text_from(row, 0)?,
         user_id: uuid_from(row, 1)?,
         version: int_from(row, 2)?,
         lamport_clock: int_from(row, 3)?,

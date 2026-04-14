@@ -6,7 +6,6 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
@@ -16,7 +15,7 @@ use crate::{
 
 pub async fn get_chunk(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<String>,
     session: AuthSession,
 ) -> Result<impl IntoResponse> {
     let rows = state.db.query(
@@ -57,7 +56,7 @@ pub async fn get_chunk(
 
 pub async fn put_chunk(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<String>,
     session: AuthSession,
     headers_in: HeaderMap,
     body: Bytes,
@@ -165,7 +164,7 @@ pub async fn put_chunk(
 
 pub async fn delete_chunk(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<String>,
     session: AuthSession,
     headers_in: HeaderMap,
 ) -> Result<impl IntoResponse> {

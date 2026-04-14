@@ -161,7 +161,8 @@ pub fn verify_cyclo_proof(
         .map_err(|_| AppError::BadRequest("proof is not valid base64".into()))?;
     let proof = vela_crypto::cyclo::CycloProof::from_bytes(proof_bytes);
 
-    let ok = vela_crypto::cyclo::verify(&public_inputs, &proof)
+    // VELA auth witness is always cyclo_sk: N=128 u64 ring-element coefficients.
+    let ok = vela_crypto::cyclo::verify(&public_inputs, 128, &proof)
         .map_err(|e| AppError::Internal(format!("ZKP verify error: {e}")))?;
 
     if !ok {

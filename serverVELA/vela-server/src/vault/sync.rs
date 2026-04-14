@@ -10,7 +10,7 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct ChunkMeta {
-    pub chunk_id:      Uuid,
+    pub chunk_id:      String,
     pub version:       i64,
     pub lamport_clock: i64,
     pub last_writer:   Option<Uuid>,

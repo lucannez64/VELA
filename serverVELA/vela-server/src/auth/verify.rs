@@ -4,9 +4,11 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use crate::{
     auth::token::TokenService,
+    device::enroll::verify_cyclo_proof,
     error::{AppError, Result},
     rate_limit,
     state::AppState,
@@ -23,6 +25,7 @@ pub struct VerifyRequest {
 #[derive(Serialize)]
 pub struct VerifyResponse {
     pub token: String,
+    pub user_id: String,
 }
 
 pub async fn post_verify(
@@ -58,35 +61,27 @@ pub async fn post_verify(
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let device = crate::db::parse_device_row(&row)?;
 
-    let cyclo_pk_u64s = le_bytes_to_u64_slice(&device.cyclo_pk)
-        .ok_or_else(|| AppError::Internal("corrupt cyclo_pk in database".into()))?;
+    let challenge_bytes = B64.decode(&body.challenge)
+        .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
 
-    let hash_bytes = hex::decode(&body.committed_hash)
-        .map_err(|_| AppError::BadRequest("committed_hash is not valid hex".into()))?;
-    if hash_bytes.len() != 32 {
-        return Err(AppError::BadRequest("committed_hash must be 32 bytes".into()));
+    // Validate committed_hash = SHA256(challenge_bytes || device_id).
+    // This binds the proof to the specific challenge issued by the server and
+    // prevents cross-device replay of captured proofs.
+    let mut hasher = Sha256::new();
+    hasher.update(&challenge_bytes);
+    hasher.update(device_id_str.as_bytes());
+    let expected_hash_hex = hex::encode(hasher.finalize());
+
+    if body.committed_hash != expected_hash_hex {
+        return Err(AppError::BadRequest("committed_hash does not match challenge".into()));
     }
-    let hash_u64s = le_bytes_to_u64_slice(&hash_bytes)
-        .ok_or_else(|| AppError::BadRequest("committed_hash length not a multiple of 8".into()))?;
 
-    let mut public_inputs: Vec<u64> = Vec::with_capacity(cyclo_pk_u64s.len() + hash_u64s.len());
-    public_inputs.extend_from_slice(&cyclo_pk_u64s);
-    public_inputs.extend_from_slice(&hash_u64s);
-
-    let proof_bytes = B64
-        .decode(&body.proof)
-        .map_err(|_| AppError::BadRequest("proof is not valid base64".into()))?;
-    let proof = vela_crypto::cyclo::CycloProof::from_bytes(proof_bytes);
-
-    let ok = vela_crypto::cyclo::verify(&public_inputs, &proof).map_err(|e| {
-        tracing::warn!(device_id = %body.device_id, error = %e, "Cyclo verify internal error");
-        AppError::Internal(format!("ZKP verification error: {e}"))
-    })?;
-
-    if !ok {
+    // Verify the Cyclo ZK proof.
+    // Public inputs: cyclo_pk (128 u64s LE) || committed_hash (4 u64s LE) = 132 u64s.
+    if let Err(e) = verify_cyclo_proof(&device.cyclo_pk, &body.committed_hash, &body.proof) {
         let _ = rate_limit::record_verify_failure(&state.store, &device_id_str);
         rate_limit::verify_fail_by_device(&state.store, &device_id_str)?;
-        return Err(AppError::Unauthorized("Cyclo proof verification failed".into()));
+        return Err(e);
     }
 
     rate_limit::reset_verify_streak(&state.store, &device_id_str)?;
@@ -96,17 +91,5 @@ pub async fn post_verify(
 
     rate_limit::track_device_jti(&state.store, &device_id_str, &jti)?;
 
-    Ok(Json(VerifyResponse { token }))
-}
-
-fn le_bytes_to_u64_slice(bytes: &[u8]) -> Option<Vec<u64>> {
-    if bytes.len() % 8 != 0 {
-        return None;
-    }
-    Some(
-        bytes
-            .chunks_exact(8)
-            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
-            .collect(),
-    )
+    Ok(Json(VerifyResponse { token, user_id: device.user_id.to_string() }))
 }
