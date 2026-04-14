@@ -8,7 +8,7 @@ interface Props {
 }
 
 export default function ItemDetail({ item, onEdit }: Props) {
-  const { setSelectedItem, showToast, setCurrentView } = useApp();
+  const { setSelectedItem, showToast, setCurrentView, setPendingShareItemId } = useApp();
   const [showPassword, setShowPassword] = useState(false);
   const [showCardNumber, setShowCardNumber] = useState(false);
   const [showCVV, setShowCVV] = useState(false);
@@ -87,6 +87,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
   };
 
   const handleShare = () => {
+    setPendingShareItemId(item.id);
     setCurrentView('sharing');
   };
 
@@ -98,6 +99,8 @@ export default function ItemDetail({ item, onEdit }: Props) {
       default: return 'shield';
     }
   };
+
+  const isReceivedShare = item.shared && !item.share_recipient;
 
   return (
     <div className="flex-1 bg-surface-container-lowest overflow-y-auto">
@@ -116,6 +119,9 @@ export default function ItemDetail({ item, onEdit }: Props) {
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-primary"></span>
                 <p className="text-on-surface-variant font-label text-xs tracking-wider uppercase">Zero-Knowledge {item.item_type}</p>
+                {isReceivedShare && (
+                  <span className="ml-2 px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest">Shared with you · Read-only</span>
+                )}
               </div>
             </div>
           </div>
@@ -123,18 +129,22 @@ export default function ItemDetail({ item, onEdit }: Props) {
             <button onClick={handleToggleFavorite} className={`w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors ${favorite ? 'text-amber-400' : ''}`}>
               <span className="material-symbols-outlined text-xl text-amber-400" style={favorite ? { fontVariationSettings: "'FILL' 1" } : undefined}>star</span>
             </button>
-            <button 
-              onClick={onEdit}
-              className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
-              <span className="material-symbols-outlined text-xl">edit</span>
-            </button>
-            <button 
-              onClick={handleShare}
-              className="px-5 h-10 rounded-full flex items-center gap-2 bg-primary text-on-primary font-bold text-sm glow-button transition-all"
-            >
-              <span className="material-symbols-outlined text-sm">share</span>
-              Share Access
-            </button>
+            {!isReceivedShare && (
+              <button
+                onClick={onEdit}
+                className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
+                <span className="material-symbols-outlined text-xl">edit</span>
+              </button>
+            )}
+            {!isReceivedShare && (
+              <button
+                onClick={handleShare}
+                className="px-5 h-10 rounded-full flex items-center gap-2 bg-primary text-on-primary font-bold text-sm glow-button transition-all"
+              >
+                <span className="material-symbols-outlined text-sm">share</span>
+                Share Access
+              </button>
+            )}
           </div>
         </div>
 
@@ -344,14 +354,25 @@ export default function ItemDetail({ item, onEdit }: Props) {
           </div>
         )}
 
+        {item.notes && (
+          <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Additional Notes</label>
+            <p className="text-on-surface whitespace-pre-wrap text-sm leading-relaxed">{item.notes}</p>
+          </div>
+        )}
+
         <div className="mt-12 pt-8 border-t border-outline-variant/10 flex justify-between items-center">
-          <button 
-            onClick={handleDelete}
-            className="px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-          >
-            <span className="material-symbols-outlined text-sm mr-2">delete</span>
-            Delete
-          </button>
+          {!isReceivedShare ? (
+            <button
+              onClick={handleDelete}
+              className="px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm mr-2">delete</span>
+              Delete
+            </button>
+          ) : (
+            <div />
+          )}
           <div className="flex flex-wrap gap-8">
             <div className="flex flex-col">
               <span className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 mb-1">Last Modified</span>

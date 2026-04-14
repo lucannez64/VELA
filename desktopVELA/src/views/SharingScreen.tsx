@@ -15,13 +15,19 @@ interface Share {
 }
 
 export default function SharingScreen() {
-  const { showToast, items } = useApp();
+  const { showToast, items, pendingShareItemId, setPendingShareItemId } = useApp();
   const [shares, setShares] = useState<Share[]>([]);
   const [activeTab, setActiveTab] = useState<'received' | 'sent'>('received');
   const [showShareModal, setShowShareModal] = useState(false);
+  const [shareModalItemId, setShareModalItemId] = useState<string | null>(null);
 
   useEffect(() => {
     loadShares();
+    if (pendingShareItemId) {
+      setShareModalItemId(pendingShareItemId);
+      setShowShareModal(true);
+      setPendingShareItemId(null);
+    }
   }, []);
 
   const loadShares = async () => {
@@ -49,7 +55,16 @@ export default function SharingScreen() {
       showToast('Share declined', 'info');
       loadShares();
     } catch (e) {
-      showToast('Failed to decline share', 'error');
+      showToast('Failed to decline share: ' + String(e), 'error');
+    }
+  };
+
+  const handleDismiss = async (shareId: string) => {
+    try {
+      await invoke('delete_share', { shareId });
+      loadShares();
+    } catch (e) {
+      showToast('Failed to dismiss: ' + String(e), 'error');
     }
   };
 
@@ -86,7 +101,7 @@ export default function SharingScreen() {
           <p className="text-on-surface-variant">Securely share vault items with other VELA users</p>
         </div>
         <button
-          onClick={() => setShowShareModal(true)}
+          onClick={() => { setShareModalItemId(null); setShowShareModal(true); }}
           className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors"
         >
           <span className="material-symbols-outlined">share</span>
@@ -143,23 +158,32 @@ export default function SharingScreen() {
                     </div>
                     {share.accepted === null ? (
                       <div className="flex gap-2">
-                        <button 
+                        <button
                           onClick={() => handleDecline(share.id)}
                           className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
                         >
                           Decline
                         </button>
-                        <button 
+                        <button
                           onClick={() => handleAccept(share.id)}
                           className="px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
                         >
                           Accept
                         </button>
                       </div>
-                    ) : share.accepted ? (
-                      <span className="px-3 py-1 bg-primary/10 text-primary rounded-full text-xs font-label">Accepted</span>
                     ) : (
-                      <span className="px-3 py-1 bg-surface-container-highest text-on-surface-variant rounded-full text-xs font-label">Declined</span>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-3 py-1 rounded-full text-xs font-label ${share.accepted ? 'bg-primary/10 text-primary' : 'bg-surface-container-highest text-on-surface-variant'}`}>
+                          {share.accepted ? 'Accepted' : 'Declined'}
+                        </span>
+                        <button
+                          onClick={() => handleDismiss(share.id)}
+                          className="p-1.5 hover:bg-surface-bright rounded-lg transition-colors text-on-surface-variant hover:text-on-surface"
+                          title="Clear from inbox"
+                        >
+                          <span className="material-symbols-outlined text-sm">close</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -211,6 +235,7 @@ export default function SharingScreen() {
       {showShareModal && (
         <ShareModal
           items={items}
+          initialItemId={shareModalItemId}
           onClose={() => setShowShareModal(false)}
           onShared={() => { setShowShareModal(false); loadShares(); }}
         />
@@ -219,9 +244,9 @@ export default function SharingScreen() {
   );
 }
 
-function ShareModal({ items, onClose, onShared }: { items: VaultItem[]; onClose: () => void; onShared: () => void }) {
+function ShareModal({ items, initialItemId, onClose, onShared }: { items: VaultItem[]; initialItemId: string | null; onClose: () => void; onShared: () => void }) {
   const { showToast } = useApp();
-  const [selectedItemId, setSelectedItemId] = useState('');
+  const [selectedItemId, setSelectedItemId] = useState(initialItemId ?? '');
   const [recipient, setRecipient] = useState('');
   const [sending, setSending] = useState(false);
 

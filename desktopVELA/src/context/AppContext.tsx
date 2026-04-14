@@ -210,6 +210,8 @@ interface AppContextType {
   setSettings: (settings: Settings | null) => void;
   clipboardTimer: ReturnType<typeof setTimeout> | null;
   setClipboardTimer: (timer: ReturnType<typeof setTimeout> | null) => void;
+  pendingShareItemId: string | null;
+  setPendingShareItemId: (id: string | null) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -224,6 +226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<VaultItem[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [clipboardTimer, setClipboardTimer] = useState<NodeJS.Timeout | null>(null);
+  const [pendingShareItemId, setPendingShareItemId] = useState<string | null>(null);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info') => {
     setToast({ message, type });
@@ -249,6 +252,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSettings,
     clipboardTimer,
     setClipboardTimer,
+    pendingShareItemId,
+    setPendingShareItemId,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

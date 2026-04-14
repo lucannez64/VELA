@@ -190,6 +190,10 @@ function AppContent() {
         }} onAddExisting={() => {
           setSetupStep('biometric');
           setIsFirstLaunch(false);
+        }} onImportComplete={async () => {
+          setIsFirstLaunch(false);
+          setSetupComplete(true);
+          await refreshSession();
         }} />
       </div>
     );

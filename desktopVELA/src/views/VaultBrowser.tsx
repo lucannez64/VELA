@@ -182,7 +182,13 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                   </div>
                   <div className="flex items-center gap-6">
                     {item.shared && (
-                      <div className="px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest">Shared</div>
+                      item.share_recipient
+                        ? <div className="px-2 py-0.5 rounded bg-primary/10 text-[10px] text-primary font-label font-bold uppercase tracking-widest flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>share</span>Shared
+                          </div>
+                        : <div className="px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>download</span>Received
+                          </div>
                     )}
                     <span className="hidden md:block font-mono text-xs text-outline-variant tracking-tighter">
                       {item.item_type === 'creditCard' ? `EXP: ${item.card_exp}` : '••••••••••••'}

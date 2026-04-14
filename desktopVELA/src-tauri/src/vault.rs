@@ -260,6 +260,12 @@ impl VaultItem {
         }
     }
 
+    /// Returns `true` if this item was received via a share (read-only).
+    /// Received shares have `shared = true` but no `share_recipient` set.
+    pub fn is_received_share(&self) -> bool {
+        self.shared() && self.share_recipient().is_none()
+    }
+
     pub fn url(&self) -> Option<&str> {
         match self {
             VaultItem::Login { url, .. } => Some(url),

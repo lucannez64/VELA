@@ -1,3 +1,4 @@
+use crate::commands::audit::{AuditAction, record_audit_event};
 use crate::vault::{ItemType, PasswordGeneratorOptions, VaultItem};
 use crate::AppState;
 use chrono::Utc;
@@ -109,6 +110,10 @@ pub async fn add_item(
     drop(vault);
     save_vault(&state)?;
     
+    record_audit_event(&state, AuditAction::ItemAdded {
+        item_type: format!("{:?}", new_item.item_type()).to_lowercase(),
+    });
+    
     tracing::info!("Returning item: {:?}", serde_json::to_string(&new_item).unwrap_or_default());
     
     Ok(new_item)
@@ -119,12 +124,24 @@ pub async fn update_item(
     state: State<'_, Arc<AppState>>,
     item: VaultItem,
 ) -> Result<VaultItem, String> {
+    // Block edits on items received via share (shared=true, no share_recipient).
+    {
+        let vault = state.vault.read();
+        if let Some(existing) = vault.get_item(item.id()) {
+            if existing.is_received_share() {
+                return Err("Cannot modify a received shared item".to_string());
+            }
+        }
+    }
     let mut vault = state.vault.write();
     let updated = item.with_updated_at(Utc::now());
+    let item_type = format!("{:?}", updated.item_type()).to_lowercase();
     vault.update_item(updated.clone());
     
     drop(vault);
     save_vault(&state)?;
+    
+    record_audit_event(&state, AuditAction::ItemUpdated { item_type });
     
     Ok(updated)
 }
@@ -134,11 +151,25 @@ pub async fn delete_item(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<(), String> {
+    let item_type = {
+        let vault = state.vault.read();
+        if let Some(item) = vault.get_item(&id) {
+            if item.is_received_share() {
+                return Err("Cannot delete a received shared item".to_string());
+            }
+            format!("{:?}", item.item_type()).to_lowercase()
+        } else {
+            "unknown".to_string()
+        }
+    };
+
     let mut vault = state.vault.write();
     vault.delete_item(&id);
     
     drop(vault);
     save_vault(&state)?;
+    
+    record_audit_event(&state, AuditAction::ItemDeleted { item_type });
     
     Ok(())
 }
@@ -192,6 +223,15 @@ pub async fn generate_password(options: PasswordGeneratorOptions) -> Result<Pass
     let strength = calculate_password_strength(&password);
     
     Ok(PasswordWithStrength { password, strength })
+}
+
+#[command]
+pub async fn log_password_generated(
+    state: State<'_, Arc<AppState>>,
+    length: usize,
+) -> Result<(), String> {
+    record_audit_event(&state, AuditAction::PasswordGenerated { length });
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,5 @@
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
@@ -119,33 +121,46 @@ pub async fn get_shares(state: State<'_, Arc<AppState>>) -> Result<Vec<Share>, S
     let client = ApiClient::with_url(server_url);
     if let Some(token) = state.get_session_token() {
         match client.get_inbox(&token).await {
-            Ok(inbox_items) => {
-                let crypto = state.crypto.read();
-                if let Some(crypto) = crypto.as_ref() {
-                    for inbox_item in inbox_items {
-                        let decrypted = crypto.decrypt_vault(&inbox_item.encrypted_payload);
-                        if let Ok(plaintext) = decrypted {
-                            if let Ok(item) = serde_json::from_slice::<crate::vault::VaultItem>(&plaintext) {
-                                let share = Share {
-                                    id: inbox_item.id.clone(),
-                                    item_id: inbox_item.item_id,
-                                    item_name: inbox_item.item_name,
-                                    item_type: format!("{:?}", item.item_type()).to_lowercase(),
-                                    direction: ShareDirection::Received,
-                                    from: inbox_item.from,
-                                    to: None,
-                                    shared_at: inbox_item.shared_at.parse().unwrap_or_else(|_| Utc::now()),
-                                    accepted: None,
-                                    allow_edit: inbox_item.allow_edit,
-                                    encrypted_payload: Some(inbox_item.encrypted_payload),
-                                };
-                                if !store.received_shares.iter().any(|s| s.id == share.id) {
-                                    store.received_shares.push(share);
-                                }
-                            }
-                        }
+            Ok((inbox_items, new_tok)) => {
+                if let Some(t) = new_tok {
+                    state.session.write().set_server_token(t);
+                }
+                for inbox_item in inbox_items {
+                    if store.received_shares.iter().any(|s| s.id == inbox_item.id) {
+                        continue;
                     }
-                    drop(crypto);
+                    // Decode the base64 capsule — the name/type come from decrypting it.
+                    let capsule_bytes = B64.decode(&inbox_item.capsule).unwrap_or_default();
+                    let (item_name, item_type) = {
+                        let crypto = state.crypto.read();
+                        if let Some(crypto) = crypto.as_ref() {
+                            if let Ok(plaintext) = crypto.decrypt_vault(&capsule_bytes) {
+                                if let Ok(item) = serde_json::from_slice::<crate::vault::VaultItem>(&plaintext) {
+                                    (item.name().to_string(), format!("{:?}", item.item_type()).to_lowercase())
+                                } else {
+                                    ("Shared item".to_string(), "login".to_string())
+                                }
+                            } else {
+                                ("Shared item".to_string(), "login".to_string())
+                            }
+                        } else {
+                            ("Shared item".to_string(), "login".to_string())
+                        }
+                    };
+                    let share = Share {
+                        id: inbox_item.id.clone(),
+                        item_id: inbox_item.id.clone(), // inbox_id as surrogate until accepted
+                        item_name,
+                        item_type,
+                        direction: ShareDirection::Received,
+                        from: inbox_item.sender_user_id,
+                        to: None,
+                        shared_at: inbox_item.created_at.parse().unwrap_or_else(|_| Utc::now()),
+                        accepted: None,
+                        allow_edit: false,
+                        encrypted_payload: Some(capsule_bytes),
+                    };
+                    store.received_shares.push(share);
                 }
                 let _ = save_share_store(&state, &store);
             }
@@ -199,16 +214,42 @@ pub async fn send_share(
     };
 
     let mut store = load_share_store(&state).unwrap_or_default();
-    store.add_sent_share(share.clone());
-    save_share_store(&state, &store)?;
 
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
     if let Some(token) = state.get_session_token() {
-        if let Err(e) = client.send_share(&token, &request.item_id, &request.recipient, request.allow_edit, encrypted_payload).await {
-            tracing::warn!("Failed to send share to server (local share saved): {}", e);
+        let capsule_b64 = B64.encode(&encrypted_payload);
+        match client.send_share(&token, &request.recipient, &capsule_b64).await {
+            Ok((_, new_tok)) => {
+                if let Some(t) = new_tok {
+                    state.session.write().set_server_token(t);
+                }
+                tracing::info!("Share delivered to server: {} to {}", share.item_name, request.recipient);
+            }
+            Err(e) => {
+                tracing::warn!("Share send to server failed: {}", e);
+                return Err(format!("Could not deliver share: {e}. Check the recipient's user ID."));
+            }
+        }
+    } else {
+        return Err("Not authenticated — please unlock your vault and try again.".to_string());
+    }
+
+    // Mark the original vault item as shared so the vault list shows the indicator.
+    {
+        let mut vault = state.vault.write();
+        if let Some(existing) = vault.get_item(&request.item_id).cloned() {
+            let marked = existing.with_shared_status(true, Some(request.recipient.clone()));
+            vault.update_item(marked);
         }
     }
+    if let Some(crypto) = state.crypto.read().as_ref() {
+        let vault_snapshot = state.vault.read().clone();
+        let _ = state.store.save_vault(&vault_snapshot, crypto);
+    }
+
+    store.add_sent_share(share.clone());
+    save_share_store(&state, &store)?;
 
     tracing::info!("Share sent: {} to {}", share.item_name, request.recipient);
     record_audit_event(&state, AuditAction::ShareSent {
@@ -233,35 +274,49 @@ pub async fn accept_share(
     if let Some(encrypted_payload) = &share.encrypted_payload {
         let crypto = state.crypto.read();
         let crypto = crypto.as_ref().ok_or("Session not unlocked")?;
-        
+
         let decrypted = crypto.decrypt_vault(encrypted_payload)
             .map_err(|e| e.to_string())?;
-        
+
         let item: crate::vault::VaultItem = serde_json::from_slice(&decrypted)
             .map_err(|e| e.to_string())?;
-        
+
         let _ = crypto;
-        
-        let mut vault = state.vault.write();
-        let shared_item = item.with_shared_status(true, share.to.clone());
-        vault.add_item(shared_item);
-        
-        drop(vault);
-        
+
+        // Always give the received copy a fresh ID so it is a distinct vault item,
+        // even when the sender and recipient are the same user.
+        let received_item = item
+            .with_id(Uuid::new_v4().to_string())
+            .with_shared_status(true, share.to.clone());
+        {
+            let mut vault = state.vault.write();
+            vault.add_item(received_item);
+        }
         if let Some(crypto) = state.crypto.read().as_ref() {
             let vault_store = state.vault.read();
             state.store.save_vault(&vault_store, crypto).map_err(|e| e.to_string())?;
         }
     }
-    
-    store.update_share_status(&share_id, true);
+
+    // Remove from server inbox and local store — inbox is cleared after accepting.
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    if let Some(token) = state.get_session_token() {
+        if let Ok(new_tok) = client.delete_inbox_item(&token, &share_id).await {
+            if let Some(t) = new_tok {
+                state.session.write().set_server_token(t);
+            }
+        }
+    }
+
+    store.remove_share(&share_id);
     save_share_store(&state, &store)?;
     record_audit_event(&state, AuditAction::ShareReceived {
         sender_user_id: share.from.clone(),
     });
-    
+
     tracing::info!("Share accepted: {}", share_id);
-    
+
     Ok(())
 }
 
@@ -271,11 +326,23 @@ pub async fn decline_share(
     share_id: String,
 ) -> Result<(), String> {
     let mut store = load_share_store(&state).ok_or("Failed to load share store")?;
-    store.update_share_status(&share_id, false);
+
+    // Delete from server inbox and remove from local store entirely.
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    if let Some(token) = state.get_session_token() {
+        if let Ok(new_tok) = client.delete_inbox_item(&token, &share_id).await {
+            if let Some(t) = new_tok {
+                state.session.write().set_server_token(t);
+            }
+        }
+    }
+
+    store.remove_share(&share_id);
     save_share_store(&state, &store)?;
-    
+
     tracing::info!("Share declined: {}", share_id);
-    
+
     Ok(())
 }
 
@@ -285,22 +352,41 @@ pub async fn delete_share(
     share_id: String,
 ) -> Result<(), String> {
     let mut store = load_share_store(&state).ok_or("Failed to load share store")?;
-    
+
     let is_received = store.received_shares.iter().any(|s| s.id == share_id);
     if is_received {
         let server_url = state.server_url.read().clone();
         let client = ApiClient::with_url(server_url);
         if let Some(token) = state.get_session_token() {
-            if let Err(e) = client.delete_inbox_item(&token, &share_id).await {
-                tracing::warn!("Failed to delete inbox item on server: {}", e);
+            match client.delete_inbox_item(&token, &share_id).await {
+                Ok(new_tok) => {
+                    if let Some(t) = new_tok {
+                        state.session.write().set_server_token(t);
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to delete inbox item on server: {}", e),
+            }
+        }
+    } else {
+        // Revoking a sent share — clear the shared flag on the vault item.
+        if let Some(sent) = store.sent_shares.iter().find(|s| s.id == share_id).cloned() {
+            let mut vault = state.vault.write();
+            if let Some(existing) = vault.get_item(&sent.item_id).cloned() {
+                let unmarked = existing.with_shared_status(false, None);
+                vault.update_item(unmarked);
+            }
+            drop(vault);
+            if let Some(crypto) = state.crypto.read().as_ref() {
+                let vault_snapshot = state.vault.read().clone();
+                let _ = state.store.save_vault(&vault_snapshot, crypto);
             }
         }
     }
-    
+
     store.remove_share(&share_id);
     save_share_store(&state, &store)?;
-    
+
     tracing::info!("Share deleted: {}", share_id);
-    
+
     Ok(())
 }

@@ -187,6 +187,55 @@ impl HybridSignature {
     }
 }
 
+// ── Signing-key serialisation ─────────────────────────────────────────────────
+
+/// ML-DSA-87 private-key wire length (FIPS 204, Table 1).
+pub const ML_DSA_SK_LEN: usize = 4896;
+
+impl HybridSigningKey {
+    /// Serialize the signing key for storage.
+    ///
+    /// Format: `ml_dsa_87_sk (4896 B) ‖ ed25519_sk (32 B)` = 4928 B.
+    ///
+    /// Consumes `self` because `fips204`'s `SerDes::into_bytes` takes ownership.
+    pub fn into_bytes(self) -> Vec<u8> {
+        // HybridSigningKey implements Drop, so we can't destructure with a move directly.
+        // Wrap in ManuallyDrop to prevent the destructor from running, then read fields out.
+        let this = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `this` will not be dropped (ManuallyDrop), so reading the fields here
+        // gives us owned values without a double-free.
+        let ml_dsa = unsafe { std::ptr::read(&this.ml_dsa) };
+        let ed25519 = unsafe { std::ptr::read(&this.ed25519) };
+        let ml_dsa_bytes = <MlDsaSk as SerDes>::into_bytes(ml_dsa);
+        let ed_bytes = ed25519.to_bytes();
+        let mut out = Vec::with_capacity(ml_dsa_bytes.as_ref().len() + 32);
+        out.extend_from_slice(ml_dsa_bytes.as_ref());
+        out.extend_from_slice(&ed_bytes);
+        out
+    }
+
+    /// Reconstruct from bytes produced by [`HybridSigningKey::into_bytes`].
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < ML_DSA_SK_LEN + 32 {
+            return Err(VelaError::SigningError(format!(
+                "hybrid_sk too short: {} bytes (need {})",
+                bytes.len(),
+                ML_DSA_SK_LEN + 32
+            )));
+        }
+        let ml_dsa_arr: [u8; ML_DSA_SK_LEN] = bytes[..ML_DSA_SK_LEN]
+            .try_into()
+            .expect("slice length checked above");
+        let ml_dsa = MlDsaSk::try_from_bytes(ml_dsa_arr)
+            .map_err(|e| VelaError::SigningError(format!("ML-DSA-87 sk decode failed: {e:?}")))?;
+        let ed_arr: [u8; 32] = bytes[ML_DSA_SK_LEN..ML_DSA_SK_LEN + 32]
+            .try_into()
+            .expect("slice length checked above");
+        let ed25519 = Ed25519Sk::from_bytes(&ed_arr);
+        Ok(Self { ml_dsa, ed25519 })
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
