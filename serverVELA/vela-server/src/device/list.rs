@@ -1,17 +1,10 @@
-//! GET /devices
-//!
-//! Lists all devices enrolled for the authenticated user.
-//! Returns device metadata (no key material) so the client can display the
-//! device list for management (e.g., revoking a lost device).
-
 use axum::{extract::State, http::HeaderMap, Json};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{
-    db::DeviceRow,
-    error::Result,
+    error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
     state::AppState,
 };
@@ -35,28 +28,29 @@ pub async fn list_devices(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<ListDevicesResponse>)> {
-    let rows = sqlx::query_as::<_, DeviceRow>(
+    let rows = state.db.query(
         "SELECT id, user_id, hybrid_ek, hybrid_vk, cyclo_pk,
                 enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at
          FROM devices
          WHERE user_id = $1
          ORDER BY created_at ASC",
-    )
-    .bind(session.user_id)
-    .fetch_all(&state.db)
-    .await?;
+        stoolap::params![session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let devices = rows
-        .into_iter()
-        .map(|r| DeviceInfo {
-            id: r.id,
-            enrolled_by: r.enrolled_by,
-            revoked: r.revoked,
-            revoked_at: r.revoked_at,
-            revoked_by: r.revoked_by,
-            created_at: r.created_at,
+    let devices: Vec<DeviceInfo> = rows
+        .map(|r| {
+            let row = r.map_err(|e| AppError::Internal(e.to_string()))?;
+            let d = crate::db::parse_device_row(&row)?;
+            Ok(DeviceInfo {
+                id: d.id,
+                enrolled_by: d.enrolled_by,
+                revoked: d.revoked,
+                revoked_at: d.revoked_at,
+                revoked_by: d.revoked_by,
+                created_at: d.created_at,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);

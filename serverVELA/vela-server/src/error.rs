@@ -1,5 +1,3 @@
-//! Unified application error type with `IntoResponse` for Axum.
-
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -10,41 +8,29 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    // ── 400 Bad Request ───────────────────────────────────────────────────────
     #[error("bad request: {0}")]
     BadRequest(String),
 
-    // ── 401 Unauthorized ──────────────────────────────────────────────────────
     #[error("unauthorized: {0}")]
     Unauthorized(String),
 
-    // ── 403 Forbidden ─────────────────────────────────────────────────────────
     #[error("forbidden: {0}")]
     Forbidden(String),
 
-    // ── 404 Not Found ─────────────────────────────────────────────────────────
     #[error("not found: {0}")]
     NotFound(String),
 
-    // ── 409 Conflict ──────────────────────────────────────────────────────────
     #[error("version conflict: {0}")]
     Conflict(String),
 
-    // ── 422 Unprocessable ─────────────────────────────────────────────────────
     #[error("unprocessable: {0}")]
     Unprocessable(String),
 
-    // ── 429 Too Many Requests ─────────────────────────────────────────────────
     #[error("rate limit exceeded: {0}")]
     RateLimited(String),
 
-    // ── 500 Internal ──────────────────────────────────────────────────────────
     #[error("internal error: {0}")]
     Internal(String),
-
-    // ── Infrastructure pass-through ───────────────────────────────────────────
-    #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
 }
 
 impl IntoResponse for AppError {
@@ -64,14 +50,6 @@ impl IntoResponse for AppError {
                 "internal_error",
                 m.clone(),
             ),
-            AppError::Database(e) => {
-                tracing::error!(error = %e, "database error");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "database_error",
-                    "database error".into(),
-                )
-            }
         };
 
         let body = Json(json!({ "error": code, "message": message }));

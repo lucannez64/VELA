@@ -1,31 +1,5 @@
-//! GET /device/capsule
-//!
-//! Allows a newly-enrolled device (Device B) to download the RMS capsule that
-//! Device A stored for it during `POST /device/enroll`.  Device B must first
-//! authenticate via `/auth/challenge` + `/auth/verify` to prove possession of
-//! the Cyclo private key it registered with, then call this endpoint.
-//!
-//! ## Spec reference (§4.2, step 6)
-//!
-//! > "Device B downloads the capsule, decapsulates it to recover the RMS,
-//! > provisions its own local Secure Enclave, and appends a signed entry to
-//! > the encrypted device audit log."
-//!
-//! ## One-time semantics
-//!
-//! The capsule is cleared from the database after a successful download.
-//! Subsequent calls return `404 Not Found`.  If the device loses the RMS
-//! before writing it to its enclave it must be re-enrolled by Device A.
-//!
-//! ## Response
-//!
-//! ```json
-//! { "capsule": "<base64>" }
-//! ```
-
 use axum::{extract::State, http::HeaderMap, Json};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use serde::Serialize;
 
 use crate::{
     error::{AppError, Result},
@@ -33,9 +7,8 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub struct CapsuleResponse {
-    /// Base64-encoded RMS capsule (Hybrid KEM ciphertext).
     pub capsule: String,
 }
 
@@ -43,38 +16,40 @@ pub async fn get_capsule(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<CapsuleResponse>)> {
-    // ── Atomically fetch + clear capsule (one-time download) ──────────────
-    // Uses UPDATE ... RETURNING so that concurrent requests cannot both read
-    // the capsule before it is nulled.  The first request to hit this query
-    // wins; all others see NULL and get 404.
-    #[derive(sqlx::FromRow)]
-    struct Row { rms_capsule: Option<Vec<u8>> }
+    let rows = state.db.query(
+        "SELECT rms_capsule FROM devices
+         WHERE id = $1 AND user_id = $2 AND revoked = FALSE AND rms_capsule IS NOT NULL",
+        stoolap::params![session.device_id.to_string(), session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = sqlx::query_as::<_, Row>(
-        r#"
-        UPDATE devices
-           SET rms_capsule = NULL
-         WHERE id = $1
-           AND user_id = $2
-           AND revoked = FALSE
-           AND rms_capsule IS NOT NULL
-     RETURNING rms_capsule
-        "#,
-    )
-    .bind(session.device_id)
-    .bind(session.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(
+    let row = match rows.into_iter().next() {
+        Some(r) => r.map_err(|e| AppError::Internal(e.to_string()))?,
+        None => {
+            return Err(AppError::NotFound(
+                "no capsule available — device may be the first device, \
+                 or the capsule has already been downloaded".into(),
+            ));
+        }
+    };
+
+    let v = crate::db::row_val(&row, 0)?;
+    let capsule_b64 = if v.is_null() {
+        None
+    } else {
+        v.as_str().map(|s| s.to_string())
+    };
+
+    let capsule_b64 = capsule_b64.ok_or_else(|| AppError::NotFound(
         "no capsule available — device may be the first device, \
          or the capsule has already been downloaded".into(),
     ))?;
 
-    let capsule_bytes = row.rms_capsule
-        .ok_or_else(|| AppError::NotFound(
-            "no capsule available — device may be the first device, \
-             or the capsule has already been downloaded".into(),
-        ))?;
+    state.db.execute(
+        "UPDATE devices SET rms_capsule = NULL WHERE id = $1 AND user_id = $2",
+        stoolap::params![session.device_id.to_string(), session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let capsule_bytes = crate::db::decode_b64(&capsule_b64)?;
 
     tracing::info!(
         device_id = %session.device_id,

@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::{DateTime, Utc};
-use stoolap::{params, Database, ResultRow};
+use stoolap::{Database, ResultRow, Value};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -34,7 +32,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         )",
         (),
     )?;
-
     db.execute(
         "CREATE TABLE IF NOT EXISTS devices (
             id          TEXT PRIMARY KEY,
@@ -51,7 +48,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         )",
         (),
     )?;
-
     db.execute(
         "CREATE TABLE IF NOT EXISTS vault_chunks (
             chunk_id      TEXT PRIMARY KEY,
@@ -65,7 +61,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         )",
         (),
     )?;
-
     db.execute(
         "CREATE TABLE IF NOT EXISTS share_inbox (
             id                TEXT PRIMARY KEY,
@@ -76,7 +71,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         )",
         (),
     )?;
-
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)",
         (),
@@ -93,7 +87,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_share_inbox_created_at ON share_inbox(created_at)",
         (),
     )?;
-
     Ok(())
 }
 
@@ -105,8 +98,6 @@ pub fn decode_b64(s: &str) -> Result<Vec<u8>, AppError> {
     B64.decode(s)
         .map_err(|e| AppError::Internal(format!("base64 decode error: {e}")))
 }
-
-// ─── Row types ────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 pub struct UserRow {
@@ -149,102 +140,123 @@ pub struct ChunkRow {
     pub ciphertext: Vec<u8>,
 }
 
-// ─── Row parsers ──────────────────────────────────────────────────────────────
+fn val(row: &ResultRow, idx: usize) -> Result<Value, AppError> {
+    row.get::<Value>(idx)
+        .map_err(|e| AppError::Internal(e.to_string()))
+}
+
+fn uuid_from(row: &ResultRow, idx: usize) -> Result<Uuid, AppError> {
+    let v = val(row, idx)?;
+    v.as_str()
+        .ok_or_else(|| AppError::Internal("expected text for uuid".into()))
+        .and_then(|s| {
+            Uuid::parse_str(s).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))
+        })
+}
+
+fn opt_uuid_from(row: &ResultRow, idx: usize) -> Result<Option<Uuid>, AppError> {
+    let v = val(row, idx)?;
+    if v.is_null() {
+        return Ok(None);
+    }
+    v.as_str()
+        .ok_or_else(|| AppError::Internal("expected text".into()))
+        .and_then(|s| {
+            Uuid::parse_str(s).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))
+        })
+        .map(Some)
+}
+
+fn text_from(row: &ResultRow, idx: usize) -> Result<String, AppError> {
+    let v = val(row, idx)?;
+    v.as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::Internal("expected text".into()))
+}
+
+fn opt_text_from(row: &ResultRow, idx: usize) -> Result<Option<String>, AppError> {
+    let v = val(row, idx)?;
+    if v.is_null() {
+        return Ok(None);
+    }
+    Ok(Some(
+        v.as_str()
+            .ok_or_else(|| AppError::Internal("expected text".into()))?
+            .to_string(),
+    ))
+}
+
+fn int_from(row: &ResultRow, idx: usize) -> Result<i64, AppError> {
+    let v = val(row, idx)?;
+    v.as_int64()
+        .ok_or_else(|| AppError::Internal("expected integer".into()))
+}
+
+fn bool_from(row: &ResultRow, idx: usize) -> Result<bool, AppError> {
+    let v = val(row, idx)?;
+    v.as_boolean()
+        .ok_or_else(|| AppError::Internal("expected boolean".into()))
+}
+
+fn ts_from(row: &ResultRow, idx: usize) -> Result<DateTime<Utc>, AppError> {
+    let v = val(row, idx)?;
+    v.as_timestamp()
+        .ok_or_else(|| AppError::Internal("expected timestamp".into()))
+}
+
+fn opt_ts_from(row: &ResultRow, idx: usize) -> Result<Option<DateTime<Utc>>, AppError> {
+    let v = val(row, idx)?;
+    if v.is_null() {
+        return Ok(None);
+    }
+    Ok(v.as_timestamp())
+}
 
 pub fn parse_user_row(row: &ResultRow) -> Result<UserRow, AppError> {
-    let id_str: String = row.get("id").map_err(db_err)?;
-    let recovery_share_str: Option<String> = row.get("recovery_share").map_err(db_err)?;
-    let recovery_auth_hash_str: Option<String> = row.get("recovery_auth_hash").map_err(db_err)?;
-    let created_at: DateTime<Utc> = row.get("created_at").map_err(db_err)?;
-
     Ok(UserRow {
-        id: Uuid::parse_str(&id_str).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?,
-        recovery_share: recovery_share_str.map(|s| decode_b64(&s)).transpose()?,
-        recovery_auth_hash: recovery_auth_hash_str.map(|s| decode_b64(&s)).transpose()?,
-        created_at,
+        id: uuid_from(row, 0)?,
+        recovery_share: opt_text_from(row, 1)?.map(|s| decode_b64(&s)).transpose()?,
+        recovery_auth_hash: opt_text_from(row, 2)?.map(|s| decode_b64(&s)).transpose()?,
+        created_at: ts_from(row, 3)?,
     })
 }
 
 pub fn parse_device_row(row: &ResultRow) -> Result<DeviceRow, AppError> {
-    let id_str: String = row.get("id").map_err(db_err)?;
-    let user_id_str: String = row.get("user_id").map_err(db_err)?;
-    let hybrid_ek_str: String = row.get("hybrid_ek").map_err(db_err)?;
-    let hybrid_vk_str: String = row.get("hybrid_vk").map_err(db_err)?;
-    let cyclo_pk_str: String = row.get("cyclo_pk").map_err(db_err)?;
-    let enrolled_by_str: Option<String> = row.get("enrolled_by").map_err(db_err)?;
-    let rms_capsule_str: Option<String> = row.get("rms_capsule").map_err(db_err)?;
-    let revoked: bool = row.get("revoked").map_err(db_err)?;
-    let revoked_at: Option<DateTime<Utc>> = row.get("revoked_at").map_err(db_err)?;
-    let revoked_by_str: Option<String> = row.get("revoked_by").map_err(db_err)?;
-    let created_at: DateTime<Utc> = row.get("created_at").map_err(db_err)?;
-
     Ok(DeviceRow {
-        id: Uuid::parse_str(&id_str).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?,
-        user_id: Uuid::parse_str(&user_id_str)
-            .map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?,
-        hybrid_ek: decode_b64(&hybrid_ek_str)?,
-        hybrid_vk: decode_b64(&hybrid_vk_str)?,
-        cyclo_pk: decode_b64(&cyclo_pk_str)?,
-        enrolled_by: enrolled_by_str
-            .map(|s| {
-                Uuid::parse_str(&s).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))
-            })
-            .transpose()?,
-        rms_capsule: rms_capsule_str.map(|s| decode_b64(&s)).transpose()?,
-        revoked,
-        revoked_at,
-        revoked_by: revoked_by_str
-            .map(|s| {
-                Uuid::parse_str(&s).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))
-            })
-            .transpose()?,
-        created_at,
+        id: uuid_from(row, 0)?,
+        user_id: uuid_from(row, 1)?,
+        hybrid_ek: decode_b64(&text_from(row, 2)?)?,
+        hybrid_vk: decode_b64(&text_from(row, 3)?)?,
+        cyclo_pk: decode_b64(&text_from(row, 4)?)?,
+        enrolled_by: opt_uuid_from(row, 5)?,
+        rms_capsule: opt_text_from(row, 6)?.map(|s| decode_b64(&s)).transpose()?,
+        revoked: bool_from(row, 7)?,
+        revoked_at: opt_ts_from(row, 8)?,
+        revoked_by: opt_uuid_from(row, 9)?,
+        created_at: ts_from(row, 10)?,
     })
 }
 
 pub fn parse_chunk_manifest_row(row: &ResultRow) -> Result<ChunkManifestRow, AppError> {
-    let chunk_id_str: String = row.get("chunk_id").map_err(db_err)?;
-    let version: i64 = row.get("version").map_err(db_err)?;
-    let lamport_clock: i64 = row.get("lamport_clock").map_err(db_err)?;
-    let last_writer_str: Option<String> = row.get("last_writer").map_err(db_err)?;
-
     Ok(ChunkManifestRow {
-        chunk_id: Uuid::parse_str(&chunk_id_str)
-            .map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?,
-        version,
-        lamport_clock,
-        last_writer: last_writer_str
-            .map(|s| {
-                Uuid::parse_str(&s).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))
-            })
-            .transpose()?,
+        chunk_id: uuid_from(row, 0)?,
+        version: int_from(row, 1)?,
+        lamport_clock: int_from(row, 2)?,
+        last_writer: opt_uuid_from(row, 3)?,
     })
 }
 
 pub fn parse_chunk_row(row: &ResultRow) -> Result<ChunkRow, AppError> {
-    let chunk_id_str: String = row.get("chunk_id").map_err(db_err)?;
-    let user_id_str: String = row.get("user_id").map_err(db_err)?;
-    let version: i64 = row.get("version").map_err(db_err)?;
-    let lamport_clock: i64 = row.get("lamport_clock").map_err(db_err)?;
-    let last_writer_str: Option<String> = row.get("last_writer").map_err(db_err)?;
-    let ciphertext_str: String = row.get("ciphertext").map_err(db_err)?;
-
     Ok(ChunkRow {
-        chunk_id: Uuid::parse_str(&chunk_id_str)
-            .map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?,
-        user_id: Uuid::parse_str(&user_id_str)
-            .map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?,
-        version,
-        lamport_clock,
-        last_writer: last_writer_str
-            .map(|s| {
-                Uuid::parse_str(&s).map_err(|e| AppError::Internal(format!("uuid parse: {e}")))
-            })
-            .transpose()?,
-        ciphertext: decode_b64(&ciphertext_str)?,
+        chunk_id: uuid_from(row, 0)?,
+        user_id: uuid_from(row, 1)?,
+        version: int_from(row, 2)?,
+        lamport_clock: int_from(row, 3)?,
+        last_writer: opt_uuid_from(row, 4)?,
+        ciphertext: decode_b64(&text_from(row, 5)?)?,
     })
 }
 
-fn db_err(e: stoolap::Error) -> AppError {
-    AppError::Internal(e.to_string())
+pub fn row_val(row: &ResultRow, idx: usize) -> Result<Value, AppError> {
+    val(row, idx)
 }

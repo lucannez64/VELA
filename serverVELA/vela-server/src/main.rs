@@ -1,15 +1,9 @@
-//! VELA Protocol v2.0 — API Server
-//!
-//! Entry point: loads config, connects to Postgres, opens the sled embedded
-//! database, runs migrations, and starts the Axum HTTP server.
-
 use std::{net::SocketAddr, sync::Arc};
 
 use vela_server::{config, db, routes, share, state, store};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // ── Logging ───────────────────────────────────────────────────────────────
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -17,28 +11,22 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    // ── Configuration ─────────────────────────────────────────────────────────
-    let _ = dotenvy::dotenv(); // silently ignore missing .env
+    let _ = dotenvy::dotenv();
     let config = config::Config::from_env()?;
     tracing::info!(addr = %config.listen_addr, "VELA server starting");
 
-    // ── Database ──────────────────────────────────────────────────────────────
-    let pool = db::connect(&config.database_url).await?;
-    db::migrate(&pool).await?;
-    tracing::info!("database migrations applied");
+    let database = db::open_and_init(&config.db_path)?;
+    tracing::info!(path = %config.db_path, "stoolap database opened");
 
-    // ── Embedded store (sled) ─────────────────────────────────────────────────
     let kv = store::Store::open(&config.sled_path)?;
     tracing::info!(path = %config.sled_path, "sled embedded store opened");
 
-    // ── State ─────────────────────────────────────────────────────────────────
-    let state = Arc::new(state::AppStateInner::new(pool, kv, config.clone())?);
+    let state = Arc::new(state::AppStateInner::new(database, kv, config.clone())?);
 
-    // ── Background tasks ──────────────────────────────────────────────────────
     {
-        let bg_pool = state.db.clone();
+        let bg_db = state.db.clone();
         tokio::spawn(async move {
-            share::inbox_cleanup_task(bg_pool).await;
+            share::inbox_cleanup_task(bg_db).await;
         });
     }
     {
@@ -58,13 +46,11 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // ── Router ────────────────────────────────────────────────────────────────
     let app = routes::build(state.clone())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             config.max_body_bytes,
         ));
 
-    // ── Serve ─────────────────────────────────────────────────────────────────
     let addr: SocketAddr = config.listen_addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "listening");

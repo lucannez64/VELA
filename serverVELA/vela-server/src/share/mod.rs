@@ -1,17 +1,3 @@
-//! Share endpoints — send encrypted vault-item capsules between users and
-//! retrieve them from the inbox.
-//!
-//! ## Endpoints
-//!
-//! | Method | Route                | Auth     | Description                           |
-//! |--------|----------------------|----------|---------------------------------------|
-//! | POST   | /share/send          | PASETO   | Deliver an encrypted capsule to inbox |
-//! | GET    | /share/inbox         | PASETO   | List pending inbox items              |
-//! | DELETE | /share/inbox/:id     | PASETO   | Acknowledge / delete one inbox item   |
-//!
-//! The server stores capsules as opaque blobs — all encryption is client-side
-//! (Hybrid KEM + XChaCha20-Poly1305).  The server cannot read any capsule.
-
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -23,26 +9,22 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    db,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
     state::AppState,
 };
 
-const MAX_CAPSULE_BYTES: usize = 1024 * 1024; // 1 MiB
+const MAX_CAPSULE_BYTES: usize = 1024 * 1024;
 const DEFAULT_INBOX_LIMIT: i64 = 50;
 const MAX_INBOX_LIMIT:     i64 = 200;
 const MAX_INBOX_ITEMS_PER_USER: i64 = 500;
 
-/// Inbox items older than this are eligible for automatic purge.
-/// Set to 30 days (matches spec §5.3 conflict copy retention period).
 pub const INBOX_TTL_SECS: i64 = 30 * 24 * 60 * 60;
-
-// ── POST /share/send ──────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct SendRequest {
     pub recipient_user_id: Uuid,
-    /// Base64-encoded Hybrid KEM capsule ‖ AEAD-encrypted vault item payload.
     pub capsule: String,
 }
 
@@ -56,25 +38,25 @@ pub async fn post_send(
     session: AuthSession,
     Json(body): Json<SendRequest>,
 ) -> Result<(HeaderMap, Json<SendResponse>)> {
-    // ── Validate recipient ────────────────────────────────────────────────────
-    let recipient_exists: Option<bool> = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)",
-    )
-    .bind(body.recipient_user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let exists_rows = state.db.query(
+        "SELECT 1 FROM users WHERE id = $1",
+        stoolap::params![body.recipient_user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if !recipient_exists.unwrap_or(false) {
+    if exists_rows.into_iter().next().is_none() {
         return Err(AppError::NotFound("recipient user not found".into()));
     }
 
-    // ── Enforce inbox size limit ──────────────────────────────────────────────
-    let inbox_count: i64 = sqlx::query_scalar(
+    let count_rows = state.db.query(
         "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = $1",
-    )
-    .bind(body.recipient_user_id)
-    .fetch_one(&state.db)
-    .await?;
+        stoolap::params![body.recipient_user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let count_row = count_rows.into_iter().next()
+        .ok_or_else(|| AppError::Internal("count query failed".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let cv = crate::db::row_val(&count_row, 0)?;
+    let inbox_count: i64 = cv.as_int64().unwrap_or(0);
 
     if inbox_count >= MAX_INBOX_ITEMS_PER_USER {
         return Err(AppError::Conflict(format!(
@@ -82,7 +64,6 @@ pub async fn post_send(
         )));
     }
 
-    // ── Decode and size-check capsule ─────────────────────────────────────────
     let capsule_bytes = B64
         .decode(&body.capsule)
         .map_err(|_| AppError::BadRequest("capsule is not valid base64".into()))?;
@@ -93,19 +74,20 @@ pub async fn post_send(
         )));
     }
 
-    // ── Persist ───────────────────────────────────────────────────────────────
     let inbox_id = Uuid::new_v4();
+    let now = Utc::now().to_rfc3339();
 
-    sqlx::query(
-        "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(inbox_id)
-    .bind(session.user_id)
-    .bind(body.recipient_user_id)
-    .bind(&capsule_bytes)
-    .execute(&state.db)
-    .await?;
+    state.db.execute(
+        "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
+         VALUES ($1, $2, $3, $4, $5)",
+        stoolap::params![
+            inbox_id.to_string(),
+            session.user_id.to_string(),
+            body.recipient_user_id.to_string(),
+            db::encode_b64(&capsule_bytes),
+            now,
+        ],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(
         inbox_id  = %inbox_id,
@@ -121,14 +103,9 @@ pub async fn post_send(
     Ok((headers, Json(SendResponse { inbox_id })))
 }
 
-// ── GET /share/inbox ──────────────────────────────────────────────────────────
-
-/// Query-string parameters for inbox pagination.
 #[derive(Deserialize, Default)]
 pub struct InboxQuery {
-    /// Maximum number of items to return (default 50, max 200).
     pub limit: Option<i64>,
-    /// Return items older than this inbox ID (cursor-based pagination).
     pub before: Option<Uuid>,
 }
 
@@ -136,7 +113,7 @@ pub struct InboxQuery {
 pub struct InboxItem {
     pub id:             Uuid,
     pub sender_user_id: Uuid,
-    pub capsule:        String,  // base64-encoded
+    pub capsule:        String,
     pub created_at:     DateTime<Utc>,
 }
 
@@ -155,97 +132,96 @@ pub async fn get_inbox(
         .unwrap_or(DEFAULT_INBOX_LIMIT)
         .clamp(1, MAX_INBOX_LIMIT);
 
-    // Fetch one extra to determine has_more.
     let fetch_limit = limit + 1;
 
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id:             Uuid,
-        sender_user_id: Uuid,
-        capsule:        Vec<u8>,
-        created_at:     DateTime<Utc>,
-    }
-
-    let rows: Vec<Row> = if let Some(before_id) = query.before {
-        // Cursor: find the created_at of the `before` item, then page.
-        #[derive(sqlx::FromRow)]
-        struct Cursor { created_at: DateTime<Utc> }
-
-        let cursor = sqlx::query_as::<_, Cursor>(
+    let rows = if let Some(before_id) = query.before {
+        let cursor_rows = state.db.query(
             "SELECT created_at FROM share_inbox
              WHERE id = $1 AND recipient_user_id = $2",
-        )
-        .bind(before_id)
-        .bind(session.user_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound("cursor inbox_id not found".into()))?;
+            stoolap::params![before_id.to_string(), session.user_id.to_string()],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-        sqlx::query_as::<_, Row>(
+        let cursor_row = cursor_rows.into_iter().next()
+            .ok_or_else(|| AppError::NotFound("cursor inbox_id not found".into()))?
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let cv = crate::db::row_val(&cursor_row, 0)?;
+        let cursor_ts = cv.as_timestamp()
+            .ok_or_else(|| AppError::Internal("expected timestamp".into()))?;
+
+        state.db.query(
             "SELECT id, sender_user_id, capsule, created_at
              FROM share_inbox
              WHERE recipient_user_id = $1
                AND created_at < $2
              ORDER BY created_at DESC
              LIMIT $3",
-        )
-        .bind(session.user_id)
-        .bind(cursor.created_at)
-        .bind(fetch_limit)
-        .fetch_all(&state.db)
-        .await?
+            stoolap::params![
+                session.user_id.to_string(),
+                cursor_ts.to_rfc3339(),
+                fetch_limit,
+            ],
+        ).map_err(|e| AppError::Internal(e.to_string()))?
     } else {
-        sqlx::query_as::<_, Row>(
+        state.db.query(
             "SELECT id, sender_user_id, capsule, created_at
              FROM share_inbox
              WHERE recipient_user_id = $1
              ORDER BY created_at DESC
              LIMIT $2",
-        )
-        .bind(session.user_id)
-        .bind(fetch_limit)
-        .fetch_all(&state.db)
-        .await?
+            stoolap::params![session.user_id.to_string(), fetch_limit],
+        ).map_err(|e| AppError::Internal(e.to_string()))?
     };
 
-    let has_more = rows.len() as i64 > limit;
-    let items = rows
-        .into_iter()
-        .take(limit as usize)
-        .map(|r| InboxItem {
-            id:             r.id,
-            sender_user_id: r.sender_user_id,
-            capsule:        B64.encode(&r.capsule),
-            created_at:     r.created_at,
-        })
-        .collect();
+    let mut all_items: Vec<InboxItem> = Vec::new();
+    for row_result in rows {
+        let row = row_result.map_err(|e| AppError::Internal(e.to_string()))?;
+        let id_v = crate::db::row_val(&row, 0)?;
+        let sender_v = crate::db::row_val(&row, 1)?;
+        let capsule_v = crate::db::row_val(&row, 2)?;
+        let ts_v = crate::db::row_val(&row, 3)?;
+
+        let id = id_v.as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(|| AppError::Internal("uuid parse".into()))?;
+        let sender_user_id = sender_v.as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(|| AppError::Internal("uuid parse".into()))?;
+        let capsule_b64 = capsule_v.as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| AppError::Internal("expected text".into()))?;
+        let created_at = ts_v.as_timestamp()
+            .ok_or_else(|| AppError::Internal("expected timestamp".into()))?;
+
+        let capsule_bytes = db::decode_b64(&capsule_b64)?;
+
+        all_items.push(InboxItem {
+            id,
+            sender_user_id,
+            capsule: B64.encode(&capsule_bytes),
+            created_at,
+        });
+    }
+
+    let has_more = all_items.len() as i64 > limit;
+    all_items.truncate(limit as usize);
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
 
-    Ok((headers, Json(InboxResponse { items, has_more })))
+    Ok((headers, Json(InboxResponse { items: all_items, has_more })))
 }
 
-// ── DELETE /share/inbox/:id ───────────────────────────────────────────────────
-
-/// Acknowledge and delete a received share capsule.
-///
-/// The client calls this after successfully decrypting and importing the item
-/// into the local vault to prevent re-processing on future inbox fetches.
 pub async fn delete_inbox_item(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<(HeaderMap, StatusCode)> {
-    let result = sqlx::query(
+    let n: i64 = state.db.execute(
         "DELETE FROM share_inbox WHERE id = $1 AND recipient_user_id = $2",
-    )
-    .bind(id)
-    .bind(session.user_id)
-    .execute(&state.db)
-    .await?;
+        stoolap::params![id.to_string(), session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if result.rows_affected() == 0 {
+    if n == 0 {
         return Err(AppError::NotFound(format!("inbox item {id} not found")));
     }
 
@@ -257,13 +233,7 @@ pub async fn delete_inbox_item(
     Ok((headers, StatusCode::NO_CONTENT))
 }
 
-// ── Background inbox cleanup ──────────────────────────────────────────────────
-
-/// Periodically purges expired share inbox items (older than `INBOX_TTL_SECS`).
-/// Runs every 6 hours. Logs the number of purged rows.
-pub async fn inbox_cleanup_task(pool: sqlx::PgPool) {
-    use chrono::Utc;
-
+pub async fn inbox_cleanup_task(db: stoolap::Database) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(6 * 60 * 60));
 
     loop {
@@ -271,17 +241,14 @@ pub async fn inbox_cleanup_task(pool: sqlx::PgPool) {
 
         let cutoff = Utc::now() - chrono::Duration::seconds(INBOX_TTL_SECS);
 
-        match sqlx::query(
+        match db.execute(
             "DELETE FROM share_inbox WHERE created_at < $1",
-        )
-        .bind(cutoff)
-        .execute(&pool)
-        .await
-        {
-            Ok(result) => {
-                if result.rows_affected() > 0 {
+            stoolap::params![cutoff.to_rfc3339()],
+        ) {
+            Ok(n) => {
+                if n > 0 {
                     tracing::info!(
-                        purged = result.rows_affected(),
+                        purged = n,
                         "inbox cleanup: expired share items removed"
                     );
                 }

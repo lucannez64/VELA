@@ -1,28 +1,3 @@
-//! GET /vault/chunk/:id  — download one encrypted ORAM blob.
-//! PUT /vault/chunk/:id  — upload / create one encrypted ORAM blob.
-//! DELETE /vault/chunk/:id — remove an encrypted ORAM blob.
-//!
-//! ## PUT semantics
-//!
-//! * Requires `If-Match: <version>` header for optimistic concurrency.
-//! * Returns `409 Conflict` if the stored version has advanced since the
-//!   client's last fetch.
-//! * On success, the server increments `version` and stores the new `lamport_clock`
-//!   and `last_writer` supplied by the client in the request body.
-//! * New chunks (first upload): `If-Match: 0` signals creation intent.
-//!
-//! ## DELETE semantics
-//!
-//! * Requires `If-Match: <version>` header for optimistic concurrency.
-//! * Returns `409 Conflict` if the stored version has advanced since the
-//!   client's last fetch.
-//! * On success, returns `200` with the deleted chunk's last version number.
-//!
-//! ## Chunk size enforcement
-//!
-//! The server accepts ciphertext up to `config.max_chunk_bytes` (default 1 MiB).
-//! Clients must pad to exactly 1 MiB before encryption.
-
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -30,6 +5,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::{
@@ -38,36 +14,34 @@ use crate::{
     state::AppState,
 };
 
-// ─── GET /vault/chunk/:id ─────────────────────────────────────────────────────
-
 pub async fn get_chunk(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<impl IntoResponse> {
-    let row = sqlx::query_as::<_, crate::db::ChunkRow>(
+    let rows = state.db.query(
         "SELECT chunk_id, user_id, version, lamport_clock, last_writer, ciphertext
          FROM vault_chunks
          WHERE chunk_id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(session.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("chunk {id} not found")))?;
+        stoolap::params![id.to_string(), session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let row = rows.into_iter().next()
+        .ok_or_else(|| AppError::NotFound(format!("chunk {id} not found")))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let chunk = crate::db::parse_chunk_row(&row)?;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    // Expose the current version so clients can use it as the If-Match value.
     headers.insert(
         "X-Chunk-Version",
-        row.version.to_string().parse().unwrap(),
+        chunk.version.to_string().parse().unwrap(),
     );
     headers.insert(
         "X-Lamport-Clock",
-        row.lamport_clock.to_string().parse().unwrap(),
+        chunk.lamport_clock.to_string().parse().unwrap(),
     );
-    if let Some(lw) = row.last_writer {
+    if let Some(lw) = chunk.last_writer {
         headers.insert(
             "X-Last-Writer",
             lw.to_string().parse().unwrap(),
@@ -78,10 +52,8 @@ pub async fn get_chunk(
         "application/octet-stream".parse().unwrap(),
     );
 
-    Ok((StatusCode::OK, headers, row.ciphertext))
+    Ok((StatusCode::OK, headers, chunk.ciphertext))
 }
-
-// ─── PUT /vault/chunk/:id ─────────────────────────────────────────────────────
 
 pub async fn put_chunk(
     State(state): State<AppState>,
@@ -90,7 +62,6 @@ pub async fn put_chunk(
     headers_in: HeaderMap,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
-    // ── Enforce chunk size ────────────────────────────────────────────────────
     if body.len() > state.config.max_chunk_bytes {
         return Err(AppError::BadRequest(format!(
             "chunk exceeds maximum size of {} bytes",
@@ -98,7 +69,6 @@ pub async fn put_chunk(
         )));
     }
 
-    // ── Extract If-Match version ──────────────────────────────────────────────
     let if_match: i64 = headers_in
         .get("if-match")
         .or_else(|| headers_in.get("If-Match"))
@@ -106,7 +76,6 @@ pub async fn put_chunk(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
-    // ── Extract Lamport clock from X-Lamport-Clock header ────────────────────
     let lamport_clock: i64 = headers_in
         .get("x-lamport-clock")
         .or_else(|| headers_in.get("X-Lamport-Clock"))
@@ -115,71 +84,74 @@ pub async fn put_chunk(
         .ok_or_else(|| AppError::BadRequest("X-Lamport-Clock header is required".into()))?;
 
     let ciphertext = body.to_vec();
+    let now = Utc::now().to_rfc3339();
 
-    // ── Upsert under optimistic locking ──────────────────────────────────────
-    // if_match == 0 signals "create new chunk"; otherwise it must match the
-    // current stored version exactly.
-    let result = if if_match == 0 {
-        // INSERT (new chunk) — fail if chunk already exists.
-        sqlx::query(
+    if if_match == 0 {
+        let existing = state.db.query(
+            "SELECT 1 FROM vault_chunks WHERE chunk_id = $1",
+            stoolap::params![id.to_string()],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+        if existing.into_iter().next().is_some() {
+            return Err(AppError::Conflict(
+                "chunk already exists; use If-Match with current version to update".into(),
+            ));
+        }
+
+        state.db.execute(
             "INSERT INTO vault_chunks
-             (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext)
-             VALUES ($1, $2, 1, $3, $4, $5)",
-        )
-        .bind(id)
-        .bind(session.user_id)
-        .bind(lamport_clock)
-        .bind(session.device_id)
-        .bind(&ciphertext)
-        .execute(&state.db)
-        .await
+             (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, created_at, updated_at)
+             VALUES ($1, $2, 1, $3, $4, $5, $6, $7)",
+            stoolap::params![
+                id.to_string(),
+                session.user_id.to_string(),
+                lamport_clock,
+                session.device_id.to_string(),
+                crate::db::encode_b64(&ciphertext),
+                now.clone(),
+                now,
+            ],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
     } else {
-        // UPDATE with version check.
-        sqlx::query(
+        let n: i64 = state.db.execute(
             "UPDATE vault_chunks
              SET version       = version + 1,
                  lamport_clock = $1,
                  last_writer   = $2,
                  ciphertext    = $3,
-                 updated_at    = NOW()
-             WHERE chunk_id = $4
-               AND user_id  = $5
-               AND version  = $6",
-        )
-        .bind(lamport_clock)
-        .bind(session.device_id)
-        .bind(&ciphertext)
-        .bind(id)
-        .bind(session.user_id)
-        .bind(if_match)
-        .execute(&state.db)
-        .await
-    };
+                 updated_at    = $4
+             WHERE chunk_id = $5
+               AND user_id  = $6
+               AND version  = $7",
+            stoolap::params![
+                lamport_clock,
+                session.device_id.to_string(),
+                crate::db::encode_b64(&ciphertext),
+                now,
+                id.to_string(),
+                session.user_id.to_string(),
+                if_match,
+            ],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    match result {
-        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => {
-            // Unique constraint violation on INSERT (chunk already exists).
-            return Err(AppError::Conflict(
-                "chunk already exists; use If-Match with current version to update".into(),
-            ));
-        }
-        Err(e) => return Err(AppError::Database(e)),
-        Ok(r) if r.rows_affected() == 0 => {
-            // UPDATE matched no rows → version mismatch.
+        if n == 0 {
             return Err(AppError::Conflict(
                 "version mismatch — re-sync before retrying".into(),
             ));
         }
-        Ok(_) => {}
     }
 
-    // ── Response ──────────────────────────────────────────────────────────────
-    let new_version: i64 = sqlx::query_scalar(
+    let ver_rows = state.db.query(
         "SELECT version FROM vault_chunks WHERE chunk_id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
+        stoolap::params![id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let ver_row = ver_rows.into_iter().next()
+        .ok_or_else(|| AppError::Internal("failed to read new version".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let v = crate::db::row_val(&ver_row, 0)?;
+    let new_version: i64 = v.as_int64()
+        .ok_or_else(|| AppError::Internal("expected integer".into()))?;
 
     let mut resp_headers = HeaderMap::new();
     maybe_append_new_token(&mut resp_headers, &session);
@@ -190,8 +162,6 @@ pub async fn put_chunk(
 
     Ok((StatusCode::OK, resp_headers, Json(serde_json::json!({ "version": new_version }))))
 }
-
-// ─── DELETE /vault/chunk/:id ──────────────────────────────────────────────────
 
 pub async fn delete_chunk(
     State(state): State<AppState>,
@@ -206,56 +176,44 @@ pub async fn delete_chunk(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
-    let result = sqlx::query_scalar::<_, i64>(
-        r#"
-        DELETE FROM vault_chunks
-         WHERE chunk_id = $1
-           AND user_id  = $2
-           AND version  = $3
-     RETURNING version
-        "#,
-    )
-    .bind(id)
-    .bind(session.user_id)
-    .bind(if_match)
-    .fetch_optional(&state.db)
-    .await?;
+    let rows = state.db.query(
+        "SELECT version FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+        stoolap::params![id.to_string(), session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    match result {
-        Some(deleted_version) => {
-            tracing::info!(
-                chunk_id = %id,
-                user_id = %session.user_id,
-                version = deleted_version,
-                "vault chunk deleted"
-            );
+    let row = match rows.into_iter().next() {
+        Some(r) => r.map_err(|e| AppError::Internal(e.to_string()))?,
+        None => return Err(AppError::NotFound(format!("chunk {id} not found"))),
+    };
 
-            let mut resp_headers = HeaderMap::new();
-            maybe_append_new_token(&mut resp_headers, &session);
+    let v = crate::db::row_val(&row, 0)?;
+    let current_version: i64 = v.as_int64()
+        .ok_or_else(|| AppError::Internal("expected integer".into()))?;
 
-            Ok((
-                StatusCode::OK,
-                resp_headers,
-                Json(serde_json::json!({ "deleted": true, "version": deleted_version })),
-            ))
-        }
-        None => {
-            let exists: bool = sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
-            )
-            .bind(id)
-            .bind(session.user_id)
-            .fetch_one(&state.db)
-            .await?
-                > 0;
-
-            if exists {
-                Err(AppError::Conflict(
-                    "version mismatch — re-sync before deleting".into(),
-                ))
-            } else {
-                Err(AppError::NotFound(format!("chunk {id} not found")))
-            }
-        }
+    if current_version != if_match {
+        return Err(AppError::Conflict(
+            "version mismatch — re-sync before deleting".into(),
+        ));
     }
+
+    state.db.execute(
+        "DELETE FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+        stoolap::params![id.to_string(), session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+    tracing::info!(
+        chunk_id = %id,
+        user_id = %session.user_id,
+        version = current_version,
+        "vault chunk deleted"
+    );
+
+    let mut resp_headers = HeaderMap::new();
+    maybe_append_new_token(&mut resp_headers, &session);
+
+    Ok((
+        StatusCode::OK,
+        resp_headers,
+        Json(serde_json::json!({ "deleted": true, "version": current_version })),
+    ))
 }

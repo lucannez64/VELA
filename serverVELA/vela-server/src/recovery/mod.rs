@@ -1,24 +1,3 @@
-//! Recovery share endpoints (§4.3 Master Passwordless Recovery).
-//!
-//! VELA uses a 2-of-3 Shamir Secret Sharing scheme to allow recovery when all
-//! devices are lost:
-//!
-//! - **Share 1** — client's cloud provider (iCloud / Google Drive).
-//! - **Share 2** — stored here on the VELA server.  Encrypted client-side
-//!   under a key derived from the user's FIDO2 / passkey hardware credential,
-//!   so the server cannot decrypt it.
-//! - **Share 3** — held by a trusted contact via `/share/send`.
-//!
-//! ## Endpoints
-//!
-//! | Method | Route                | Description                                    |
-//! |--------|----------------------|------------------------------------------------|
-//! | PUT    | /recovery/share      | Store (or replace) Share 2 for this user       |
-//! | GET    | /recovery/share      | Retrieve Share 2 for this user                 |
-//! | DELETE | /recovery/share      | Wipe Share 2 (e.g. on account deletion)        |
-//! | POST   | /recovery/initiate   | Get a challenge nonce for recovery              |
-//! | POST   | /recovery/recover    | Retrieve Share 2 using challenge + proof        |
-
 pub mod initiate;
 pub mod recover;
 
@@ -36,20 +15,11 @@ use crate::{
     state::AppState,
 };
 
-/// Maximum size for an encrypted recovery share blob (generous upper bound).
-/// A Shamir share of a 32-byte RMS after AEAD encryption is tiny; this limit
-/// prevents abuse of the storage endpoint.
 const MAX_SHARE_BYTES: usize = 4096;
-
-// ── PUT /recovery/share ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct PutShareRequest {
-    /// Base64-encoded encrypted Share 2 blob.
     pub share: String,
-    /// Base64-encoded BLAKE3 hash of the recovery authorization preimage.
-    /// The preimage is derived from the user's FIDO2 credential client-side.
-    /// Required for `POST /recovery/recover` to verify identity during recovery.
     pub auth_hash: Option<String>,
 }
 
@@ -58,7 +28,6 @@ pub struct PutShareResponse {
     pub stored: bool,
 }
 
-/// Store (or replace) the encrypted recovery share for the authenticated user.
 pub async fn put_share(
     State(state): State<AppState>,
     session: AuthSession,
@@ -74,7 +43,7 @@ pub async fn put_share(
         )));
     }
 
-    let auth_hash_bytes: Option<Vec<u8>> = match &body.auth_hash {
+    let auth_hash_str: Option<String> = match &body.auth_hash {
         Some(h) => {
             let bytes = B64
                 .decode(h)
@@ -86,19 +55,19 @@ pub async fn put_share(
                     "auth_hash must be exactly 32 bytes (BLAKE3)".into(),
                 ));
             }
-            Some(bytes)
+            Some(crate::db::encode_b64(&bytes))
         }
         None => None,
     };
 
-    sqlx::query(
+    state.db.execute(
         "UPDATE users SET recovery_share = $1, recovery_auth_hash = $2 WHERE id = $3",
-    )
-    .bind(&share_bytes)
-    .bind(&auth_hash_bytes)
-    .bind(session.user_id)
-    .execute(&state.db)
-    .await?;
+        stoolap::params![
+            crate::db::encode_b64(&share_bytes),
+            auth_hash_str,
+            session.user_id.to_string(),
+        ],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(user_id = %session.user_id, bytes = share_bytes.len(), "recovery share stored");
 
@@ -108,34 +77,35 @@ pub async fn put_share(
     Ok((headers, Json(PutShareResponse { stored: true })))
 }
 
-// ── GET /recovery/share ───────────────────────────────────────────────────────
-
 #[derive(Serialize)]
 pub struct GetShareResponse {
-    /// Base64-encoded encrypted Share 2 blob.
     pub share: String,
 }
 
-/// Retrieve the encrypted recovery share for the authenticated user.
-///
-/// Returns `404` if no share has been stored yet.
 pub async fn get_share(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<GetShareResponse>)> {
-    #[derive(sqlx::FromRow)]
-    struct Row { recovery_share: Option<Vec<u8>> }
-
-    let row = sqlx::query_as::<_, Row>(
+    let rows = state.db.query(
         "SELECT recovery_share FROM users WHERE id = $1",
-    )
-    .bind(session.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+        stoolap::params![session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let share_bytes = row.recovery_share
+    let row = rows.into_iter().next()
+        .ok_or_else(|| AppError::NotFound("user not found".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let v = crate::db::row_val(&row, 0)?;
+    let share_b64 = if v.is_null() {
+        None
+    } else {
+        v.as_str().map(|s| s.to_string())
+    };
+
+    let share_b64 = share_b64
         .ok_or_else(|| AppError::NotFound("no recovery share stored for this user".into()))?;
+
+    let share_bytes = crate::db::decode_b64(&share_b64)?;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -143,17 +113,14 @@ pub async fn get_share(
     Ok((headers, Json(GetShareResponse { share: B64.encode(&share_bytes) })))
 }
 
-// ── DELETE /recovery/share ────────────────────────────────────────────────────
-
-/// Wipe the stored recovery share (e.g. on account deletion or FIDO2 rotation).
 pub async fn delete_share(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, StatusCode)> {
-    sqlx::query("UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = $1")
-        .bind(session.user_id)
-        .execute(&state.db)
-        .await?;
+    state.db.execute(
+        "UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = $1",
+        stoolap::params![session.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(user_id = %session.user_id, "recovery share deleted");
 

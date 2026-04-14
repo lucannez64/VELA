@@ -1,14 +1,3 @@
-//! POST /recovery/recover
-//!
-//! Retrieves the encrypted Share 2 blob for a user who has lost all devices
-//! and needs to bootstrap a new device via the 2-of-3 Shamir recovery scheme
-//! (SPEC §4.3).
-//!
-//! ## Rate limiting
-//!
-//! 5 attempts per hour per user to prevent brute-force attacks on the
-//! recovery proof.
-
 use axum::{extract::State, Json};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -38,7 +27,6 @@ pub async fn post_recover(
     State(state): State<AppState>,
     Json(body): Json<RecoverRequest>,
 ) -> Result<Json<RecoverResponse>> {
-    // ── Rate limit: 5 attempts per hour per user ─────────────────────────
     rate_limit::check(
         &state.store,
         &format!("rl:recover:user:{}", body.user_id),
@@ -46,7 +34,6 @@ pub async fn post_recover(
         3600,
     )?;
 
-    // ── Verify challenge nonce (single-use, 60s TTL) ────────────────────
     let challenge_key = format!("recovery:challenge:{}", body.challenge);
     let stored_user_id = state.store.get_del(&challenge_key)?;
 
@@ -64,32 +51,35 @@ pub async fn post_recover(
         }
     }
 
-    // ── Fetch encrypted share + recovery auth hash ───────────────────────
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        recovery_share: Option<Vec<u8>>,
-        recovery_auth_hash: Option<Vec<u8>>,
-    }
-
-    let row = sqlx::query_as::<_, Row>(
+    let rows = state.db.query(
         "SELECT recovery_share, recovery_auth_hash FROM users WHERE id = $1",
-    )
-    .bind(body.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+        stoolap::params![body.user_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let share_bytes = row.recovery_share.ok_or_else(|| {
-        AppError::NotFound("no recovery share stored for this user".into())
-    })?;
+    let row = rows.into_iter().next()
+        .ok_or_else(|| AppError::NotFound("user not found".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let auth_hash = row.recovery_auth_hash.ok_or_else(|| {
-        AppError::BadRequest(
-            "recovery not set up — no auth hash on file".into(),
-        )
-    })?;
+    let v0 = crate::db::row_val(&row, 0)?;
+    let v1 = crate::db::row_val(&row, 1)?;
 
-    // ── Verify proof ─────────────────────────────────────────────────────
+    let share_b64 = if v0.is_null() { None } else { v0.as_str().map(|s| s.to_string()) };
+    let auth_hash_b64 = if v1.is_null() { None } else { v1.as_str().map(|s| s.to_string()) };
+
+    let share_bytes = crate::db::decode_b64(
+        &share_b64.ok_or_else(|| {
+            AppError::NotFound("no recovery share stored for this user".into())
+        })?
+    )?;
+
+    let auth_hash = crate::db::decode_b64(
+        &auth_hash_b64.ok_or_else(|| {
+            AppError::BadRequest(
+                "recovery not set up — no auth hash on file".into(),
+            )
+        })?
+    )?;
+
     let proof_bytes = B64
         .decode(&body.proof)
         .map_err(|_| AppError::BadRequest("proof is not valid base64".into()))?;

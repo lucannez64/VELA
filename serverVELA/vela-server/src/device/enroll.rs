@@ -1,41 +1,6 @@
-//! POST /device/enroll
-//!
-//! Registers a new device (Device B) on behalf of an already-enrolled
-//! device (Device A).  Auth is provided by a fresh Cyclo ZKP from Device A —
-//! this is an escalated-auth endpoint: even a valid session token is not
-//! sufficient because enrollment is a high-value operation.
-//!
-//! ## Request body
-//!
-//! ```json
-//! {
-//!   "enrolling_device_id": "<uuid>",          // Device A
-//!   "challenge":           "<base64 32-byte>", // from GET /auth/challenge
-//!   "committed_hash":      "<hex 32-byte>",    // BLAKE3(sk_A ‖ challenge)
-//!   "proof":               "<base64>",         // Cyclo proof for Device A
-//!
-//!   "new_device": {
-//!     "hybrid_ek":   "<base64 1600-byte>",   // ML-KEM-1024 EK ‖ X25519 PK
-//!     "hybrid_vk":   "<base64 2624-byte>",   // ML-DSA-87 VK ‖ Ed25519 VK
-//!     "cyclo_pk":    "<base64 1024-byte>",   // Cyclo public key (128 × u64 LE)
-//!     "rms_capsule": "<base64>",             // RMS encapsulated for Device B
-//!     "signature":   "<base64 4691-byte>"    // Device A signs Device B's hybrid_vk
-//!   }
-//! }
-//! ```
-//!
-//! ## Flow
-//!
-//! 1. Consume challenge nonce from sled.
-//! 2. Verify enrolling device's Cyclo proof (Device A must be active).
-//! 3. Verify Device A's hybrid signature over Device B's `hybrid_vk`.
-//! 4. Insert Device B into the `devices` table.
-//!
-//! The new device's ID is returned so Device B can authenticate via
-//! `GET /auth/challenge` → `POST /auth/verify` to obtain its own session.
-
 use axum::{extract::State, Json};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -44,49 +9,33 @@ use crate::{
     state::AppState,
 };
 
-// ─── Wire types ───────────────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 pub struct NewDevicePayload {
-    /// ML-KEM-1024 encapsulation key (1568 B) ‖ X25519 public key (32 B) → 1600 B, base64.
     pub hybrid_ek: String,
-    /// ML-DSA-87 verifying key (2592 B) ‖ Ed25519 verifying key (32 B) → 2624 B, base64.
     pub hybrid_vk: String,
-    /// Cyclo ZKP public key: 128 u64 LE values → 1024 B, base64.
     pub cyclo_pk: String,
-    /// Hybrid KEM capsule carrying the RMS for Device B, base64.
     pub rms_capsule: String,
-    /// Device A's hybrid signature over Device B's raw `hybrid_vk` bytes, base64.
     pub signature: String,
 }
 
 #[derive(Deserialize)]
 pub struct EnrollRequest {
-    /// UUID of the device performing the enrollment (Device A).
     pub enrolling_device_id: Uuid,
-    /// Base64-encoded 32-byte challenge nonce.
     pub challenge: String,
-    /// Hex-encoded 32-byte BLAKE3(sk_A ‖ challenge).
     pub committed_hash: String,
-    /// Base64-encoded Cyclo proof for Device A.
     pub proof: String,
-    /// Public key material and capsule for Device B.
     pub new_device: NewDevicePayload,
 }
 
 #[derive(Serialize)]
 pub struct EnrollResponse {
-    /// UUID assigned to the newly enrolled device.
     pub device_id: Uuid,
 }
-
-// ─── Handler ──────────────────────────────────────────────────────────────────
 
 pub async fn post_enroll(
     State(state): State<AppState>,
     Json(body): Json<EnrollRequest>,
 ) -> Result<Json<EnrollResponse>> {
-    // ── 1. Consume challenge nonce ────────────────────────────────────────────
     let challenge_key = format!("challenge:{}", body.challenge);
     let consumed = state.store.get_del(&challenge_key)?;
     if consumed.is_none() {
@@ -95,27 +44,26 @@ pub async fn post_enroll(
         ));
     }
 
-    // ── 2. Fetch enrolling device (Device A) ──────────────────────────────────
-    let device_a = sqlx::query_as::<_, crate::db::DeviceRow>(
-        r#"SELECT id, user_id, hybrid_ek, hybrid_vk, cyclo_pk,
-                  enrolled_by, rms_capsule, revoked,
-                  revoked_at, revoked_by, created_at
-           FROM devices
-           WHERE id = $1 AND revoked = FALSE"#,
-    )
-    .bind(body.enrolling_device_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?;
+    let rows = state.db.query(
+        "SELECT id, user_id, hybrid_ek, hybrid_vk, cyclo_pk,
+                enrolled_by, rms_capsule, revoked,
+                revoked_at, revoked_by, created_at
+         FROM devices
+         WHERE id = $1 AND revoked = FALSE",
+        stoolap::params![body.enrolling_device_id.to_string()],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // ── 3. Verify Device A's Cyclo proof ──────────────────────────────────────
+    let row = rows.into_iter().next()
+        .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let device_a = crate::db::parse_device_row(&row)?;
+
     verify_cyclo_proof(
         &device_a.cyclo_pk,
         &body.committed_hash,
         &body.proof,
     )?;
 
-    // ── 4. Decode new-device key material ─────────────────────────────────────
     let new_hybrid_ek = B64.decode(&body.new_device.hybrid_ek)
         .map_err(|_| AppError::BadRequest("hybrid_ek is not valid base64".into()))?;
     let new_hybrid_vk_bytes = B64.decode(&body.new_device.hybrid_vk)
@@ -127,11 +75,10 @@ pub async fn post_enroll(
     let signature_bytes = B64.decode(&body.new_device.signature)
         .map_err(|_| AppError::BadRequest("signature is not valid base64".into()))?;
 
-    // Validate byte-length constants defined in vela-crypto::signing.
-    const HYBRID_EK_LEN: usize = 1568 + 32;   // ML-KEM-1024 ct + X25519 pk
-    const HYBRID_VK_LEN: usize = 2592 + 32;   // ML-DSA-87 vk + Ed25519 vk
-    const CYCLO_PK_LEN:  usize = 128 * 8;     // 128 × u64
-    const HYBRID_SIG_LEN: usize = 4627 + 64;  // ML-DSA-87 sig + Ed25519 sig
+    const HYBRID_EK_LEN: usize = 1568 + 32;
+    const HYBRID_VK_LEN: usize = 2592 + 32;
+    const CYCLO_PK_LEN:  usize = 128 * 8;
+    const HYBRID_SIG_LEN: usize = 4627 + 64;
 
     if new_hybrid_ek.len() != HYBRID_EK_LEN {
         return Err(AppError::BadRequest(format!(
@@ -154,30 +101,30 @@ pub async fn post_enroll(
         )));
     }
 
-    // ── 5. Verify Device A's signature over Device B's hybrid_vk ──────────────
     verify_enrollment_signature(
         &device_a.hybrid_vk,
         &new_hybrid_vk_bytes,
         &signature_bytes,
     )?;
 
-    // ── 6. Insert Device B ────────────────────────────────────────────────────
     let new_device_id = Uuid::new_v4();
+    let now = Utc::now().to_rfc3339();
 
-    sqlx::query(
-        r#"INSERT INTO devices
-           (id, user_id, hybrid_ek, hybrid_vk, cyclo_pk, enrolled_by, rms_capsule)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
-    )
-    .bind(new_device_id)
-    .bind(device_a.user_id)
-    .bind(new_hybrid_ek)
-    .bind(new_hybrid_vk_bytes)
-    .bind(new_cyclo_pk)
-    .bind(body.enrolling_device_id)
-    .bind(rms_capsule)
-    .execute(&state.db)
-    .await?;
+    state.db.execute(
+        "INSERT INTO devices
+         (id, user_id, hybrid_ek, hybrid_vk, cyclo_pk, enrolled_by, rms_capsule, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        stoolap::params![
+            new_device_id.to_string(),
+            device_a.user_id.to_string(),
+            crate::db::encode_b64(&new_hybrid_ek),
+            crate::db::encode_b64(&new_hybrid_vk_bytes),
+            crate::db::encode_b64(&new_cyclo_pk),
+            body.enrolling_device_id.to_string(),
+            crate::db::encode_b64(&rms_capsule),
+            now,
+        ],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(
         new_device_id = %new_device_id,
@@ -189,9 +136,6 @@ pub async fn post_enroll(
     Ok(Json(EnrollResponse { device_id: new_device_id }))
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Verify a Cyclo ZKP for authentication (reused by both enroll and verify).
 pub fn verify_cyclo_proof(
     cyclo_pk_bytes: &[u8],
     committed_hash_hex: &str,
@@ -226,7 +170,6 @@ pub fn verify_cyclo_proof(
     Ok(())
 }
 
-/// Verify Device A's hybrid signature (ML-DSA-87 + Ed25519) over `message`.
 fn verify_enrollment_signature(
     device_a_vk_bytes: &[u8],
     message: &[u8],
