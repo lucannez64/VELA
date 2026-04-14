@@ -9,6 +9,14 @@ pub struct ApiClient {
     base_url: String,
 }
 
+/// Extract the rotated token from `X-New-Token` response header, if present.
+fn extract_new_token(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get("X-New-Token")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChallengeResponse {
     pub challenge: String,
@@ -108,22 +116,23 @@ impl ApiClient {
         Ok(verify_resp)
     }
 
-    pub async fn get_sync_manifest(&self, token: &str) -> Result<SyncManifest> {
+    pub async fn get_sync_manifest(&self, token: &str) -> Result<(SyncManifest, Option<String>)> {
         let resp = self.client
             .get(format!("{}/vault/sync", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await?;
-        
+
         if !resp.status().is_success() {
             anyhow::bail!("Sync manifest request failed: {}", resp.status());
         }
-        
+
+        let new_token = extract_new_token(&resp);
         let manifest: SyncManifest = resp.json().await?;
-        Ok(manifest)
+        Ok((manifest, new_token))
     }
 
-    pub async fn get_chunk(&self, token: &str, chunk_id: &str) -> Result<(Vec<u8>, i64, i64)> {
+    pub async fn get_chunk(&self, token: &str, chunk_id: &str) -> Result<(Vec<u8>, i64, i64, Option<String>)> {
         let resp = self.client
             .get(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
             .header("Authorization", format!("Bearer {}", token))
@@ -146,8 +155,9 @@ impl ApiClient {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
+        let new_token = extract_new_token(&resp);
         let ciphertext = resp.bytes().await?.to_vec();
-        Ok((ciphertext, version, lamport_clock))
+        Ok((ciphertext, version, lamport_clock, new_token))
     }
 
     pub async fn put_chunk(
@@ -157,7 +167,7 @@ impl ApiClient {
         version: i64,
         ciphertext: Vec<u8>,
         lamport_clock: i64,
-    ) -> Result<i64> {
+    ) -> Result<(i64, Option<String>)> {
         let resp = self.client
             .put(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
             .header("Authorization", format!("Bearer {}", token))
@@ -171,46 +181,48 @@ impl ApiClient {
             anyhow::bail!("Chunk upload failed: {}", resp.status());
         }
 
+        let new_token = extract_new_token(&resp);
         #[derive(Deserialize)]
         struct UploadResponse { version: i64 }
         let upload_resp: UploadResponse = resp.json().await?;
-        Ok(upload_resp.version)
+        Ok((upload_resp.version, new_token))
     }
 
-    pub async fn get_devices(&self, token: &str) -> Result<Vec<DeviceInfo>> {
-        let body = self.get_devices_raw(token).await?;
+    pub async fn get_devices(&self, token: &str) -> Result<(Vec<DeviceInfo>, Option<String>)> {
+        let (body, new_token) = self.get_devices_raw(token).await?;
         let devices: Vec<DeviceInfo> = serde_json::from_str(&body)?;
-        Ok(devices)
+        Ok((devices, new_token))
     }
 
-    pub async fn get_devices_raw(&self, token: &str) -> Result<String> {
+    pub async fn get_devices_raw(&self, token: &str) -> Result<(String, Option<String>)> {
         let resp = self.client
             .get(format!("{}/devices", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await?;
-        
+
         if !resp.status().is_success() {
             anyhow::bail!("Device list request failed: {}", resp.status());
         }
-        
+
+        let new_token = extract_new_token(&resp);
         let body = resp.text().await?;
-        Ok(body)
+        Ok((body, new_token))
     }
 
-    pub async fn revoke_device(&self, token: &str, device_id: &str) -> Result<()> {
+    pub async fn revoke_device(&self, token: &str, device_id: &str) -> Result<Option<String>> {
         let resp = self.client
             .post(format!("{}/device/revoke", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({ "device_id": device_id }))
             .send()
             .await?;
-        
+
         if !resp.status().is_success() {
             anyhow::bail!("Device revocation failed: {}", resp.status());
         }
-        
-        Ok(())
+
+        Ok(extract_new_token(&resp))
     }
 
     pub async fn register_account(&self, request: &RegisterRequest) -> Result<RegisterResponse> {
@@ -228,7 +240,7 @@ impl ApiClient {
         Ok(result)
     }
 
-    pub async fn delete_account(&self, token: &str) -> Result<()> {
+    pub async fn delete_account(&self, token: &str) -> Result<Option<String>> {
         let resp = self.client
             .delete(format!("{}/account", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
@@ -239,10 +251,10 @@ impl ApiClient {
             anyhow::bail!("Account deletion failed: {}", resp.status());
         }
 
-        Ok(())
+        Ok(extract_new_token(&resp))
     }
 
-    pub async fn logout(&self, token: &str) -> Result<()> {
+    pub async fn logout(&self, token: &str) -> Result<Option<String>> {
         let resp = self.client
             .post(format!("{}/auth/logout", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
@@ -253,7 +265,7 @@ impl ApiClient {
             anyhow::bail!("Logout failed: {}", resp.status());
         }
 
-        Ok(())
+        Ok(extract_new_token(&resp))
     }
 
     pub async fn enroll_device(&self, request: &EnrollDeviceRequest) -> Result<EnrollResponse> {
@@ -273,7 +285,7 @@ impl ApiClient {
         Ok(result)
     }
 
-    pub async fn get_capsule(&self, token: &str) -> Result<CapsuleResponse> {
+    pub async fn get_capsule(&self, token: &str) -> Result<(CapsuleResponse, Option<String>)> {
         let resp = self.client
             .get(format!("{}/device/capsule", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
@@ -284,11 +296,12 @@ impl ApiClient {
             anyhow::bail!("Capsule request failed: {}", resp.status());
         }
 
+        let new_token = extract_new_token(&resp);
         let result: CapsuleResponse = resp.json().await?;
-        Ok(result)
+        Ok((result, new_token))
     }
 
-    pub async fn get_inbox(&self, token: &str) -> Result<Vec<InboxItem>> {
+    pub async fn get_inbox(&self, token: &str) -> Result<(Vec<InboxItem>, Option<String>)> {
         let resp = self.client
             .get(format!("{}/share/inbox", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
@@ -299,19 +312,21 @@ impl ApiClient {
             anyhow::bail!("Inbox request failed: {}", resp.status());
         }
 
-        let result: Vec<InboxItem> = resp.json().await?;
-        Ok(result)
+        let new_token = extract_new_token(&resp);
+        #[derive(serde::Deserialize)]
+        struct InboxResponse { items: Vec<InboxItem> }
+        let result: InboxResponse = resp.json().await?;
+        Ok((result.items, new_token))
     }
 
-    pub async fn send_share(&self, token: &str, item_id: &str, recipient: &str, allow_edit: bool, ciphertext: Vec<u8>) -> Result<ShareResponse> {
+    /// `capsule` must be base64-encoded ciphertext; `recipient_user_id` must be a UUID string.
+    pub async fn send_share(&self, token: &str, recipient_user_id: &str, capsule: &str) -> Result<(ShareResponse, Option<String>)> {
         let resp = self.client
             .post(format!("{}/share/send", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({
-                "item_id": item_id,
-                "recipient": recipient,
-                "allow_edit": allow_edit,
-                "ciphertext": ciphertext,
+                "recipient_user_id": recipient_user_id,
+                "capsule": capsule,
             }))
             .send()
             .await?;
@@ -320,11 +335,12 @@ impl ApiClient {
             anyhow::bail!("Share send failed: {}", resp.status());
         }
 
+        let new_token = extract_new_token(&resp);
         let result: ShareResponse = resp.json().await?;
-        Ok(result)
+        Ok((result, new_token))
     }
 
-    pub async fn delete_inbox_item(&self, token: &str, item_id: &str) -> Result<()> {
+    pub async fn delete_inbox_item(&self, token: &str, item_id: &str) -> Result<Option<String>> {
         let resp = self.client
             .delete(format!("{}/share/inbox/{}", self.base_url, item_id))
             .header("Authorization", format!("Bearer {}", token))
@@ -335,7 +351,7 @@ impl ApiClient {
             anyhow::bail!("Delete inbox item failed: {}", resp.status());
         }
 
-        Ok(())
+        Ok(extract_new_token(&resp))
     }
 
     pub async fn initiate_recovery(&self, email: &str) -> Result<RecoveryInitiateResponse> {
@@ -368,7 +384,7 @@ impl ApiClient {
         Ok(result)
     }
 
-    pub async fn get_recovery_share(&self, token: &str) -> Result<RecoveryShareResponse> {
+    pub async fn get_recovery_share(&self, token: &str) -> Result<(RecoveryShareResponse, Option<String>)> {
         let resp = self.client
             .get(format!("{}/recovery/share", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
@@ -379,11 +395,12 @@ impl ApiClient {
             anyhow::bail!("Get recovery share failed: {}", resp.status());
         }
 
+        let new_token = extract_new_token(&resp);
         let result: RecoveryShareResponse = resp.json().await?;
-        Ok(result)
+        Ok((result, new_token))
     }
 
-    pub async fn put_recovery_share(&self, token: &str, share: RecoveryShareData) -> Result<()> {
+    pub async fn put_recovery_share(&self, token: &str, share: RecoveryShareData) -> Result<Option<String>> {
         let resp = self.client
             .put(format!("{}/recovery/share", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
@@ -395,10 +412,10 @@ impl ApiClient {
             anyhow::bail!("Put recovery share failed: {}", resp.status());
         }
 
-        Ok(())
+        Ok(extract_new_token(&resp))
     }
 
-    pub async fn delete_recovery_share(&self, token: &str) -> Result<()> {
+    pub async fn delete_recovery_share(&self, token: &str) -> Result<Option<String>> {
         let resp = self.client
             .delete(format!("{}/recovery/share", self.base_url))
             .header("Authorization", format!("Bearer {}", token))
@@ -409,7 +426,7 @@ impl ApiClient {
             anyhow::bail!("Delete recovery share failed: {}", resp.status());
         }
 
-        Ok(())
+        Ok(extract_new_token(&resp))
     }
 }
 
@@ -455,17 +472,15 @@ pub struct CapsuleResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboxItem {
     pub id: String,
-    pub from: String,
-    pub item_id: String,
-    pub item_name: String,
-    pub allow_edit: bool,
-    pub encrypted_payload: Vec<u8>,
-    pub shared_at: String,
+    pub sender_user_id: String,
+    /// Base64-encoded encrypted capsule (the shared vault item).
+    pub capsule: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareResponse {
-    pub share_id: String,
+    pub inbox_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

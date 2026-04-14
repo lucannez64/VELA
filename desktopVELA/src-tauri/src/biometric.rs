@@ -782,9 +782,8 @@ pub mod windows_password {
                             rms.copy_from_slice(&decrypted[..32]);
                             CredFree(credential as *mut _);
 
-                            if CACHED_RMS.set(rms).is_ok() || CACHED_RMS.get().is_some() {
-                                return CACHED_RMS.get().copied();
-                            }
+                            let _ = CACHED_RMS.set(rms);
+                            return Some(rms);
                         } else {
                             tracing::warn!("Decrypted data too short: {} bytes", decrypted.len());
                         }
@@ -875,10 +874,9 @@ pub mod default_password {
             let mut rms = [0u8; 32];
             rms.copy_from_slice(&decrypted[..32]);
 
-            if CACHED_RMS.set(rms).is_ok() || CACHED_RMS.get().is_some() {
-                tracing::info!("Password authentication successful");
-                return CACHED_RMS.get().copied();
-            }
+            let _ = CACHED_RMS.set(rms);
+            tracing::info!("Password authentication successful");
+            return Some(rms);
         }
 
         tracing::warn!("Decrypted data too short: {} bytes", decrypted.len());

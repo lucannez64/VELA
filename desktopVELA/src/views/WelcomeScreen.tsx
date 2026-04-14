@@ -4,10 +4,17 @@ import { invoke } from '@tauri-apps/api/core';
 interface Props {
   onCreateVault: () => void;
   onAddExisting: () => void;
+  onImportComplete?: () => void;
 }
 
-export default function WelcomeScreen({ onCreateVault, onAddExisting }: Props) {
+export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportComplete }: Props) {
   const [biometricAvailable, setBiometricAvailable] = useState<boolean | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importCode, setImportCode] = useState('');
+  const [importPassword, setImportPassword] = useState('');
+  const [importPasswordVisible, setImportPasswordVisible] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
 
   useEffect(() => {
     checkBiometric();
@@ -28,6 +35,22 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting }: Props) {
       onAddExisting();
     } else {
       onCreateVault();
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importCode.trim()) { setImportError('Please paste the enrollment code.'); return; }
+    if (!importPassword) { setImportError('Please set a password to protect the vault on this device.'); return; }
+    setImporting(true);
+    setImportError('');
+    try {
+      await invoke('import_enrollment_code', { code: importCode.trim(), password: importPassword });
+      setShowImportModal(false);
+      onImportComplete?.();
+    } catch (e: any) {
+      setImportError(typeof e === 'string' ? e : 'Import failed. Check the code and try again.');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -106,13 +129,21 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting }: Props) {
                 </div>
               </button>
 
-              <button 
+              <button
                 onClick={onAddExisting}
                 disabled={biometricAvailable === null}
                 className="w-full flex items-center justify-between bg-surface-container-highest hover:bg-surface-bright py-4 px-6 rounded-xl transition-all active:scale-95 duration-200 disabled:opacity-50"
               >
                 <span className="font-headline font-medium text-on-surface tracking-wide">Add existing device</span>
                 <span className="material-symbols-outlined text-on-surface-variant">devices</span>
+              </button>
+
+              <button
+                onClick={() => { setShowImportModal(true); setImportError(''); }}
+                className="w-full flex items-center justify-between bg-surface-container-highest hover:bg-surface-bright py-4 px-6 rounded-xl transition-all active:scale-95 duration-200"
+              >
+                <span className="font-headline font-medium text-on-surface tracking-wide">Join existing account</span>
+                <span className="material-symbols-outlined text-on-surface-variant">vpn_key</span>
               </button>
             </div>
 
@@ -138,6 +169,77 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting }: Props) {
           </div>
         </div>
       </div>
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setShowImportModal(false)}>
+          <div
+            className="bg-surface-container rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <span className="material-symbols-outlined text-2xl text-primary">vpn_key</span>
+              <h2 className="font-headline text-2xl font-bold text-on-surface">Join existing account</h2>
+            </div>
+            <p className="text-on-surface-variant text-sm mb-5">
+              Paste the enrollment code generated on your other device, then set a password to protect the vault on this device.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Enrollment code</label>
+                <textarea
+                  value={importCode}
+                  onChange={e => setImportCode(e.target.value)}
+                  placeholder="Paste enrollment code here…"
+                  rows={4}
+                  className="w-full bg-surface-bright border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface text-xs font-mono placeholder-on-surface-variant/40 focus:outline-none focus:border-primary resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Vault password (this device)</label>
+                <div className="relative">
+                  <input
+                    type={importPasswordVisible ? 'text' : 'password'}
+                    value={importPassword}
+                    onChange={e => setImportPassword(e.target.value)}
+                    placeholder="Set a password for this device"
+                    className="w-full bg-surface-bright border border-outline-variant/30 rounded-xl px-4 py-3 pr-12 text-on-surface placeholder-on-surface-variant/40 focus:outline-none focus:border-primary"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setImportPasswordVisible(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
+                  >
+                    <span className="material-symbols-outlined text-xl">
+                      {importPasswordVisible ? 'visibility_off' : 'visibility'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {importError && (
+                <p className="text-red-400 text-sm">{importError}</p>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowImportModal(false)}
+                className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={importing}
+                className="flex-1 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {importing ? 'Importing…' : 'Import & join'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
