@@ -37,9 +37,11 @@ int cyclo_prove(
 );
 
 // Verify: returns 1 if valid, 0 if invalid, negative on error
+// private_len must equal the number of private inputs used when proving.
 int cyclo_verify(
     const uint64_t* public_inputs,
     size_t public_len,
+    size_t private_len,
     const uint8_t* proof,
     size_t proof_len
 );

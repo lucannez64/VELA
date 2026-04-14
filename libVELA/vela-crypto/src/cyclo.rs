@@ -38,9 +38,11 @@ mod ffi {
         ) -> c_int;
 
         /// Returns 1 if valid, 0 if invalid, 1-6 on internal error.
+        /// `private_len` must equal the number of private inputs used when proving.
         pub fn cyclo_verify(
             public_inputs: *const u64,
             public_len: usize,
+            private_len: usize,
             proof: *const u8,
             proof_len: usize,
         ) -> c_int;
@@ -74,8 +76,13 @@ fn map_error(code: c_int) -> VelaError {
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-/// Maximum proof buffer size — matches the Zig-side page allocator reservation.
-const PROOF_BUF_SIZE: usize = 65536;
+/// Maximum proof buffer size passed to the Zig `cyclo_prove` FFI.
+///
+/// PRESET_128 produces two Ajtai commitments of rank_a_prime=64 ring elements
+/// each (N=128 u64s × 8 bytes = 65,536 bytes per commitment), plus the extension
+/// opening and round polynomials.  Empirical proof size is ~133 KB; 512 KB
+/// gives a comfortable margin.
+const PROOF_BUF_SIZE: usize = 512 * 1024;
 
 /// A serialized Cyclo ZK proof.
 pub struct CycloProof(Vec<u8>);
@@ -126,13 +133,18 @@ pub fn prove(public_inputs: &[u64], private_inputs: &[u64]) -> Result<CycloProof
 
 /// Verify a Cyclo ZK proof against public inputs.
 ///
+/// `private_len` must equal the number of private inputs that were passed to
+/// [`prove`] — the verifier needs this to reconstruct the relation's
+/// `num_variables` for the Fiat-Shamir transcript.
+///
 /// Returns `Ok(true)` when the proof is valid, `Ok(false)` when it is structurally
 /// valid but the statement does not hold, and `Err` on an internal protocol error.
-pub fn verify(public_inputs: &[u64], proof: &CycloProof) -> Result<bool> {
+pub fn verify(public_inputs: &[u64], private_len: usize, proof: &CycloProof) -> Result<bool> {
     let ret = unsafe {
         ffi::cyclo_verify(
             public_inputs.as_ptr(),
             public_inputs.len(),
+            private_len,
             proof.0.as_ptr(),
             proof.0.len(),
         )

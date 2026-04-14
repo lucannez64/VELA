@@ -18,6 +18,18 @@ const Q: u64 = 1125899906839937;
 const CycloProtocol = zig_ring_arithmetic.CycloProtocol(N, Q);
 const ProofType = zig_ring_arithmetic.CycloProof(N, Q);
 
+// PRESET_128 was designed for N=256.  For standalone (non-IVC)
+// proveFromStatement / verifyFromStatement the docstring says to set
+// security_target_bits = 0.0; soundness is then guaranteed by the
+// Ajtai lattice hardness alone (rank_a=64 Ring-SIS rows, B_sis=2^20).
+// Keeping security_target_bits=128 causes the verifier to reject all
+// proofs at N=128 because sisHardnessBits(N=128,...) < 128.
+const VELA_AUTH_PARAMS = blk: {
+    var p = CycloProtocol.PRESET_128;
+    p.security_target_bits = 0.0;
+    break :blk p;
+};
+
 // Opaque pointers for handles
 pub const CycloStatement = opaque {};
 pub const CycloWitness = opaque {};
@@ -53,21 +65,23 @@ export fn cyclo_security_bits() f64 {
 // Memory Allocation
 // ============================================================================
 
-/// Allocate a proof buffer of maximum size
-/// The caller is responsible for freeing with cyclo_proof_free
+/// Allocate a proof buffer of maximum size.
+/// The caller is responsible for freeing with cyclo_proof_free.
+/// NOTE: PRESET_128 proofs are ~133 KB; callers should prefer allocating
+/// 512 KB on their side and passing it directly to cyclo_prove.
 export fn cyclo_proof_allocate() ?*anyopaque {
     const allocator = std.heap.page_allocator;
-    const size = 65536; // 64KB should be enough for most proofs
+    const size = 512 * 1024;
     const buf = allocator.alloc(u8, size) catch return null;
     return buf.ptr;
 }
 
-/// Free a proof buffer
+/// Free a proof buffer allocated by cyclo_proof_allocate.
 export fn cyclo_proof_free(ptr: ?*anyopaque) void {
     if (ptr) |p| {
         const allocator = std.heap.page_allocator;
         const slice: [*]u8 = @ptrCast(p);
-        allocator.free(slice[0..65536]);
+        allocator.free(slice[0..512 * 1024]);
     }
 }
 
@@ -114,7 +128,7 @@ export fn cyclo_prove(
         .private_assignment = private_assignment,
     };
 
-    var proof_result = CycloProtocol.proveFromStatement(allocator, statement, witness, CycloProtocol.PRESET_128) catch {
+    var proof_result = CycloProtocol.proveFromStatement(allocator, statement, witness, VELA_AUTH_PARAMS) catch {
         return .proof_failed;
     };
     defer proof_result.deinit(allocator);
@@ -133,15 +147,17 @@ export fn cyclo_prove(
 /// Verify a proof
 ///
 /// Args:
-///   public_inputs: slice of public input u64 values
-///   public_len: number of public inputs
-///   proof: proof bytes
-///   proof_len: proof size
+///   public_inputs:  slice of public input u64 values
+///   public_len:     number of public inputs
+///   private_len:    number of private inputs (must match the value used by cyclo_prove)
+///   proof:          proof bytes
+///   proof_len:      proof size
 ///
 /// Returns: success(1) if valid, success(0) if invalid, error code on failure
 export fn cyclo_verify(
     public_inputs: [*]const u64,
     public_len: usize,
+    private_len: usize,
     proof: [*]const u8,
     proof_len: usize,
 ) CycloError {
@@ -149,11 +165,13 @@ export fn cyclo_verify(
 
     const public_assignment = public_inputs[0..public_len];
 
+    // num_variables must match the prover's relation exactly so that the
+    // Fiat-Shamir transcript (which includes num_variables) is identical.
     const statement = CycloProtocol.Statement{
         .relation = .{
             .r1cs = .{
                 .q = Q,
-                .num_variables = public_len,
+                .num_variables = public_len + private_len,
                 .constraints = &.{},
             },
         },
@@ -166,7 +184,7 @@ export fn cyclo_verify(
     };
     defer deserialized.deinit(allocator);
 
-    const ok = CycloProtocol.verifyFromStatement(allocator, statement, &deserialized, CycloProtocol.PRESET_128) catch {
+    const ok = CycloProtocol.verifyFromStatement(allocator, statement, &deserialized, VELA_AUTH_PARAMS) catch {
         return .verification_failed;
     };
 

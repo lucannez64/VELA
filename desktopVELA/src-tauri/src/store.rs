@@ -1,6 +1,7 @@
 //! Persistent encrypted storage for VELA vault.
 
 use directories::ProjectDirs;
+use sha2::Digest;
 use std::fs;
 use std::path::PathBuf;
 use vela_crypto::aead::{decrypt, encrypt};
@@ -14,12 +15,25 @@ const VAULT_FILE: &str = "vault.enc";
 const RMS_FILE: &str = "rms.enc";
 const SETTINGS_FILE: &str = "settings.json";
 const DEVICE_ID_FILE: &str = "device_id.json";
+const IDENTITY_KEYS_FILE: &str = "identity_keys.enc";
 const DEVICE_KEY_CONTEXT: &str = "vela device rms protection v1";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct DeviceIdStore {
     device_id: String,
     user_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IdentityKeysStore {
+    pub hybrid_ek: Vec<u8>,
+    pub hybrid_vk: Vec<u8>,
+    pub cyclo_pk: Vec<u8>,
+    pub cyclo_sk: Vec<u8>,
+    /// ML-DSA-87 sk (4896 B) ‖ Ed25519 sk (32 B). Empty for legacy vaults created
+    /// before enrollment support; those devices cannot enroll other devices.
+    #[serde(default)]
+    pub hybrid_sk: Vec<u8>,
 }
 
 pub struct Store {
@@ -52,6 +66,10 @@ impl Store {
     pub fn save_vault(&self, vault: &VaultStore, crypto: &Crypto) -> anyhow::Result<()> {
         let plaintext = serde_json::to_vec(vault)?;
         tracing::info!("Vault plaintext size: {} bytes", plaintext.len());
+        tracing::info!(
+            "Vault key hash: {:x}",
+            sha2::Sha256::digest(crypto.vault_key().as_bytes())
+        );
 
         if let Ok(json_str) = std::str::from_utf8(&plaintext) {
             tracing::debug!(
@@ -87,6 +105,10 @@ impl Store {
 
         let ciphertext = fs::read(&vault_path)?;
         tracing::info!("Vault file size: {} bytes", ciphertext.len());
+        tracing::info!(
+            "Vault key hash: {:x}",
+            sha2::Sha256::digest(crypto.vault_key().as_bytes())
+        );
 
         if ciphertext.len() < 40 {
             tracing::error!("Vault file too small: {} bytes", ciphertext.len());
@@ -217,6 +239,46 @@ impl Store {
         let json = fs::read_to_string(device_path)?;
         let store: DeviceIdStore = serde_json::from_str(&json)?;
         Ok(store.user_id)
+    }
+
+    pub fn save_identity_keys(
+        &self,
+        hybrid_ek: &[u8],
+        hybrid_vk: &[u8],
+        cyclo_pk: &[u8],
+        cyclo_sk: &[u8],
+        hybrid_sk: &[u8],
+    ) -> anyhow::Result<()> {
+        let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
+
+        if let Some(parent) = identity_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        let store = IdentityKeysStore {
+            hybrid_ek: hybrid_ek.to_vec(),
+            hybrid_vk: hybrid_vk.to_vec(),
+            cyclo_pk: cyclo_pk.to_vec(),
+            cyclo_sk: cyclo_sk.to_vec(),
+            hybrid_sk: hybrid_sk.to_vec(),
+        };
+        let json = serde_json::to_string_pretty(&store)?;
+        fs::write(identity_path, json)?;
+        Ok(())
+    }
+
+    pub fn load_identity_keys(&self) -> anyhow::Result<Option<IdentityKeysStore>> {
+        let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
+
+        if !identity_path.exists() {
+            return Ok(None);
+        }
+
+        let json = fs::read_to_string(identity_path)?;
+        let store: IdentityKeysStore = serde_json::from_str(&json)?;
+        Ok(Some(store))
     }
 }
 
