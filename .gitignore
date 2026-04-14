@@ -39,3 +39,4 @@ desktopVELA/dist/
 
 # pnpm lock files (use bun.lock instead)
 **/pnpm-lock.yaml
+.claude/
