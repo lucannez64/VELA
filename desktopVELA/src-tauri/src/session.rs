@@ -15,6 +15,8 @@ pub struct Session {
     pub expires_at: Option<DateTime<Utc>>,
     pub session_time_remaining_secs: u64,
     pub session_token: Option<String>,
+    /// Server-issued Bearer token, kept separate so `unlock()` cannot overwrite it.
+    pub server_token: Option<String>,
 }
 
 impl Default for Session {
@@ -33,6 +35,7 @@ impl Session {
             expires_at: None,
             session_time_remaining_secs: 0,
             session_token: None,
+            server_token: None,
         }
     }
 
@@ -44,6 +47,7 @@ impl Session {
         self.expires_at = None;
         self.session_time_remaining_secs = 0;
         self.session_token = None;
+        self.server_token = None;
     }
 
     pub fn unlock(&mut self, device_id: String, user_id: String, duration_secs: u64) {
@@ -102,7 +106,11 @@ impl Session {
     }
 
     pub fn set_server_token(&mut self, token: String) {
-        self.session_token = Some(token);
+        self.server_token = Some(token);
+    }
+
+    pub fn get_server_token(&self) -> Option<&str> {
+        self.server_token.as_deref()
     }
 
     pub fn get_device_id(&self) -> Option<&str> {
@@ -142,6 +150,7 @@ impl Session {
                 "v2.local.{}",
                 BASE64URL.encode(token_string.as_bytes())
             )),
+            server_token: None,
         }
     }
 }

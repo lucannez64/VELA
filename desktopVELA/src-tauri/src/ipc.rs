@@ -89,11 +89,17 @@ pub mod server {
                             Ok((stream, client_addr)) => {
                                 info!("IPC server: client connected from {}", client_addr);
                                 let app_handle = _app_handle.clone();
+                                {
+                                    let state = app_handle.state::<std::sync::Arc<crate::AppState>>();
+                                    state.extension_connected.store(true, std::sync::atomic::Ordering::Relaxed);
+                                }
                                 tokio::spawn(async move {
-                                    if let Err(e) = handle_connection(stream, app_handle).await {
+                                    if let Err(e) = handle_connection(stream, app_handle.clone()).await {
                                         error!("Connection error: {:?}", e);
                                     }
                                     info!("IPC server: client disconnected");
+                                    let state = app_handle.state::<std::sync::Arc<crate::AppState>>();
+                                    state.extension_connected.store(false, std::sync::atomic::Ordering::Relaxed);
                                 });
                             }
                             Err(e) => {

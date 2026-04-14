@@ -3,6 +3,7 @@ use tauri::{command, State};
 use std::sync::Arc;
 
 use crate::AppState;
+use crate::commands::audit::{AuditAction, record_audit_event};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -36,7 +37,7 @@ impl Default for Settings {
             background_sync_minutes: 5,
             theme: Theme::System,
             compact_list: false,
-            user_id: "vela://abc123...".to_string(),
+            user_id: String::new(),
             extension_connected: false,
             extension_version: None,
         }
@@ -45,12 +46,24 @@ impl Default for Settings {
 
 #[command]
 pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<Settings, String> {
-    state.store.load_settings().map_err(|e| e.to_string())
+    let mut settings = state.store.load_settings().map_err(|e| e.to_string())?;
+    // Prefer the live session user_id (set after server auth), fall back to store.
+    let user_id = {
+        let session = state.session.read();
+        session.get_user_id().map(|s| s.to_string())
+    };
+    settings.user_id = user_id
+        .or_else(|| state.store.load_user_id().ok())
+        .unwrap_or_default();
+    settings.extension_connected = state.is_extension_connected();
+    Ok(settings)
 }
 
 #[command]
 pub async fn update_settings(state: State<'_, Arc<AppState>>, settings: Settings) -> Result<(), String> {
-    state.store.save_settings(&settings).map_err(|e| e.to_string())
+    state.store.save_settings(&settings).map_err(|e| e.to_string())?;
+    record_audit_event(&state, AuditAction::SettingsChanged);
+    Ok(())
 }
 
 #[command]

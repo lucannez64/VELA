@@ -195,6 +195,10 @@ impl Store {
     }
 
     pub fn save_device_id(&self, device_id: &str) -> anyhow::Result<()> {
+        self.save_device_id_with_user_id(device_id, &format!("user-{}", &device_id[..8]))
+    }
+
+    pub fn save_device_id_with_user_id(&self, device_id: &str, user_id: &str) -> anyhow::Result<()> {
         let device_path = self.store_path.join(DEVICE_ID_FILE);
 
         if let Some(parent) = device_path.parent() {
@@ -205,7 +209,7 @@ impl Store {
 
         let store = DeviceIdStore {
             device_id: device_id.to_string(),
-            user_id: format!("user-{}", &device_id[..8]),
+            user_id: user_id.to_string(),
         };
         let json = serde_json::to_string_pretty(&store)?;
         fs::write(device_path, json)?;

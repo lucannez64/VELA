@@ -131,13 +131,19 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
 
-    let token = state.get_session_token()
+    let mut token = state.get_session_token()
         .ok_or_else(|| "No session token available".to_string())?;
 
     let local_meta = load_local_sync_meta(&state);
 
     let manifest = match client.get_sync_manifest(&token).await {
-        Ok(m) => m,
+        Ok((m, new_tok)) => {
+            if let Some(t) = new_tok {
+                state.session.write().set_server_token(t.clone());
+                token = t;
+            }
+            m
+        }
         Err(e) => {
             tracing::warn!("Sync: server unavailable, using local vault: {}", e);
             return Ok(SyncStatus {
@@ -174,7 +180,13 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
         );
 
         let (ciphertext, server_version, server_lamport) = match client.get_chunk(&token, &entry.chunk_id).await {
-            Ok(data) => data,
+            Ok((data, version, lamport, new_tok)) => {
+                if let Some(t) = new_tok {
+                    state.session.write().set_server_token(t.clone());
+                    token = t;
+                }
+                (data, version, lamport)
+            }
             Err(e) => {
                 tracing::error!("Sync: failed to download chunk {}: {}", entry.chunk_id, e);
                 continue;
@@ -255,7 +267,10 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
     );
 
     match client.put_chunk(&token, VAULT_MAIN_CHUNK_ID, current_meta.version, ciphertext, new_lamport).await {
-        Ok(new_version) => {
+        Ok((new_version, new_tok)) => {
+            if let Some(t) = new_tok {
+                state.session.write().set_server_token(t);
+            }
             let updated_meta = LocalSyncMeta {
                 version: new_version,
                 lamport_clock: new_lamport,
@@ -356,10 +371,13 @@ pub async fn resolve_conflict(
         let token = state.get_session_token()
             .ok_or("No session token available")?;
 
-        let (ciphertext, _version, _lamport) = client
+        let (ciphertext, _version, _lamport, new_tok) = client
             .get_chunk(&token, VAULT_MAIN_CHUNK_ID)
             .await
             .map_err(|e| format!("Failed to download server vault: {}", e))?;
+        if let Some(t) = new_tok {
+            state.session.write().set_server_token(t);
+        }
 
         let plaintext = decrypt(&_chunk_key_bytes, &ciphertext)
             .map_err(|e| format!("Failed to decrypt server vault: {}", e))?;

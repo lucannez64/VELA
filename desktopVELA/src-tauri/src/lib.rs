@@ -11,6 +11,7 @@ pub mod token;
 
 use parking_lot::RwLock;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -27,6 +28,13 @@ pub struct AppState {
     pub rate_limiter: RwLock<HashMap<String, RateLimitState>>,
     pub token_store: RwLock<token::TokenStore>,
     pub secret_key: token::SecretKey,
+    pub extension_connected: Arc<AtomicBool>,
+}
+
+impl AppState {
+    pub fn is_extension_connected(&self) -> bool {
+        self.extension_connected.load(Ordering::Relaxed)
+    }
 }
 
 struct RateLimitState {
@@ -80,7 +88,7 @@ impl AppState {
     
     pub fn get_session_token(&self) -> Option<String> {
         let session = self.session.read();
-        session.get_token().map(|s| s.to_string())
+        session.get_server_token().map(|s| s.to_string())
     }
     
     pub fn validate_session_token(&self, token: &str) -> Result<token::PasetoToken, String> {
@@ -107,6 +115,7 @@ impl Default for AppState {
             rate_limiter: RwLock::new(HashMap::new()),
             token_store: RwLock::new(token::TokenStore::new()),
             secret_key: token::SecretKey::generate(),
+            extension_connected: Arc::new(AtomicBool::new(false)),
         }
     }
 }

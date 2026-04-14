@@ -31,13 +31,14 @@ fn get_device_name() -> String {
     }
 }
 
+/// Returns `(token, user_id)` on success.
 async fn authenticate_with_server(
     state: &Arc<AppState>,
     device_id: &str,
     _device_name: &str,
     cyclo_pk: &[u8],
     cyclo_sk: &[u8],
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
 
@@ -60,14 +61,14 @@ async fn authenticate_with_server(
     .await
     .map_err(|e| format!("Failed to verify proof: {}", e))?;
 
-    Ok(verify_resp.token)
+    Ok((verify_resp.token, verify_resp.user_id))
 }
 
-/// Registers this device with the server and returns the server-assigned device_id.
+/// Registers this device with the server and returns `(user_id, device_id)`.
 async fn register_with_server(
     state: &Arc<AppState>,
     _device_name: &str,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
 
@@ -86,7 +87,7 @@ async fn register_with_server(
     state.store.save_identity_keys(&identity.hybrid_ek, &identity.hybrid_vk, &identity.cyclo_pk, &identity.cyclo_sk, &identity.hybrid_sk)
         .map_err(|e| format!("Failed to save identity keys: {}", e))?;
 
-    Ok(register_resp.device_id)
+    Ok((register_resp.user_id, register_resp.device_id))
 }
 
 #[command]
@@ -151,7 +152,7 @@ pub async fn unlock_session(
     let device_id = state.store.load_device_id()
         .ok()
         .unwrap_or_else(|| local_device_id.clone());
-    let user_id = format!("user-{}", &device_id[..8]);
+    let mut user_id = state.store.load_user_id().unwrap_or_else(|_| format!("user-{}", &device_id[..8]));
 
     if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
         match authenticate_with_server(
@@ -161,7 +162,9 @@ pub async fn unlock_session(
             &identity_keys.cyclo_pk,
             &identity_keys.cyclo_sk,
         ).await {
-            Ok(token) => {
+            Ok((token, server_user_id)) => {
+                user_id = server_user_id.clone();
+                state.store.save_device_id_with_user_id(&device_id, &server_user_id).ok();
                 {
                     let mut session = state.session.write();
                     session.set_server_token(token);
@@ -235,7 +238,7 @@ pub async fn unlock_session_with_password(
     let device_id = state.store.load_device_id()
         .ok()
         .unwrap_or_else(|| local_device_id.clone());
-    let user_id = format!("user-{}", &device_id[..8]);
+    let mut user_id = state.store.load_user_id().unwrap_or_else(|_| format!("user-{}", &device_id[..8]));
 
     tracing::info!("Vault loaded, unlocking session");
     {
@@ -259,9 +262,15 @@ pub async fn unlock_session_with_password(
             &identity_keys.cyclo_pk,
             &identity_keys.cyclo_sk,
         ).await {
-            Ok(token) => {
-                let mut session = state.session.write();
-                session.set_server_token(token);
+            Ok((token, server_user_id)) => {
+                user_id = server_user_id.clone();
+                state.store.save_device_id_with_user_id(&device_id, &server_user_id).ok();
+                {
+                    let mut session = state.session.write();
+                    session.set_server_token(token);
+                    // Update user_id in the already-active session without re-running unlock().
+                    session.user_id = Some(server_user_id);
+                }
                 tracing::info!("Server authentication successful (password unlock)");
             }
             Err(e) => {
@@ -303,19 +312,19 @@ pub async fn create_vault(
     
     let (local_device_id, device_name) = get_device_info();
 
-    let device_id = match register_with_server(&state, &device_name).await {
-        Ok(server_device_id) => {
-            tracing::info!("Server registration successful, device_id={}", server_device_id);
-            server_device_id
+    let (device_id, mut user_id) = match register_with_server(&state, &device_name).await {
+        Ok((server_user_id, server_device_id)) => {
+            tracing::info!("Server registration successful, device_id={}, user_id={}", server_device_id, server_user_id);
+            (server_device_id, server_user_id)
         }
         Err(e) => {
             tracing::warn!("Server registration failed (non-fatal): {}", e);
-            local_device_id
+            let fallback_uid = format!("user-{}", &local_device_id[..8]);
+            (local_device_id, fallback_uid)
         }
     };
-    let user_id = format!("user-{}", &device_id[..8]);
 
-    state.store.save_device_id(&device_id).ok();
+    state.store.save_device_id_with_user_id(&device_id, &user_id).ok();
 
     if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
         match authenticate_with_server(
@@ -325,7 +334,9 @@ pub async fn create_vault(
             &identity_keys.cyclo_pk,
             &identity_keys.cyclo_sk,
         ).await {
-            Ok(token) => {
+            Ok((token, server_user_id)) => {
+                user_id = server_user_id.clone();
+                state.store.save_device_id_with_user_id(&device_id, &server_user_id).ok();
                 let mut session = state.session.write();
                 session.set_server_token(token);
                 tracing::info!("Server authentication successful (vault creation)");
@@ -394,19 +405,19 @@ pub async fn create_vault_with_password(
     
     let (local_device_id, device_name) = get_device_info();
 
-    let device_id = match register_with_server(&state, &device_name).await {
-        Ok(server_device_id) => {
-            tracing::info!("Server registration successful, device_id={}", server_device_id);
-            server_device_id
+    let (device_id, mut user_id) = match register_with_server(&state, &device_name).await {
+        Ok((server_user_id, server_device_id)) => {
+            tracing::info!("Server registration successful, device_id={}, user_id={}", server_device_id, server_user_id);
+            (server_device_id, server_user_id)
         }
         Err(e) => {
             tracing::warn!("Server registration failed (non-fatal): {}", e);
-            local_device_id
+            let fallback_uid = format!("user-{}", &local_device_id[..8]);
+            (local_device_id, fallback_uid)
         }
     };
-    let user_id = format!("user-{}", &device_id[..8]);
 
-    state.store.save_device_id(&device_id).ok();
+    state.store.save_device_id_with_user_id(&device_id, &user_id).ok();
 
     if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
         match authenticate_with_server(
@@ -416,7 +427,9 @@ pub async fn create_vault_with_password(
             &identity_keys.cyclo_pk,
             &identity_keys.cyclo_sk,
         ).await {
-            Ok(token) => {
+            Ok((token, server_user_id)) => {
+                user_id = server_user_id.clone();
+                state.store.save_device_id_with_user_id(&device_id, &server_user_id).ok();
                 let mut session = state.session.write();
                 session.set_server_token(token);
                 tracing::info!("Server authentication successful (password vault creation)");
@@ -426,7 +439,7 @@ pub async fn create_vault_with_password(
             }
         }
     }
-    
+
     {
         let mut crypto_state = state.crypto.write();
         *crypto_state = Some(crypto);
