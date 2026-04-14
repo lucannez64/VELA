@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useApp, VaultItem } from '../context/AppContext';
+import { useApp, VaultItem, toBackendItem } from '../context/AppContext';
 
 interface Props {
   item: VaultItem;
@@ -8,13 +8,18 @@ interface Props {
 }
 
 export default function ItemDetail({ item, onEdit }: Props) {
-  const { setSelectedItem, showToast } = useApp();
+  const { setSelectedItem, showToast, setCurrentView } = useApp();
   const [showPassword, setShowPassword] = useState(false);
   const [showCardNumber, setShowCardNumber] = useState(false);
   const [showCVV, setShowCVV] = useState(false);
   const [showCardPin, setShowCardPin] = useState(false);
   const [totpTimeLeft, setTotpTimeLeft] = useState(30);
   const [totpCode, setTotpCode] = useState('--- ---');
+  const [favorite, setFavorite] = useState(item.favorite);
+
+  useEffect(() => {
+    setFavorite(item.favorite);
+  }, [item.favorite]);
 
   useEffect(() => {
     setShowPassword(false);
@@ -70,6 +75,21 @@ export default function ItemDetail({ item, onEdit }: Props) {
     }
   };
 
+  const handleToggleFavorite = async () => {
+    const newValue = !favorite;
+    setFavorite(newValue);
+    try {
+      await invoke('update_item', { item: { ...toBackendItem({ ...item, favorite: newValue }), favorite: newValue } });
+    } catch (e) {
+      setFavorite(!newValue);
+      showToast('Failed to update item', 'error');
+    }
+  };
+
+  const handleShare = () => {
+    setCurrentView('sharing');
+  };
+
   const getIcon = () => {
     switch (item.item_type) {
       case 'login': return 'key';
@@ -100,15 +120,18 @@ export default function ItemDetail({ item, onEdit }: Props) {
             </div>
           </div>
           <div className="flex gap-3">
-            <button className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
-              <span className="material-symbols-outlined text-xl">star</span>
+            <button onClick={handleToggleFavorite} className={`w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors ${favorite ? 'text-amber-400' : ''}`}>
+              <span className="material-symbols-outlined text-xl text-amber-400" style={favorite ? { fontVariationSettings: "'FILL' 1" } : undefined}>star</span>
             </button>
             <button 
               onClick={onEdit}
               className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
               <span className="material-symbols-outlined text-xl">edit</span>
             </button>
-            <button className="px-5 h-10 rounded-full flex items-center gap-2 bg-primary text-on-primary font-bold text-sm glow-button transition-all">
+            <button 
+              onClick={handleShare}
+              className="px-5 h-10 rounded-full flex items-center gap-2 bg-primary text-on-primary font-bold text-sm glow-button transition-all"
+            >
               <span className="material-symbols-outlined text-sm">share</span>
               Share Access
             </button>

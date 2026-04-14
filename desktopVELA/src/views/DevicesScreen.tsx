@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useApp } from '../context/AppContext';
 
 interface Device {
@@ -12,11 +13,18 @@ interface Device {
   revoked: boolean;
 }
 
-export default function DevicesScreen() {
+interface Props {
+  onItemsChanged?: () => void;
+}
+
+export default function DevicesScreen({ onItemsChanged }: Props) {
   const { showToast } = useApp();
   const [devices, setDevices] = useState<Device[]>([]);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [showRevokeModal, setShowRevokeModal] = useState<Device | null>(null);
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   useEffect(() => {
     loadDevices();
@@ -45,10 +53,38 @@ export default function DevicesScreen() {
       showToast('Device revoked', 'success');
       setShowRevokeModal(null);
       loadDevices();
+      onItemsChanged?.();
     } catch (e) {
       showToast('Failed to revoke device', 'error');
     } finally {
       setRevokingId(null);
+    }
+  };
+
+  const handleEnrollDevice = async () => {
+    setEnrolling(true);
+    setEnrollmentCode(null);
+    setCodeCopied(false);
+    try {
+      const code = await invoke<string>('generate_enrollment_code');
+      setEnrollmentCode(code);
+      loadDevices();
+      onItemsChanged?.();
+    } catch (e: any) {
+      showToast(typeof e === 'string' ? e : 'Enrollment failed', 'error');
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
+  const handleCopyCode = async () => {
+    if (!enrollmentCode) return;
+    try {
+      await writeText(enrollmentCode);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 3000);
+    } catch {
+      showToast('Failed to copy to clipboard', 'error');
     }
   };
 
@@ -83,9 +119,13 @@ export default function DevicesScreen() {
           <h1 className="font-headline text-3xl font-bold text-on-surface mb-2">My Devices</h1>
           <p className="text-on-surface-variant">Manage devices that have access to your vault</p>
         </div>
-        <button className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors">
+        <button
+          onClick={handleEnrollDevice}
+          disabled={enrolling}
+          className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
           <span className="material-symbols-outlined">add</span>
-          Enroll new device
+          {enrolling ? 'Generating code…' : 'Enroll new device'}
         </button>
       </div>
 
@@ -130,6 +170,44 @@ export default function DevicesScreen() {
           </div>
         ))}
       </div>
+
+      {enrollmentCode && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setEnrollmentCode(null)}>
+          <div
+            className="bg-surface-container rounded-2xl p-8 max-w-lg w-full mx-4 shadow-2xl border border-outline-variant/20"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <span className="material-symbols-outlined text-2xl text-primary">key</span>
+              <h2 className="font-headline text-2xl font-bold text-on-surface">Enrollment Code</h2>
+            </div>
+            <p className="text-on-surface-variant text-sm mb-4">
+              Copy this code and paste it on the new device under <strong>Join existing account</strong>.
+              The code is valid for one use and contains sensitive key material — do not share it over unencrypted channels.
+            </p>
+            <div className="bg-surface-bright rounded-xl p-3 mb-4 font-mono text-xs text-on-surface break-all select-all max-h-36 overflow-y-auto">
+              {enrollmentCode}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handleCopyCode}
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">
+                  {codeCopied ? 'check' : 'content_copy'}
+                </span>
+                {codeCopied ? 'Copied!' : 'Copy code'}
+              </button>
+              <button
+                onClick={() => setEnrollmentCode(null)}
+                className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showRevokeModal && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setShowRevokeModal(null)}>
