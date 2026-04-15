@@ -430,7 +430,13 @@ pub async fn resolve_conflict(
 
 #[tauri::command]
 pub async fn set_server_url(state: State<'_, Arc<AppState>>, url: String) -> Result<(), String> {
-    let mut server_url = state.server_url.write();
-    *server_url = url;
+    {
+        let mut server_url = state.server_url.write();
+        *server_url = url.clone();
+    }
+    if let Ok(mut settings) = state.store.load_settings() {
+        settings.server_url = url;
+        let _ = state.store.save_settings(&settings);
+    }
     Ok(())
 }

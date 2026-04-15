@@ -18,6 +18,8 @@ use std::time::Instant;
 use crate::store::Store;
 use crate::session::RateLimitEntry;
 
+pub const DEFAULT_SERVER_URL: &str = "http://192.168.1.34:8443";
+
 pub struct AppState {
     pub session: RwLock<session::Session>,
     pub vault: RwLock<vault::VaultStore>,
@@ -105,13 +107,18 @@ pub enum RateLimitResult {
 
 impl Default for AppState {
     fn default() -> Self {
+        let store = Store::new().expect("Failed to create store");
+        let server_url = store.load_settings()
+            .ok()
+            .and_then(|s| if s.server_url.is_empty() { None } else { Some(s.server_url) })
+            .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string());
         Self {
             session: RwLock::new(session::Session::new()),
             vault: RwLock::new(vault::VaultStore::new()),
             crypto: RwLock::new(None),
-            store: Arc::new(Store::new().expect("Failed to create store")),
-            api: Arc::new(api::ApiClient::with_url("http://localhost:8443".to_string())),
-            server_url: RwLock::new("http://localhost:8443".to_string()),
+            store: Arc::new(store),
+            api: Arc::new(api::ApiClient::with_url(server_url.clone())),
+            server_url: RwLock::new(server_url),
             rate_limiter: RwLock::new(HashMap::new()),
             token_store: RwLock::new(token::TokenStore::new()),
             secret_key: token::SecretKey::generate(),

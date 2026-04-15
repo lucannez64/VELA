@@ -8,6 +8,8 @@ export default function SettingsScreen() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [editingServerUrl, setEditingServerUrl] = useState(false);
+  const [serverUrlDraft, setServerUrlDraft] = useState('');
 
   const handleSyncNow = async () => {
     if (syncing) return;
@@ -148,6 +150,60 @@ export default function SettingsScreen() {
         <section>
           <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Sync</h2>
           <div className="bg-surface-container rounded-xl p-6 space-y-6">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <label className="font-body font-medium text-on-surface">Server URL</label>
+                  <p className="text-sm text-on-surface-variant">VELA server address for sync and auth</p>
+                </div>
+                {!editingServerUrl && (
+                  <button
+                    onClick={() => { setEditingServerUrl(true); setServerUrlDraft(settings.server_url); }}
+                    className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+              {editingServerUrl ? (
+                <div className="flex gap-2 mt-1">
+                  <input
+                    type="text"
+                    value={serverUrlDraft}
+                    onChange={e => setServerUrlDraft(e.target.value)}
+                    placeholder="http://192.168.1.34:8443"
+                    className="flex-1 px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface font-mono text-sm placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        handleUpdateSettings({ ...settings, server_url: serverUrlDraft.trim() });
+                        setEditingServerUrl(false);
+                      } else if (e.key === 'Escape') {
+                        setEditingServerUrl(false);
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => {
+                      handleUpdateSettings({ ...settings, server_url: serverUrlDraft.trim() });
+                      setEditingServerUrl(false);
+                    }}
+                    className="px-4 py-2 bg-primary text-white rounded-lg hover:opacity-90 transition-opacity"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingServerUrl(false)}
+                    className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <p className="font-mono text-sm text-on-surface-variant">{settings.server_url || 'Not configured'}</p>
+              )}
+            </div>
+
             <div className="flex items-center justify-between">
               <div>
                 <label className="font-body font-medium text-on-surface">Sync on startup</label>

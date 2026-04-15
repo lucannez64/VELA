@@ -51,16 +51,9 @@ pub fn build(b: *std.Build) void {
     });
     mod.addImport("msvc_compat", msvc_compat);
 
-    mod.addLibraryPath(b.path("ntt_shim/target/release"));
-    mod.linkSystemLibrary("ntt_shim", .{});
     mod.addIncludePath(b.path("src"));
     mod.link_libc = true;
     mod.link_libcpp = true;
-    if (target.result.os.tag == .windows) {
-        mod.linkSystemLibrary("ws2_32", .{});
-        mod.linkSystemLibrary("userenv", .{});
-        mod.linkSystemLibrary("bcrypt", .{});
-    }
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business
@@ -104,6 +97,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.step.dependOn(&cargo.step);
+    exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    exe.root_module.linkSystemLibrary("ntt_shim", .{});
+    if (target.result.os.tag == .windows) {
+        exe.root_module.linkSystemLibrary("ws2_32", .{});
+        exe.root_module.linkSystemLibrary("userenv", .{});
+        exe.root_module.linkSystemLibrary("bcrypt", .{});
+    }
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
@@ -224,6 +224,16 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    vote_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    vote_exe.root_module.linkSystemLibrary("ntt_shim", .{});
+    vote_exe.root_module.addIncludePath(b.path("src"));
+    vote_exe.root_module.link_libc = true;
+    vote_exe.root_module.link_libcpp = true;
+    if (target.result.os.tag == .windows) {
+        vote_exe.root_module.linkSystemLibrary("ws2_32", .{});
+        vote_exe.root_module.linkSystemLibrary("userenv", .{});
+        vote_exe.root_module.linkSystemLibrary("bcrypt", .{});
+    }
     vote_exe.step.dependOn(&cargo.step);
     b.installArtifact(vote_exe);
 
@@ -244,6 +254,16 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    ticket_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    ticket_exe.root_module.linkSystemLibrary("ntt_shim", .{});
+    ticket_exe.root_module.addIncludePath(b.path("src"));
+    ticket_exe.root_module.link_libc = true;
+    ticket_exe.root_module.link_libcpp = true;
+    if (target.result.os.tag == .windows) {
+        ticket_exe.root_module.linkSystemLibrary("ws2_32", .{});
+        ticket_exe.root_module.linkSystemLibrary("userenv", .{});
+        ticket_exe.root_module.linkSystemLibrary("bcrypt", .{});
+    }
     ticket_exe.step.dependOn(&cargo.step);
     b.installArtifact(ticket_exe);
 
@@ -264,6 +284,16 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    griffin_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    griffin_exe.root_module.linkSystemLibrary("ntt_shim", .{});
+    griffin_exe.root_module.addIncludePath(b.path("src"));
+    griffin_exe.root_module.link_libc = true;
+    griffin_exe.root_module.link_libcpp = true;
+    if (target.result.os.tag == .windows) {
+        griffin_exe.root_module.linkSystemLibrary("ws2_32", .{});
+        griffin_exe.root_module.linkSystemLibrary("userenv", .{});
+        griffin_exe.root_module.linkSystemLibrary("bcrypt", .{});
+    }
     griffin_exe.step.dependOn(&cargo.step);
     b.installArtifact(griffin_exe);
 
@@ -284,6 +314,16 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    governance_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    governance_exe.root_module.linkSystemLibrary("ntt_shim", .{});
+    governance_exe.root_module.addIncludePath(b.path("src"));
+    governance_exe.root_module.link_libc = true;
+    governance_exe.root_module.link_libcpp = true;
+    if (target.result.os.tag == .windows) {
+        governance_exe.root_module.linkSystemLibrary("ws2_32", .{});
+        governance_exe.root_module.linkSystemLibrary("userenv", .{});
+        governance_exe.root_module.linkSystemLibrary("bcrypt", .{});
+    }
     governance_exe.step.dependOn(&cargo.step);
     b.installArtifact(governance_exe);
 

@@ -184,6 +184,7 @@ export interface Settings {
   theme: 'system' | 'dark' | 'light';
   compact_list: boolean;
   user_id: string;
+  server_url: string;
   extension_connected: boolean;
   extension_version?: string;
 }

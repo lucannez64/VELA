@@ -15,6 +15,7 @@ pub struct Settings {
     pub theme: Theme,
     pub compact_list: bool,
     pub user_id: String,
+    pub server_url: String,
     pub extension_connected: bool,
     pub extension_version: Option<String>,
 }
@@ -38,6 +39,7 @@ impl Default for Settings {
             theme: Theme::System,
             compact_list: false,
             user_id: String::new(),
+            server_url: String::new(),
             extension_connected: false,
             extension_version: None,
         }
@@ -55,12 +57,16 @@ pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<Settings, S
     settings.user_id = user_id
         .or_else(|| state.store.load_user_id().ok())
         .unwrap_or_default();
+    settings.server_url = state.server_url.read().clone();
     settings.extension_connected = state.is_extension_connected();
     Ok(settings)
 }
 
 #[command]
 pub async fn update_settings(state: State<'_, Arc<AppState>>, settings: Settings) -> Result<(), String> {
+    if !settings.server_url.is_empty() {
+        *state.server_url.write() = settings.server_url.clone();
+    }
     state.store.save_settings(&settings).map_err(|e| e.to_string())?;
     record_audit_event(&state, AuditAction::SettingsChanged);
     Ok(())

@@ -7,9 +7,7 @@ const std = @import("std");
 const zig_ring_arithmetic = @import("zig_ring_arithmetic");
 
 comptime {
-    if (@import("builtin").os.tag == .windows) {
-        _ = @import("msvc_compat");
-    }
+    _ = @import("msvc_compat");
 }
 
 // Protocol instantiation for VELA parameters (N=128, Q=1125899906839937)
@@ -81,7 +79,7 @@ export fn cyclo_proof_free(ptr: ?*anyopaque) void {
     if (ptr) |p| {
         const allocator = std.heap.page_allocator;
         const slice: [*]u8 = @ptrCast(p);
-        allocator.free(slice[0..512 * 1024]);
+        allocator.free(slice[0 .. 512 * 1024]);
     }
 }
 
