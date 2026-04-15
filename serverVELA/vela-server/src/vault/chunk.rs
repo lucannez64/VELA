@@ -87,8 +87,8 @@ pub async fn put_chunk(
 
     if if_match == 0 {
         let existing = state.db.query(
-            "SELECT 1 FROM vault_chunks WHERE chunk_id = $1",
-            stoolap::params![id.to_string()],
+            "SELECT 1 FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+            stoolap::params![id.to_string(), session.user_id.to_string()],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
         if existing.into_iter().next().is_some() {
@@ -141,8 +141,8 @@ pub async fn put_chunk(
     }
 
     let ver_rows = state.db.query(
-        "SELECT version FROM vault_chunks WHERE chunk_id = $1",
-        stoolap::params![id.to_string()],
+        "SELECT version FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+        stoolap::params![id.to_string(), session.user_id.to_string()],
     ).map_err(|e| AppError::Internal(e.to_string()))?;
 
     let ver_row = ver_rows.into_iter().next()
