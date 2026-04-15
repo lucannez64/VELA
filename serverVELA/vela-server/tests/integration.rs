@@ -61,9 +61,7 @@ async fn register_creates_account_and_device() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(resp.into_body(), 1024)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(v["user_id"].is_string());
     assert!(v["device_id"].is_string());
@@ -103,9 +101,7 @@ async fn challenge_returns_nonce() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(resp.into_body(), 1024)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(v["challenge"].is_string());
 }
@@ -164,11 +160,7 @@ async fn delete_chunk_without_token_returns_401() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
-fn issue_token(
-    state: &vela_server::state::AppState,
-    user_id: Uuid,
-    device_id: Uuid,
-) -> String {
+fn issue_token(state: &vela_server::state::AppState, user_id: Uuid, device_id: Uuid) -> String {
     let ts = vela_server::auth::token::TokenService::new(
         state.paseto_sk.clone(),
         state.paseto_pk.clone(),
@@ -190,10 +182,13 @@ async fn two_users_can_store_same_chunk_id() {
     let now = chrono::Utc::now();
 
     for user_id in [user_a, user_b] {
-        state.db.execute(
-            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
-            stoolap::params![user_id.to_string(), now.to_rfc3339()],
-        ).unwrap();
+        state
+            .db
+            .execute(
+                "INSERT INTO users (id, created_at) VALUES ($1, $2)",
+                stoolap::params![user_id.to_string(), now.to_rfc3339()],
+            )
+            .unwrap();
     }
 
     for (device_id, user_id) in [(device_a, user_a), (device_b, user_b)] {

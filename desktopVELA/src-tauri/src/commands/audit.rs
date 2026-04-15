@@ -1,11 +1,12 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
 use crate::AppState;
 
+pub const AUDIT_CHUNK_ID: &str = "audit-log";
 const AUDIT_FILE: &str = "audit.enc";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,39 +41,45 @@ pub enum AuditAction {
     VaultCreated,
     VaultUnlocked,
     VaultLocked,
-    PasswordGenerated { length: usize },
-    ItemAdded { item_type: String },
-    ItemUpdated { item_type: String },
-    ItemDeleted { item_type: String },
+    PasswordGenerated {
+        length: usize,
+    },
+    ItemAdded {
+        item_type: String,
+    },
+    ItemUpdated {
+        item_type: String,
+    },
+    ItemDeleted {
+        item_type: String,
+    },
     SettingsChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AuditSubject {
-    Device {
-        device_name: String,
-    },
-    Session {
-        device_name: String,
-    },
+    Device { device_name: String },
+    Session { device_name: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct AuditLog {
+pub struct AuditLog {
     entries: Vec<AuditEntry>,
 }
 
 impl Default for AuditLog {
     fn default() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 }
 
 impl AuditLog {
     fn add_entry(&mut self, entry: AuditEntry) {
         self.entries.push(entry);
-        
+
         if self.entries.len() > 1000 {
             self.entries = self.entries.split_off(self.entries.len() - 1000);
         }
@@ -107,31 +114,43 @@ pub fn record_audit_event(state: &AppState, action: AuditAction) {
     let _ = save_audit_log(state, &log);
 }
 
-fn load_audit_log(state: &AppState) -> Option<AuditLog> {
+pub fn load_audit_log(state: &AppState) -> Option<AuditLog> {
     let crypto = state.crypto.read();
     let crypto = crypto.as_ref()?;
-    
+
     let audit_path = state.store.store_path().join(AUDIT_FILE);
     if !audit_path.exists() {
         return Some(AuditLog::default());
     }
-    
+
     let ciphertext = std::fs::read(&audit_path).ok()?;
     let plaintext = crypto.decrypt_vault(&ciphertext).ok()?;
     serde_json::from_slice(&plaintext).ok()
 }
 
-fn save_audit_log(state: &AppState, log: &AuditLog) -> Result<(), String> {
+pub fn save_audit_log(state: &AppState, log: &AuditLog) -> Result<(), String> {
     let crypto = state.crypto.read();
     let crypto = crypto.as_ref().ok_or("Crypto not initialized")?;
-    
+
     let plaintext = serde_json::to_vec(log).map_err(|e| e.to_string())?;
-    let ciphertext = crypto.encrypt_vault(&plaintext).map_err(|e| e.to_string())?;
-    
+    let ciphertext = crypto
+        .encrypt_vault(&plaintext)
+        .map_err(|e| e.to_string())?;
+
     let audit_path = state.store.store_path().join(AUDIT_FILE);
     std::fs::write(audit_path, ciphertext).map_err(|e| e.to_string())?;
-    
+
     Ok(())
+}
+
+pub fn serialize_audit_plaintext(state: &AppState) -> Option<Vec<u8>> {
+    let log = load_audit_log(state).unwrap_or_default();
+    serde_json::to_vec(&log).ok()
+}
+
+pub fn replace_audit_from_plaintext(state: &AppState, plaintext: &[u8]) -> Result<(), String> {
+    let log: AuditLog = serde_json::from_slice(plaintext).map_err(|e| e.to_string())?;
+    save_audit_log(state, &log)
 }
 
 #[tauri::command]
@@ -148,7 +167,7 @@ pub async fn log_audit_event(
 ) -> Result<(), String> {
     let mut log = load_audit_log(&state).unwrap_or_default();
     let device_name = get_device_name();
-    
+
     let entry = match action.as_str() {
         "vault_created" => AuditEntry {
             id: Uuid::new_v4().to_string(),
@@ -197,7 +216,10 @@ pub async fn log_audit_event(
             AuditEntry {
                 id: Uuid::new_v4().to_string(),
                 timestamp: Utc::now(),
-                action: AuditAction::DeviceEnrolled { device_id, enrolling_device_id },
+                action: AuditAction::DeviceEnrolled {
+                    device_id,
+                    enrolling_device_id,
+                },
                 subject: AuditSubject::Device { device_name },
             }
         }
@@ -217,7 +239,10 @@ pub async fn log_audit_event(
             AuditEntry {
                 id: Uuid::new_v4().to_string(),
                 timestamp: Utc::now(),
-                action: AuditAction::DeviceRevoked { device_id, revoking_device_id },
+                action: AuditAction::DeviceRevoked {
+                    device_id,
+                    revoking_device_id,
+                },
                 subject: AuditSubject::Device { device_name },
             }
         }
@@ -290,10 +315,10 @@ pub async fn log_audit_event(
         },
         _ => return Err(format!("Unknown audit action: {}", action)),
     };
-    
+
     log.add_entry(entry);
     save_audit_log(&state, &log)?;
-    
+
     Ok(())
 }
 

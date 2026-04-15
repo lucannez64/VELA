@@ -1,5 +1,6 @@
 pub mod initiate;
 pub mod recover;
+pub mod webauthn;
 
 use axum::{
     extract::State,
@@ -20,7 +21,6 @@ const MAX_SHARE_BYTES: usize = 4096;
 #[derive(Deserialize)]
 pub struct PutShareRequest {
     pub share: String,
-    pub auth_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -43,31 +43,16 @@ pub async fn put_share(
         )));
     }
 
-    let auth_hash_str: Option<String> = match &body.auth_hash {
-        Some(h) => {
-            let bytes = B64
-                .decode(h)
-                .map_err(|_| {
-                    AppError::BadRequest("auth_hash is not valid base64".into())
-                })?;
-            if bytes.len() != 32 {
-                return Err(AppError::BadRequest(
-                    "auth_hash must be exactly 32 bytes (BLAKE3)".into(),
-                ));
-            }
-            Some(crate::db::encode_b64(&bytes))
-        }
-        None => None,
-    };
-
-    state.db.execute(
-        "UPDATE users SET recovery_share = $1, recovery_auth_hash = $2 WHERE id = $3",
-        stoolap::params![
-            crate::db::encode_b64(&share_bytes),
-            auth_hash_str,
-            session.user_id.to_string(),
-        ],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    state
+        .db
+        .execute(
+            "UPDATE users SET recovery_share = $1, recovery_auth_hash = NULL WHERE id = $2",
+            stoolap::params![
+                crate::db::encode_b64(&share_bytes),
+                session.user_id.to_string(),
+            ],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(user_id = %session.user_id, bytes = share_bytes.len(), "recovery share stored");
 
@@ -86,12 +71,17 @@ pub async fn get_share(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<GetShareResponse>)> {
-    let rows = state.db.query(
-        "SELECT recovery_share FROM users WHERE id = $1",
-        stoolap::params![session.user_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    let rows = state
+        .db
+        .query(
+            "SELECT recovery_share FROM users WHERE id = $1",
+            stoolap::params![session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows.into_iter().next()
+    let row = rows
+        .into_iter()
+        .next()
         .ok_or_else(|| AppError::NotFound("user not found".into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -110,17 +100,25 @@ pub async fn get_share(
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
 
-    Ok((headers, Json(GetShareResponse { share: B64.encode(&share_bytes) })))
+    Ok((
+        headers,
+        Json(GetShareResponse {
+            share: B64.encode(&share_bytes),
+        }),
+    ))
 }
 
 pub async fn delete_share(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, StatusCode)> {
-    state.db.execute(
-        "UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = $1",
-        stoolap::params![session.user_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    state
+        .db
+        .execute(
+            "UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = $1",
+            stoolap::params![session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(user_id = %session.user_id, "recovery share deleted");
 

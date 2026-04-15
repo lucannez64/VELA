@@ -28,7 +28,7 @@ export default function TrustedContactRecovery({ onComplete, onSkip }: Props) {
     try {
       await invoke('send_recovery_invite', { email });
       setSent(true);
-      showToast('Recovery invitation sent', 'success');
+      showToast('Recovery invitation queued', 'success');
     } catch (e) {
       showToast('Failed to send invitation', 'error');
     } finally {
@@ -47,8 +47,8 @@ export default function TrustedContactRecovery({ onComplete, onSkip }: Props) {
         </h3>
         <p className="text-on-surface-variant">
           {sent 
-            ? `An encrypted recovery share has been sent to ${email}. They will need to accept the invitation to become your recovery contact.`
-            : 'Share a recovery fragment with a trusted VELA contact. If you lose all devices, they can help you recover your vault.'
+            ? `A recovery contact invite has been queued for ${email}.`
+            : 'Queue a trusted contact invite for account recovery.'
           }
         </p>
       </div>
@@ -72,8 +72,7 @@ export default function TrustedContactRecovery({ onComplete, onSkip }: Props) {
             <div className="flex items-start gap-3">
               <span className="material-symbols-outlined text-primary text-lg">info</span>
               <p className="text-sm text-on-surface-variant">
-                Your recovery contact will receive an encrypted fragment of your vault's master key. 
-                They cannot access your vault without also having another recovery method.
+                The invite is stored locally until contact delivery is configured.
               </p>
             </div>
           </div>
@@ -98,7 +97,7 @@ export default function TrustedContactRecovery({ onComplete, onSkip }: Props) {
         <div className="space-y-4">
           <div className="p-6 bg-primary/10 border border-primary/30 rounded-xl text-center">
             <span className="material-symbols-outlined text-primary text-5xl mb-3 block">check_circle</span>
-            <p className="text-on-surface font-medium">Recovery contact added successfully</p>
+            <p className="text-on-surface font-medium">Recovery contact invite queued</p>
           </div>
 
           <button

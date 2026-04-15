@@ -11,9 +11,7 @@ pub async fn test_state() -> vela_server::state::AppState {
 
     let cfg = config::Config::from_env().expect("failed to load config");
 
-    std::sync::Arc::new(
-        AppStateInner::new(database, store, cfg).expect("failed to create state"),
-    )
+    std::sync::Arc::new(AppStateInner::new(database, store, cfg).expect("failed to create state"))
 }
 
 pub async fn test_app() -> Router {

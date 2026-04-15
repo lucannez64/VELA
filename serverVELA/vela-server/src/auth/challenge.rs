@@ -45,5 +45,7 @@ pub async fn get_challenge(
     let store_key = format!("challenge:{nonce_b64}");
     state.store.set_ex(&store_key, &[1u8], CHALLENGE_TTL_SECS)?;
 
-    Ok(Json(ChallengeResponse { challenge: nonce_b64 }))
+    Ok(Json(ChallengeResponse {
+        challenge: nonce_b64,
+    }))
 }

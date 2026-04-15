@@ -22,6 +22,13 @@ import ConflictResolution from './components/ConflictResolution';
 
 type SetupStep = 'welcome' | 'biometric' | 'password' | 'recovery' | 'complete';
 
+interface SyncConflict {
+  item_id: string;
+  local_version: VaultItem;
+  server_version: VaultItem;
+  conflict_detected_at: string;
+}
+
 function AppContent() {
   const [setupComplete, setSetupComplete] = useState(false);
   const [setupStep, setSetupStep] = useState<SetupStep>('welcome');
@@ -30,7 +37,7 @@ function AppContent() {
   const [sessionChecked, setSessionChecked] = useState(false);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [conflicts, setConflicts] = useState<any[]>([]);
+  const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, settings } = useApp();
   const [syncing, setSyncing] = useState(false);
 
@@ -38,13 +45,15 @@ function AppContent() {
     if (syncing) return;
     setSyncing(true);
     try {
-      const result = await invoke<{ last_synced: string | null; conflicts: string[]; error: string | null }>('trigger_sync');
+      const result = await invoke<{ last_synced: string | null; conflicts: SyncConflict[]; error: string | null }>('trigger_sync');
       await loadItems();
       if (result.error) {
         showToast(result.error, 'info');
       } else if (result.conflicts.length > 0) {
+        setConflicts(result.conflicts);
         showToast(`${result.conflicts.length} conflict(s) detected`, 'error');
       } else {
+        setConflicts([]);
         showToast('Vault synced', 'success');
       }
     } catch (e) {
@@ -126,10 +135,15 @@ function AppContent() {
       doSync();
     });
 
+    const unlistenVaultItemsChanged = listen('vault-items-changed', () => {
+      loadItems();
+    });
+
     return () => {
       unlistenSessionLocked.then(fn => fn());
       unlistenQuickSearch.then(fn => fn());
       unlistenSync.then(fn => fn());
+      unlistenVaultItemsChanged.then(fn => fn());
     };
   }, []);
 
@@ -138,6 +152,16 @@ function AppContent() {
       loadItems();
     }
   }, [session?.active]);
+
+  useEffect(() => {
+    if (!selectedItem) return;
+    const freshItem = items.find(item => item.id === selectedItem.id);
+    if (freshItem && freshItem !== selectedItem) {
+      setSelectedItem(freshItem);
+    } else if (!freshItem) {
+      setSelectedItem(null);
+    }
+  }, [items, selectedItem, setSelectedItem]);
 
   useEffect(() => {
     if (!session?.active) return;

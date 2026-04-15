@@ -20,11 +20,9 @@ pub async fn post_logout(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, &'static str)> {
-    state.store.set_ex(
-        &format!("jti:revoked:{}", session.jti),
-        &[1u8],
-        15 * 60,
-    )?;
+    state
+        .store
+        .set_ex(&format!("jti:revoked:{}", session.jti), &[1u8], 15 * 60)?;
 
     tracing::info!(
         user_id = %session.user_id,

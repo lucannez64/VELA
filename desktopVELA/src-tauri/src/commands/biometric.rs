@@ -1,4 +1,8 @@
-use crate::biometric::{authenticate as do_auth, authenticate_with_password as do_auth_password, check_enrollment as do_check, store_password_encrypted, BiometricAuthResult, BiometricEnrollmentStatus};
+use crate::biometric::{
+    authenticate as do_auth, authenticate_with_password as do_auth_password,
+    check_enrollment as do_check, store_password_encrypted, BiometricAuthResult,
+    BiometricEnrollmentStatus,
+};
 use tauri::command;
 
 #[command]
@@ -11,7 +15,10 @@ pub async fn authenticate_password(password: String) -> Result<BiometricAuthResu
     tracing::info!("Attempting password authentication");
     match do_auth_password(&password) {
         Some(rms) => {
-            tracing::info!("Password authentication successful, RMS length: {}", rms.len());
+            tracing::info!(
+                "Password authentication successful, RMS length: {}",
+                rms.len()
+            );
             Ok(BiometricAuthResult {
                 success: true,
                 error_message: None,

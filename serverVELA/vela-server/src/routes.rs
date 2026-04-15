@@ -1,5 +1,5 @@
 use axum::{
-    http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName},
+    http::header::{HeaderName, AUTHORIZATION, CONTENT_TYPE},
     routing::{delete, get, post, put},
     Router,
 };
@@ -14,7 +14,12 @@ static IF_MATCH: HeaderName = HeaderName::from_static("if-match");
 static X_LAMPORT_CLOCK: HeaderName = HeaderName::from_static("x-lamport-clock");
 
 pub fn build(state: AppState) -> Router {
-    let allowed_headers = [AUTHORIZATION, CONTENT_TYPE, IF_MATCH.clone(), X_LAMPORT_CLOCK.clone()];
+    let allowed_headers = [
+        AUTHORIZATION,
+        CONTENT_TYPE,
+        IF_MATCH.clone(),
+        X_LAMPORT_CLOCK.clone(),
+    ];
 
     let cors = if state.config.cors_origins == ["*"] {
         CorsLayer::new()
@@ -41,26 +46,60 @@ pub fn build(state: AppState) -> Router {
 
     Router::new()
         .route("/account/register", post(crate::account::post_register))
-        .route("/account",          delete(crate::account::delete::delete_account))
-        .route("/auth/challenge",   get(crate::auth::challenge::get_challenge))
-        .route("/auth/verify",      post(crate::auth::verify::post_verify))
-        .route("/auth/logout",      post(crate::auth::logout::post_logout))
-        .route("/device/enroll",    post(crate::device::enroll::post_enroll))
-        .route("/device/revoke",    post(crate::device::revoke::post_revoke))
-        .route("/device/capsule",   get(crate::device::capsule::get_capsule))
-        .route("/devices",          get(crate::device::list::list_devices))
-        .route("/vault/sync",            get(crate::vault::sync::get_sync))
-        .route("/vault/chunk/:id",       get(crate::vault::chunk::get_chunk))
-        .route("/vault/chunk/:id",       put(crate::vault::chunk::put_chunk))
-        .route("/vault/chunk/:id",       delete(crate::vault::chunk::delete_chunk))
-        .route("/share/send",            post(crate::share::post_send))
-        .route("/share/inbox",           get(crate::share::get_inbox))
-        .route("/share/inbox/:id",       delete(crate::share::delete_inbox_item))
-        .route("/recovery/share",        put(crate::recovery::put_share))
-        .route("/recovery/share",        get(crate::recovery::get_share))
-        .route("/recovery/share",        delete(crate::recovery::delete_share))
-        .route("/recovery/initiate",     post(crate::recovery::initiate::post_initiate))
-        .route("/recovery/recover",      post(crate::recovery::recover::post_recover))
+        .route("/account", delete(crate::account::delete::delete_account))
+        .route(
+            "/auth/challenge",
+            get(crate::auth::challenge::get_challenge),
+        )
+        .route("/auth/verify", post(crate::auth::verify::post_verify))
+        .route("/auth/logout", post(crate::auth::logout::post_logout))
+        .route("/device/enroll", post(crate::device::enroll::post_enroll))
+        .route("/device/revoke", post(crate::device::revoke::post_revoke))
+        .route("/device/capsule", get(crate::device::capsule::get_capsule))
+        .route("/devices", get(crate::device::list::list_devices))
+        .route("/vault/sync", get(crate::vault::sync::get_sync))
+        .route("/vault/chunk/:id", get(crate::vault::chunk::get_chunk))
+        .route("/vault/chunk/:id", put(crate::vault::chunk::put_chunk))
+        .route(
+            "/vault/chunk/:id",
+            delete(crate::vault::chunk::delete_chunk),
+        )
+        .route(
+            "/vault/oram/:tree_id/path/:leaf",
+            get(crate::vault::oram::get_path),
+        )
+        .route(
+            "/vault/oram/:tree_id/path/:leaf",
+            put(crate::vault::oram::put_path),
+        )
+        .route("/share/send", post(crate::share::post_send))
+        .route("/share/inbox", get(crate::share::get_inbox))
+        .route("/share/inbox/:id", delete(crate::share::delete_inbox_item))
+        .route("/share/linked", get(crate::share::get_linked_items))
+        .route("/share/linked/:id", put(crate::share::put_linked_item))
+        .route(
+            "/share/linked/:id",
+            delete(crate::share::delete_linked_item),
+        )
+        .route("/recovery/share", put(crate::recovery::put_share))
+        .route("/recovery/share", get(crate::recovery::get_share))
+        .route("/recovery/share", delete(crate::recovery::delete_share))
+        .route(
+            "/recovery/webauthn/register/start",
+            post(crate::recovery::webauthn::post_register_start),
+        )
+        .route(
+            "/recovery/webauthn/register/finish",
+            post(crate::recovery::webauthn::post_register_finish),
+        )
+        .route(
+            "/recovery/initiate",
+            post(crate::recovery::initiate::post_initiate),
+        )
+        .route(
+            "/recovery/recover",
+            post(crate::recovery::recover::post_recover),
+        )
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http())
         .layer(cors)

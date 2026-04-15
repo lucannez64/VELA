@@ -6,6 +6,9 @@ pub struct Config {
     pub listen_addr: String,
     pub db_path: String,
     pub sled_path: String,
+    pub webauthn_rp_id: String,
+    pub webauthn_rp_origin: String,
+    pub webauthn_rp_name: String,
     pub paseto_secret_key: Vec<u8>,
     pub paseto_public_key: Vec<u8>,
     pub max_body_bytes: usize,
@@ -18,6 +21,10 @@ impl Config {
         let db_path = std::env::var("DB_PATH").unwrap_or_else(|_| "./data/vela.db".into());
         let sled_path = std::env::var("SLED_PATH").unwrap_or_else(|_| "./data/sled".into());
         let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8443".into());
+        let webauthn_rp_id = std::env::var("WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".into());
+        let webauthn_rp_origin =
+            std::env::var("WEBAUTHN_RP_ORIGIN").unwrap_or_else(|_| "http://localhost:1420".into());
+        let webauthn_rp_name = std::env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "VELA".into());
 
         let (sk_bytes, pk_bytes) = load_or_generate_paseto_key()?;
 
@@ -42,6 +49,9 @@ impl Config {
             listen_addr,
             db_path,
             sled_path,
+            webauthn_rp_id,
+            webauthn_rp_origin,
+            webauthn_rp_name,
             paseto_secret_key: sk_bytes,
             paseto_public_key: pk_bytes,
             max_body_bytes,

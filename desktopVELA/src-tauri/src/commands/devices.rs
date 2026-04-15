@@ -1,14 +1,15 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use rand::RngCore;
-use tauri::State;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tauri::State;
 
-use crate::AppState;
 use crate::api::{ApiClient, EnrollDeviceRequest, NewDevicePayload, VerifyRequest};
-use crate::commands::audit::{AuditAction, record_audit_event};
+use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::crypto;
+use crate::AppState;
+use vela_crypto::aead::decrypt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -19,6 +20,7 @@ pub struct Device {
     pub last_active: Option<DateTime<Utc>>,
     pub this_device: bool,
     pub revoked: bool,
+    pub pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -37,13 +39,74 @@ pub struct RevokeRequest {
 #[derive(Debug, Deserialize)]
 struct ServerDeviceInfo {
     pub id: String,
+    pub name: String,
+    pub device_type: String,
+    pub last_active: Option<String>,
     pub revoked: bool,
+    pub pending: bool,
     pub created_at: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct ServerDeviceListResponse {
     pub devices: Vec<ServerDeviceInfo>,
+}
+
+const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
+const VAULT_CHUNK_PREFIX: &str = "vault-data-";
+
+async fn download_enrolled_vault(
+    client: &ApiClient,
+    token: &mut String,
+    crypto_obj: &crate::crypto::Crypto,
+) -> crate::vault::VaultStore {
+    let Ok((manifest, new_tok)) = client.get_sync_manifest(token).await else {
+        return crate::vault::VaultStore::new();
+    };
+    if let Some(t) = new_tok {
+        *token = t;
+    }
+
+    let mut ids: Vec<String> = manifest
+        .chunks
+        .iter()
+        .filter(|entry| entry.chunk_id.starts_with(VAULT_CHUNK_PREFIX))
+        .map(|entry| entry.chunk_id.clone())
+        .collect();
+    ids.sort();
+
+    if ids.is_empty()
+        && manifest
+            .chunks
+            .iter()
+            .any(|entry| entry.chunk_id == LEGACY_VAULT_MAIN_CHUNK_ID)
+    {
+        ids.push(LEGACY_VAULT_MAIN_CHUNK_ID.to_string());
+    }
+
+    let mut plaintext = Vec::new();
+    for chunk_id in ids {
+        let Ok((ciphertext, _, _, new_tok)) = client.get_chunk(token, &chunk_id).await else {
+            continue;
+        };
+        if let Some(t) = new_tok {
+            *token = t;
+        }
+        let key = *crypto_obj.chunk_key(chunk_id.as_bytes()).as_bytes();
+        let Ok(mut chunk) = decrypt(&key, &ciphertext) else {
+            continue;
+        };
+        plaintext.append(&mut chunk);
+    }
+
+    if plaintext.is_empty() {
+        return crate::vault::VaultStore::new();
+    }
+
+    serde_json::from_slice::<crate::vault::VaultStore>(&plaintext).unwrap_or_else(|e| {
+        tracing::warn!("Failed to parse downloaded vault JSON: {e}");
+        crate::vault::VaultStore::new()
+    })
 }
 
 #[tauri::command]
@@ -76,15 +139,23 @@ pub async fn get_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<Device>,
             Device {
                 id: d.id.clone(),
                 name: if d.id == this_device_id {
-                    "This Device".to_string()
+                    format!("{} (This Device)", d.name)
                 } else {
-                    "Device".to_string()
+                    d.name
                 },
-                device_type: DeviceType::Desktop,
+                device_type: if d.device_type == "mobile" {
+                    DeviceType::Mobile
+                } else {
+                    DeviceType::Desktop
+                },
                 enrolled_at,
-                last_active: None,
+                last_active: d
+                    .last_active
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
+                    .map(|dt| dt.with_timezone(&Utc)),
                 this_device: d.id == this_device_id,
                 revoked: d.revoked,
+                pending: d.pending,
             }
         })
         .collect();
@@ -95,14 +166,14 @@ pub async fn get_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<Device>,
 /// Payload embedded in the enrollment invitation code (base64-encoded JSON).
 #[derive(Debug, Serialize, Deserialize)]
 struct EnrollmentCodePayload {
-    device_id:    String,
-    hybrid_ek:    String, // base64
-    hybrid_vk:    String, // base64
-    cyclo_pk:     String, // base64
-    cyclo_sk:     String, // base64
-    hybrid_sk:    String, // base64 (signing key — keep this secret!)
+    device_id: String,
+    hybrid_ek: String,    // base64
+    hybrid_vk: String,    // base64
+    cyclo_pk: String,     // base64
+    cyclo_sk: String,     // base64
+    hybrid_sk: String,    // base64 (signing key — keep this secret!)
     transfer_key: String, // base64, 32 B — decrypts rms_capsule on server
-    server_url:   String,
+    server_url: String,
 }
 
 /// Generate an enrollment invitation code that a second device can import.
@@ -126,18 +197,23 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
     }
 
     // ── load own identity keys ────────────────────────────────────────────────
-    let own_keys = state.store.load_identity_keys()
+    let own_keys = state
+        .store
+        .load_identity_keys()
         .map_err(|e| format!("Failed to load identity keys: {e}"))?
         .ok_or("No identity keys found. Please re-create your vault.")?;
 
     if own_keys.hybrid_sk.is_empty() {
         return Err(
             "This vault was created before enrollment support was added. \
-             Please re-create the vault to enable device enrollment.".to_string()
+             Please re-create the vault to enable device enrollment."
+                .to_string(),
         );
     }
 
-    let own_device_id = state.store.load_device_id()
+    let own_device_id = state
+        .store
+        .load_device_id()
         .map_err(|e| format!("Failed to load device ID: {e}"))?;
 
     // ── get RMS ───────────────────────────────────────────────────────────────
@@ -164,20 +240,22 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
     // ── sign the new device's hybrid_vk ──────────────────────────────────────
     // Spawn on blocking thread — ML-DSA signing is compute-heavy.
     let (sk_bytes, vk_bytes) = (own_keys.hybrid_sk.clone(), new_identity.hybrid_vk.clone());
-    let signature = tokio::task::spawn_blocking(move || {
-        crypto::sign_new_device_vk(&sk_bytes, &vk_bytes)
-    })
-    .await
-    .map_err(|e| format!("Thread join error: {e}"))?
-    .map_err(|e| format!("Signing failed: {e}"))?;
+    let signature =
+        tokio::task::spawn_blocking(move || crypto::sign_new_device_vk(&sk_bytes, &vk_bytes))
+            .await
+            .map_err(|e| format!("Thread join error: {e}"))?
+            .map_err(|e| format!("Signing failed: {e}"))?;
 
     // ── get challenge and create ZKP proof ────────────────────────────────────
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url.clone());
 
-    let challenge_resp = client.get_challenge().await
+    let challenge_resp = client
+        .get_challenge()
+        .await
         .map_err(|e| format!("Failed to get challenge: {e}"))?;
-    let challenge_bytes = B64.decode(&challenge_resp.challenge)
+    let challenge_bytes = B64
+        .decode(&challenge_resp.challenge)
         .map_err(|_| "Invalid challenge encoding from server")?;
 
     let (pk_bytes, sk_bytes2) = (own_keys.cyclo_pk.clone(), own_keys.cyclo_sk.clone());
@@ -192,19 +270,23 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
     // ── POST /device/enroll ───────────────────────────────────────────────────
     let enroll_req = EnrollDeviceRequest {
         enrolling_device_id: own_device_id.clone(),
-        challenge:           challenge_resp.challenge,
-        committed_hash:      committed_hash_hex,
+        challenge: challenge_resp.challenge,
+        committed_hash: committed_hash_hex,
         proof,
         new_device: NewDevicePayload {
-            hybrid_ek:   B64.encode(&new_identity.hybrid_ek),
-            hybrid_vk:   B64.encode(&new_identity.hybrid_vk),
-            cyclo_pk:    B64.encode(&new_identity.cyclo_pk),
+            hybrid_ek: B64.encode(&new_identity.hybrid_ek),
+            hybrid_vk: B64.encode(&new_identity.hybrid_vk),
+            cyclo_pk: B64.encode(&new_identity.cyclo_pk),
             rms_capsule: B64.encode(&rms_capsule),
-            signature:   B64.encode(&signature),
+            signature: B64.encode(&signature),
+            device_name: Some("Pending Desktop Enrollment".to_string()),
+            device_type: Some("desktop".to_string()),
         },
     };
 
-    let enroll_resp = client.enroll_device(&enroll_req).await
+    let enroll_resp = client
+        .enroll_device(&enroll_req)
+        .await
         .map_err(|e| format!("Enrollment failed: {e}"))?;
 
     tracing::info!(
@@ -213,25 +295,27 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
         "New device enrolled"
     );
 
-    record_audit_event(&state, AuditAction::DeviceEnrolled {
-        device_id: enroll_resp.device_id.clone(),
-        enrolling_device_id: Some(own_device_id.clone()),
-    });
+    record_audit_event(
+        &state,
+        AuditAction::DeviceEnrolled {
+            device_id: enroll_resp.device_id.clone(),
+            enrolling_device_id: Some(own_device_id.clone()),
+        },
+    );
 
     // ── package the invitation code ───────────────────────────────────────────
     let payload = EnrollmentCodePayload {
-        device_id:    enroll_resp.device_id,
-        hybrid_ek:    B64.encode(&new_identity.hybrid_ek),
-        hybrid_vk:    B64.encode(&new_identity.hybrid_vk),
-        cyclo_pk:     B64.encode(&new_identity.cyclo_pk),
-        cyclo_sk:     B64.encode(&new_identity.cyclo_sk),
-        hybrid_sk:    B64.encode(&new_identity.hybrid_sk),
+        device_id: enroll_resp.device_id,
+        hybrid_ek: B64.encode(&new_identity.hybrid_ek),
+        hybrid_vk: B64.encode(&new_identity.hybrid_vk),
+        cyclo_pk: B64.encode(&new_identity.cyclo_pk),
+        cyclo_sk: B64.encode(&new_identity.cyclo_sk),
+        hybrid_sk: B64.encode(&new_identity.hybrid_sk),
         transfer_key: B64.encode(&transfer_key),
         server_url,
     };
 
-    let json = serde_json::to_string(&payload)
-        .map_err(|e| format!("Serialization error: {e}"))?;
+    let json = serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {e}"))?;
     Ok(B64.encode(json.as_bytes()))
 }
 
@@ -251,18 +335,27 @@ pub async fn import_enrollment_code(
     password: String,
 ) -> Result<(), String> {
     // ── decode invitation code ────────────────────────────────────────────────
-    let json_bytes = B64.decode(&code)
+    let json_bytes = B64
+        .decode(&code)
         .map_err(|e| format!("Invalid enrollment code (base64 error): {e}"))?;
     let payload: EnrollmentCodePayload = serde_json::from_slice(&json_bytes)
         .map_err(|e| format!("Invalid enrollment code (JSON error): {e}"))?;
 
     // ── decode key material ───────────────────────────────────────────────────
-    let hybrid_ek    = B64.decode(&payload.hybrid_ek)   .map_err(|_| "bad hybrid_ek")?;
-    let hybrid_vk    = B64.decode(&payload.hybrid_vk)   .map_err(|_| "bad hybrid_vk")?;
-    let cyclo_pk     = B64.decode(&payload.cyclo_pk)    .map_err(|_| "bad cyclo_pk")?;
-    let cyclo_sk     = B64.decode(&payload.cyclo_sk)    .map_err(|_| "bad cyclo_sk")?;
-    let hybrid_sk    = B64.decode(&payload.hybrid_sk)   .map_err(|_| "bad hybrid_sk")?;
-    let transfer_key_vec = B64.decode(&payload.transfer_key).map_err(|_| "bad transfer_key")?;
+    let hybrid_ek = B64
+        .decode(&payload.hybrid_ek)
+        .map_err(|_| "bad hybrid_ek")?;
+    let hybrid_vk = B64
+        .decode(&payload.hybrid_vk)
+        .map_err(|_| "bad hybrid_vk")?;
+    let cyclo_pk = B64.decode(&payload.cyclo_pk).map_err(|_| "bad cyclo_pk")?;
+    let cyclo_sk = B64.decode(&payload.cyclo_sk).map_err(|_| "bad cyclo_sk")?;
+    let hybrid_sk = B64
+        .decode(&payload.hybrid_sk)
+        .map_err(|_| "bad hybrid_sk")?;
+    let transfer_key_vec = B64
+        .decode(&payload.transfer_key)
+        .map_err(|_| "bad transfer_key")?;
 
     if transfer_key_vec.len() != 32 {
         return Err("transfer_key must be 32 bytes".to_string());
@@ -271,9 +364,13 @@ pub async fn import_enrollment_code(
     transfer_key.copy_from_slice(&transfer_key_vec);
 
     // ── persist device ID and identity keys ───────────────────────────────────
-    state.store.save_device_id(&payload.device_id)
+    state
+        .store
+        .save_device_id(&payload.device_id)
         .map_err(|e| format!("Failed to save device ID: {e}"))?;
-    state.store.save_identity_keys(&hybrid_ek, &hybrid_vk, &cyclo_pk, &cyclo_sk, &hybrid_sk)
+    state
+        .store
+        .save_identity_keys(&hybrid_ek, &hybrid_vk, &cyclo_pk, &cyclo_sk, &hybrid_sk)
         .map_err(|e| format!("Failed to save identity keys: {e}"))?;
 
     // ── set server URL ────────────────────────────────────────────────────────
@@ -284,9 +381,12 @@ pub async fn import_enrollment_code(
     let client = ApiClient::with_url(server_url);
 
     // ── authenticate with server ──────────────────────────────────────────────
-    let challenge_resp = client.get_challenge().await
+    let challenge_resp = client
+        .get_challenge()
+        .await
         .map_err(|e| format!("Failed to get challenge: {e}"))?;
-    let challenge_bytes = B64.decode(&challenge_resp.challenge)
+    let challenge_bytes = B64
+        .decode(&challenge_resp.challenge)
         .map_err(|_| "Invalid challenge encoding")?;
 
     let device_id_clone = payload.device_id.clone();
@@ -298,21 +398,26 @@ pub async fn import_enrollment_code(
     .map_err(|e| format!("Thread join error: {e}"))?
     .map_err(|e| format!("ZKP proof failed: {e}"))?;
 
-    let verify_resp = client.verify_proof(&VerifyRequest {
-        device_id:      payload.device_id.clone(),
-        challenge:      challenge_resp.challenge,
-        committed_hash: committed_hash_hex,
-        proof,
-    })
-    .await
-    .map_err(|e| format!("Server authentication failed: {e}"))?;
+    let verify_resp = client
+        .verify_proof(&VerifyRequest {
+            device_id: payload.device_id.clone(),
+            challenge: challenge_resp.challenge,
+            committed_hash: committed_hash_hex,
+            proof,
+        })
+        .await
+        .map_err(|e| format!("Server authentication failed: {e}"))?;
 
-    let token = verify_resp.token;
+    let mut token = verify_resp.token;
+    let user_id = verify_resp.user_id;
 
     // ── download RMS capsule from server ──────────────────────────────────────
-    let (capsule_resp, _) = client.get_capsule(&token).await
+    let (capsule_resp, _) = client
+        .get_capsule(&token)
+        .await
         .map_err(|e| format!("Failed to download RMS capsule: {e}"))?;
-    let capsule_bytes = B64.decode(&capsule_resp.capsule)
+    let capsule_bytes = B64
+        .decode(&capsule_resp.capsule)
         .map_err(|_| "Invalid capsule encoding")?;
 
     // ── decrypt capsule → RMS ─────────────────────────────────────────────────
@@ -326,39 +431,18 @@ pub async fn import_enrollment_code(
     // ── build Crypto and download vault ───────────────────────────────────────
     let crypto_obj = crate::crypto::Crypto::new(&rms);
 
-    // Try to pull the vault from the server; fall back to empty vault.
-    let vault = match client.get_chunk(&token, "vault-main").await {
-        Ok((ciphertext, _, _, _)) => {
-            match crypto_obj.decrypt_vault(&ciphertext) {
-                Ok(plaintext) => {
-                    match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
-                        Ok(v) => {
-                            tracing::info!("Vault downloaded from server during enrollment import");
-                            v
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to parse vault JSON: {e}");
-                            crate::vault::VaultStore::new()
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to decrypt downloaded vault: {e}");
-                    crate::vault::VaultStore::new()
-                }
-            }
-        }
-        Err(e) => {
-            tracing::info!("No vault on server yet ({}), starting empty", e);
-            crate::vault::VaultStore::new()
-        }
-    };
+    let vault = download_enrolled_vault(&client, &mut token, &crypto_obj).await;
 
-    state.store.save_vault(&vault, &crypto_obj)
+    state
+        .store
+        .save_vault(&vault, &crypto_obj)
         .map_err(|e| format!("Failed to save vault locally: {e}"))?;
+    state
+        .store
+        .save_device_id_with_user_id(&payload.device_id, &user_id)
+        .map_err(|e| format!("Failed to save user ID: {e}"))?;
 
     // ── unlock session ────────────────────────────────────────────────────────
-    let user_id = format!("user-{}", &payload.device_id[..8]);
     {
         let mut session = state.session.write();
         session.set_server_token(token);
@@ -400,10 +484,13 @@ pub async fn revoke_device(
     }
 
     let this_device_id = state.store.load_device_id().unwrap_or_default();
-    record_audit_event(&state, AuditAction::DeviceRevoked {
-        device_id: request.device_id.clone(),
-        revoking_device_id: this_device_id,
-    });
+    record_audit_event(
+        &state,
+        AuditAction::DeviceRevoked {
+            device_id: request.device_id.clone(),
+            revoking_device_id: this_device_id,
+        },
+    );
 
     Ok(())
 }

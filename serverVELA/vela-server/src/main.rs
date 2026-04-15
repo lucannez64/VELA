@@ -46,10 +46,9 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let app = routes::build(state.clone())
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(
-            config.max_body_bytes,
-        ));
+    let app = routes::build(state.clone()).layer(tower_http::limit::RequestBodyLimitLayer::new(
+        config.max_body_bytes,
+    ));
 
     let addr: SocketAddr = config.listen_addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;

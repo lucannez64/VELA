@@ -11,6 +11,7 @@ interface Device {
   last_active: string | null;
   this_device: boolean;
   revoked: boolean;
+  pending: boolean;
 }
 
 interface Props {
@@ -151,9 +152,12 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                     {device.revoked && (
                       <span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs font-label">Revoked</span>
                     )}
+                    {device.pending && !device.revoked && (
+                      <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded text-xs font-label">Pending</span>
+                    )}
                   </div>
                   <p className="text-sm text-on-surface-variant">
-                    Enrolled: {formatDate(device.enrolled_at)} · Last active: {formatLastActive(device.last_active)}
+                    {device.pending ? 'Enrollment code generated' : `Enrolled: ${formatDate(device.enrolled_at)}`} · Last active: {formatLastActive(device.last_active)}
                   </p>
                 </div>
               </div>
@@ -163,7 +167,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                   onClick={() => setShowRevokeModal(device)}
                   className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors text-red-400 hover:text-red-300"
                 >
-                  {device.this_device ? 'Revoke (signs out everywhere)' : 'Revoke'}
+                  {device.pending ? 'Cancel enrollment' : device.this_device ? 'Revoke (signs out everywhere)' : 'Revoke'}
                 </button>
               )}
             </div>
@@ -184,6 +188,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
             <p className="text-on-surface-variant text-sm mb-4">
               Copy this code and paste it on the new device under <strong>Join existing account</strong>.
               The code is valid for one use and contains sensitive key material — do not share it over unencrypted channels.
+              Closing this dialog keeps the device pending until it is used or cancelled from the Devices list.
             </p>
             <div className="bg-surface-bright rounded-xl p-3 mb-4 font-mono text-xs text-on-surface break-all select-all max-h-36 overflow-y-auto">
               {enrollmentCode}
@@ -216,11 +221,12 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
             onClick={e => e.stopPropagation()}
           >
             <h2 className="font-headline text-2xl font-bold text-on-surface mb-4">
-              Revoke {showRevokeModal.name}?
+              {showRevokeModal.pending ? 'Cancel pending enrollment?' : `Revoke ${showRevokeModal.name}?`}
             </h2>
             <p className="text-on-surface-variant mb-6">
-              This will immediately sign out that device and prevent it from accessing your vault. 
-              It cannot be undone — the device must be re-enrolled to regain access.
+              {showRevokeModal.pending
+                ? 'This deletes the unused enrollment slot. The code will no longer work.'
+                : 'This will immediately sign out that device and prevent it from accessing your vault. It cannot be undone — the device must be re-enrolled to regain access.'}
             </p>
             <div className="flex gap-4">
               <button 
@@ -234,7 +240,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                 disabled={revokingId === showRevokeModal.id}
                 className="flex-1 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
               >
-                {revokingId === showRevokeModal.id ? 'Revoking...' : 'Revoke device'}
+                {revokingId === showRevokeModal.id ? 'Revoking...' : showRevokeModal.pending ? 'Cancel enrollment' : 'Revoke device'}
               </button>
             </div>
           </div>

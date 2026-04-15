@@ -1,22 +1,22 @@
-pub mod biometric;
-pub mod session;
-pub mod vault;
-pub mod commands;
-pub mod ipc;
-pub mod crypto;
-pub mod store;
 pub mod api;
+pub mod biometric;
+pub mod commands;
+pub mod crypto;
 pub mod device;
+pub mod ipc;
+pub mod session;
+pub mod store;
 pub mod token;
+pub mod vault;
 
 use parking_lot::RwLock;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
-use crate::store::Store;
 use crate::session::RateLimitEntry;
+use crate::store::Store;
 
 pub const DEFAULT_SERVER_URL: &str = "http://192.168.1.34:8443";
 
@@ -59,23 +59,27 @@ impl AppState {
     pub fn check_rate_limit(&self, device_id: &str, _ip: &str) -> RateLimitResult {
         let mut limiter = self.rate_limiter.write();
         let now = Instant::now();
-        
-        let state = limiter.entry(device_id.to_string()).or_insert_with(RateLimitState::new);
-        
+
+        let state = limiter
+            .entry(device_id.to_string())
+            .or_insert_with(RateLimitState::new);
+
         if state.entry.is_blocked() {
             return RateLimitResult::Blocked;
         }
-        
+
         if now.duration_since(state.last_ip_attempt).as_secs() > 60 {
             state.ip_attempts = 0;
         }
-        
+
         RateLimitResult::Allowed
     }
 
     pub fn record_failed_attempt(&self, device_id: &str, _ip: &str) {
         let mut limiter = self.rate_limiter.write();
-        let state = limiter.entry(device_id.to_string()).or_insert_with(RateLimitState::new);
+        let state = limiter
+            .entry(device_id.to_string())
+            .or_insert_with(RateLimitState::new);
         state.entry.record_failure();
         state.ip_attempts += 1;
         state.last_ip_attempt = Instant::now();
@@ -87,15 +91,14 @@ impl AppState {
             state.entry.record_success();
         }
     }
-    
+
     pub fn get_session_token(&self) -> Option<String> {
         let session = self.session.read();
         session.get_server_token().map(|s| s.to_string())
     }
-    
+
     pub fn validate_session_token(&self, token: &str) -> Result<token::PasetoToken, String> {
-        token::validate_local_token(token, &self.secret_key)
-            .map_err(|e| e.to_string())
+        token::validate_local_token(token, &self.secret_key).map_err(|e| e.to_string())
     }
 }
 
@@ -108,9 +111,16 @@ pub enum RateLimitResult {
 impl Default for AppState {
     fn default() -> Self {
         let store = Store::new().expect("Failed to create store");
-        let server_url = store.load_settings()
+        let server_url = store
+            .load_settings()
             .ok()
-            .and_then(|s| if s.server_url.is_empty() { None } else { Some(s.server_url) })
+            .and_then(|s| {
+                if s.server_url.is_empty() {
+                    None
+                } else {
+                    Some(s.server_url)
+                }
+            })
             .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string());
         Self {
             session: RwLock::new(session::Session::new()),

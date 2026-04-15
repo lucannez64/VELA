@@ -104,20 +104,20 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
   return (
     <div className="flex-1 bg-surface-container-lowest overflow-y-auto">
-      <div className="max-w-3xl mx-auto py-12 px-10">
-        <div className="flex items-start justify-between mb-12">
-          <div className="flex items-center gap-6">
-            <button onClick={() => setSelectedItem(null)} className="text-on-surface-variant hover:text-primary transition-colors">
+      <div className="max-w-5xl mx-auto py-10 px-6 lg:px-10">
+        <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-6 mb-10">
+          <div className="flex items-start gap-5 min-w-0">
+            <button onClick={() => setSelectedItem(null)} className="mt-7 shrink-0 text-on-surface-variant hover:text-primary transition-colors">
               <span className="material-symbols-outlined">arrow_back</span>
             </button>
-            <div className="w-20 h-20 rounded-2xl bg-surface-bright flex items-center justify-center shadow-2xl relative">
+            <div className="w-20 h-20 shrink-0 rounded-2xl bg-surface-bright flex items-center justify-center shadow-2xl relative">
               <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>{getIcon()}</span>
               <div className="absolute -bottom-2 -right-2 bg-secondary text-on-secondary px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">SECURE</div>
             </div>
-            <div>
-              <h1 className="font-headline text-4xl font-bold tracking-tight mb-1">{item.name}</h1>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-primary"></span>
+            <div className="min-w-0 pt-2">
+              <h1 className="font-headline text-3xl lg:text-4xl font-bold tracking-tight mb-1 break-words leading-tight">{item.name}</h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-2 h-2 shrink-0 rounded-full bg-primary"></span>
                 <p className="text-on-surface-variant font-label text-xs tracking-wider uppercase">Zero-Knowledge {item.item_type}</p>
                 {isReceivedShare && (
                   <span className="ml-2 px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest">Shared with you · Read-only</span>
@@ -125,7 +125,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
               </div>
             </div>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3 shrink-0 xl:justify-end">
             <button onClick={handleToggleFavorite} className={`w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors ${favorite ? 'text-amber-400' : ''}`}>
               <span className="material-symbols-outlined text-xl text-amber-400" style={favorite ? { fontVariationSettings: "'FILL' 1" } : undefined}>star</span>
             </button>
@@ -150,10 +150,10 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {item.username && (
-            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
               <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Username</label>
-              <div className="flex items-center justify-between">
-                <span className="text-on-surface text-lg font-medium">{item.username}</span>
+              <div className="flex items-center justify-between gap-3 min-w-0">
+                <span className="text-on-surface text-lg font-medium min-w-0 break-all">{item.username}</span>
                 <button 
                   onClick={() => copyToClipboard(item.username!, 'Username')}
                   className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
@@ -165,13 +165,13 @@ export default function ItemDetail({ item, onEdit }: Props) {
           )}
 
           {item.password && (
-            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
               <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Password</label>
-              <div className="flex items-center justify-between">
-                <span className={`text-on-surface text-2xl tracking-[0.3em] font-mono leading-none pt-1 ${!showPassword ? '' : 'text-primary'}`}>
+              <div className="flex items-center justify-between gap-3 min-w-0">
+                <span className={`text-on-surface text-xl lg:text-2xl tracking-[0.2em] font-mono leading-none pt-1 min-w-0 break-all ${!showPassword ? '' : 'text-primary'}`}>
                   {showPassword ? item.password : '••••••••••••'}
                 </span>
-                <div className="flex gap-1">
+                <div className="flex gap-1 shrink-0">
                   <button 
                     onClick={() => setShowPassword(!showPassword)}
                     className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
@@ -219,21 +219,21 @@ export default function ItemDetail({ item, onEdit }: Props) {
           )}
 
           {item.url && (
-            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
               <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Website</label>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 min-w-0">
                 <a 
                   href={item.url} 
                   target="_blank" 
                   rel="noopener noreferrer"
-                  className="text-on-surface hover:text-primary transition-colors text-sm flex items-center gap-2 underline decoration-outline-variant underline-offset-4"
+                  className="text-on-surface hover:text-primary transition-colors text-sm flex items-center gap-2 underline decoration-outline-variant underline-offset-4 min-w-0 break-all"
                 >
                   {item.url}
-                  <span className="material-symbols-outlined text-xs">open_in_new</span>
+                  <span className="material-symbols-outlined text-xs shrink-0">open_in_new</span>
                 </a>
                 <button 
                   onClick={() => copyToClipboard(item.url!, 'URL')}
-                  className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-500"
+                  className="p-2 shrink-0 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-500"
                 >
                   <span className="material-symbols-outlined text-xl">content_copy</span>
                 </button>
