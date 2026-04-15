@@ -156,6 +156,10 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
     };
 
     let mut merged_conflicts: Vec<String> = Vec::new();
+    let server_main_entry = manifest
+        .chunks
+        .iter()
+        .find(|entry| entry.chunk_id == VAULT_MAIN_CHUNK_ID);
 
     for entry in &manifest.chunks {
         if entry.chunk_id != VAULT_MAIN_CHUNK_ID {
@@ -245,6 +249,17 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
     }
 
     let current_meta = load_local_sync_meta(&state);
+    let upload_version = if server_main_entry.is_some() {
+        current_meta.version
+    } else {
+        if current_meta.version > 0 {
+            tracing::info!(
+                "Sync: server missing vault-main; resetting upload base version from local {} to 0",
+                current_meta.version
+            );
+        }
+        0
+    };
 
     let local_items = {
         let vault = state.vault.read();
@@ -262,11 +277,11 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
     tracing::info!(
         "Sync: uploading vault-main ({} bytes, version {}, lamport {})",
         ciphertext.len(),
-        current_meta.version,
+        upload_version,
         new_lamport
     );
 
-    match client.put_chunk(&token, VAULT_MAIN_CHUNK_ID, current_meta.version, ciphertext, new_lamport).await {
+    match client.put_chunk(&token, VAULT_MAIN_CHUNK_ID, upload_version, ciphertext, new_lamport).await {
         Ok((new_version, new_tok)) => {
             if let Some(t) = new_tok {
                 state.session.write().set_server_token(t);

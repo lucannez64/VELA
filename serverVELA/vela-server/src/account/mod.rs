@@ -35,10 +35,12 @@ pub struct RegisterResponse {
 
 pub async fn post_register(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    addr: Option<ConnectInfo<SocketAddr>>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>> {
-    let ip = addr.ip().to_string();
+    let ip = addr
+        .map(|ConnectInfo(addr)| addr.ip().to_string())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
 
     rate_limit::check(&state.store, &format!("rl:register:ip:{ip}"), 5, 3600)?;
 

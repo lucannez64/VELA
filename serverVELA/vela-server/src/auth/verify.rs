@@ -30,10 +30,12 @@ pub struct VerifyResponse {
 
 pub async fn post_verify(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    addr: Option<ConnectInfo<SocketAddr>>,
     Json(body): Json<VerifyRequest>,
 ) -> Result<Json<VerifyResponse>> {
-    let ip = addr.ip().to_string();
+    let ip = addr
+        .map(|ConnectInfo(addr)| addr.ip().to_string())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     let device_id_str = body.device_id.to_string();
 
     rate_limit::verify_by_ip(&state.store, &ip)?;

@@ -27,9 +27,11 @@ pub struct ChallengeResponse {
 
 pub async fn get_challenge(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    addr: Option<ConnectInfo<SocketAddr>>,
 ) -> Result<Json<ChallengeResponse>> {
-    let ip = addr.ip().to_string();
+    let ip = addr
+        .map(|ConnectInfo(addr)| addr.ip().to_string())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
 
     // ── Rate limit ────────────────────────────────────────────────────────────
     rate_limit::challenge_by_ip(&state.store, &ip)?;

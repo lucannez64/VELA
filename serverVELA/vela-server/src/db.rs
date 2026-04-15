@@ -50,7 +50,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     db.execute(
         "CREATE TABLE IF NOT EXISTS vault_chunks (
-            chunk_id      TEXT UNIQUE NOT NULL,
+            chunk_id      TEXT NOT NULL,
             user_id       TEXT NOT NULL,
             version       INTEGER NOT NULL DEFAULT 1,
             lamport_clock INTEGER NOT NULL DEFAULT 0,
@@ -59,6 +59,11 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             created_at    TIMESTAMP NOT NULL,
             updated_at    TIMESTAMP NOT NULL
         )",
+        (),
+    )?;
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk
+         ON vault_chunks(user_id, chunk_id)",
         (),
     )?;
     db.execute(
@@ -85,6 +90,43 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_share_inbox_created_at ON share_inbox(created_at)",
+        (),
+    )?;
+    migrate_vault_chunks_schema(db)?;
+    Ok(())
+}
+
+fn migrate_vault_chunks_schema(db: &Database) -> anyhow::Result<()> {
+    let _ = db.execute("DROP TABLE IF EXISTS vault_chunks_v2", ());
+    db.execute(
+        "CREATE TABLE vault_chunks_v2 (
+            chunk_id      TEXT NOT NULL,
+            user_id       TEXT NOT NULL,
+            version       INTEGER NOT NULL DEFAULT 1,
+            lamport_clock INTEGER NOT NULL DEFAULT 0,
+            last_writer   TEXT,
+            ciphertext    TEXT NOT NULL,
+            created_at    TIMESTAMP NOT NULL,
+            updated_at    TIMESTAMP NOT NULL
+        )",
+        (),
+    )?;
+    db.execute(
+        "INSERT INTO vault_chunks_v2
+         (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, created_at, updated_at)
+         SELECT chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, created_at, updated_at
+         FROM vault_chunks",
+        (),
+    )?;
+    db.execute("DROP TABLE vault_chunks", ())?;
+    db.execute("ALTER TABLE vault_chunks_v2 RENAME TO vault_chunks", ())?;
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk
+         ON vault_chunks(user_id, chunk_id)",
+        (),
+    )?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id)",
         (),
     )?;
     Ok(())
