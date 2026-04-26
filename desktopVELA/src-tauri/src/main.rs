@@ -9,8 +9,8 @@ use tauri::{
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use vela_desktop::{commands, AppState};
 use vela_desktop::ipc::server::IpcServer;
+use vela_desktop::{commands, AppState};
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -150,7 +150,7 @@ fn main() {
 
             let ipc_server = IpcServer::new();
             let app_handle = app.handle().clone();
-            
+
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -208,6 +208,7 @@ fn main() {
             commands::vault::check_all_vault_passwords,
             commands::sync::trigger_sync,
             commands::sync::get_sync_status,
+            commands::sync::resolve_conflict,
             commands::sync::set_server_url,
             commands::devices::get_devices,
             commands::devices::revoke_device,
@@ -224,6 +225,10 @@ fn main() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::send_recovery_invite,
+            commands::settings::start_recovery_webauthn_registration,
+            commands::settings::finish_recovery_webauthn_registration,
+            commands::settings::initiate_account_recovery,
+            commands::settings::finish_account_recovery,
             commands::ipc::handle_autofill_request,
             commands::window::minimize_window,
             commands::window::maximize_window,

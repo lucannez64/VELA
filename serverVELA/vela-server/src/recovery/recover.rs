@@ -2,6 +2,7 @@ use axum::{extract::State, Json};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use webauthn_rs::prelude::PublicKeyCredential;
 
 use crate::{
     error::{AppError, Result},
@@ -9,13 +10,10 @@ use crate::{
     state::AppState,
 };
 
-const MAX_PROOF_BYTES: usize = 128;
-
 #[derive(Deserialize)]
 pub struct RecoverRequest {
     pub user_id: Uuid,
-    pub challenge: String,
-    pub proof: String,
+    pub credential: PublicKeyCredential,
 }
 
 #[derive(Serialize)]
@@ -34,74 +32,51 @@ pub async fn post_recover(
         3600,
     )?;
 
-    let challenge_key = format!("recovery:challenge:{}", body.challenge);
-    let stored_user_id = state.store.get_del(&challenge_key)?;
+    crate::recovery::initiate::ensure_recovery_share_exists(&state, body.user_id)?;
+    let mut passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)?
+        .ok_or_else(|| {
+        AppError::NotFound("no WebAuthn recovery credential registered".into())
+    })?;
+    let auth_state = crate::recovery::initiate::take_auth_state(&state, body.user_id)?;
 
-    match stored_user_id {
-        Some(uid) if String::from_utf8_lossy(&uid) == body.user_id.to_string() => {}
-        Some(_) => {
-            return Err(AppError::BadRequest(
-                "challenge does not match user_id".into(),
-            ))
-        }
-        None => {
-            return Err(AppError::BadRequest(
-                "challenge expired or already used".into(),
-            ))
-        }
-    }
+    let auth_result = state
+        .webauthn
+        .finish_passkey_authentication(&body.credential, &auth_state)
+        .map_err(|e| AppError::Unauthorized(format!("WebAuthn recovery failed: {e:?}")))?;
 
-    let rows = state.db.query(
-        "SELECT recovery_share, recovery_auth_hash FROM users WHERE id = $1",
-        stoolap::params![body.user_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let row = rows.into_iter().next()
-        .ok_or_else(|| AppError::NotFound("user not found".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let v0 = crate::db::row_val(&row, 0)?;
-    let v1 = crate::db::row_val(&row, 1)?;
-
-    let share_b64 = if v0.is_null() { None } else { v0.as_str().map(|s| s.to_string()) };
-    let auth_hash_b64 = if v1.is_null() { None } else { v1.as_str().map(|s| s.to_string()) };
-
-    let share_bytes = crate::db::decode_b64(
-        &share_b64.ok_or_else(|| {
-            AppError::NotFound("no recovery share stored for this user".into())
-        })?
-    )?;
-
-    let auth_hash = crate::db::decode_b64(
-        &auth_hash_b64.ok_or_else(|| {
-            AppError::BadRequest(
-                "recovery not set up — no auth hash on file".into(),
-            )
-        })?
-    )?;
-
-    let proof_bytes = B64
-        .decode(&body.proof)
-        .map_err(|_| AppError::BadRequest("proof is not valid base64".into()))?;
-
-    if proof_bytes.len() > MAX_PROOF_BYTES {
-        return Err(AppError::BadRequest(format!(
-            "proof exceeds maximum size of {MAX_PROOF_BYTES} bytes"
-        )));
-    }
-
-    let computed_hash = blake3::hash(&proof_bytes);
-    if computed_hash.as_bytes() != auth_hash.as_slice() {
-        tracing::warn!(
-            user_id = %body.user_id,
-            "recovery proof verification failed"
-        );
+    if !auth_result.user_verified() {
         return Err(AppError::Unauthorized(
-            "recovery proof verification failed".into(),
+            "WebAuthn recovery requires user verification".into(),
         ));
     }
 
-    tracing::info!(user_id = %body.user_id, "recovery share released");
+    if auth_result.needs_update() {
+        if passkey.update_credential(&auth_result).is_some() {
+            crate::recovery::webauthn::update_recovery_passkey(&state, body.user_id, &passkey)?;
+        }
+    }
+
+    let rows = state
+        .db
+        .query(
+            "SELECT recovery_share FROM users WHERE id = $1",
+            stoolap::params![body.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let row = rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::NotFound("user not found".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let share_b64 = crate::db::row_val(&row, 0)?
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::NotFound("no recovery share stored for this user".into()))?;
+    let share_bytes = crate::db::decode_b64(&share_b64)?;
+
+    tracing::info!(user_id = %body.user_id, "recovery share released after WebAuthn assertion");
 
     Ok(Json(RecoverResponse {
         share: B64.encode(&share_bytes),

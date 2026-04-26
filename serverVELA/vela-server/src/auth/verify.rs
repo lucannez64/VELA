@@ -1,3 +1,10 @@
+use crate::{
+    auth::token::TokenService,
+    device::enroll::verify_cyclo_proof,
+    error::{AppError, Result},
+    rate_limit,
+    state::AppState,
+};
 use axum::{
     extract::{ConnectInfo, State},
     Json,
@@ -6,20 +13,13 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
-use crate::{
-    auth::token::TokenService,
-    device::enroll::verify_cyclo_proof,
-    error::{AppError, Result},
-    rate_limit,
-    state::AppState,
-};
 
 #[derive(Deserialize)]
 pub struct VerifyRequest {
-    pub device_id:      uuid::Uuid,
-    pub challenge:      String,
+    pub device_id: uuid::Uuid,
+    pub challenge: String,
     pub committed_hash: String,
-    pub proof:          String,
+    pub proof: String,
 }
 
 #[derive(Serialize)]
@@ -30,10 +30,12 @@ pub struct VerifyResponse {
 
 pub async fn post_verify(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    addr: Option<ConnectInfo<SocketAddr>>,
     Json(body): Json<VerifyRequest>,
 ) -> Result<Json<VerifyResponse>> {
-    let ip = addr.ip().to_string();
+    let ip = addr
+        .map(|ConnectInfo(addr)| addr.ip().to_string())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     let device_id_str = body.device_id.to_string();
 
     rate_limit::verify_by_ip(&state.store, &ip)?;
@@ -47,21 +49,28 @@ pub async fn post_verify(
         ));
     }
 
-    let rows = state.db.query(
-        "SELECT id, user_id, hybrid_ek, hybrid_vk, cyclo_pk,
+    let rows = state
+        .db
+        .query(
+            "SELECT id, user_id, device_name, device_type, last_active,
+                hybrid_ek, hybrid_vk, cyclo_pk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
          FROM devices
          WHERE id = $1 AND revoked = FALSE",
-        stoolap::params![body.device_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+            stoolap::params![body.device_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows.into_iter().next()
+    let row = rows
+        .into_iter()
+        .next()
         .ok_or_else(|| AppError::Unauthorized("device not found or revoked".into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let device = crate::db::parse_device_row(&row)?;
 
-    let challenge_bytes = B64.decode(&body.challenge)
+    let challenge_bytes = B64
+        .decode(&body.challenge)
         .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
 
     // Validate committed_hash = SHA256(challenge_bytes || device_id).
@@ -73,7 +82,9 @@ pub async fn post_verify(
     let expected_hash_hex = hex::encode(hasher.finalize());
 
     if body.committed_hash != expected_hash_hex {
-        return Err(AppError::BadRequest("committed_hash does not match challenge".into()));
+        return Err(AppError::BadRequest(
+            "committed_hash does not match challenge".into(),
+        ));
     }
 
     // Verify the Cyclo ZK proof.
@@ -85,11 +96,18 @@ pub async fn post_verify(
     }
 
     rate_limit::reset_verify_streak(&state.store, &device_id_str)?;
+    let _ = state.db.execute(
+        "UPDATE devices SET last_active = $1 WHERE id = $2",
+        stoolap::params![chrono::Utc::now().to_rfc3339(), device_id_str.clone()],
+    );
 
     let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
     let (token, jti) = ts.issue(device.user_id, device.id, None)?;
 
     rate_limit::track_device_jti(&state.store, &device_id_str, &jti)?;
 
-    Ok(Json(VerifyResponse { token, user_id: device.user_id.to_string() }))
+    Ok(Json(VerifyResponse {
+        token,
+        user_id: device.user_id.to_string(),
+    }))
 }

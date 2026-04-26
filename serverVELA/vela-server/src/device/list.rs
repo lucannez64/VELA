@@ -12,8 +12,12 @@ use crate::{
 #[derive(Serialize)]
 pub struct DeviceInfo {
     pub id: Uuid,
+    pub name: String,
+    pub device_type: String,
     pub enrolled_by: Option<Uuid>,
+    pub last_active: Option<DateTime<Utc>>,
     pub revoked: bool,
+    pub pending: bool,
     pub revoked_at: Option<DateTime<Utc>>,
     pub revoked_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
@@ -28,14 +32,18 @@ pub async fn list_devices(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<ListDevicesResponse>)> {
-    let rows = state.db.query(
-        "SELECT id, user_id, hybrid_ek, hybrid_vk, cyclo_pk,
+    let rows = state
+        .db
+        .query(
+            "SELECT id, user_id, device_name, device_type, last_active,
+                hybrid_ek, hybrid_vk, cyclo_pk,
                 enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at
          FROM devices
          WHERE user_id = $1
          ORDER BY created_at ASC",
-        stoolap::params![session.user_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+            stoolap::params![session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let devices: Vec<DeviceInfo> = rows
         .map(|r| {
@@ -43,8 +51,12 @@ pub async fn list_devices(
             let d = crate::db::parse_device_row(&row)?;
             Ok(DeviceInfo {
                 id: d.id,
+                name: d.device_name,
+                device_type: d.device_type,
                 enrolled_by: d.enrolled_by,
+                last_active: d.last_active,
                 revoked: d.revoked,
+                pending: d.last_active.is_none() && d.rms_capsule.is_some() && !d.revoked,
                 revoked_at: d.revoked_at,
                 revoked_by: d.revoked_by,
                 created_at: d.created_at,

@@ -1,4 +1,4 @@
-# VELA Protocol Specification v2.0 (Passwordless & Zero-Knowledge)
+# VELA Protocol Specification v2.0 (Hardware-Bound & Zero-Knowledge)
 
 **Version:** 2.1
 **Date:** 2026-03-26
@@ -23,10 +23,10 @@
 
 ## 1. Overview & Design Philosophy
 
-VELA v2.0 completely abandons the "Master Password" paradigm. It is a multi-device, hardware-bound, hybrid post-quantum secure vault. Authorization is proven not by transmitting signatures or passwords, but via **Cyclo**, a lattice-based zero-knowledge folding scheme.
+VELA v2.0 abandons server-side passwords and password-derived server authentication. It is a multi-device, hardware-bound, hybrid post-quantum secure vault. Authorization is proven to the server via **Cyclo**, a lattice-based zero-knowledge folding scheme. Clients may still protect local vault material with an optional device password fallback for systems that do not provide usable biometric hardware.
 
 ### Core Principles
-- **True Passwordless Identity:** Keys are generated on-device and locked inside hardware secure enclaves (TPM, Secure Enclave, Android Keystore) guarded by biometrics.
+- **Passwordless Server Identity:** Keys are generated on-device and locked inside hardware secure enclaves (TPM, Secure Enclave, Android Keystore) guarded by biometrics where available. A local-only password fallback may wrap the RMS on devices without biometric support; it is never sent to the VELA server.
 - **Hybrid Post-Quantum Security:** Combines NIST post-quantum standards (ML-KEM-1024) with classical elliptic curve cryptography (X25519) to guard against both quantum threats and undiscovered flaws in new lattice math.
 - **ZKP Authorization (Cyclo):** The server authenticates devices via Cyclo ZKPs, proving ownership of a valid device capability without exposing any key material — providing quantum-resistant authentication where even a future adversary who captures network traffic cannot retroactively break session authenticity.
 - **Metadata-Hiding Vault:** The server does not know how many items you have or what type they are. The vault is synced as fixed-size encrypted blobs with access patterns hidden via Path ORAM.
@@ -66,15 +66,15 @@ VELA v2.0 completely abandons the "Master Password" paradigm. It is a multi-devi
 │  │                   API Server (Rust / Axum)                       │  │
 │  │ - ZKP Verifier (Cyclo)                                           │  │
 │  │ - Sync Engine (Blob differential sync + ORAM tree storage)       │  │
-│  │ - Rate Limiter (Redis sliding window)                            │  │
+│  │ - Rate Limiter (embedded sled TTL counters)                       │  │
 │  └─────────────────┬─────────────────────────────────┬──────────────┘  │
 │                    ↓                                 ↓                 │
 │          ┌──────────────────┐               ┌───────────────────┐      │
-│          │    PostgreSQL    │               │      Redis        │      │
+│          │     stoolap      │               │       sled        │      │
 │          │ - User identities│               │ - Rate limits     │      │
 │          │ - Device records │               │ - Challenge nonces│      │
 │          │ - Encrypted blobs│               │ - Token JTI       │      │
-│          │   (ORAM tree)    │               │   revocation set  │      │
+│          │   (ORAM chunks)  │               │   revocation set  │      │
 │          └──────────────────┘               └───────────────────┘      │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -116,7 +116,7 @@ All BLAKE3 KDF derivations from the RMS use the following domain-separated conte
 Every user has a 32-byte **Root Master Seed (RMS)**. It never leaves the client devices in plaintext.
 - The RMS is generated on the first device.
 - It is used to derive the `Vault_Encryption_Key` and all other per-purpose keys via BLAKE3 KDF.
-- It is stored inside the device's Hardware Secure Enclave. Access requires local OS biometric authentication.
+- It is stored inside the device's Hardware Secure Enclave when available. On devices without supported biometric hardware, the client may store the RMS encrypted under a local device password. This fallback is a local unlock mechanism only and is never used for server authentication.
 
 ### 4.2 Multi-Device Sync (Device Enrollment)
 When adding a new device (Device B), Device A must authorize it.
@@ -137,15 +137,17 @@ This produces a 32-byte seed used as the Ed25519 private key for enrollment sign
 
 **First-device bootstrap:** On initial account creation (no prior enrolled device), the first device generates the RMS, derives its identity signing key, and self-signs its own device public key. The server records this as the genesis device entry with no enroller's Cyclo proof required.
 
-### 4.3 Master Passwordless Recovery
+### 4.3 Recovery
 If all devices are lost, the user relies on **Shamir's Secret Sharing (SSS)** established at account creation.
 - The `RMS` is split into a 2-of-3 scheme:
   - **Share 1:** Encrypted and backed up to the user's cloud provider (iCloud/Google Drive).
-  - **Share 2:** Stored on the VELA Server. The client generates a random 256-bit `share_2_key` at account creation and uses it to encrypt Share 2 with XChaCha20-Poly1305. The `share_2_key` is then encrypted under the user's FIDO2 authenticator's public key (using the authenticator's key-wrapping capability, e.g., ECDH with the FIDO2 attestation key) and the wrapped result is stored on the VELA server. The server never sees `share_2_key` or Share 2 in plaintext.
+  - **Share 2:** Stored on the VELA Server as ciphertext generated client-side. Recovery release is gated by a registered WebAuthn/FIDO2 recovery credential. The server stores the passkey public credential and never sees Share 2 plaintext.
   - **Share 3:** Given to a trusted contact via VELA protocol item sharing.
-- To recover, the user downloads the VELA app on a new device, pulls Share 1 from their cloud, and authenticates with their FIDO2 credential. The FIDO2 authentication releases the wrapped `share_2_key`, which the client decrypts using the FIDO2 private key. The client then decrypts Share 2 with `share_2_key`. The Rust core combines both shares to reconstruct the `RMS` locally.
+- Setup uses dedicated WebAuthn registration ceremonies: an authenticated device starts `/recovery/webauthn/register/start`, the client calls `navigator.credentials.create`, and `/recovery/webauthn/register/finish` verifies and stores the resulting passkey credential.
+- To recover, the user downloads the VELA app on a new device, pulls Share 1 from their cloud, starts `/recovery/initiate`, signs the WebAuthn assertion with their FIDO2 credential, and submits it to `/recovery/recover`. The server releases only the encrypted Share 2 ciphertext. The Rust core combines Share 1 and Share 2 locally to reconstruct the `RMS`.
+- For desktop devices without usable biometric hardware, the same local password fallback used for unlock may also be used to protect locally stored recovery material. This password never leaves the client and does not replace FIDO2 or trusted-contact recovery for account recovery across devices.
 
-> **Threat note:** An adversary who compromises both the user's cloud provider and the VELA server still cannot reconstruct the RMS without also compromising the user's physical FIDO2 credential. Share 2 is protected by hardware-bound key material, not a server-side secret. If the FIDO2 credential is also lost, recovery requires Share 3 from the trusted contact (2-of-3 threshold); if only the trusted contact is compromised, the adversary still needs Share 1 from the cloud provider.
+> **Threat note:** An adversary who compromises both the user's cloud provider and the VELA server still cannot recover by API unless they can also satisfy the user's WebAuthn assertion. The server still stores only ciphertext; the recovery credential gates release, not decryption. If the FIDO2 credential is also lost, recovery requires Share 3 from the trusted contact (2-of-3 threshold); if only the trusted contact is compromised, the adversary still needs Share 1 from the cloud provider.
 
 ### 4.4 Device Audit Log
 VELA maintains an end-to-end encrypted audit log of device lifecycle events. The server stores this log as an opaque encrypted blob and has no plaintext access to its contents.
@@ -201,12 +203,14 @@ struct VaultChunk {
 ```
 
 **Path ORAM for access pattern hiding:**
-The client maintains a local *position map* (`chunk_id → current ORAM tree path`). All chunk reads and writes are routed through Path ORAM:
+The client maintains a local *position map* (`chunk_id → current ORAM tree path`). The server also exposes opaque bucket/path endpoints for Path ORAM trees. All chunk reads and writes above the trivial threshold are routed through Path ORAM:
 1. On read: the client reads the entire path from root to the leaf specified in the position map, re-randomizes the chunk's position, and writes the path back.
 2. On write: the updated chunk is placed at a new random leaf path; all other slots along the path are re-encrypted with fresh nonces before upload.
 3. The server observes only a sequence of fixed-size blob reads/writes along tree paths; it cannot determine which logical chunk is being accessed or whether it is a read or write.
 
 For vaults with ≤4 active chunks, the client uses **trivial ORAM** (download and re-upload all chunks on every sync). At this scale, Path ORAM's path-read + path-write overhead (~2× tree depth slot accesses per sync) exceeds the cost of a full sequential sync (N chunks). The threshold of 4 chunks (binary tree depth ≈ 2–3 slots per path; 2 paths = 4–6 slot accesses vs. N = 4 sequential accesses) is empirically chosen; future implementations may adjust based on measured bandwidth and enclave overhead.
+
+The legacy `/vault/chunk/{id}` endpoints remain for direct opaque-chunk sync and migration. Full tree access uses `/vault/oram/{tree_id}/path/{leaf}`. The `GET` response returns every bucket index on that root-to-leaf path with its version and base64 ciphertext if present. The `PUT` body writes the complete path back, one encrypted bucket per path bucket, each with its own `if_match` version for optimistic concurrency.
 
 ### 5.3 Conflict Resolution (Multi-Device Sync)
 
@@ -238,7 +242,7 @@ device_identity_key = blake3::derive_key("vela device identity v1", RMS)
 This binds the authentication key to the RMS: compromising the RMS would allow an attacker to derive all current and future device identity keys. The server registers the device's X25519 public key at enrollment and uses it as the Cyclo verification key.
 
 ### Flow
-1. **Challenge:** Client requests a 32-byte challenge nonce from the server (stored in Redis with a 60-second TTL; single-use).
+1. **Challenge:** Client requests a 32-byte challenge nonce from the server (stored in sled with a 60-second TTL; single-use).
 2. **Proof Generation (Zig/Rust Core):** The client constructs a Cyclo proof π:
    - *Statement:* "I know a secret key `sk` such that `pk = PublicKey(sk)`, where `pk` appears in the server's enrolled device registry, and `BLAKE3(sk ‖ challenge)` equals a committed value."
    - The proof is generated by the Zig implementation of the Cyclo prover, which uses the `tfhe-ntt` Rust library for NTT operations via FFI.
@@ -254,17 +258,19 @@ This binds the authentication key to the RMS: compromising the RMS would allow a
 | **Token lifetime** | 15 minutes (sliding) |
 | **Max session duration** | 8 hours (hard cap regardless of activity) |
 | **Renewal** | Each authenticated API call that arrives within the last 5 minutes of validity issues a refreshed token in the response header. |
-| **Revocation** | On device revocation or explicit logout, the token's `jti` is added to a Redis revocation set with a TTL equal to the token's remaining lifetime. Every request checks this set. |
+| **Revocation** | On device revocation or explicit logout, the token's `jti` is added to a sled-backed revocation set with a TTL equal to the token's remaining lifetime. Every request checks this set. |
 | **Device revocation cascade** | Revoking a device invalidates all active JTIs associated with that `device_id`. |
 
 ### Rate Limiting
 
+The server uses embedded sled TTL counters for rate limits, challenge nonces, token revocation, and device-JTI tracking. This keeps the deployable server as a single binary with embedded data files instead of requiring PostgreSQL and Redis services.
+
 | Endpoint | Limit | Enforcement |
 | :--- | :--- | :--- |
-| `GET /auth/challenge` | 20 requests/min per IP | Redis sliding window |
-| `POST /auth/verify` | 5 failed proofs/min per `device_id` | Redis counter; exponential backoff after 3 consecutive failures (1s, 2s, 4s, …, capped at 5min) |
-| `POST /auth/verify` | 10 attempts/min per IP | Redis sliding window; independent of per-device limit |
-| All authenticated routes | 300 requests/min per session token | Redis token-bucket |
+| `GET /auth/challenge` | 20 requests/min per IP | sled TTL counter |
+| `POST /auth/verify` | 5 failed proofs/min per `device_id` | sled TTL counter; exponential backoff after 3 consecutive failures (1s, 2s, 4s, ..., capped at 5min) |
+| `POST /auth/verify` | 10 attempts/min per IP | sled TTL counter; independent of per-device limit |
+| All authenticated routes | 300 requests/min per session token | sled TTL counter |
 
 ---
 
@@ -283,7 +289,7 @@ This binds the authentication key to the RMS: compromising the RMS would allow a
 
 ### 7.3 Desktop App
 - **App:** Rust Tauri.
-- **Enclave:** Windows TPM 2.0 or macOS Secure Enclave.
+- **Enclave:** Windows TPM 2.0 or macOS Secure Enclave where available. Desktop can fall back to a local password-wrapped RMS for computers without biometric hardware.
 - **UX:** Runs as a background daemon. Exposes a local IPC socket (Unix Domain Socket / Named Pipe on Windows) for the Web Extension to communicate with.
 
 ### 7.4 Web Extension
@@ -305,6 +311,14 @@ This binds the authentication key to the RMS: compromising the RMS would allow a
 | `/vault/sync` | GET | PASETO v4 | Returns manifest: list of `(chunk_id, version, lamport_clock, last_writer)`. |
 | `/vault/chunk/{id}` | GET | PASETO v4 | Download one 1MB encrypted ORAM chunk. |
 | `/vault/chunk/{id}` | PUT | PASETO v4 | Upload a 1MB encrypted chunk. Requires `If-Match: <version>` header; returns `409 Conflict` if version has advanced. |
+| `/vault/chunk/{id}` | DELETE | PASETO v4 | Delete a stale encrypted chunk. Requires `If-Match: <version>`. |
+| `/vault/oram/{tree_id}/path/{leaf}?height=N` | GET | PASETO v4 | Download the opaque encrypted buckets on a Path ORAM root-to-leaf path. Missing buckets are returned with version `0`. |
+| `/vault/oram/{tree_id}/path/{leaf}` | PUT | PASETO v4 | Write back a complete Path ORAM path. Each bucket carries `if_match`, `lamport_clock`, and base64 ciphertext. |
+| `/recovery/share` | PUT/GET/DELETE | PASETO v4 | Store, retrieve, or delete the user's encrypted server-side recovery share. |
+| `/recovery/webauthn/register/start` | POST | PASETO v4 | Starts passkey/FIDO2 registration for recovery; returns WebAuthn creation options. |
+| `/recovery/webauthn/register/finish` | POST | PASETO v4 | Verifies the WebAuthn attestation response and stores the recovery credential public key. |
+| `/recovery/initiate` | POST | None | Starts a WebAuthn assertion ceremony for a user with a stored recovery share and recovery passkey. |
+| `/recovery/recover` | POST | WebAuthn assertion | Verifies the passkey assertion with user verification and releases the encrypted server-side recovery share. |
 | `/share/send` | POST | PASETO v4 | Encapsulate a specific vault item for another user using Hybrid KEM; delivers encrypted capsule to recipient's inbox. |
 
 ---
@@ -327,6 +341,7 @@ This binds the authentication key to the RMS: compromising the RMS would allow a
 | Cloud Provider (iCloud/Google Drive) | Semi-trusted | Holds Share 1 only; one of three Shamir shares; useless alone. |
 | Browser (Web Extension fallback) | Untrusted | Hostile environment; fallback mode degrades security. |
 | Network | Untrusted | All communication over TLS 1.3; Cyclo proofs provide quantum-resistant authentication layer above TLS. |
+| Local password fallback | Semi-trusted | Protects RMS at rest only on devices without biometric hardware. It is intentionally scoped to local unlock and is never accepted by the server as identity proof. |
 
 ### Threat Coverage
 

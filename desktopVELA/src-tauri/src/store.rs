@@ -198,7 +198,11 @@ impl Store {
         self.save_device_id_with_user_id(device_id, &format!("user-{}", &device_id[..8]))
     }
 
-    pub fn save_device_id_with_user_id(&self, device_id: &str, user_id: &str) -> anyhow::Result<()> {
+    pub fn save_device_id_with_user_id(
+        &self,
+        device_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<()> {
         let device_path = self.store_path.join(DEVICE_ID_FILE);
 
         if let Some(parent) = device_path.parent() {

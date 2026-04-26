@@ -1,9 +1,9 @@
 use data_encoding::BASE32;
-use serde::Serialize;
-use tauri::command;
-use std::time::{SystemTime, UNIX_EPOCH};
 use hmac::{Hmac, Mac};
+use serde::Serialize;
 use sha1::Sha1;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::command;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -73,7 +73,10 @@ fn extract_secret(input: &str) -> String {
 
 fn base32_decode(secret: &str) -> Option<Vec<u8>> {
     let secret_upper = secret.to_uppercase().replace(" ", "").replace("-", "");
-    let clean: String = secret_upper.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let clean: String = secret_upper
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
     let padding = (8 - clean.len() % 8) % 8;
     let padded = format!("{}{}", clean, "=".repeat(padding));
     BASE32.decode(padded.as_bytes()).ok()
@@ -101,8 +104,8 @@ fn compute_hotp(secret: &[u8], counter: u64, digits: u32) -> String {
 #[command]
 pub async fn generate_totp(secret: String) -> Result<TotpCode, String> {
     let params = parse_otpauth(&secret);
-    let secret_bytes = base32_decode(&params.secret)
-        .ok_or_else(|| "Invalid base32 secret".to_string())?;
+    let secret_bytes =
+        base32_decode(&params.secret).ok_or_else(|| "Invalid base32 secret".to_string())?;
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -126,8 +129,8 @@ pub async fn generate_totp(secret: String) -> Result<TotpCode, String> {
 #[command]
 pub async fn verify_totp(secret: String, code: String) -> Result<bool, String> {
     let params = parse_otpauth(&secret);
-    let secret_bytes = base32_decode(&params.secret)
-        .ok_or_else(|| "Invalid base32 secret".to_string())?;
+    let secret_bytes =
+        base32_decode(&params.secret).ok_or_else(|| "Invalid base32 secret".to_string())?;
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

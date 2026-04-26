@@ -343,7 +343,9 @@ pub mod linux_biometric {
         if check_secret_service_sync() {
             let enrolled = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
-                    match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                    match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
+                        .await
+                    {
                         Ok(ss) => match ss.get_default_collection().await {
                             Ok(collection) => {
                                 let mut attrs = HashMap::new();
@@ -394,7 +396,9 @@ pub mod linux_biometric {
                     }
                     return BiometricAuthResult {
                         success: false,
-                        error_message: Some("Fingerprint matched but no vault data found".to_string()),
+                        error_message: Some(
+                            "Fingerprint matched but no vault data found".to_string(),
+                        ),
                         retry_count: None,
                         uses_password: false,
                     };
@@ -479,7 +483,9 @@ pub mod linux_biometric {
 
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
+                    .await
+                {
                     Ok(ss) => match ss.get_default_collection().await {
                         Ok(collection) => {
                             let mut attrs = HashMap::new();
@@ -507,7 +513,9 @@ pub mod linux_biometric {
 
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
+                    .await
+                {
                     Ok(ss) => match ss.get_default_collection().await {
                         Ok(collection) => {
                             let mut attrs = HashMap::new();

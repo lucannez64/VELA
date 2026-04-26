@@ -4,8 +4,8 @@ use tauri::Manager;
 use tracing::{error, info};
 
 use crate::commands::totp::generate_totp_code;
-use crate::AppState;
 use crate::vault::VaultItem;
+use crate::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcMessage {
@@ -79,27 +79,35 @@ pub mod server {
         pub async fn start(&self, app_handle: tauri::AppHandle) {
             let addr = format!("127.0.0.1:{}", PORT);
             let _app_handle = app_handle.clone();
-            
+
             match TcpListener::bind(&addr).await {
                 Ok(listener) => {
                     info!("IPC server listening on {}", addr);
-                    
+
                     loop {
                         match listener.accept().await {
                             Ok((stream, client_addr)) => {
                                 info!("IPC server: client connected from {}", client_addr);
                                 let app_handle = _app_handle.clone();
                                 {
-                                    let state = app_handle.state::<std::sync::Arc<crate::AppState>>();
-                                    state.extension_connected.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    let state =
+                                        app_handle.state::<std::sync::Arc<crate::AppState>>();
+                                    state
+                                        .extension_connected
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
                                 }
                                 tokio::spawn(async move {
-                                    if let Err(e) = handle_connection(stream, app_handle.clone()).await {
+                                    if let Err(e) =
+                                        handle_connection(stream, app_handle.clone()).await
+                                    {
                                         error!("Connection error: {:?}", e);
                                     }
                                     info!("IPC server: client disconnected");
-                                    let state = app_handle.state::<std::sync::Arc<crate::AppState>>();
-                                    state.extension_connected.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    let state =
+                                        app_handle.state::<std::sync::Arc<crate::AppState>>();
+                                    state
+                                        .extension_connected
+                                        .store(false, std::sync::atomic::Ordering::Relaxed);
                                 });
                             }
                             Err(e) => {
@@ -115,13 +123,16 @@ pub mod server {
         }
     }
 
-    async fn handle_connection(mut stream: TcpStream, app_handle: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle_connection(
+        mut stream: TcpStream,
+        app_handle: tauri::AppHandle,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        
+
         let (mut rd, mut wr) = stream.split();
         let mut buffer = String::new();
         let mut content_length: Option<usize> = None;
-        
+
         loop {
             let mut tmp_buf = vec![0u8; 4096];
             match rd.read(&mut tmp_buf).await {
@@ -131,12 +142,12 @@ pub mod server {
                     if let Ok(text) = std::str::from_utf8(data) {
                         buffer.push_str(text);
                     }
-                    
+
                     if let Some(cl) = content_length {
                         let header_end = buffer.find("\r\n\r\n").map(|p| p + 4);
                         let body_start = header_end.unwrap_or(buffer.len());
                         let current_body_len = buffer.len() - body_start;
-                        
+
                         if current_body_len >= cl {
                             let body = &buffer[body_start..body_start + cl];
                             handle_json_message(&mut wr, body, &app_handle).await?;
@@ -152,12 +163,12 @@ pub mod server {
                                 }
                             }
                         }
-                        
+
                         if buffer.contains("\r\n\r\n") {
                             if let Some(cl) = content_length {
                                 let body_start = buffer.find("\r\n\r\n").unwrap() + 4;
                                 let current_body_len = buffer.len() - body_start;
-                                
+
                                 if current_body_len >= cl {
                                     let body = &buffer[body_start..body_start + cl];
                                     handle_json_message(&mut wr, body, &app_handle).await?;
@@ -177,17 +188,17 @@ pub mod server {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     async fn handle_ping_request(
         wr: &mut tokio::net::tcp::WriteHalf<'_>,
         app_handle: &tauri::AppHandle,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let response = process_message(IpcMessage::ping(), app_handle).await;
         let body = serde_json::to_string(&response)?;
-        
+
         let http_response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
@@ -195,10 +206,10 @@ pub mod server {
         );
         wr.write_all(http_response.as_bytes()).await?;
         wr.flush().await?;
-        
+
         Ok(())
     }
-    
+
     async fn handle_json_message(
         wr: &mut tokio::net::tcp::WriteHalf<'_>,
         text: &str,
@@ -208,9 +219,9 @@ pub mod server {
         if text.is_empty() {
             return Ok(());
         }
-        
+
         info!("Received: {}", text);
-        
+
         let message: IpcMessage = match serde_json::from_str(text) {
             Ok(m) => m,
             Err(e) => {
@@ -220,35 +231,38 @@ pub mod server {
         };
 
         let response = process_message(message, app_handle).await;
-        
+
         let body = serde_json::to_string(&response)?;
-        
+
         let http_response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
             body
         );
-        
+
         wr.write_all(http_response.as_bytes()).await?;
         wr.flush().await?;
-        
+
         Ok(())
     }
 
     async fn process_message(message: IpcMessage, app_handle: &tauri::AppHandle) -> IpcMessage {
         info!("Processing IPC message: {:?}", message.msg_type);
-        
+
         match message.msg_type {
             IpcMessageType::Ping => IpcMessage::pong(),
-            IpcMessageType::AutofillRequest => {
-                handle_autofill_request(&message, app_handle).await
-            }
+            IpcMessageType::AutofillRequest => handle_autofill_request(&message, app_handle).await,
             _ => IpcMessage::error("Unknown message type".to_string()),
         }
     }
 
-    async fn handle_autofill_request(message: &IpcMessage, app_handle: &tauri::AppHandle) -> IpcMessage {
-        let url = message.payload.get("domain")
+    async fn handle_autofill_request(
+        message: &IpcMessage,
+        app_handle: &tauri::AppHandle,
+    ) -> IpcMessage {
+        let url = message
+            .payload
+            .get("domain")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -261,7 +275,7 @@ pub mod server {
         let state = app_handle.state::<Arc<AppState>>();
         let vault = state.vault.read();
         let items = vault.search_by_domain(&base_domain);
-        
+
         let items_clone: Vec<_> = items.into_iter().cloned().collect();
 
         IpcMessage {
@@ -276,25 +290,25 @@ pub mod server {
 
 fn extract_base_domain(url: &str) -> String {
     let url = url.trim();
-    
+
     if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://") {
         if let Ok(parsed) = url::Url::parse(url) {
             if let Some(host) = parsed.host_str() {
                 let host = host.to_lowercase();
-                
+
                 if host.starts_with("www.") {
                     return host.strip_prefix("www.").unwrap_or(&host).to_string();
                 }
-                
+
                 let parts: Vec<&str> = host.split('.').collect();
                 if parts.len() >= 2 {
                     return parts[parts.len() - 2..].join(".");
                 }
-                
+
                 return host;
             }
         }
     }
-    
+
     url.to_lowercase()
 }

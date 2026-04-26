@@ -16,6 +16,8 @@ pub struct NewDevicePayload {
     pub cyclo_pk: String,
     pub rms_capsule: String,
     pub signature: String,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -44,40 +46,47 @@ pub async fn post_enroll(
         ));
     }
 
-    let rows = state.db.query(
-        "SELECT id, user_id, hybrid_ek, hybrid_vk, cyclo_pk,
+    let rows = state
+        .db
+        .query(
+            "SELECT id, user_id, device_name, device_type, last_active,
+                hybrid_ek, hybrid_vk, cyclo_pk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
          FROM devices
          WHERE id = $1 AND revoked = FALSE",
-        stoolap::params![body.enrolling_device_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+            stoolap::params![body.enrolling_device_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows.into_iter().next()
+    let row = rows
+        .into_iter()
+        .next()
         .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let device_a = crate::db::parse_device_row(&row)?;
 
-    verify_cyclo_proof(
-        &device_a.cyclo_pk,
-        &body.committed_hash,
-        &body.proof,
-    )?;
+    verify_cyclo_proof(&device_a.cyclo_pk, &body.committed_hash, &body.proof)?;
 
-    let new_hybrid_ek = B64.decode(&body.new_device.hybrid_ek)
+    let new_hybrid_ek = B64
+        .decode(&body.new_device.hybrid_ek)
         .map_err(|_| AppError::BadRequest("hybrid_ek is not valid base64".into()))?;
-    let new_hybrid_vk_bytes = B64.decode(&body.new_device.hybrid_vk)
+    let new_hybrid_vk_bytes = B64
+        .decode(&body.new_device.hybrid_vk)
         .map_err(|_| AppError::BadRequest("hybrid_vk is not valid base64".into()))?;
-    let new_cyclo_pk = B64.decode(&body.new_device.cyclo_pk)
+    let new_cyclo_pk = B64
+        .decode(&body.new_device.cyclo_pk)
         .map_err(|_| AppError::BadRequest("cyclo_pk is not valid base64".into()))?;
-    let rms_capsule = B64.decode(&body.new_device.rms_capsule)
+    let rms_capsule = B64
+        .decode(&body.new_device.rms_capsule)
         .map_err(|_| AppError::BadRequest("rms_capsule is not valid base64".into()))?;
-    let signature_bytes = B64.decode(&body.new_device.signature)
+    let signature_bytes = B64
+        .decode(&body.new_device.signature)
         .map_err(|_| AppError::BadRequest("signature is not valid base64".into()))?;
 
     const HYBRID_EK_LEN: usize = 1568 + 32;
     const HYBRID_VK_LEN: usize = 2592 + 32;
-    const CYCLO_PK_LEN:  usize = 128 * 8;
+    const CYCLO_PK_LEN: usize = 128 * 8;
     const HYBRID_SIG_LEN: usize = 4627 + 64;
 
     if new_hybrid_ek.len() != HYBRID_EK_LEN {
@@ -101,22 +110,32 @@ pub async fn post_enroll(
         )));
     }
 
-    verify_enrollment_signature(
-        &device_a.hybrid_vk,
-        &new_hybrid_vk_bytes,
-        &signature_bytes,
-    )?;
+    verify_enrollment_signature(&device_a.hybrid_vk, &new_hybrid_vk_bytes, &signature_bytes)?;
 
     let new_device_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
+    let device_name = body
+        .new_device
+        .device_name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Desktop Device".to_string());
+    let device_type = body
+        .new_device
+        .device_type
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "desktop".to_string());
 
     state.db.execute(
         "INSERT INTO devices
-         (id, user_id, hybrid_ek, hybrid_vk, cyclo_pk, enrolled_by, rms_capsule, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, cyclo_pk, enrolled_by, rms_capsule, created_at)
+         VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10)",
         stoolap::params![
             new_device_id.to_string(),
             device_a.user_id.to_string(),
+            device_name,
+            device_type,
             crate::db::encode_b64(&new_hybrid_ek),
             crate::db::encode_b64(&new_hybrid_vk_bytes),
             crate::db::encode_b64(&new_cyclo_pk),
@@ -133,7 +152,9 @@ pub async fn post_enroll(
         "device enrolled"
     );
 
-    Ok(Json(EnrollResponse { device_id: new_device_id }))
+    Ok(Json(EnrollResponse {
+        device_id: new_device_id,
+    }))
 }
 
 pub fn verify_cyclo_proof(
@@ -147,12 +168,13 @@ pub fn verify_cyclo_proof(
     let hash_bytes = hex::decode(committed_hash_hex)
         .map_err(|_| AppError::BadRequest("committed_hash is not valid hex".into()))?;
     if hash_bytes.len() != 32 {
-        return Err(AppError::BadRequest("committed_hash must be 32 bytes".into()));
+        return Err(AppError::BadRequest(
+            "committed_hash must be 32 bytes".into(),
+        ));
     }
     let hash_u64s = le_bytes_to_u64_slice(&hash_bytes).unwrap();
 
-    let mut public_inputs: Vec<u64> =
-        Vec::with_capacity(cyclo_pk_u64s.len() + hash_u64s.len());
+    let mut public_inputs: Vec<u64> = Vec::with_capacity(cyclo_pk_u64s.len() + hash_u64s.len());
     public_inputs.extend_from_slice(&cyclo_pk_u64s);
     public_inputs.extend_from_slice(&hash_u64s);
 
@@ -176,7 +198,9 @@ fn verify_enrollment_signature(
     message: &[u8],
     signature_bytes: &[u8],
 ) -> Result<()> {
-    use vela_crypto::signing::{HybridSignature, HybridVerifyingKey, HYBRID_SIG_LEN, HYBRID_VK_LEN};
+    use vela_crypto::signing::{
+        HybridSignature, HybridVerifyingKey, HYBRID_SIG_LEN, HYBRID_VK_LEN,
+    };
 
     let vk_arr: &[u8; HYBRID_VK_LEN] = device_a_vk_bytes
         .try_into()
@@ -185,7 +209,7 @@ fn verify_enrollment_signature(
         .try_into()
         .map_err(|_| AppError::BadRequest("signature has wrong length".into()))?;
 
-    let vk  = HybridVerifyingKey::from_bytes(vk_arr)
+    let vk = HybridVerifyingKey::from_bytes(vk_arr)
         .map_err(|e| AppError::Internal(format!("vk decode: {e}")))?;
     let sig = HybridSignature::from_bytes(sig_arr)
         .map_err(|e| AppError::BadRequest(format!("signature decode: {e}")))?;

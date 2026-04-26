@@ -24,6 +24,8 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
   const [passwordError, setPasswordError] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState<boolean | null>(null);
   const [biometricError, setBiometricError] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [isSettingUpSecurityKey, setIsSettingUpSecurityKey] = useState(false);
 
   useEffect(() => {
     checkBiometricAvailability();
@@ -111,6 +113,36 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
 
   const completedSteps = Object.values(recoverySteps).filter(Boolean).length;
 
+  const handleSecurityKeySetup = async () => {
+    if (!navigator.credentials?.create) {
+      setRecoveryError('WebAuthn is not available in this WebView.');
+      return;
+    }
+
+      setRecoveryError('');
+      setIsSettingUpSecurityKey(true);
+      try {
+      const response = await invoke<any>('start_recovery_webauthn_registration');
+      const publicKey = unwrapPublicKeyOptions(response);
+      const credential = await navigator.credentials.create({
+        publicKey: decodeCreationOptions(publicKey),
+      });
+      if (!credential) {
+        throw new Error('No credential was created');
+      }
+      const registered = await invoke<boolean>('finish_recovery_webauthn_registration', {
+        credential: credentialToJSON(credential as PublicKeyCredential),
+      });
+      if (registered) {
+        setRecoverySteps(prev => ({ ...prev, securityKey: true }));
+      }
+    } catch (e) {
+      setRecoveryError(e instanceof Error ? e.message : 'Security key setup failed');
+    } finally {
+      setIsSettingUpSecurityKey(false);
+    }
+  };
+
   if (showTrustedContact) {
     return (
       <main className="flex-1 flex items-center justify-center p-6 overflow-y-auto">
@@ -131,8 +163,79 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
           }}
         />
       </main>
-    );
+  );
+}
+
+function unwrapPublicKeyOptions(response: any): PublicKeyCredentialCreationOptions {
+  return response?.publicKey ?? response?.public_key ?? response;
+}
+
+function decodeCreationOptions(options: PublicKeyCredentialCreationOptions): PublicKeyCredentialCreationOptions {
+  if (!options?.challenge || !options?.user?.id) {
+    throw new Error('Invalid WebAuthn creation options from server');
   }
+
+  return {
+    ...options,
+    challenge: base64UrlToBuffer(options.challenge as unknown as string),
+    user: {
+      ...options.user,
+      id: base64UrlToBuffer(options.user.id as unknown as string),
+    },
+    excludeCredentials: options.excludeCredentials?.map(credential => ({
+      ...credential,
+      id: base64UrlToBuffer(credential.id as unknown as string),
+    })),
+  };
+}
+
+function credentialToJSON(credential: PublicKeyCredential): Record<string, unknown> {
+  return {
+    id: credential.id,
+    rawId: bufferToBase64Url(credential.rawId),
+    type: credential.type,
+    response: responseToJSON(credential.response),
+    clientExtensionResults: credential.getClientExtensionResults(),
+    authenticatorAttachment: credential.authenticatorAttachment,
+  };
+}
+
+function responseToJSON(response: AuthenticatorResponse): Record<string, string> {
+  if (response instanceof AuthenticatorAttestationResponse) {
+    return {
+      clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+      attestationObject: bufferToBase64Url(response.attestationObject),
+    };
+  }
+
+  return {
+    clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+    authenticatorData: bufferToBase64Url((response as AuthenticatorAssertionResponse).authenticatorData),
+    signature: bufferToBase64Url((response as AuthenticatorAssertionResponse).signature),
+    userHandle: (response as AuthenticatorAssertionResponse).userHandle
+      ? bufferToBase64Url((response as AuthenticatorAssertionResponse).userHandle as ArrayBuffer)
+      : '',
+  };
+}
+
+function base64UrlToBuffer(value: string): ArrayBuffer {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function bufferToBase64Url(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
 
   if (step === 'welcome') {
     return (
@@ -372,19 +475,23 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
                   <div>
                     <div className="font-body font-medium text-on-surface">Security Key</div>
                     <div className="text-sm text-on-surface-variant">
-                      {recoverySteps.securityKey ? 'Master password enabled' : 'Password recovery enabled'}
+                      {recoverySteps.securityKey ? 'Passkey registered' : 'Passkey recovery enabled'}
                     </div>
                   </div>
                 </div>
                 {!recoverySteps.securityKey && (
                   <button 
-                    onClick={() => setRecoverySteps(prev => ({ ...prev, securityKey: true }))}
+                    onClick={handleSecurityKeySetup}
+                    disabled={isSettingUpSecurityKey}
                     className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
                   >
-                    Enable
+                    {isSettingUpSecurityKey ? 'Waiting...' : 'Enable'}
                   </button>
                 )}
               </div>
+              {recoveryError && (
+                <p className="mt-3 text-sm text-error">{recoveryError}</p>
+              )}
             </div>
 
             <div className="p-6 rounded-xl border border-outline-variant bg-surface-container">

@@ -57,7 +57,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
   }, [propItems]);
 
   const groupedItems = filteredItems.reduce((acc, item) => {
-    const letter = item.name[0].toUpperCase();
+    const letter = (item.name.trim()[0] || '#').toUpperCase();
     if (!acc[letter]) acc[letter] = [];
     acc[letter].push(item);
     return acc;
@@ -69,15 +69,6 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
       case 'creditCard': return 'credit_card';
       case 'secureNote': return 'note';
       default: return 'shield';
-    }
-  };
-
-  const getFavicon = (url: string): string | undefined => {
-    try {
-      const domain = new URL(url).hostname;
-      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-    } catch {
-      return undefined;
     }
   };
 
@@ -118,7 +109,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
         </div>
         <button 
           onClick={onAddItem}
-          className="flex items-center gap-2 bg-gradient-to-br from-primary to-on-primary-container text-on-primary px-6 py-4 rounded-xl font-bold font-headline tracking-tight hover:shadow-[0_0_20px_rgba(115,219,154,0.2)] active:scale-95 transition-all"
+          className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors"
         >
           <span className="material-symbols-outlined">add</span>
           <span>Add Item</span>
@@ -136,7 +127,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                 : 'text-on-surface-variant hover:text-on-surface border-transparent'
             }`}
           >
-            {type === 'all' ? 'All' : type === 'creditCard' ? 'Cards' : type.charAt(0).toUpperCase() + type.slice(1)}
+            {type === 'all' ? 'All' : type === 'creditCard' ? 'Cards' : type === 'secureNote' ? 'Secure Notes' : 'Logins'}
             <span className={`px-2 py-0.5 rounded text-[10px] ${filter === type ? 'bg-primary/10' : 'bg-surface-container-highest'}`}>
               {typeCounts[type]}
             </span>
@@ -156,31 +147,18 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                 <div
                   key={item.id}
                   onClick={() => setSelectedItem(item)}
-                  className="group flex items-center justify-between p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
+                  className="group flex items-center justify-between gap-4 p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
                 >
-                  <div className="flex items-center gap-4">
-                    {item.item_type === 'login' && item.url && getFavicon(item.url) ? (
-                      <img 
-                        src={getFavicon(item.url)} 
-                        alt="" 
-                        className="w-12 h-12 rounded-xl object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                          (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                        }}
-                      />
-                    ) : null}
-                    <div className="w-12 h-12 rounded-xl bg-surface-bright flex items-center justify-center">
-                      <span className="material-symbols-outlined text-primary">{getIcon(item.item_type)}</span>
-                    </div>
-                    <div>
-                      <h3 className="font-body font-bold text-on-surface">{item.name}</h3>
-                      <p className="font-mono text-xs text-on-surface-variant/60">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <ItemIcon item={item} icon={getIcon(item.item_type)} />
+                    <div className="min-w-0">
+                      <h3 className="font-body font-bold text-on-surface truncate">{item.name}</h3>
+                      <p className="font-mono text-xs text-on-surface-variant/60 truncate">
                         {item.username || item.url || (item.item_type === 'creditCard' ? `Ending in •••• ${item.card_number?.slice(-4)}` : '••••••••')}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-6">
+                  <div className="flex items-center gap-6 shrink-0">
                     {item.shared && (
                       item.share_recipient
                         ? <div className="px-2 py-0.5 rounded bg-primary/10 text-[10px] text-primary font-label font-bold uppercase tracking-widest flex items-center gap-1">
@@ -295,4 +273,37 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
       </div>
     </div>
   );
+}
+
+function ItemIcon({ item, icon }: { item: VaultItem; icon: string }) {
+  const [failed, setFailed] = useState(false);
+  const favicon = item.item_type === 'login' && item.url ? faviconUrl(item.url) : undefined;
+
+  if (favicon && !failed) {
+    return (
+      <img
+        src={favicon}
+        alt=""
+        className="w-12 h-12 shrink-0 rounded-xl object-cover bg-surface-bright"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <div className="w-12 h-12 shrink-0 rounded-xl bg-surface-bright flex items-center justify-center">
+      <span className="material-symbols-outlined text-primary">{icon}</span>
+    </div>
+  );
+}
+
+function faviconUrl(url: string): string | undefined {
+  try {
+    const normalized = url.includes('://') ? url : `https://${url}`;
+    const domain = new URL(normalized).hostname;
+    if (!domain || /^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) return undefined;
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+  } catch {
+    return undefined;
+  }
 }

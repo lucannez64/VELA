@@ -1,9 +1,12 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::{command, State};
 use std::sync::Arc;
+use tauri::{command, State};
+use uuid::Uuid;
 
+use crate::api::{ApiClient, RecoveryRecoverRequest};
+use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::AppState;
-use crate::commands::audit::{AuditAction, record_audit_event};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -63,17 +66,135 @@ pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<Settings, S
 }
 
 #[command]
-pub async fn update_settings(state: State<'_, Arc<AppState>>, settings: Settings) -> Result<(), String> {
+pub async fn update_settings(
+    state: State<'_, Arc<AppState>>,
+    settings: Settings,
+) -> Result<(), String> {
     if !settings.server_url.is_empty() {
         *state.server_url.write() = settings.server_url.clone();
     }
-    state.store.save_settings(&settings).map_err(|e| e.to_string())?;
+    state
+        .store
+        .save_settings(&settings)
+        .map_err(|e| e.to_string())?;
     record_audit_event(&state, AuditAction::SettingsChanged);
     Ok(())
 }
 
 #[command]
-pub async fn send_recovery_invite(email: String) -> Result<(), String> {
-    tracing::info!("Sending recovery invite to: {}", email);
+pub async fn send_recovery_invite(
+    state: State<'_, Arc<AppState>>,
+    email: String,
+) -> Result<(), String> {
+    let email = email.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 {
+        return Err("Enter a valid recovery contact email address".to_string());
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct RecoveryInvite {
+        id: String,
+        email: String,
+        created_at: DateTime<Utc>,
+        status: String,
+    }
+
+    let invites_path = state.store.store_path().join("recovery_invites.json");
+    let mut invites: Vec<RecoveryInvite> = if invites_path.exists() {
+        std::fs::read_to_string(&invites_path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    invites.push(RecoveryInvite {
+        id: Uuid::new_v4().to_string(),
+        email: email.clone(),
+        created_at: Utc::now(),
+        status: "pending".to_string(),
+    });
+
+    let json = serde_json::to_string_pretty(&invites).map_err(|e| e.to_string())?;
+    std::fs::write(invites_path, json).map_err(|e| e.to_string())?;
+
+    record_audit_event(&state, AuditAction::SettingsChanged);
+    tracing::info!("Recovery invite queued for: {}", email);
     Ok(())
+}
+
+#[command]
+pub async fn start_recovery_webauthn_registration(
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+
+    let (response, new_token) = client
+        .start_recovery_webauthn_registration(&token, None, Some("VELA recovery key"))
+        .await
+        .map_err(|e| format!("Failed to start WebAuthn recovery setup: {e}"))?;
+    if let Some(t) = new_token {
+        state.session.write().set_server_token(t);
+    }
+
+    Ok(response.public_key)
+}
+
+#[command]
+pub async fn finish_recovery_webauthn_registration(
+    state: State<'_, Arc<AppState>>,
+    credential: serde_json::Value,
+) -> Result<bool, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+
+    let (response, new_token) = client
+        .finish_recovery_webauthn_registration(&token, credential)
+        .await
+        .map_err(|e| format!("Failed to finish WebAuthn recovery setup: {e}"))?;
+    if let Some(t) = new_token {
+        state.session.write().set_server_token(t);
+    }
+
+    Ok(response.registered)
+}
+
+#[command]
+pub async fn initiate_account_recovery(
+    state: State<'_, Arc<AppState>>,
+    user_id: String,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let response = client
+        .initiate_recovery(&user_id)
+        .await
+        .map_err(|e| format!("Failed to initiate account recovery: {e}"))?;
+    Ok(response.public_key)
+}
+
+#[command]
+pub async fn finish_account_recovery(
+    state: State<'_, Arc<AppState>>,
+    user_id: String,
+    credential: serde_json::Value,
+) -> Result<String, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let response = client
+        .recover_account(&RecoveryRecoverRequest {
+            user_id,
+            credential,
+        })
+        .await
+        .map_err(|e| format!("Failed to finish account recovery: {e}"))?;
+    Ok(response.share)
 }

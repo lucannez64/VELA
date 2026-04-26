@@ -18,14 +18,19 @@ pub async fn get_chunk(
     Path(id): Path<String>,
     session: AuthSession,
 ) -> Result<impl IntoResponse> {
-    let rows = state.db.query(
-        "SELECT chunk_id, user_id, version, lamport_clock, last_writer, ciphertext
+    let rows = state
+        .db
+        .query(
+            "SELECT chunk_id, user_id, version, lamport_clock, last_writer, ciphertext
          FROM vault_chunks
          WHERE chunk_id = $1 AND user_id = $2",
-        stoolap::params![id.to_string(), session.user_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+            stoolap::params![id.to_string(), session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows.into_iter().next()
+    let row = rows
+        .into_iter()
+        .next()
         .ok_or_else(|| AppError::NotFound(format!("chunk {id} not found")))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let chunk = crate::db::parse_chunk_row(&row)?;
@@ -41,10 +46,7 @@ pub async fn get_chunk(
         chunk.lamport_clock.to_string().parse().unwrap(),
     );
     if let Some(lw) = chunk.last_writer {
-        headers.insert(
-            "X-Last-Writer",
-            lw.to_string().parse().unwrap(),
-        );
+        headers.insert("X-Last-Writer", lw.to_string().parse().unwrap());
     }
     headers.insert(
         axum::http::header::CONTENT_TYPE,
@@ -86,10 +88,13 @@ pub async fn put_chunk(
     let now = Utc::now().to_rfc3339();
 
     if if_match == 0 {
-        let existing = state.db.query(
-            "SELECT 1 FROM vault_chunks WHERE chunk_id = $1",
-            stoolap::params![id.to_string()],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        let existing = state
+            .db
+            .query(
+                "SELECT 1 FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+                stoolap::params![id.to_string(), session.user_id.to_string()],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         if existing.into_iter().next().is_some() {
             return Err(AppError::Conflict(
@@ -112,8 +117,10 @@ pub async fn put_chunk(
             ],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
     } else {
-        let n: i64 = state.db.execute(
-            "UPDATE vault_chunks
+        let n: i64 = state
+            .db
+            .execute(
+                "UPDATE vault_chunks
              SET version       = version + 1,
                  lamport_clock = $1,
                  last_writer   = $2,
@@ -122,16 +129,17 @@ pub async fn put_chunk(
              WHERE chunk_id = $5
                AND user_id  = $6
                AND version  = $7",
-            stoolap::params![
-                lamport_clock,
-                session.device_id.to_string(),
-                crate::db::encode_b64(&ciphertext),
-                now,
-                id.to_string(),
-                session.user_id.to_string(),
-                if_match,
-            ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+                stoolap::params![
+                    lamport_clock,
+                    session.device_id.to_string(),
+                    crate::db::encode_b64(&ciphertext),
+                    now,
+                    id.to_string(),
+                    session.user_id.to_string(),
+                    if_match,
+                ],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         if n == 0 {
             return Err(AppError::Conflict(
@@ -140,26 +148,33 @@ pub async fn put_chunk(
         }
     }
 
-    let ver_rows = state.db.query(
-        "SELECT version FROM vault_chunks WHERE chunk_id = $1",
-        stoolap::params![id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    let ver_rows = state
+        .db
+        .query(
+            "SELECT version FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+            stoolap::params![id.to_string(), session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let ver_row = ver_rows.into_iter().next()
+    let ver_row = ver_rows
+        .into_iter()
+        .next()
         .ok_or_else(|| AppError::Internal("failed to read new version".into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let v = crate::db::row_val(&ver_row, 0)?;
-    let new_version: i64 = v.as_int64()
+    let new_version: i64 = v
+        .as_int64()
         .ok_or_else(|| AppError::Internal("expected integer".into()))?;
 
     let mut resp_headers = HeaderMap::new();
     maybe_append_new_token(&mut resp_headers, &session);
-    resp_headers.insert(
-        "X-Chunk-Version",
-        new_version.to_string().parse().unwrap(),
-    );
+    resp_headers.insert("X-Chunk-Version", new_version.to_string().parse().unwrap());
 
-    Ok((StatusCode::OK, resp_headers, Json(serde_json::json!({ "version": new_version }))))
+    Ok((
+        StatusCode::OK,
+        resp_headers,
+        Json(serde_json::json!({ "version": new_version })),
+    ))
 }
 
 pub async fn delete_chunk(
@@ -175,10 +190,13 @@ pub async fn delete_chunk(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
-    let rows = state.db.query(
-        "SELECT version FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
-        stoolap::params![id.to_string(), session.user_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    let rows = state
+        .db
+        .query(
+            "SELECT version FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+            stoolap::params![id.to_string(), session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let row = match rows.into_iter().next() {
         Some(r) => r.map_err(|e| AppError::Internal(e.to_string()))?,
@@ -186,7 +204,8 @@ pub async fn delete_chunk(
     };
 
     let v = crate::db::row_val(&row, 0)?;
-    let current_version: i64 = v.as_int64()
+    let current_version: i64 = v
+        .as_int64()
         .ok_or_else(|| AppError::Internal("expected integer".into()))?;
 
     if current_version != if_match {
@@ -195,10 +214,13 @@ pub async fn delete_chunk(
         ));
     }
 
-    state.db.execute(
-        "DELETE FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
-        stoolap::params![id.to_string(), session.user_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    state
+        .db
+        .execute(
+            "DELETE FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
+            stoolap::params![id.to_string(), session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(
         chunk_id = %id,

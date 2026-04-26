@@ -1,22 +1,30 @@
-use crate::commands::audit::{AuditAction, record_audit_event};
+use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::vault::{ItemType, PasswordGeneratorOptions, VaultItem};
 use crate::AppState;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use tauri::{command, State};
-use std::sync::Arc;
-use uuid::Uuid;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tauri::{command, AppHandle, Emitter, State};
+use uuid::Uuid;
+
+pub const VAULT_ITEMS_CHANGED_EVENT: &str = "vault-items-changed";
+
+pub fn emit_vault_items_changed(app: &AppHandle) {
+    let _ = app.emit(VAULT_ITEMS_CHANGED_EVENT, ());
+}
 
 fn save_vault(state: &State<'_, Arc<AppState>>) -> Result<(), String> {
     let vault = state.vault.read();
     let crypto = state.crypto.read();
-    
+
     if let Some(crypto) = crypto.as_ref() {
-        state.store.save_vault(&vault, crypto)
+        state
+            .store
+            .save_vault(&vault, crypto)
             .map_err(|e| format!("Failed to save vault: {}", e))?;
     }
-    
+
     Ok(())
 }
 
@@ -28,17 +36,30 @@ pub struct PasswordStrength {
 }
 
 fn calculate_password_strength(password: &str) -> PasswordStrength {
-    let charset_size = if password.chars().any(|c| c.is_ascii_lowercase()) { 26 } else { 0 }
-        + if password.chars().any(|c| c.is_ascii_uppercase()) { 26 } else { 0 }
-        + if password.chars().any(|c| c.is_ascii_digit()) { 10 } else { 0 }
-        + if password.chars().any(|c| !c.is_alphanumeric()) { 32 } else { 0 };
-    
+    let charset_size = if password.chars().any(|c| c.is_ascii_lowercase()) {
+        26
+    } else {
+        0
+    } + if password.chars().any(|c| c.is_ascii_uppercase()) {
+        26
+    } else {
+        0
+    } + if password.chars().any(|c| c.is_ascii_digit()) {
+        10
+    } else {
+        0
+    } + if password.chars().any(|c| !c.is_alphanumeric()) {
+        32
+    } else {
+        0
+    };
+
     let entropy = if charset_size > 0 {
         (password.len() as f64) * (charset_size as f64).log2()
     } else {
         0.0
     };
-    
+
     let (score, crack_time) = if entropy < 28.0 {
         ("weak".to_string(), "instant".to_string())
     } else if entropy < 36.0 {
@@ -48,8 +69,12 @@ fn calculate_password_strength(password: &str) -> PasswordStrength {
     } else {
         ("strong".to_string(), "centuries".to_string())
     };
-    
-    PasswordStrength { entropy, score, crack_time }
+
+    PasswordStrength {
+        entropy,
+        score,
+        crack_time,
+    }
 }
 
 #[command]
@@ -58,8 +83,22 @@ pub async fn get_items(state: State<'_, Arc<AppState>>) -> Result<Vec<VaultItem>
     let items = vault.items.clone();
     tracing::info!("get_items: {} items in vault", items.len());
     for (i, item) in items.iter().enumerate() {
-        if let VaultItem::CreditCard { name, number, exp, cvv, .. } = item {
-            tracing::info!("  item[{}]: name={}, number={}, exp={}, cvv={}", i, name, number, exp, cvv);
+        if let VaultItem::CreditCard {
+            name,
+            number,
+            exp,
+            cvv,
+            ..
+        } = item
+        {
+            tracing::info!(
+                "  item[{}]: name={}, number={}, exp={}, cvv={}",
+                i,
+                name,
+                number,
+                exp,
+                cvv
+            );
         }
     }
     Ok(items)
@@ -76,51 +115,89 @@ pub async fn get_item(
 
 #[command]
 pub async fn add_item(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     item: VaultItem,
 ) -> Result<VaultItem, String> {
-    if let VaultItem::CreditCard { name, number, exp, cvv, pin, cardholder_name, notes, .. } = &item {
+    if let VaultItem::CreditCard {
+        name,
+        number,
+        exp,
+        cvv,
+        pin,
+        cardholder_name,
+        notes,
+        ..
+    } = &item
+    {
         tracing::info!("Adding creditcard: name={}, number={}, exp={}, cvv={}, pin={:?}, cardholder={:?}, notes={:?}",
             name, number, exp, cvv, pin, cardholder_name, notes);
     } else {
-        tracing::info!("Adding item type: {:?}", match &item {
-            VaultItem::Login { .. } => "login",
-            VaultItem::CreditCard { .. } => "creditcard",
-            VaultItem::SecureNote { .. } => "securenote",
-            VaultItem::Identity { .. } => "identity",
-            VaultItem::FileBlob { .. } => "fileblob",
-            VaultItem::BreachMonitor { .. } => "breachmonitor",
-        });
+        tracing::info!(
+            "Adding item type: {:?}",
+            match &item {
+                VaultItem::Login { .. } => "login",
+                VaultItem::CreditCard { .. } => "creditcard",
+                VaultItem::SecureNote { .. } => "securenote",
+                VaultItem::Identity { .. } => "identity",
+                VaultItem::FileBlob { .. } => "fileblob",
+                VaultItem::BreachMonitor { .. } => "breachmonitor",
+            }
+        );
     }
-    
+
     let mut vault = state.vault.write();
     let now = Utc::now();
     let new_id = Uuid::new_v4().to_string();
-    let new_item = item
-        .with_id(new_id)
-        .with_updated_at(now);
-    
-    if let VaultItem::CreditCard { name, number, exp, cvv, pin, cardholder_name, notes, .. } = &new_item {
-        tracing::info!("After with_id: name={}, number={}, exp={}, cvv={}, pin={:?}, cardholder={:?}",
-            name, number, exp, cvv, pin, cardholder_name);
+    let new_item = item.with_id(new_id).with_updated_at(now);
+
+    if let VaultItem::CreditCard {
+        name,
+        number,
+        exp,
+        cvv,
+        pin,
+        cardholder_name,
+        notes,
+        ..
+    } = &new_item
+    {
+        tracing::info!(
+            "After with_id: name={}, number={}, exp={}, cvv={}, pin={:?}, cardholder={:?}",
+            name,
+            number,
+            exp,
+            cvv,
+            pin,
+            cardholder_name
+        );
     }
-    
+
     vault.add_item(new_item.clone());
-    
+
     drop(vault);
     save_vault(&state)?;
-    
-    record_audit_event(&state, AuditAction::ItemAdded {
-        item_type: format!("{:?}", new_item.item_type()).to_lowercase(),
-    });
-    
-    tracing::info!("Returning item: {:?}", serde_json::to_string(&new_item).unwrap_or_default());
-    
+
+    record_audit_event(
+        &state,
+        AuditAction::ItemAdded {
+            item_type: format!("{:?}", new_item.item_type()).to_lowercase(),
+        },
+    );
+
+    tracing::info!(
+        "Returning item: {:?}",
+        serde_json::to_string(&new_item).unwrap_or_default()
+    );
+
+    emit_vault_items_changed(&app);
+
     Ok(new_item)
 }
 
 #[command]
 pub async fn update_item(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     item: VaultItem,
 ) -> Result<VaultItem, String> {
@@ -133,21 +210,27 @@ pub async fn update_item(
             }
         }
     }
-    let mut vault = state.vault.write();
-    let updated = item.with_updated_at(Utc::now());
-    let item_type = format!("{:?}", updated.item_type()).to_lowercase();
-    vault.update_item(updated.clone());
-    
-    drop(vault);
+    let (updated, item_type) = {
+        let mut vault = state.vault.write();
+        let updated = item.with_updated_at(Utc::now());
+        let item_type = format!("{:?}", updated.item_type()).to_lowercase();
+        vault.update_item(updated.clone());
+        (updated, item_type)
+    };
+
     save_vault(&state)?;
-    
+    let _ = crate::commands::sharing::push_sent_share_update_inner(&state, &updated).await;
+
     record_audit_event(&state, AuditAction::ItemUpdated { item_type });
-    
+
+    emit_vault_items_changed(&app);
+
     Ok(updated)
 }
 
 #[command]
 pub async fn delete_item(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<(), String> {
@@ -170,12 +253,13 @@ pub async fn delete_item(
 
     let mut vault = state.vault.write();
     vault.delete_item(&id, device_id.as_deref());
-    
     drop(vault);
     save_vault(&state)?;
-    
+
     record_audit_event(&state, AuditAction::ItemDeleted { item_type });
-    
+
+    emit_vault_items_changed(&app);
+
     Ok(())
 }
 
@@ -189,9 +273,11 @@ pub async fn search_items(
 }
 
 #[command]
-pub async fn generate_password(options: PasswordGeneratorOptions) -> Result<PasswordWithStrength, String> {
+pub async fn generate_password(
+    options: PasswordGeneratorOptions,
+) -> Result<PasswordWithStrength, String> {
     let mut charset = String::new();
-    
+
     if options.uppercase {
         charset.push_str("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     }
@@ -204,29 +290,33 @@ pub async fn generate_password(options: PasswordGeneratorOptions) -> Result<Pass
     if options.symbols {
         charset.push_str("!@#$%^&*()_+-=[]{}|;:,.<>?");
     }
-    
+
     if options.easy_to_type {
         charset = charset.replace(|c: char| !c.is_alphanumeric(), "");
     }
-    
+
     if charset.is_empty() {
         charset.push_str("abcdefghijklmnopqrstuvwxyz");
     }
-    
+
     let charset: Vec<char> = charset.chars().collect();
     let mut rng = rand::rngs::OsRng;
-    
+
     let password: String = (0..options.length)
         .map(|_| {
             let mut buf = [0u8; 4];
             rng.fill_bytes(&mut buf);
-            let idx = (buf[0] as usize | (buf[1] as usize) << 8 | (buf[2] as usize) << 16 | (buf[3] as usize) << 24) % charset.len();
+            let idx = (buf[0] as usize
+                | (buf[1] as usize) << 8
+                | (buf[2] as usize) << 16
+                | (buf[3] as usize) << 24)
+                % charset.len();
             charset[idx]
         })
         .collect();
-    
+
     let strength = calculate_password_strength(&password);
-    
+
     Ok(PasswordWithStrength { password, strength })
 }
 
@@ -274,31 +364,32 @@ pub struct VaultHealth {
 #[command]
 pub async fn get_vault_health(state: State<'_, Arc<AppState>>) -> Result<VaultHealth, String> {
     let vault = state.vault.read();
-    
+
     let login_items: Vec<&VaultItem> = vault
         .items
         .iter()
         .filter(|i| i.item_type() == ItemType::Login && i.password().is_some())
         .collect();
-    
+
     let total_logins = login_items.len();
-    
+
     let mut weak_passwords = 0;
-    let mut password_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    
+    let mut password_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
     for item in &login_items {
         if let Some(password) = item.password() {
             let strength = calculate_password_strength(password);
             if strength.score == "weak" || strength.score == "fair" {
                 weak_passwords += 1;
             }
-            
+
             *password_counts.entry(password.to_string()).or_insert(0) += 1;
         }
     }
-    
+
     let reused_passwords = password_counts.values().filter(|&&count| count > 1).count();
-    
+
     let health_score = if total_logins == 0 {
         100.0
     } else {
@@ -306,7 +397,7 @@ pub async fn get_vault_health(state: State<'_, Arc<AppState>>) -> Result<VaultHe
         let reused_pct = (reused_passwords as f64 / total_logins as f64) * 100.0;
         100.0 - (weak_pct * 0.6 + reused_pct * 0.4)
     };
-    
+
     let status = if health_score >= 90.0 {
         "OPTIMAL".to_string()
     } else if health_score >= 70.0 {
@@ -316,7 +407,7 @@ pub async fn get_vault_health(state: State<'_, Arc<AppState>>) -> Result<VaultHe
     } else {
         "POOR".to_string()
     };
-    
+
     Ok(VaultHealth {
         weak_passwords,
         reused_passwords,
@@ -352,35 +443,32 @@ pub async fn export_vault_bitwarden_json(
 ) -> Result<String, String> {
     let vault = state.vault.read();
     let store = state.store.load_device_id().map_err(|e| e.to_string())?;
-    
+
     let user_id = store;
-    
+
     let passwords: Vec<BitwardenPasswordEntry> = vault
         .items
         .iter()
         .filter(|item| matches!(item.item_type(), ItemType::Login))
-        .map(|item| {
-            BitwardenPasswordEntry {
-                id: item.id().to_string(),
-                username: item.username().unwrap_or("").to_string(),
-                password: item.password().unwrap_or("").to_string(),
-                app_id: None,
-                description: item.notes().map(|n| n.to_string()),
-                url: item.url().map(|u| u.to_string()),
-                otp: None,
-            }
+        .map(|item| BitwardenPasswordEntry {
+            id: item.id().to_string(),
+            username: item.username().unwrap_or("").to_string(),
+            password: item.password().unwrap_or("").to_string(),
+            app_id: None,
+            description: item.notes().map(|n| n.to_string()),
+            url: item.url().map(|u| u.to_string()),
+            otp: None,
         })
         .collect();
-    
+
     let export = BitwardenExport {
         version: 1,
         timestamp: Utc::now().to_rfc3339(),
         user_id,
         passwords,
     };
-    
-    serde_json::to_string_pretty(&export)
-        .map_err(|e| format!("Failed to serialize export: {}", e))
+
+    serde_json::to_string_pretty(&export).map_err(|e| format!("Failed to serialize export: {}", e))
 }
 
 #[derive(Debug, Deserialize)]
@@ -398,15 +486,15 @@ fn normalize_import_url(url: Option<&str>) -> String {
     if url.is_empty() {
         return String::new();
     }
-    
+
     if url.starts_with("http://") || url.starts_with("https://") {
         return url.to_string();
     }
-    
+
     if url.parse::<std::net::IpAddr>().is_ok() {
         return format!("http://{}", url);
     }
-    
+
     if url.contains(':') && !url.contains('/') {
         if let Some(host_part) = url.split(':').next() {
             if host_part.parse::<std::net::IpAddr>().is_ok() {
@@ -414,47 +502,56 @@ fn normalize_import_url(url: Option<&str>) -> String {
             }
         }
     }
-    
+
     format!("https://{}", url)
 }
 
 #[command]
 pub async fn import_vault_bitwarden_json(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     data: String,
 ) -> Result<ImportResult, String> {
-    let import: BitwardenImport = serde_json::from_str(&data)
-        .map_err(|e| format!("Failed to parse import data: {}", e))?;
-    
+    let import: BitwardenImport =
+        serde_json::from_str(&data).map_err(|e| format!("Failed to parse import data: {}", e))?;
+
     if import.version != 1 {
         return Err(format!("Unsupported export version: {}", import.version));
     }
-    
+
     {
         let crypto = state.crypto.read();
         if crypto.is_none() {
             return Err("Session not unlocked. Please unlock the vault first.".to_string());
         }
     }
-    
+
     let now = Utc::now();
     let total_count = import.passwords.len() as u32;
     let mut added_count = 0u32;
     let mut skipped_count = 0u32;
-    
+
     {
         let mut vault = state.vault.write();
-        
+
         for entry in import.passwords {
-            let name = entry.url.clone()
+            let name = entry
+                .url
+                .clone()
                 .filter(|u| !u.is_empty())
                 .unwrap_or_else(|| entry.username.clone());
-            
+
             let url = normalize_import_url(entry.url.as_deref());
-            
-            tracing::info!("Importing: name={}, username={}, password_len={}, description={:?}, url={}", 
-                name, entry.username, entry.password.len(), entry.description, url);
-            
+
+            tracing::info!(
+                "Importing: name={}, username={}, password_len={}, description={:?}, url={}",
+                name,
+                entry.username,
+                entry.password.len(),
+                entry.description,
+                url
+            );
+
             let item = VaultItem::Login {
                 id: Uuid::new_v4().to_string(),
                 name,
@@ -470,18 +567,22 @@ pub async fn import_vault_bitwarden_json(
                 shared: false,
                 share_recipient: None,
             };
-            
+
             vault.add_item(item);
             added_count += 1;
         }
-        
+
         tracing::info!("Total items in vault after import: {}", vault.items.len());
     }
-    
+
     save_vault(&state)?;
-    
+
     tracing::info!("Imported {} items, {} total", added_count, total_count);
-    
+
+    if added_count > 0 {
+        emit_vault_items_changed(&app);
+    }
+
     Ok(ImportResult {
         added: added_count,
         skipped: skipped_count,
@@ -543,46 +644,42 @@ impl From<HibpBreach> for crate::vault::BreachEntry {
 #[command]
 pub async fn check_email_breach(email: String) -> Result<Vec<crate::vault::BreachEntry>, String> {
     tracing::info!("Checking breaches for email: {}", email);
-    
+
     let client = reqwest::Client::new();
     let api_key = std::env::var("HIBP_API_KEY").unwrap_or_default();
-    
+
     if api_key.is_empty() {
         tracing::warn!("HIBP_API_KEY not set, using anonymous API");
     }
-    
+
     let mut request = client.get(&format!(
         "https://haveibeenpwned.com/api/v3/breachedaccount/{}?truncateResponse=false",
         urlencoding::encode(&email)
     ));
-    
+
     if !api_key.is_empty() {
         request = request.header("hibp-api-key", &api_key);
     }
-    
+
     request = request.header("User-Agent", "VELA-Desktop-App");
-    
+
     match request.send().await {
-        Ok(response) => {
-            match response.status().as_u16() {
-                200 => {
-                    let breaches: Vec<HibpBreach> = response.json().await
-                        .map_err(|e| format!("Failed to parse breach data: {}", e))?;
-                    tracing::info!("Found {} breaches for {}", breaches.len(), email);
-                    Ok(breaches.into_iter().map(|b| b.into()).collect())
-                }
-                404 => {
-                    tracing::info!("No breaches found for {}", email);
-                    Ok(vec![])
-                }
-                429 => {
-                    Err("Rate limited by HaveIBeenPwned. Please try again later.".to_string())
-                }
-                status => {
-                    Err(format!("HIBP API error: HTTP {}", status))
-                }
+        Ok(response) => match response.status().as_u16() {
+            200 => {
+                let breaches: Vec<HibpBreach> = response
+                    .json()
+                    .await
+                    .map_err(|e| format!("Failed to parse breach data: {}", e))?;
+                tracing::info!("Found {} breaches for {}", breaches.len(), email);
+                Ok(breaches.into_iter().map(|b| b.into()).collect())
             }
-        }
+            404 => {
+                tracing::info!("No breaches found for {}", email);
+                Ok(vec![])
+            }
+            429 => Err("Rate limited by HaveIBeenPwned. Please try again later.".to_string()),
+            status => Err(format!("HIBP API error: HTTP {}", status)),
+        },
         Err(e) => {
             tracing::error!("Failed to check breaches: {}", e);
             Err(format!("Network error: {}", e))
@@ -595,10 +692,15 @@ pub async fn check_all_vault_emails(state: State<'_, Arc<AppState>>) -> Result<u
     let emails: Vec<String> = {
         let vault = state.vault.read();
         let mut seen = std::collections::HashSet::new();
-        vault.items.iter()
+        vault
+            .items
+            .iter()
             .filter_map(|item| {
                 if let VaultItem::Login { username, .. } = item {
-                    if !username.is_empty() && username.contains('@') && seen.insert(username.clone()) {
+                    if !username.is_empty()
+                        && username.contains('@')
+                        && seen.insert(username.clone())
+                    {
                         return Some(username.clone());
                     }
                 }
@@ -606,26 +708,26 @@ pub async fn check_all_vault_emails(state: State<'_, Arc<AppState>>) -> Result<u
             })
             .collect()
     };
-    
+
     tracing::info!("Unique emails to check: {}", emails.len());
-    
+
     let client = reqwest::Client::new();
     let api_key = std::env::var("HIBP_API_KEY").unwrap_or_default();
     let mut total_breaches = 0u32;
-    
+
     for email in emails {
         tracing::info!("Checking breaches for: {}", email);
-        
+
         let mut request = client.get(&format!(
             "https://haveibeenpwned.com/api/v3/breachedaccount/{}?truncateResponse=false",
             urlencoding::encode(&email)
         ));
-        
+
         if !api_key.is_empty() {
             request = request.header("hibp-api-key", &api_key);
         }
         request = request.header("User-Agent", "VELA-Desktop-App");
-        
+
         if let Ok(response) = request.send().await {
             if response.status().as_u16() == 200 {
                 if let Ok(breaches) = response.json::<Vec<HibpBreach>>().await {
@@ -634,10 +736,10 @@ pub async fn check_all_vault_emails(state: State<'_, Arc<AppState>>) -> Result<u
                 }
             }
         }
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(1600)).await;
     }
-    
+
     tracing::info!("Total breaches found: {}", total_breaches);
     Ok(total_breaches)
 }
@@ -651,22 +753,23 @@ pub struct PasswordBreachResult {
 
 #[command]
 pub async fn check_password_breach(password: String) -> Result<PasswordBreachResult, String> {
-    use sha1::{Sha1, Digest};
-    
+    use sha1::{Digest, Sha1};
+
     let mut hasher = Sha1::new();
     hasher.update(password.as_bytes());
     let hash = hasher.finalize();
     let hash_hex = hex::encode(hash).to_uppercase();
-    
+
     let prefix = &hash_hex[..5];
     let suffix = &hash_hex[5..];
-    
+
     tracing::info!("Checking password hash prefix: {}...", prefix);
-    
+
     let client = reqwest::Client::new();
     let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
-    
-    match client.get(&url)
+
+    match client
+        .get(&url)
         .header("User-Agent", "VELA-Desktop-App")
         .send()
         .await
@@ -674,13 +777,13 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
         Ok(response) => {
             if response.status().as_u16() == 200 {
                 let body = response.text().await.unwrap_or_default();
-                
+
                 for line in body.lines() {
                     let parts: Vec<&str> = line.split(':').collect();
                     if parts.len() == 2 {
                         let hash_suffix = parts[0];
                         let count: u32 = parts[1].parse().unwrap_or(0);
-                        
+
                         if hash_suffix == suffix {
                             tracing::info!("Password found in breach with count: {}", count);
                             return Ok(PasswordBreachResult {
@@ -695,15 +798,19 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
                         }
                     }
                 }
-                
+
                 tracing::info!("Password not found in breaches");
                 Ok(PasswordBreachResult {
                     breached: false,
                     count: 0,
-                    description: "This password has not been found in any known data breaches.".to_string(),
+                    description: "This password has not been found in any known data breaches."
+                        .to_string(),
                 })
             } else {
-                Err(format!("Pwned Passwords API error: HTTP {}", response.status().as_u16()))
+                Err(format!(
+                    "Pwned Passwords API error: HTTP {}",
+                    response.status().as_u16()
+                ))
             }
         }
         Err(e) => {
@@ -714,11 +821,15 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
 }
 
 #[command]
-pub async fn check_all_vault_passwords(state: State<'_, Arc<AppState>>) -> Result<Vec<PasswordBreachResult>, String> {
+pub async fn check_all_vault_passwords(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PasswordBreachResult>, String> {
     let passwords: Vec<(String, String)> = {
         let vault = state.vault.read();
         let mut seen = std::collections::HashSet::new();
-        vault.items.iter()
+        vault
+            .items
+            .iter()
             .filter_map(|item| {
                 if let VaultItem::Login { name, pass, .. } = item {
                     if !pass.is_empty() && seen.insert(pass.clone()) {
@@ -729,26 +840,27 @@ pub async fn check_all_vault_passwords(state: State<'_, Arc<AppState>>) -> Resul
             })
             .collect()
     };
-    
+
     tracing::info!("Checking {} unique passwords", passwords.len());
-    
+
     let client = reqwest::Client::new();
     let mut results: Vec<PasswordBreachResult> = Vec::new();
-    
+
     for (name, password) in passwords {
-        use sha1::{Sha1, Digest};
-        
+        use sha1::{Digest, Sha1};
+
         let mut hasher = Sha1::new();
         hasher.update(password.as_bytes());
         let hash = hasher.finalize();
         let hash_hex = hex::encode(hash).to_uppercase();
-        
+
         let prefix = &hash_hex[..5];
         let suffix = &hash_hex[5..];
-        
+
         let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
-        
-        if let Ok(response) = client.get(&url)
+
+        if let Ok(response) = client
+            .get(&url)
             .header("User-Agent", "VELA-Desktop-App")
             .send()
             .await
@@ -756,18 +868,21 @@ pub async fn check_all_vault_passwords(state: State<'_, Arc<AppState>>) -> Resul
             if response.status().as_u16() == 200 {
                 let body = response.text().await.unwrap_or_default();
                 let mut found = false;
-                
+
                 for line in body.lines() {
                     let parts: Vec<&str> = line.split(':').collect();
                     if parts.len() == 2 {
                         let hash_suffix = parts[0];
                         let count: u32 = parts[1].parse().unwrap_or(0);
-                        
+
                         if hash_suffix == suffix {
                             let result = PasswordBreachResult {
                                 breached: true,
                                 count,
-                                description: format!("Password for '{}' found {} times in breaches", name, count),
+                                description: format!(
+                                    "Password for '{}' found {} times in breaches",
+                                    name, count
+                                ),
                             };
                             tracing::info!("{}", result.description);
                             results.push(result);
@@ -776,7 +891,7 @@ pub async fn check_all_vault_passwords(state: State<'_, Arc<AppState>>) -> Resul
                         }
                     }
                 }
-                
+
                 if !found {
                     results.push(PasswordBreachResult {
                         breached: false,
@@ -787,6 +902,6 @@ pub async fn check_all_vault_passwords(state: State<'_, Arc<AppState>>) -> Resul
             }
         }
     }
-    
+
     Ok(results)
 }

@@ -23,6 +23,7 @@ export default function ConflictResolution({ conflicts, onResolved, onClose }: P
   const handleKeepLocal = async () => {
     try {
       await invoke('update_item', { item: conflict.local_version });
+      await invoke('resolve_conflict', { itemId: conflict.item_id, useLocal: true });
       showToast('Kept local version', 'success');
       moveToNext();
     } catch (e) {
@@ -33,6 +34,7 @@ export default function ConflictResolution({ conflicts, onResolved, onClose }: P
   const handleKeepServer = async () => {
     try {
       await invoke('update_item', { item: conflict.server_version });
+      await invoke('resolve_conflict', { itemId: conflict.item_id, useLocal: false });
       showToast('Kept server version', 'success');
       moveToNext();
     } catch (e) {
@@ -48,6 +50,7 @@ export default function ConflictResolution({ conflicts, onResolved, onClose }: P
         name: `${conflict.local_version.name} (conflict copy)`,
       };
       await invoke('add_item', { item: duplicated });
+      await invoke('resolve_conflict', { itemId: conflict.item_id, useLocal: true });
       showToast('Kept both versions', 'success');
       moveToNext();
     } catch (e) {

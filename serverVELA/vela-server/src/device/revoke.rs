@@ -25,16 +25,22 @@ pub async fn post_revoke(
     session: AuthSession,
     Json(body): Json<RevokeRequest>,
 ) -> Result<Json<RevokeResponse>> {
-    let rows = state.db.query(
-        "SELECT id, user_id, hybrid_ek, hybrid_vk, cyclo_pk,
+    let rows = state
+        .db
+        .query(
+            "SELECT id, user_id, device_name, device_type, last_active,
+                hybrid_ek, hybrid_vk, cyclo_pk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
          FROM devices
          WHERE id = $1",
-        stoolap::params![body.target_device_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+            stoolap::params![body.target_device_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows.into_iter().next()
+    let row = rows
+        .into_iter()
+        .next()
         .ok_or_else(|| AppError::NotFound("device not found".into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let target = crate::db::parse_device_row(&row)?;
@@ -49,21 +55,26 @@ pub async fn post_revoke(
     }
 
     let now = Utc::now().to_rfc3339();
-    state.db.execute(
-        "UPDATE devices SET revoked = TRUE, revoked_at = $1, revoked_by = $2 WHERE id = $3",
-        stoolap::params![now, session.device_id.to_string(), body.target_device_id.to_string()],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    state
+        .db
+        .execute(
+            "UPDATE devices SET revoked = TRUE, revoked_at = $1, revoked_by = $2 WHERE id = $3",
+            stoolap::params![
+                now,
+                session.device_id.to_string(),
+                body.target_device_id.to_string()
+            ],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let device_id_str = body.target_device_id.to_string();
 
     rate_limit::revoke_all_device_jtis(&state.store, &device_id_str)?;
 
     let sentinel_key = format!("device:revoked:{}", body.target_device_id);
-    state.store.set_ex(
-        &sentinel_key,
-        &[1u8],
-        rate_limit::TOKEN_MAX_LIFETIME_SECS,
-    )?;
+    state
+        .store
+        .set_ex(&sentinel_key, &[1u8], rate_limit::TOKEN_MAX_LIFETIME_SECS)?;
 
     tracing::info!(
         target_device = %body.target_device_id,
@@ -72,5 +83,7 @@ pub async fn post_revoke(
         "device revoked"
     );
 
-    Ok(Json(RevokeResponse { revoked: body.target_device_id }))
+    Ok(Json(RevokeResponse {
+        revoked: body.target_device_id,
+    }))
 }

@@ -1,51 +1,42 @@
 use crate::api::ApiClient;
-use crate::AppState;
-use crate::commands::audit::{AuditAction, record_audit_event};
+use crate::commands::audit::{self, record_audit_event, AuditAction};
 use crate::vault::VaultItem;
+use crate::AppState;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
 use vela_crypto::aead::{decrypt, encrypt};
+use vela_crypto::oram::CHUNK_SIZE;
 
-const VAULT_MAIN_CHUNK_ID: &str = "vault-main";
-const VAULT_DATA_PREFIX: &str = "vault-data-";
-
-/// Resolve the vault chunk ID from the sync manifest.
-/// Returns `"vault-main"` if present (backward-compatible),
-/// otherwise falls back to the first chunk with a `"vault-data-"` prefix.
-fn resolve_vault_chunk_id(manifest: &crate::api::SyncManifest) -> Option<String> {
-    // Prefer the canonical name.
-    if manifest.chunks.iter().any(|c| c.chunk_id == VAULT_MAIN_CHUNK_ID) {
-        return Some(VAULT_MAIN_CHUNK_ID.to_string());
-    }
-    // Fall back to the first ORAM-style vault-data-* chunk.
-    manifest
-        .chunks
-        .iter()
-        .find(|c| c.chunk_id.starts_with(VAULT_DATA_PREFIX))
-        .map(|c| c.chunk_id.clone())
-}
+const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
+const VAULT_CHUNK_PREFIX: &str = "vault-data-";
+const VAULT_CHUNK_PLAINTEXT_SIZE: usize = CHUNK_SIZE - 4096;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncStatus {
     pub syncing: bool,
     pub last_synced: Option<DateTime<Utc>>,
-    pub conflicts: Vec<String>,
+    pub conflicts: Vec<ConflictItem>,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConflictItem {
     pub item_id: String,
-    pub local_version: serde_json::Value,
-    pub server_version: serde_json::Value,
+    pub local_version: VaultItem,
+    pub server_version: VaultItem,
     pub conflict_detected_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LocalSyncMeta {
+    chunks: HashMap<String, LocalChunkMeta>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LocalChunkMeta {
     version: i64,
     lamport_clock: i64,
 }
@@ -57,7 +48,9 @@ fn load_local_sync_meta(state: &AppState) -> LocalSyncMeta {
             return meta;
         }
     }
-    LocalSyncMeta { version: 0, lamport_clock: 0 }
+    LocalSyncMeta {
+        chunks: HashMap::new(),
+    }
 }
 
 fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), String> {
@@ -66,6 +59,14 @@ fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), St
     let json = serde_json::to_string(meta).map_err(|e| e.to_string())?;
     std::fs::write(meta_path, json).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn chunk_key_bytes(state: &AppState, chunk_id: &str) -> Result<[u8; 32], String> {
+    let crypto_guard = state.crypto.read();
+    let crypto = crypto_guard
+        .as_ref()
+        .ok_or_else(|| "Crypto not initialized".to_string())?;
+    Ok(*crypto.chunk_key(chunk_id.as_bytes()).as_bytes())
 }
 
 fn log_sync_audit(state: &AppState, chunk_count: usize) {
@@ -81,7 +82,7 @@ fn merge_server_vaults(
     local: &mut crate::vault::VaultStore,
     server: crate::vault::VaultStore,
     device_id: &str,
-) -> Vec<String> {
+) -> Vec<ConflictItem> {
     use crate::vault::Tombstone;
     use std::collections::HashSet;
 
@@ -116,7 +117,12 @@ fn merge_server_vaults(
             if server_updated > local_updated {
                 let local_modified = local_item.last_modified_device();
                 if local_modified.is_some() && local_modified != Some(device_id) {
-                    conflicts.push(id.clone());
+                    conflicts.push(ConflictItem {
+                        item_id: id.clone(),
+                        local_version: local_item.clone(),
+                        server_version: server_item.clone(),
+                        conflict_detected_at: Utc::now(),
+                    });
                 }
             }
         }
@@ -168,8 +174,266 @@ fn merge_server_vaults(
     conflicts
 }
 
+fn is_vault_data_chunk(chunk_id: &str) -> bool {
+    chunk_id.starts_with(VAULT_CHUNK_PREFIX)
+}
+
+fn vault_chunk_id(index: usize) -> String {
+    format!("{VAULT_CHUNK_PREFIX}{index:06}")
+}
+
+fn ordered_vault_chunk_ids(manifest: &crate::api::SyncManifest) -> Vec<String> {
+    let mut ids: Vec<String> = manifest
+        .chunks
+        .iter()
+        .filter(|entry| is_vault_data_chunk(&entry.chunk_id))
+        .map(|entry| entry.chunk_id.clone())
+        .collect();
+    ids.sort();
+    ids
+}
+
+fn manifest_versions(manifest: &crate::api::SyncManifest) -> HashMap<String, LocalChunkMeta> {
+    manifest
+        .chunks
+        .iter()
+        .map(|entry| {
+            (
+                entry.chunk_id.clone(),
+                LocalChunkMeta {
+                    version: entry.version,
+                    lamport_clock: entry.lamport_clock,
+                },
+            )
+        })
+        .collect()
+}
+
+fn split_plaintext_chunks(plaintext: &[u8]) -> Vec<Vec<u8>> {
+    if plaintext.is_empty() {
+        return vec![Vec::new()];
+    }
+
+    plaintext
+        .chunks(VAULT_CHUNK_PLAINTEXT_SIZE)
+        .map(|chunk| chunk.to_vec())
+        .collect()
+}
+
+fn save_conflicts(state: &AppState, conflicts: &[ConflictItem]) -> Result<(), String> {
+    let conflicts_path = state.store.store_path().join("sync_conflicts.json");
+    if conflicts.is_empty() {
+        if conflicts_path.exists() {
+            let _ = std::fs::remove_file(conflicts_path);
+        }
+        return Ok(());
+    }
+
+    let json = serde_json::to_string(conflicts).map_err(|e| e.to_string())?;
+    std::fs::write(conflicts_path, json).map_err(|e| e.to_string())
+}
+
+async fn download_vault_from_manifest(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+    manifest: &crate::api::SyncManifest,
+) -> Result<Option<(crate::vault::VaultStore, i64)>, String> {
+    let ids = ordered_vault_chunk_ids(manifest);
+    let ids = if ids.is_empty()
+        && manifest
+            .chunks
+            .iter()
+            .any(|entry| entry.chunk_id == LEGACY_VAULT_MAIN_CHUNK_ID)
+    {
+        vec![LEGACY_VAULT_MAIN_CHUNK_ID.to_string()]
+    } else {
+        ids
+    };
+
+    if ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut plaintext = Vec::new();
+    let mut max_lamport = 0;
+
+    for chunk_id in ids {
+        let key = chunk_key_bytes(state, &chunk_id)?;
+        let (ciphertext, _version, lamport, new_tok) = client
+            .get_chunk(token, &chunk_id)
+            .await
+            .map_err(|e| format!("Failed to download chunk {chunk_id}: {e}"))?;
+        if let Some(t) = new_tok {
+            *token = t;
+        }
+        max_lamport = max_lamport.max(lamport);
+        let mut chunk = decrypt(&key, &ciphertext)
+            .map_err(|e| format!("Failed to decrypt chunk {chunk_id}: {e}"))?;
+        plaintext.append(&mut chunk);
+    }
+
+    let vault: crate::vault::VaultStore = serde_json::from_slice(&plaintext)
+        .map_err(|e| format!("Failed to deserialize synced vault: {e}"))?;
+    Ok(Some((vault, max_lamport)))
+}
+
+async fn upload_vault_chunks(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+    manifest: &crate::api::SyncManifest,
+    local_meta: &mut LocalSyncMeta,
+    plaintext: &[u8],
+    base_lamport: i64,
+) -> Result<usize, String> {
+    let chunks = split_plaintext_chunks(plaintext);
+    let manifest_meta = manifest_versions(manifest);
+    let mut next_meta = HashMap::new();
+    let mut lamport = base_lamport;
+
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let chunk_id = vault_chunk_id(idx);
+        let version = manifest_meta.get(&chunk_id).map(|m| m.version).unwrap_or(0);
+        let previous_lamport = manifest_meta
+            .get(&chunk_id)
+            .map(|m| m.lamport_clock)
+            .or_else(|| local_meta.chunks.get(&chunk_id).map(|m| m.lamport_clock))
+            .unwrap_or(0);
+        lamport = lamport.max(previous_lamport) + 1;
+
+        let key = chunk_key_bytes(state, &chunk_id)?;
+        let ciphertext =
+            encrypt(&key, chunk).map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
+
+        let (new_version, new_tok) = client
+            .put_chunk(token, &chunk_id, version, ciphertext, lamport)
+            .await
+            .map_err(|e| format!("Failed to upload chunk {chunk_id}: {e}"))?;
+        if let Some(t) = new_tok {
+            *token = t;
+        }
+
+        next_meta.insert(
+            chunk_id,
+            LocalChunkMeta {
+                version: new_version,
+                lamport_clock: lamport,
+            },
+        );
+    }
+
+    for entry in manifest
+        .chunks
+        .iter()
+        .filter(|entry| is_vault_data_chunk(&entry.chunk_id))
+    {
+        let Some(index_str) = entry.chunk_id.strip_prefix(VAULT_CHUNK_PREFIX) else {
+            continue;
+        };
+        let Ok(index) = index_str.parse::<usize>() else {
+            continue;
+        };
+        if index < chunks.len() {
+            continue;
+        }
+        match client
+            .delete_chunk(token, &entry.chunk_id, entry.version)
+            .await
+        {
+            Ok(new_tok) => {
+                if let Some(t) = new_tok {
+                    *token = t;
+                }
+            }
+            Err(e) => tracing::warn!(
+                "Failed to delete stale sync chunk {}: {}",
+                entry.chunk_id,
+                e
+            ),
+        }
+    }
+
+    local_meta.chunks = next_meta;
+    Ok(chunks.len())
+}
+
+async fn sync_audit_chunk(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+    manifest: &crate::api::SyncManifest,
+) {
+    let Some(plaintext) = audit::serialize_audit_plaintext(state) else {
+        return;
+    };
+
+    if let Some(entry) = manifest
+        .chunks
+        .iter()
+        .find(|entry| entry.chunk_id == audit::AUDIT_CHUNK_ID)
+    {
+        if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
+            match client.get_chunk(token, audit::AUDIT_CHUNK_ID).await {
+                Ok((ciphertext, _, _, new_tok)) => {
+                    if let Some(t) = new_tok {
+                        *token = t;
+                    }
+                    if let Ok(server_plaintext) = decrypt(&key, &ciphertext) {
+                        let _ = audit::replace_audit_from_plaintext(state, &server_plaintext);
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to pull audit chunk: {}", e),
+            }
+        }
+
+        if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
+            if let Some(updated_plaintext) = audit::serialize_audit_plaintext(state) {
+                match encrypt(&key, &updated_plaintext) {
+                    Ok(ciphertext) => {
+                        let _ = client
+                            .put_chunk(
+                                token,
+                                audit::AUDIT_CHUNK_ID,
+                                entry.version,
+                                ciphertext,
+                                entry.lamport_clock + 1,
+                            )
+                            .await
+                            .map(|(_, new_tok)| {
+                                if let Some(t) = new_tok {
+                                    *token = t;
+                                }
+                            })
+                            .map_err(|e| tracing::warn!("Failed to push audit chunk: {}", e));
+                    }
+                    Err(e) => tracing::warn!("Failed to encrypt audit chunk: {}", e),
+                }
+            }
+        }
+    } else if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
+        match encrypt(&key, &plaintext) {
+            Ok(ciphertext) => {
+                let _ = client
+                    .put_chunk(token, audit::AUDIT_CHUNK_ID, 0, ciphertext, 1)
+                    .await
+                    .map(|(_, new_tok)| {
+                        if let Some(t) = new_tok {
+                            *token = t;
+                        }
+                    })
+                    .map_err(|e| tracing::warn!("Failed to create audit chunk: {}", e));
+            }
+            Err(e) => tracing::warn!("Failed to encrypt audit chunk: {}", e),
+        }
+    }
+}
+
 #[tauri::command]
-pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus, String> {
+pub async fn trigger_sync(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<SyncStatus, String> {
     let session_active = {
         let session = state.session.read();
         session.active
@@ -192,10 +456,9 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
 
-    let mut token = state.get_session_token()
+    let mut token = state
+        .get_session_token()
         .ok_or_else(|| "No session token available".to_string())?;
-
-    let local_meta = load_local_sync_meta(&state);
 
     let manifest = match client.get_sync_manifest(&token).await {
         Ok((m, new_tok)) => {
@@ -211,97 +474,21 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
                 syncing: false,
                 last_synced: Some(Utc::now()),
                 conflicts: vec![],
-                error: Some(format!("Server unavailable: {}. Using local vault only.", e)),
+                error: Some(format!(
+                    "Server unavailable: {}. Using local vault only.",
+                    e
+                )),
             });
         }
     };
 
-    let vault_chunk_id = resolve_vault_chunk_id(&manifest)
-        .unwrap_or_else(|| VAULT_MAIN_CHUNK_ID.to_string());
+    let mut merged_conflicts: Vec<ConflictItem> = Vec::new();
+    let mut max_server_lamport = 0;
 
-    let chunk_key_bytes: [u8; 32] = {
-        let crypto_guard = state.crypto.read();
-        let crypto = crypto_guard.as_ref().ok_or_else(|| "Crypto not initialized".to_string())?;
-        *crypto.chunk_key(vault_chunk_id.as_bytes()).as_bytes()
-    };
-
-    tracing::info!(
-        "Sync: using vault chunk '{}', manifest has {} chunks",
-        vault_chunk_id,
-        manifest.chunks.len()
-    );
-
-    let mut merged_conflicts: Vec<String> = Vec::new();
-
-    for entry in &manifest.chunks {
-        if entry.chunk_id != vault_chunk_id {
-            continue;
-        }
-
-        if entry.version <= local_meta.version {
-            let local_count = { state.vault.read().items.len() };
-            // Heuristic: if the local vault is empty but the sync metadata says
-            // we are up-to-date, the local state is likely corrupt (e.g. after a
-            // failed enrollment import).  Force a download to recover.
-            if local_count == 0 && entry.version > 0 {
-                tracing::warn!(
-                    "Sync: local vault is empty but meta v{} >= server v{} — forcing download",
-                    local_meta.version,
-                    entry.version
-                );
-                // Fall through to download below.
-            } else {
-                tracing::info!(
-                    "Sync: skipping download chunk {} (server v{} <= local v{}, local has {} items)",
-                    entry.chunk_id,
-                    entry.version,
-                    local_meta.version,
-                    local_count
-                );
-                continue;
-            }
-        }
-
-        tracing::info!(
-            "Sync: downloading chunk {} (server v{}, local v{})",
-            entry.chunk_id,
-            entry.version,
-            local_meta.version
-        );
-
-        let (ciphertext, server_version, server_lamport) = match client.get_chunk(&token, &entry.chunk_id).await {
-            Ok((data, version, lamport, new_tok)) => {
-                if let Some(t) = new_tok {
-                    state.session.write().set_server_token(t.clone());
-                    token = t;
-                }
-                (data, version, lamport)
-            }
-            Err(e) => {
-                tracing::error!("Sync: failed to download chunk {}: {}", entry.chunk_id, e);
-                continue;
-            }
-        };
-
-        let plaintext = match decrypt(&chunk_key_bytes, &ciphertext) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("Sync: failed to decrypt chunk {}: {}", entry.chunk_id, e);
-                continue;
-            }
-        };
-
-        let server_vault: crate::vault::VaultStore = match serde_json::from_slice(&plaintext) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("Sync: failed to deserialize chunk {}: {}", entry.chunk_id, e);
-                continue;
-            }
-        };
-
-        let server_item_count = server_vault.items.len();
-        let server_tombstone_count = server_vault.tombstones.len();
-
+    if let Some((server_vault, server_lamport)) =
+        download_vault_from_manifest(&state, &client, &mut token, &manifest).await?
+    {
+        max_server_lamport = max_server_lamport.max(server_lamport);
         let mut local_vault = {
             let vault = state.vault.read();
             vault.clone()
@@ -315,50 +502,28 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
             *vault = local_vault;
         }
 
-        tracing::info!(
-            "Sync: merged chunk {} (v{}, lamport {}, {} server items → {} local items)",
-            entry.chunk_id,
-            server_version,
-            server_lamport,
-            server_item_count,
-            state.vault.read().items.len()
-        );
-
-        let new_lamport = local_meta.lamport_clock.max(server_lamport) + 1;
-        let updated_meta = LocalSyncMeta {
-            version: server_version,
-            lamport_clock: new_lamport,
-        };
-        save_local_sync_meta(&state, &updated_meta)?;
-
-        let crypto_guard = state.crypto.read();
-        if let Some(crypto) = crypto_guard.as_ref() {
-            let vault_snapshot = state.vault.read().clone();
-            let _ = state.store.save_vault(&vault_snapshot, crypto);
+        {
+            let crypto_guard = state.crypto.read();
+            if let Some(crypto) = crypto_guard.as_ref() {
+                let vault_snapshot = state.vault.read().clone();
+                let _ = state.store.save_vault(&vault_snapshot, crypto);
+            }
         }
-        drop(crypto_guard);
-
-        tracing::info!(
-            "Sync: merged chunk {} (v{}, lamport {})",
-            entry.chunk_id,
-            server_version,
-            new_lamport
-        );
+        }
     }
 
-    let current_meta = load_local_sync_meta(&state);
-
+    let mut current_meta = load_local_sync_meta(&state);
     let local_vault_snapshot = state.vault.read().clone();
     let local_count = local_vault_snapshot.items.len();
 
     // Safety guard: never upload an empty vault when the server has data.
     // This prevents overwriting server vault with empty data in the rare case
     // where the local vault is corrupt but sync metadata is stale.
-    if local_count == 0 && current_meta.version > 0 {
+    if local_count == 0 && !current_meta.chunks.is_empty() {
         tracing::warn!(
-            "Sync: refusing to upload empty vault (meta v{} > 0). \
+            "Sync: refusing to upload empty vault (sync meta has {} chunks). \
              Server data may be intact — re-sync or re-enroll to recover.",
-            current_meta.version
+            current_meta.chunks.len()
         );
         return Ok(SyncStatus {
             syncing: false,
@@ -372,239 +537,51 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
     let plaintext = serde_json::to_vec(&local_vault_snapshot)
         .map_err(|e| format!("Failed to serialize vault: {}", e))?;
 
-    let ciphertext = encrypt(&chunk_key_bytes, &plaintext)
-        .map_err(|e| format!("Failed to encrypt vault chunk: {}", e))?;
-
-    let new_lamport = current_meta.lamport_clock + 1;
-
     tracing::info!(
-        "Sync: uploading chunk '{}' ({} bytes, {} items, version {}, lamport {})",
-        vault_chunk_id,
-        ciphertext.len(),
-        local_count,
-        current_meta.version,
-        new_lamport
+        "Sync: uploading vault as chunked trivial ORAM payload ({} bytes)",
+        plaintext.len()
     );
 
-    let upload_result = client.put_chunk(&token, &vault_chunk_id, current_meta.version, ciphertext, new_lamport).await;
-
-    match upload_result {
-        Ok((new_version, new_tok)) => {
-            if let Some(t) = new_tok {
-                state.session.write().set_server_token(t);
-            }
-            let updated_meta = LocalSyncMeta {
-                version: new_version,
-                lamport_clock: new_lamport,
-            };
-            save_local_sync_meta(&state, &updated_meta)?;
-
-            tracing::info!("Sync: uploaded chunk '{}', new version {}", vault_chunk_id, new_version);
+    let uploaded_chunks = match upload_vault_chunks(
+        &state,
+        &client,
+        &mut token,
+        &manifest,
+        &mut current_meta,
+        &plaintext,
+        max_server_lamport,
+    )
+    .await
+    {
+        Ok(count) => {
+            save_local_sync_meta(&state, &current_meta)?;
+            count
         }
         Err(e) => {
-            let err_msg = e.to_string();
-            tracing::warn!("Sync: upload failed ({}), re-fetching server vault and retrying", err_msg);
-
-            // Re-fetch manifest and force-download server vault to reconcile.
-            let manifest2 = match client.get_sync_manifest(&token).await {
-                Ok((m, new_tok)) => {
-                    if let Some(t) = new_tok {
-                        state.session.write().set_server_token(t.clone());
-                        token = t;
-                    }
-                    m
-                }
-                Err(e2) => {
-                    tracing::error!("Sync: re-fetch manifest failed: {}", e2);
-                    return Ok(SyncStatus {
-                        syncing: false,
-                        last_synced: Some(Utc::now()),
-                        conflicts: merged_conflicts.clone(),
-                        error: Some(format!("Upload failed: {}. Re-fetch also failed: {}", err_msg, e2)),
-                    });
-                }
-            };
-
-            tracing::info!(
-                "Sync: re-fetched manifest with {} chunks: {:?}",
-                manifest2.chunks.len(),
-                manifest2.chunks.iter().map(|c| &c.chunk_id).collect::<Vec<_>>()
-            );
-
-            let mut remerged = false;
-            for entry in &manifest2.chunks {
-                if entry.chunk_id != vault_chunk_id {
-                    tracing::info!(
-                        "Sync: skipping chunk {} != {} in retry merge",
-                        entry.chunk_id, vault_chunk_id
-                    );
-                    continue;
-                }
-
-                tracing::info!(
-                    "Sync: force-downloading chunk {} (server v{}) for retry",
-                    entry.chunk_id,
-                    entry.version
-                );
-
-                let (ciphertext2, server_version, server_lamport) = match client.get_chunk(&token, &entry.chunk_id).await {
-                    Ok((data, version, lamport, new_tok)) => {
-                        if let Some(t) = new_tok {
-                            state.session.write().set_server_token(t.clone());
-                            token = t;
-                        }
-                        (data, version, lamport)
-                    }
-                    Err(e2) => {
-                        tracing::error!("Sync: re-download failed: {}", e2);
-                        return Ok(SyncStatus {
-                            syncing: false,
-                            last_synced: Some(Utc::now()),
-                            conflicts: merged_conflicts.clone(),
-                            error: Some(format!("Upload failed: {}. Re-download also failed: {}", err_msg, e2)),
-                        });
-                    }
-                };
-
-                let plaintext2 = match decrypt(&chunk_key_bytes, &ciphertext2) {
-                    Ok(p) => p,
-                    Err(e2) => {
-                        tracing::error!("Sync: re-decrypt failed: {}", e2);
-                        return Ok(SyncStatus {
-                            syncing: false,
-                            last_synced: Some(Utc::now()),
-                            conflicts: merged_conflicts.clone(),
-                            error: Some(format!("Upload failed: {}. Re-decrypt also failed: {}", err_msg, e2)),
-                        });
-                    }
-                };
-
-                let server_vault2: crate::vault::VaultStore = match serde_json::from_slice(&plaintext2) {
-                    Ok(v) => v,
-                    Err(e2) => {
-                        tracing::error!("Sync: re-deserialize failed: {}", e2);
-                        return Ok(SyncStatus {
-                            syncing: false,
-                            last_synced: Some(Utc::now()),
-                            conflicts: merged_conflicts.clone(),
-                            error: Some(format!("Upload failed: {}. Re-deserialize also failed: {}", err_msg, e2)),
-                        });
-                    }
-                };
-
-                let server_item_count2 = server_vault2.items.len();
-                tracing::info!(
-                    "Sync: re-downloaded chunk {} (v{}, {} server items, {} tombstones)",
-                    entry.chunk_id,
-                    server_version,
-                    server_item_count2,
-                    server_vault2.tombstones.len()
-                );
-
-                let mut local_vault2 = {
-                    let vault = state.vault.read();
-                    vault.clone()
-                };
-
-                let conflicts2 = merge_server_vaults(&mut local_vault2, server_vault2, &device_id);
-                merged_conflicts.extend(conflicts2);
-
-                {
-                    let mut vault = state.vault.write();
-                    *vault = local_vault2;
-                }
-
-                let new_lamport2 = current_meta.lamport_clock.max(server_lamport) + 1;
-                let updated_meta = LocalSyncMeta {
-                    version: server_version,
-                    lamport_clock: new_lamport2,
-                };
-                save_local_sync_meta(&state, &updated_meta)?;
-
-                let crypto_guard = state.crypto.read();
-                if let Some(crypto) = crypto_guard.as_ref() {
-                    let vault_snapshot = state.vault.read().clone();
-                    let _ = state.store.save_vault(&vault_snapshot, crypto);
-                }
-                drop(crypto_guard);
-
-                remerged = true;
-                tracing::info!(
-                    "Sync: re-merged chunk {} (v{}, lamport {})",
-                    entry.chunk_id,
-                    server_version,
-                    new_lamport2
-                );
-            }
-
-            if !remerged {
-                return Ok(SyncStatus {
-                    syncing: false,
-                    last_synced: Some(Utc::now()),
-                    conflicts: merged_conflicts,
-                    error: Some(format!("Upload failed: {}. No matching chunk found on server for retry.", err_msg)),
-                });
-            }
-
-            // Retry upload with the reconciled vault.
-            let retry_meta = load_local_sync_meta(&state);
-            let retry_vault_snapshot = state.vault.read().clone();
-            let retry_count = retry_vault_snapshot.items.len();
-            let retry_plaintext = serde_json::to_vec(&retry_vault_snapshot)
-                .map_err(|e| format!("Failed to serialize vault: {}", e))?;
-            let retry_ciphertext = encrypt(&chunk_key_bytes, &retry_plaintext)
-                .map_err(|e| format!("Failed to encrypt vault chunk: {}", e))?;
-            let retry_lamport = retry_meta.lamport_clock + 1;
-
-            tracing::info!(
-                "Sync: retrying upload chunk '{}' ({} bytes, {} items, version {}, lamport {})",
-                vault_chunk_id,
-                retry_ciphertext.len(),
-                retry_count,
-                retry_meta.version,
-                retry_lamport
-            );
-
-            match client.put_chunk(&token, &vault_chunk_id, retry_meta.version, retry_ciphertext, retry_lamport).await {
-                Ok((retry_version, retry_tok)) => {
-                    if let Some(t) = retry_tok {
-                        state.session.write().set_server_token(t);
-                    }
-                    let final_meta = LocalSyncMeta {
-                        version: retry_version,
-                        lamport_clock: retry_lamport,
-                    };
-                    save_local_sync_meta(&state, &final_meta)?;
-                    tracing::info!("Sync: retry upload succeeded, new version {}", retry_version);
-                }
-                Err(e2) => {
-                    tracing::error!("Sync: retry upload also failed: {}", e2);
-                    return Ok(SyncStatus {
-                        syncing: false,
-                        last_synced: Some(Utc::now()),
-                        conflicts: merged_conflicts,
-                        error: Some(format!("Upload failed after retry: {}", e2)),
-                    });
-                }
-            }
+            tracing::error!("Sync: failed to upload vault chunks: {}", e);
+            return Ok(SyncStatus {
+                syncing: false,
+                last_synced: Some(Utc::now()),
+                conflicts: merged_conflicts,
+                error: Some(format!("Upload failed: {}", e)),
+            });
         }
-    }
+    };
 
-    let crypto_guard = state.crypto.read();
-    if let Some(crypto) = crypto_guard.as_ref() {
-        let vault_snapshot = state.vault.read().clone();
-        let _ = state.store.save_vault(&vault_snapshot, crypto);
-    }
-    drop(crypto_guard);
-
-    log_sync_audit(&state, manifest.chunks.len());
+    save_conflicts(&state, &merged_conflicts)?;
+    log_sync_audit(&state, uploaded_chunks);
+    let _ = crate::commands::sharing::refresh_linked_shares_inner(&state).await;
+    sync_audit_chunk(&state, &client, &mut token, &manifest).await;
+    state.session.write().set_server_token(token);
 
     tracing::info!(
-        "Sync complete: {} items, {} server chunks, {} conflicts",
+        "Sync complete: {} items, {} uploaded chunks, {} conflicts",
         state.vault.read().items.len(),
-        manifest.chunks.len(),
+        uploaded_chunks,
         merged_conflicts.len()
     );
+
+    crate::commands::vault::emit_vault_items_changed(&app);
 
     Ok(SyncStatus {
         syncing: false,
@@ -617,7 +594,7 @@ pub async fn trigger_sync(state: State<'_, Arc<AppState>>) -> Result<SyncStatus,
 #[tauri::command]
 pub async fn get_sync_status(state: State<'_, Arc<AppState>>) -> Result<SyncStatus, String> {
     let meta = load_local_sync_meta(&state);
-    let has_meta = meta.version > 0;
+    let has_meta = !meta.chunks.is_empty();
 
     let last_synced_path = state.store.store_path().join("sync_meta.json");
     let last_synced = if has_meta {
@@ -630,7 +607,7 @@ pub async fn get_sync_status(state: State<'_, Arc<AppState>>) -> Result<SyncStat
     };
 
     let conflicts_path = state.store.store_path().join("sync_conflicts.json");
-    let conflicts: Vec<String> = if conflicts_path.exists() {
+    let conflicts: Vec<ConflictItem> = if conflicts_path.exists() {
         std::fs::read_to_string(&conflicts_path)
             .ok()
             .and_then(|json| serde_json::from_str(&json).ok())
@@ -649,48 +626,42 @@ pub async fn get_sync_status(state: State<'_, Arc<AppState>>) -> Result<SyncStat
 
 #[tauri::command]
 pub async fn resolve_conflict(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     item_id: String,
     use_local: bool,
 ) -> Result<(), String> {
     if use_local {
-        tracing::info!("Conflict resolved for item {}: keeping local version", item_id);
+        tracing::info!(
+            "Conflict resolved for item {}: keeping local version",
+            item_id
+        );
     } else {
-        let session = state.session.read();
-        let _device_id = session.get_device_id().unwrap_or("unknown").to_string();
-        drop(session);
-
-        let crypto_guard = state.crypto.read();
-        let crypto = crypto_guard.as_ref().ok_or("Crypto not initialized")?;
-        let _chunk_key_bytes: [u8; 32] = *crypto.chunk_key(VAULT_MAIN_CHUNK_ID.as_bytes()).as_bytes();
-        drop(crypto_guard);
-
         let server_url = state.server_url.read().clone();
         let client = ApiClient::with_url(server_url);
 
-        let token = state.get_session_token()
+        let mut token = state
+            .get_session_token()
             .ok_or("No session token available")?;
 
-        let (ciphertext, _version, _lamport, new_tok) = client
-            .get_chunk(&token, VAULT_MAIN_CHUNK_ID)
+        let (manifest, new_tok) = client
+            .get_sync_manifest(&token)
             .await
-            .map_err(|e| format!("Failed to download server vault: {}", e))?;
+            .map_err(|e| format!("Failed to fetch sync manifest: {}", e))?;
         if let Some(t) = new_tok {
-            state.session.write().set_server_token(t);
+            token = t;
         }
-
-        let plaintext = decrypt(&_chunk_key_bytes, &ciphertext)
-            .map_err(|e| format!("Failed to decrypt server vault: {}", e))?;
-
-        let server_vault: crate::vault::VaultStore = serde_json::from_slice(&plaintext)
-            .map_err(|e| format!("Failed to deserialize server vault: {}", e))?;
+        let Some((server_vault, _)) =
+            download_vault_from_manifest(&state, &client, &mut token, &manifest).await?
+        else {
+            return Err("Server vault is empty".to_string());
+        };
+        state.session.write().set_server_token(token);
 
         if let Some(server_item) = server_vault.items.iter().find(|i| i.id() == item_id) {
             let mut vault = state.vault.write();
             if let Some(local_item) = vault.items.iter_mut().find(|i| i.id() == item_id) {
-                let resolved = server_item
-                    .clone()
-                    .with_updated_at(Utc::now());
+                let resolved = server_item.clone().with_updated_at(Utc::now());
                 *local_item = resolved;
             } else {
                 vault.items.push(server_item.clone());
@@ -704,11 +675,14 @@ pub async fn resolve_conflict(
             drop(crypto_guard);
         }
 
-        tracing::info!("Conflict resolved for item {}: using server version", item_id);
+        tracing::info!(
+            "Conflict resolved for item {}: using server version",
+            item_id
+        );
     }
 
     let conflicts_path = state.store.store_path().join("sync_conflicts.json");
-    let mut conflicts: Vec<String> = if conflicts_path.exists() {
+    let mut conflicts: Vec<ConflictItem> = if conflicts_path.exists() {
         std::fs::read_to_string(&conflicts_path)
             .ok()
             .and_then(|json| serde_json::from_str(&json).ok())
@@ -716,7 +690,7 @@ pub async fn resolve_conflict(
     } else {
         vec![]
     };
-    conflicts.retain(|id| id != &item_id);
+    conflicts.retain(|conflict| conflict.item_id.as_str() != item_id);
 
     if !conflicts.is_empty() {
         let json = serde_json::to_string(&conflicts).map_err(|e| e.to_string())?;
@@ -724,6 +698,8 @@ pub async fn resolve_conflict(
     } else if conflicts_path.exists() {
         let _ = std::fs::remove_file(&conflicts_path);
     }
+
+    crate::commands::vault::emit_vault_items_changed(&app);
 
     Ok(())
 }

@@ -95,7 +95,10 @@ pub fn decrypt_rms_capsule(transfer_key: &[u8; 32], capsule: &[u8]) -> Result<[u
     let plaintext = vela_crypto::aead::decrypt(transfer_key, capsule)
         .map_err(|e| format!("Failed to decrypt RMS capsule: {e}"))?;
     if plaintext.len() < 32 {
-        return Err(format!("Decrypted capsule too short: {} bytes", plaintext.len()));
+        return Err(format!(
+            "Decrypted capsule too short: {} bytes",
+            plaintext.len()
+        ));
     }
     let mut rms = [0u8; 32];
     rms.copy_from_slice(&plaintext[..32]);
@@ -155,10 +158,18 @@ pub fn create_auth_proof(
     device_id: &str,
 ) -> Result<(String, String), String> {
     if cyclo_pk.len() != CYCLO_PK_LEN {
-        return Err(format!("cyclo_pk must be {} bytes, got {}", CYCLO_PK_LEN, cyclo_pk.len()));
+        return Err(format!(
+            "cyclo_pk must be {} bytes, got {}",
+            CYCLO_PK_LEN,
+            cyclo_pk.len()
+        ));
     }
     if cyclo_sk.len() != CYCLO_PK_LEN {
-        return Err(format!("cyclo_sk must be {} bytes, got {}", CYCLO_PK_LEN, cyclo_sk.len()));
+        return Err(format!(
+            "cyclo_sk must be {} bytes, got {}",
+            CYCLO_PK_LEN,
+            cyclo_sk.len()
+        ));
     }
 
     // committed_hash = SHA256(challenge || device_id) — binds proof to this session.
