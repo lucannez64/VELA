@@ -104,6 +104,15 @@ pub enum VaultItem {
     },
 }
 
+/// Record of a deleted item, propagated via sync so that deletions
+/// are honoured on all devices.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tombstone {
+    pub id: String,
+    pub deleted_at: DateTime<Utc>,
+    pub deleted_by: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BreachEntry {
     pub name: String,
@@ -852,6 +861,8 @@ fn extract_base_domain(url: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultStore {
     pub items: Vec<VaultItem>,
+    #[serde(default)]
+    pub tombstones: Vec<Tombstone>,
 }
 
 impl Default for VaultStore {
@@ -862,7 +873,10 @@ impl Default for VaultStore {
 
 impl VaultStore {
     pub fn new() -> Self {
-        Self { items: Vec::new() }
+        Self {
+            items: Vec::new(),
+            tombstones: Vec::new(),
+        }
     }
 
     pub fn add_item(&mut self, item: VaultItem) {
@@ -875,8 +889,20 @@ impl VaultStore {
         }
     }
 
-    pub fn delete_item(&mut self, id: &str) {
+    pub fn delete_item(&mut self, id: &str, device_id: Option<&str>) {
         self.items.retain(|item| item.id() != id);
+        // Record a tombstone so the deletion propagates via sync.
+        self.tombstones.push(Tombstone {
+            id: id.to_string(),
+            deleted_at: Utc::now(),
+            deleted_by: device_id.map(|s| s.to_string()),
+        });
+    }
+
+    /// Remove tombstones older than the given retention period.
+    pub fn prune_tombstones(&mut self, max_age: chrono::Duration) {
+        let cutoff = Utc::now() - max_age;
+        self.tombstones.retain(|t| t.deleted_at >= cutoff);
     }
 
     pub fn get_item(&self, id: &str) -> Option<&VaultItem> {

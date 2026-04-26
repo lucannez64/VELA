@@ -9,6 +9,10 @@ use crate::AppState;
 use crate::api::{ApiClient, EnrollDeviceRequest, NewDevicePayload, VerifyRequest};
 use crate::commands::audit::{AuditAction, record_audit_event};
 use crate::crypto;
+use vela_crypto::aead::decrypt;
+
+const VAULT_MAIN_CHUNK_ID: &str = "vault-main";
+const VAULT_DATA_PREFIX: &str = "vault-data-";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -235,6 +239,67 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
     Ok(B64.encode(json.as_bytes()))
 }
 
+/// Try to download and decrypt a single vault chunk by chunk_id.
+/// Returns `Some(VaultStore)` on success, `None` if the chunk doesn't exist
+/// or cannot be decrypted.
+async fn try_download_chunk(
+    crypto: &crate::crypto::Crypto,
+    client: &ApiClient,
+    token: &str,
+    chunk_id: &str,
+) -> Option<crate::vault::VaultStore> {
+    let chunk_key_bytes: [u8; 32] = *crypto.chunk_key(chunk_id.as_bytes()).as_bytes();
+    match client.get_chunk(token, chunk_id).await {
+        Ok((ciphertext, _, _, _)) => {
+            match decrypt(&chunk_key_bytes, &ciphertext) {
+                Ok(plaintext) => {
+                    match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
+                        Ok(v) => {
+                            tracing::info!("Vault downloaded from chunk '{}'", chunk_id);
+                            Some(v)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse vault JSON from chunk '{}': {}", chunk_id, e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to decrypt chunk '{}': {}", chunk_id, e);
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            tracing::info!("Chunk '{}' not available: {}", chunk_id, e);
+            None
+        }
+    }
+}
+
+/// Try to download the vault via the manifest, looking for the first
+/// `vault-data-*` chunk.
+async fn try_download_fallback_chunk(
+    crypto: &crate::crypto::Crypto,
+    client: &ApiClient,
+    token: &str,
+) -> Option<crate::vault::VaultStore> {
+    let manifest = match client.get_sync_manifest(token).await {
+        Ok((m, _)) => m,
+        Err(e) => {
+            tracing::warn!("Failed to fetch manifest for fallback: {}", e);
+            return None;
+        }
+    };
+    let fallback_id = manifest.chunks.iter()
+        .find(|c| c.chunk_id.starts_with(VAULT_DATA_PREFIX))
+        .map(|c| c.chunk_id.clone());
+    match fallback_id {
+        Some(id) => try_download_chunk(crypto, client, token, &id).await,
+        None => None,
+    }
+}
+
 /// Import an enrollment code on a new device.
 ///
 /// The new device:
@@ -326,32 +391,17 @@ pub async fn import_enrollment_code(
     // ── build Crypto and download vault ───────────────────────────────────────
     let crypto_obj = crate::crypto::Crypto::new(&rms);
 
-    // Try to pull the vault from the server; fall back to empty vault.
-    let vault = match client.get_chunk(&token, "vault-main").await {
-        Ok((ciphertext, _, _, _)) => {
-            match crypto_obj.decrypt_vault(&ciphertext) {
-                Ok(plaintext) => {
-                    match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
-                        Ok(v) => {
-                            tracing::info!("Vault downloaded from server during enrollment import");
-                            v
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to parse vault JSON: {e}");
-                            crate::vault::VaultStore::new()
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to decrypt downloaded vault: {e}");
-                    crate::vault::VaultStore::new()
-                }
-            }
-        }
-        Err(e) => {
-            tracing::info!("No vault on server yet ({}), starting empty", e);
-            crate::vault::VaultStore::new()
-        }
+    // Download the vault chunk from the server.  Try the canonical name first,
+    // then fall back to an ORAM-style vault-data-* chunk from the manifest.
+    let vault = if let Some(v) = try_download_chunk(&crypto_obj, &client, &token, VAULT_MAIN_CHUNK_ID).await {
+        v
+    } else {
+        tracing::info!("No '{}' chunk found, trying vault-data-* fallback from manifest", VAULT_MAIN_CHUNK_ID);
+        try_download_fallback_chunk(&crypto_obj, &client, &token).await
+            .unwrap_or_else(|| {
+                tracing::info!("No vault chunk found on server, starting empty");
+                crate::vault::VaultStore::new()
+            })
     };
 
     state.store.save_vault(&vault, &crypto_obj)

@@ -163,8 +163,13 @@ pub async fn delete_item(
         }
     };
 
+    let device_id = {
+        let session = state.session.read();
+        session.get_device_id().map(|s| s.to_string())
+    };
+
     let mut vault = state.vault.write();
-    vault.delete_item(&id);
+    vault.delete_item(&id, device_id.as_deref());
     
     drop(vault);
     save_vault(&state)?;
