@@ -619,6 +619,11 @@ pub async fn delete_share(
 
             let revoked_payload = sent.encrypted_payload.clone();
 
+            let device_id = {
+                let session = state.session.read();
+                session.get_device_id().map(|s| s.to_string())
+            };
+
             let mut vault = state.vault.write();
             if let Some(existing) = vault.get_item(&sent.item_id).cloned() {
                 let unmarked = existing.with_shared_status(false, None);
@@ -631,7 +636,7 @@ pub async fn delete_share(
                 .position(|s| s.accepted == Some(true) && s.encrypted_payload == revoked_payload)
             {
                 let received_share = store.received_shares[received_index].clone();
-                vault.delete_item(&received_share.item_id);
+                vault.delete_item(&received_share.item_id, device_id.as_deref());
                 store.received_shares.remove(received_index);
             } else {
                 store

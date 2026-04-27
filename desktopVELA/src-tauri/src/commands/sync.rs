@@ -123,9 +123,9 @@ fn merge_server_vaults(
                         server_version: server_item.clone(),
                         conflict_detected_at: Utc::now(),
                     });
-                }
             }
         }
+    }
     }
 
     // ── 3. Merge items, filtering out tombstoned IDs ───────────────────────
@@ -508,7 +508,6 @@ pub async fn trigger_sync(
                 let vault_snapshot = state.vault.read().clone();
                 let _ = state.store.save_vault(&vault_snapshot, crypto);
             }
-        }
         }
     }
 
