@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::api::{ApiClient, RecoveryRecoverRequest};
 use crate::commands::audit::{record_audit_event, AuditAction};
-use crate::AppState;
+use crate::{normalize_server_url, AppState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -60,7 +60,9 @@ pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<Settings, S
     settings.user_id = user_id
         .or_else(|| state.store.load_user_id().ok())
         .unwrap_or_default();
-    settings.server_url = state.server_url.read().clone();
+    let server_url = normalize_server_url(&state.server_url.read());
+    *state.server_url.write() = server_url.clone();
+    settings.server_url = server_url;
     settings.extension_connected = state.is_extension_connected();
     Ok(settings)
 }
@@ -70,9 +72,9 @@ pub async fn update_settings(
     state: State<'_, Arc<AppState>>,
     settings: Settings,
 ) -> Result<(), String> {
-    if !settings.server_url.is_empty() {
-        *state.server_url.write() = settings.server_url.clone();
-    }
+    let mut settings = settings;
+    settings.server_url = normalize_server_url(&settings.server_url);
+    *state.server_url.write() = settings.server_url.clone();
     state
         .store
         .save_settings(&settings)

@@ -154,6 +154,16 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
 }
 
 fn migrate_vault_chunks_schema(db: &Database) -> anyhow::Result<()> {
+    if db
+        .query(
+            "SELECT version, lamport_clock, last_writer FROM vault_chunks LIMIT 0",
+            (),
+        )
+        .is_ok()
+    {
+        return Ok(());
+    }
+
     let _ = db.execute("DROP TABLE IF EXISTS vault_chunks_v2", ());
     db.execute(
         "CREATE TABLE vault_chunks_v2 (

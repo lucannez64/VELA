@@ -18,7 +18,16 @@ use std::time::Instant;
 use crate::session::RateLimitEntry;
 use crate::store::Store;
 
-pub const DEFAULT_SERVER_URL: &str = "http://192.168.1.34:8443";
+pub const DEFAULT_SERVER_URL: &str = "";
+
+pub fn normalize_server_url(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
+}
 
 pub struct AppState {
     pub session: RwLock<session::Session>,
@@ -115,10 +124,11 @@ impl Default for AppState {
             .load_settings()
             .ok()
             .and_then(|s| {
-                if s.server_url.is_empty() {
+                let server_url = normalize_server_url(&s.server_url);
+                if server_url.is_empty() {
                     None
                 } else {
-                    Some(s.server_url)
+                    Some(server_url)
                 }
             })
             .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string());

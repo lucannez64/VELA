@@ -16,10 +16,14 @@ export default function SettingsScreen() {
     setSyncing(true);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('trigger_sync');
+      const status = await invoke<{ error?: string | null }>('trigger_sync');
+      if (status.error) {
+        showToast(status.error, 'error');
+        return;
+      }
       showToast('Vault synced', 'success');
     } catch (e) {
-      showToast('Sync failed', 'error');
+      showToast('Sync failed: ' + String(e), 'error');
     } finally {
       setSyncing(false);
     }

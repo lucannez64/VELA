@@ -1,7 +1,9 @@
-use crate::api::ApiClient;
+use crate::api::{ApiClient, VerifyRequest};
 use crate::commands::audit::{self, record_audit_event, AuditAction};
+use crate::crypto;
 use crate::vault::VaultItem;
-use crate::AppState;
+use crate::{normalize_server_url, AppState};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -71,6 +73,58 @@ fn chunk_key_bytes(state: &AppState, chunk_id: &str) -> Result<[u8; 32], String>
 
 fn log_sync_audit(state: &AppState, chunk_count: usize) {
     record_audit_event(state, AuditAction::VaultSync { chunk_count });
+}
+
+async fn authenticate_for_sync(
+    state: &AppState,
+    client: &ApiClient,
+    device_id: &str,
+) -> Result<String, String> {
+    let identity_keys = state
+        .store
+        .load_identity_keys()
+        .map_err(|e| format!("Failed to load identity keys: {e}"))?
+        .ok_or_else(|| {
+            "No server identity keys found. Re-enroll this vault or create it with a server URL configured.".to_string()
+        })?;
+
+    let challenge_resp = client
+        .get_challenge()
+        .await
+        .map_err(|e| format!("Failed to get challenge: {e}"))?;
+    let challenge_bytes = B64
+        .decode(&challenge_resp.challenge)
+        .map_err(|e| format!("Invalid challenge format: {e}"))?;
+
+    let (proof, committed_hash) = crypto::create_auth_proof(
+        &identity_keys.cyclo_pk,
+        &identity_keys.cyclo_sk,
+        &challenge_bytes,
+        device_id,
+    )
+    .map_err(|e| format!("Failed to create auth proof: {e}"))?;
+
+    let verify_resp = client
+        .verify_proof(&VerifyRequest {
+            device_id: device_id.to_string(),
+            challenge: challenge_resp.challenge,
+            committed_hash,
+            proof,
+        })
+        .await
+        .map_err(|e| format!("Failed to verify proof: {e}"))?;
+
+    state
+        .store
+        .save_device_id_with_user_id(device_id, &verify_resp.user_id)
+        .map_err(|e| format!("Failed to save server user ID: {e}"))?;
+    {
+        let mut session = state.session.write();
+        session.user_id = Some(verify_resp.user_id);
+        session.set_server_token(verify_resp.token.clone());
+    }
+
+    Ok(verify_resp.token)
 }
 
 /// How long tombstones are retained before pruning.
@@ -453,12 +507,33 @@ pub async fn trigger_sync(
         session.get_device_id().unwrap_or("unknown").to_string()
     };
 
-    let server_url = state.server_url.read().clone();
+    let server_url = normalize_server_url(&state.server_url.read());
+    if server_url.is_empty() {
+        return Ok(SyncStatus {
+            syncing: false,
+            last_synced: None,
+            conflicts: vec![],
+            error: Some("No server URL configured. Add one in Settings to enable sync.".into()),
+        });
+    }
+
     let client = ApiClient::with_url(server_url);
 
-    let mut token = state
-        .get_session_token()
-        .ok_or_else(|| "No session token available".to_string())?;
+    let mut token = match state.get_session_token() {
+        Some(token) => token,
+        None => match authenticate_for_sync(&state, &client, &device_id).await {
+            Ok(token) => token,
+            Err(e) => {
+                tracing::warn!("Sync: server authentication failed: {}", e);
+                return Ok(SyncStatus {
+                    syncing: false,
+                    last_synced: None,
+                    conflicts: vec![],
+                    error: Some(format!("Server authentication failed: {e}")),
+                });
+            }
+        },
+    };
 
     let manifest = match client.get_sync_manifest(&token).await {
         Ok((m, new_tok)) => {
@@ -705,6 +780,7 @@ pub async fn resolve_conflict(
 
 #[tauri::command]
 pub async fn set_server_url(state: State<'_, Arc<AppState>>, url: String) -> Result<(), String> {
+    let url = normalize_server_url(&url);
     {
         let mut server_url = state.server_url.write();
         *server_url = url.clone();
