@@ -3,6 +3,7 @@
 desktopVELA/src-tauri/target/
 serverVELA/target/
 libVELA/vela-crypto/target/
+libVELA/vela-android-bridge/target/
 libVELA/cyclo/ntt_shim/target/
 
 # Vite build output

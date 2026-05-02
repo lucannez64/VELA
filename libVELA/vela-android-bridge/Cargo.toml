@@ -1,0 +1,26 @@
+[package]
+name = "vela-android-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Android native bridge for VELA shared Rust core"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+hex = "0.4"
+jni = "0.21"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+vela-core = { path = "../vela-core" }
+vela-crypto = { path = "../vela-crypto", default-features = false }
+
+[features]
+default = []
+cyclo-auth = ["vela-crypto/cyclo-ffi"]
+
+[dev-dependencies]
