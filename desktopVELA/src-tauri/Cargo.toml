@@ -38,6 +38,7 @@ url = "2"
 base64 = "0.22"
 urlencoding = "2"
 hex = "0.4"
+tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

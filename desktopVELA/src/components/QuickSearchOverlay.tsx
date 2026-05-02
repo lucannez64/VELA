@@ -2,22 +2,27 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem } from '../context/AppContext';
 
-export default function QuickSearchOverlay() {
+interface QuickSearchOverlayProps {
+  onClose: () => void;
+}
+
+export default function QuickSearchOverlay({ onClose }: QuickSearchOverlayProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<VaultItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const { setQuickSearchOpen, setSelectedItem, setCurrentView } = useApp();
+  const { setSelectedItem, setCurrentView } = useApp();
 
   const handleSelect = useCallback((item: VaultItem) => {
-    setQuickSearchOpen(false);
+    onClose();
     setSelectedItem(item);
     setCurrentView('vault');
-  }, [setQuickSearchOpen, setSelectedItem, setCurrentView]);
+  }, [onClose, setSelectedItem, setCurrentView]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setQuickSearchOpen(false);
+        e.preventDefault();
+        onClose();
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         setSelectedIndex(prev => Math.min(prev + 1, results.length - 1));
@@ -31,7 +36,7 @@ export default function QuickSearchOverlay() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [results, selectedIndex, handleSelect, setQuickSearchOpen]);
+  }, [results, selectedIndex, handleSelect, onClose]);
 
   useEffect(() => {
     if (query.length > 0) {
@@ -63,7 +68,7 @@ export default function QuickSearchOverlay() {
   return (
     <div 
       className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center pt-[15vh]"
-      onClick={() => setQuickSearchOpen(false)}
+      onClick={onClose}
     >
       <div 
         className="w-full max-w-xl bg-surface-container rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden"

@@ -82,25 +82,6 @@ pub async fn get_items(state: State<'_, Arc<AppState>>) -> Result<Vec<VaultItem>
     let vault = state.vault.read();
     let items = vault.items.clone();
     tracing::info!("get_items: {} items in vault", items.len());
-    for (i, item) in items.iter().enumerate() {
-        if let VaultItem::CreditCard {
-            name,
-            number,
-            exp,
-            cvv,
-            ..
-        } = item
-        {
-            tracing::info!(
-                "  item[{}]: name={}, number={}, exp={}, cvv={}",
-                i,
-                name,
-                number,
-                exp,
-                cvv
-            );
-        }
-    }
     Ok(items)
 }
 
@@ -119,60 +100,22 @@ pub async fn add_item(
     state: State<'_, Arc<AppState>>,
     item: VaultItem,
 ) -> Result<VaultItem, String> {
-    if let VaultItem::CreditCard {
-        name,
-        number,
-        exp,
-        cvv,
-        pin,
-        cardholder_name,
-        notes,
-        ..
-    } = &item
-    {
-        tracing::info!("Adding creditcard: name={}, number={}, exp={}, cvv={}, pin={:?}, cardholder={:?}, notes={:?}",
-            name, number, exp, cvv, pin, cardholder_name, notes);
-    } else {
-        tracing::info!(
-            "Adding item type: {:?}",
-            match &item {
-                VaultItem::Login { .. } => "login",
-                VaultItem::CreditCard { .. } => "creditcard",
-                VaultItem::SecureNote { .. } => "securenote",
-                VaultItem::Identity { .. } => "identity",
-                VaultItem::FileBlob { .. } => "fileblob",
-                VaultItem::BreachMonitor { .. } => "breachmonitor",
-            }
-        );
-    }
+    tracing::info!(
+        "Adding item type: {:?}",
+        match &item {
+            VaultItem::Login { .. } => "login",
+            VaultItem::CreditCard { .. } => "creditcard",
+            VaultItem::SecureNote { .. } => "securenote",
+            VaultItem::Identity { .. } => "identity",
+            VaultItem::FileBlob { .. } => "fileblob",
+            VaultItem::BreachMonitor { .. } => "breachmonitor",
+        }
+    );
 
     let mut vault = state.vault.write();
     let now = Utc::now();
     let new_id = Uuid::new_v4().to_string();
     let new_item = item.with_id(new_id).with_updated_at(now);
-
-    if let VaultItem::CreditCard {
-        name,
-        number,
-        exp,
-        cvv,
-        pin,
-        cardholder_name,
-        notes,
-        ..
-    } = &new_item
-    {
-        tracing::info!(
-            "After with_id: name={}, number={}, exp={}, cvv={}, pin={:?}, cardholder={:?}",
-            name,
-            number,
-            exp,
-            cvv,
-            pin,
-            cardholder_name
-        );
-    }
-
     vault.add_item(new_item.clone());
 
     drop(vault);
@@ -469,6 +412,16 @@ pub async fn export_vault_bitwarden_json(
     };
 
     serde_json::to_string_pretty(&export).map_err(|e| format!("Failed to serialize export: {}", e))
+}
+
+#[command]
+pub async fn save_vault_export_file(path: String, data: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Export path is empty".to_string());
+    }
+
+    std::fs::write(path, data).map_err(|e| format!("Failed to write export file: {}", e))
 }
 
 #[derive(Debug, Deserialize)]

@@ -243,7 +243,7 @@ function AppContent() {
         <BiometricGate onUnlock={async () => {
           await refreshSession();
         }} />
-        {quickSearchOpen && <QuickSearchOverlay />}
+        {quickSearchOpen && <QuickSearchOverlay onClose={() => setQuickSearchOpen(false)} />}
         {toast && <Toast {...toast} />}
       </div>
     );
@@ -283,7 +283,7 @@ function AppContent() {
       {session.session_time_remaining_secs <= 60 && (
         <SessionExpiredOverlay onReauth={refreshSessionOnly} />
       )}
-      {quickSearchOpen && <QuickSearchOverlay />}
+      {quickSearchOpen && <QuickSearchOverlay onClose={() => setQuickSearchOpen(false)} />}
       {toast && <Toast {...toast} />}
       {showAddModal && (
         <AddItemModal 

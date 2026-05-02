@@ -9,6 +9,7 @@
     "core:event:allow-unlisten",
     "core:event:allow-emit",
     "shell:allow-open",
+    "dialog:allow-save",
     "notification:default",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",

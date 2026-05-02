@@ -6,7 +6,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, RunEvent, WindowEvent,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use vela_desktop::ipc::server::IpcServer;
@@ -103,23 +103,25 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-
-    let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV);
-
-    let app_handle = app.clone();
-    if let Err(e) = app
-        .global_shortcut()
-        .on_shortcut(shortcut, move |_app, _shortcut, _event| {
-            info!("Global shortcut triggered: Quick search overlay");
-            if let Some(window) = app_handle.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.emit("open-quick-search", ());
-            }
+    let state = app.state::<Arc<AppState>>();
+    let shortcut = state
+        .store
+        .load_settings()
+        .map(|settings| {
+            commands::settings::normalize_quick_search_shortcut(&settings.quick_search_shortcut)
         })
-    {
-        error!("Failed to register global shortcut: {}", e);
+        .unwrap_or_else(|_| commands::settings::DEFAULT_QUICK_SEARCH_SHORTCUT.to_string());
+
+    if let Err(e) = commands::settings::register_quick_search_shortcut(app, &shortcut) {
+        let message = e.to_string();
+        if message.contains("already registered") {
+            warn!(
+                shortcut = %shortcut,
+                "Global shortcut is already registered; quick search shortcut disabled for this instance"
+            );
+        } else {
+            error!("Failed to register global shortcut {}: {}", shortcut, e);
+        }
     }
 
     Ok(())
@@ -136,6 +138,7 @@ fn main() {
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -201,6 +204,7 @@ fn main() {
             commands::vault::get_items_by_type,
             commands::vault::get_vault_health,
             commands::vault::export_vault_bitwarden_json,
+            commands::vault::save_vault_export_file,
             commands::vault::import_vault_bitwarden_json,
             commands::vault::check_email_breach,
             commands::vault::check_all_vault_emails,

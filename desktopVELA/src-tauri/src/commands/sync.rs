@@ -177,9 +177,9 @@ fn merge_server_vaults(
                         server_version: server_item.clone(),
                         conflict_detected_at: Utc::now(),
                     });
+                }
             }
         }
-    }
     }
 
     // ── 3. Merge items, filtering out tombstoned IDs ───────────────────────
@@ -603,8 +603,11 @@ pub async fn trigger_sync(
             syncing: false,
             last_synced: Some(Utc::now()),
             conflicts: merged_conflicts,
-            error: Some("Local vault is empty but server may have data. \
-                         Please re-enroll or trigger a force-pull to recover.".into()),
+            error: Some(
+                "Local vault is empty but server may have data. \
+                         Please re-enroll or trigger a force-pull to recover."
+                    .into(),
+            ),
         });
     }
 

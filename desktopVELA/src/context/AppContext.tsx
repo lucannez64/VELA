@@ -185,6 +185,7 @@ export interface Settings {
   compact_list: boolean;
   user_id: string;
   server_url: string;
+  quick_search_shortcut: string;
   extension_connected: boolean;
   extension_version?: string;
 }

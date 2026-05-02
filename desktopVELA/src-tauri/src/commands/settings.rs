@@ -1,12 +1,16 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::Arc;
-use tauri::{command, State};
+use tauri::{command, AppHandle, Emitter, Manager, State};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 use uuid::Uuid;
 
 use crate::api::{ApiClient, RecoveryRecoverRequest};
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::{normalize_server_url, AppState};
+
+pub const DEFAULT_QUICK_SEARCH_SHORTCUT: &str = "Ctrl+Alt+V";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -19,8 +23,14 @@ pub struct Settings {
     pub compact_list: bool,
     pub user_id: String,
     pub server_url: String,
+    #[serde(default = "default_quick_search_shortcut")]
+    pub quick_search_shortcut: String,
     pub extension_connected: bool,
     pub extension_version: Option<String>,
+}
+
+fn default_quick_search_shortcut() -> String {
+    DEFAULT_QUICK_SEARCH_SHORTCUT.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -43,10 +53,54 @@ impl Default for Settings {
             compact_list: false,
             user_id: String::new(),
             server_url: String::new(),
+            quick_search_shortcut: default_quick_search_shortcut(),
             extension_connected: false,
             extension_version: None,
         }
     }
+}
+
+pub fn normalize_quick_search_shortcut(shortcut: &str) -> String {
+    let shortcut = shortcut.trim();
+    if shortcut.is_empty() {
+        DEFAULT_QUICK_SEARCH_SHORTCUT.to_string()
+    } else {
+        shortcut.to_string()
+    }
+}
+
+pub fn register_quick_search_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
+    let shortcut = normalize_quick_search_shortcut(shortcut);
+    let parsed = Shortcut::from_str(&shortcut)
+        .map_err(|e| format!("Invalid quick search shortcut '{shortcut}': {e}"))?;
+
+    let app_handle = app.clone();
+    app.global_shortcut()
+        .on_shortcut(parsed, move |_app, _shortcut, _event| {
+            tracing::info!("Global shortcut triggered: Quick search overlay");
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.emit("open-quick-search", ());
+            }
+        })
+        .map_err(|e| format!("Failed to register quick search shortcut '{shortcut}': {e}"))
+}
+
+fn reconfigure_quick_search_shortcut(
+    app: &AppHandle,
+    previous_shortcut: &str,
+    shortcut: &str,
+) -> Result<(), String> {
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|e| format!("Failed to clear existing shortcuts: {e}"))?;
+    if let Err(e) = register_quick_search_shortcut(app, shortcut) {
+        let _ = register_quick_search_shortcut(app, previous_shortcut);
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 #[command]
@@ -63,17 +117,34 @@ pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<Settings, S
     let server_url = normalize_server_url(&state.server_url.read());
     *state.server_url.write() = server_url.clone();
     settings.server_url = server_url;
+    settings.quick_search_shortcut =
+        normalize_quick_search_shortcut(&settings.quick_search_shortcut);
     settings.extension_connected = state.is_extension_connected();
     Ok(settings)
 }
 
 #[command]
 pub async fn update_settings(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     settings: Settings,
 ) -> Result<(), String> {
+    let previous_settings = state.store.load_settings().unwrap_or_default();
     let mut settings = settings;
     settings.server_url = normalize_server_url(&settings.server_url);
+    settings.quick_search_shortcut =
+        normalize_quick_search_shortcut(&settings.quick_search_shortcut);
+
+    if normalize_quick_search_shortcut(&previous_settings.quick_search_shortcut)
+        != settings.quick_search_shortcut
+    {
+        reconfigure_quick_search_shortcut(
+            &app,
+            &previous_settings.quick_search_shortcut,
+            &settings.quick_search_shortcut,
+        )?;
+    }
+
     *state.server_url.write() = settings.server_url.clone();
     state
         .store

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
 import { useApp, Settings } from '../context/AppContext';
 
 export default function SettingsScreen() {
@@ -10,6 +11,8 @@ export default function SettingsScreen() {
   const [syncing, setSyncing] = useState(false);
   const [editingServerUrl, setEditingServerUrl] = useState(false);
   const [serverUrlDraft, setServerUrlDraft] = useState('');
+  const [editingShortcut, setEditingShortcut] = useState(false);
+  const [shortcutDraft, setShortcutDraft] = useState('');
 
   const handleSyncNow = async () => {
     if (syncing) return;
@@ -47,8 +50,10 @@ export default function SettingsScreen() {
       await invoke('update_settings', { settings: newSettings });
       setSettings(newSettings);
       showToast('Settings saved', 'success');
+      return true;
     } catch (e) {
-      showToast('Failed to save settings', 'error');
+      showToast('Failed to save settings: ' + String(e), 'error');
+      return false;
     }
   };
 
@@ -147,6 +152,60 @@ export default function SettingsScreen() {
               >
                 <div className={`w-5 h-5 rounded-full bg-white transition-transform ${settings.require_biometric_on_reveal ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <label className="font-body font-medium text-on-surface">Quick search shortcut</label>
+                  <p className="text-sm text-on-surface-variant">Global shortcut for opening quick search</p>
+                </div>
+                {!editingShortcut && (
+                  <button
+                    onClick={() => { setEditingShortcut(true); setShortcutDraft(settings.quick_search_shortcut); }}
+                    className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+              {editingShortcut ? (
+                <div className="flex gap-2 mt-1">
+                  <input
+                    type="text"
+                    value={shortcutDraft}
+                    onChange={e => setShortcutDraft(e.target.value)}
+                    placeholder="Ctrl+Alt+V"
+                    className="flex-1 px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface font-mono text-sm placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
+                    onKeyDown={async e => {
+                      if (e.key === 'Enter') {
+                        const saved = await handleUpdateSettings({ ...settings, quick_search_shortcut: shortcutDraft.trim() });
+                        if (saved) setEditingShortcut(false);
+                      } else if (e.key === 'Escape') {
+                        setEditingShortcut(false);
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    onClick={async () => {
+                      const saved = await handleUpdateSettings({ ...settings, quick_search_shortcut: shortcutDraft.trim() });
+                      if (saved) setEditingShortcut(false);
+                    }}
+                    className="px-4 py-2 bg-primary text-white rounded-lg hover:opacity-90 transition-opacity"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingShortcut(false)}
+                    className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <p className="font-mono text-sm text-on-surface-variant">{settings.quick_search_shortcut}</p>
+              )}
             </div>
           </div>
         </section>
@@ -262,13 +321,13 @@ export default function SettingsScreen() {
                 onClick={async () => {
                   try {
                     const json = await invoke<string>('export_vault_bitwarden_json');
-                    const blob = new Blob([json], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `vela-export-${new Date().toISOString().slice(0, 10)}.json`;
-                    a.click();
-                    URL.revokeObjectURL(url);
+                    const path = await save({
+                      title: 'Export vault',
+                      defaultPath: `vela-export-${new Date().toISOString().slice(0, 10)}.json`,
+                      filters: [{ name: 'JSON', extensions: ['json'] }],
+                    });
+                    if (!path) return;
+                    await invoke('save_vault_export_file', { path, data: json });
                     showToast('Vault exported', 'success');
                   } catch (e) {
                     showToast('Export failed: ' + String(e), 'error');
