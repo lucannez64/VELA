@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="rms.enc" />
+        <exclude domain="file" path="session.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="rms.enc" />
+        <exclude domain="file" path="session.json" />
+    </device-transfer>
+</data-extraction-rules>
