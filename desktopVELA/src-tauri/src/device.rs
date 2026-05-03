@@ -3,6 +3,14 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zeroize::ZeroizeOnDrop;
 
+#[cfg(windows)]
+fn hide_command_window(command: &mut std::process::Command) -> &mut std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub device_id: String,
@@ -50,13 +58,13 @@ impl DeviceInfo {
 fn get_machine_unique_id() -> String {
     use std::process::Command;
 
-    if let Ok(output) = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "(Get-CimInstance Win32_ComputerSystemProduct).UUID",
-        ])
-        .output()
+    let mut command = Command::new("powershell");
+    if let Ok(output) = hide_command_window(command.args([
+        "-NoProfile",
+        "-Command",
+        "(Get-CimInstance Win32_ComputerSystemProduct).UUID",
+    ]))
+    .output()
     {
         let uuid = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !uuid.is_empty() && uuid != "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF" {
@@ -156,9 +164,13 @@ pub mod tpm {
     const TPM_KEY_FILE: &str = "rms.tpm";
 
     fn is_tpm_20_present() -> bool {
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command", "(Get-Tpm).TpmPresent"])
-            .output();
+        let mut command = Command::new("powershell");
+        let output = super::hide_command_window(command.args([
+            "-NoProfile",
+            "-Command",
+            "(Get-Tpm).TpmPresent",
+        ]))
+        .output();
         match output {
             Ok(out) => String::from_utf8_lossy(&out.stdout)
                 .trim()
@@ -168,9 +180,13 @@ pub mod tpm {
     }
 
     fn is_tpm_20_ready() -> bool {
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command", "(Get-Tpm).TpmReady"])
-            .output();
+        let mut command = Command::new("powershell");
+        let output = super::hide_command_window(command.args([
+            "-NoProfile",
+            "-Command",
+            "(Get-Tpm).TpmReady",
+        ]))
+        .output();
         match output {
             Ok(out) => String::from_utf8_lossy(&out.stdout)
                 .trim()
@@ -250,15 +266,15 @@ pub mod tpm {
 
         let b64_plaintext = STANDARD.encode(plaintext);
 
-        let output = Command::new("powershell")
-            .args([
+        let mut command = Command::new("powershell");
+        let output = super::hide_command_window(command.args([
                 "-NoProfile",
                 "-Command",
                 &format!(
                     "ConvertTo-SecureString -String '{}' -AsPlainText -Force | ConvertFrom-SecureString",
                     b64_plaintext
                 ),
-            ])
+            ]))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to invoke PowerShell for TPM protection: {}", e))?;
 
@@ -276,15 +292,15 @@ pub mod tpm {
 
         let protected_str = String::from_utf8_lossy(protected).trim().to_string();
 
-        let output = Command::new("powershell")
-            .args([
+        let mut command = Command::new("powershell");
+        let output = super::hide_command_window(command.args([
                 "-NoProfile",
                 "-Command",
                 &format!(
                     "ConvertTo-SecureString '{}' | ForEach-Object {{ [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($_)) }}",
                     protected_str
                 ),
-            ])
+            ]))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to invoke PowerShell for TPM unprotection: {}", e))?;
 

@@ -69,13 +69,18 @@ object VaultJson {
 
             is VaultItem.SecureNote -> json
                 .put("item_type", "secureNote")
+                .put("title", name)
                 .put("content", notes)
                 .put("notes", notes)
 
             is VaultItem.FileBlob -> json
                 .put("item_type", "fileBlob")
                 .put("file_name", fileName)
+                .put("filename", fileName)
                 .put("mime_type", mimeType)
+                .put("mime", mimeType)
+                .put("chunks", JSONArray())
+                .put("notes", JSONObject.NULL)
                 .put("size_bytes", sizeBytes)
 
             is VaultItem.BreachMonitor -> json

@@ -4,20 +4,19 @@ import org.json.JSONObject
 import java.util.Base64
 
 object NativeVelaCore {
-    private val loaded: Boolean = runCatching {
+    private val loadFailure: Throwable? = runCatching {
         System.loadLibrary("vela_android_bridge")
-    }.isSuccess
+    }.exceptionOrNull()
+    private val loaded: Boolean = loadFailure == null
 
     fun isAvailable(): Boolean = loaded
 
     fun versionOrNull(): String? {
-        if (!loaded) return null
-        return runCatching { nativeVersion() }.getOrNull()
+        return callNative { nativeVersion() }
     }
 
     fun encryptVaultJson(rms: ByteArray, vaultJson: String): String? {
-        if (!loaded) return null
-        return runCatching {
+        return callNative {
             val request = JSONObject()
                 .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("vault_json", vaultJson)
@@ -25,12 +24,11 @@ object NativeVelaCore {
             val response = JSONObject(nativeEncryptVaultJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("ciphertext_b64")
-        }.getOrNull()
+        }
     }
 
     fun decryptVaultJson(rms: ByteArray, ciphertext: ByteArray): String? {
-        if (!loaded) return null
-        return runCatching {
+        return callNative {
             val request = JSONObject()
                 .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
@@ -38,12 +36,11 @@ object NativeVelaCore {
             val response = JSONObject(nativeDecryptVaultJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("vault_json")
-        }.getOrNull()
+        }
     }
 
     fun encryptVaultChunkJson(rms: ByteArray, chunkId: String, vaultJson: String): String? {
-        if (!loaded) return null
-        return runCatching {
+        return callNative {
             val request = JSONObject()
                 .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("chunk_id", chunkId)
@@ -52,12 +49,11 @@ object NativeVelaCore {
             val response = JSONObject(nativeEncryptVaultChunkJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("ciphertext_b64")
-        }.getOrNull()
+        }
     }
 
     fun decryptVaultChunkJson(rms: ByteArray, chunkId: String, ciphertext: ByteArray): String? {
-        if (!loaded) return null
-        return runCatching {
+        return callNative {
             val request = JSONObject()
                 .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("chunk_id", chunkId)
@@ -66,16 +62,15 @@ object NativeVelaCore {
             val response = JSONObject(nativeDecryptVaultChunkJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("vault_json")
-        }.getOrNull()
+        }
     }
 
     fun generateServerIdentityJson(): String? {
-        if (!loaded) return null
-        return runCatching {
+        return callNative {
             val response = JSONObject(nativeGenerateServerIdentityJson())
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.toString()
-        }.getOrNull()
+        }
     }
 
     fun createAuthProofJson(
@@ -84,8 +79,7 @@ object NativeVelaCore {
         challengeB64: String,
         deviceId: String
     ): String? {
-        if (!loaded) return null
-        return runCatching {
+        return callNative {
             val request = JSONObject()
                 .put("cyclo_pk_b64", cycloPkB64)
                 .put("cyclo_sk_b64", cycloSkB64)
@@ -95,12 +89,11 @@ object NativeVelaCore {
             val response = JSONObject(nativeCreateAuthProofJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.toString()
-        }.getOrNull()
+        }
     }
 
     fun decryptRmsCapsule(transferKeyB64: String, capsuleB64: String): ByteArray? {
-        if (!loaded) return null
-        return runCatching {
+        return callNative {
             val request = JSONObject()
                 .put("transfer_key_b64", transferKeyB64)
                 .put("capsule_b64", capsuleB64)
@@ -108,7 +101,12 @@ object NativeVelaCore {
             val response = JSONObject(nativeDecryptRmsCapsuleJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             Base64.getDecoder().decode(response.getString("rms_b64"))
-        }.getOrNull()
+        }
+    }
+
+    private inline fun <T> callNative(block: () -> T): T? {
+        if (!loaded) return null
+        return runCatching(block).getOrElse { error("Native VELA bridge call failed: ${it.message}") }
     }
 
     private external fun nativeVersion(): String

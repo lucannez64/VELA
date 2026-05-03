@@ -24,6 +24,12 @@ android {
         compose = true
     }
 
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("rustJniLibs"))
 
     compileOptions {
