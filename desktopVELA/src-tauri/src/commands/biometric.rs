@@ -7,13 +7,15 @@ use tauri::command;
 
 #[command]
 pub async fn authenticate() -> Result<BiometricAuthResult, String> {
-    Ok(do_auth())
+    tokio::task::spawn_blocking(|| do_auth())
+        .await
+        .map_err(|e| format!("Authenticate task panicked: {}", e))
 }
 
 #[command]
 pub async fn authenticate_password(password: String) -> Result<BiometricAuthResult, String> {
     tracing::info!("Attempting password authentication");
-    match do_auth_password(&password) {
+    tokio::task::spawn_blocking(move || match do_auth_password(&password) {
         Some(rms) => {
             tracing::info!(
                 "Password authentication successful, RMS length: {}",
@@ -35,12 +37,16 @@ pub async fn authenticate_password(password: String) -> Result<BiometricAuthResu
                 uses_password: true,
             })
         }
-    }
+    })
+    .await
+    .map_err(|e| format!("Password auth task panicked: {}", e))?
 }
 
 #[command]
 pub async fn check_enrollment() -> Result<BiometricEnrollmentStatus, String> {
-    Ok(do_check())
+    tokio::task::spawn_blocking(|| do_check())
+        .await
+        .map_err(|e| format!("Check enrollment task panicked: {}", e))
 }
 
 #[command]
@@ -54,6 +60,10 @@ pub async fn enroll() -> Result<BiometricEnrollmentStatus, String> {
 #[command]
 pub async fn setup_password_recovery(password: String, rms: Vec<u8>) -> Result<(), String> {
     let rms_array: [u8; 32] = rms.try_into().map_err(|_| "RMS must be 32 bytes")?;
-    store_password_encrypted(&rms_array, &password)
-        .map_err(|e| format!("Failed to store password recovery: {}", e))
+    tokio::task::spawn_blocking(move || {
+        store_password_encrypted(&rms_array, &password)
+            .map_err(|e| format!("Failed to store password recovery: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Password recovery task panicked: {}", e))?
 }

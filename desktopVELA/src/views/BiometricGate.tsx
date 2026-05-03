@@ -1,6 +1,18 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
+const UNLOCK_TIMEOUT_MS = 15000;
+
+function invokeWithTimeout<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${command} timed out`)), UNLOCK_TIMEOUT_MS);
+  });
+  return Promise.race([invoke<T>(command, args), timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 interface Props {
   onUnlock: () => void;
 }
@@ -36,14 +48,14 @@ export default function BiometricGate({ onUnlock }: Props) {
     setError(null);
 
     try {
-      const result = await invoke<{ success: boolean; error_message?: string; retry_count?: number }>('authenticate');
+      const result = await invokeWithTimeout<{ success: boolean; error_message?: string; retry_count?: number }>('authenticate');
       
       if (result.success) {
         try {
-          await invoke('unlock_session', { deviceId: 'device-1', userId: 'user-1' });
+          await invokeWithTimeout('unlock_session', { deviceId: 'device-1', userId: 'user-1' });
           await refreshSession();
         } catch (e) {
-          setError('Failed to unlock session');
+          setError(e instanceof Error && e.message.includes('timed out') ? 'Unlock timed out. Try again or use master password.' : 'Failed to unlock session');
           setRetryCount(prev => prev + 1);
           return;
         }
@@ -69,14 +81,14 @@ export default function BiometricGate({ onUnlock }: Props) {
     setError(null);
 
     try {
-      const result = await invoke<{ success: boolean; error_message?: string }>('authenticate_password', { password });
+      const result = await invokeWithTimeout<{ success: boolean; error_message?: string }>('authenticate_password', { password });
       
       if (result.success) {
         try {
-          await invoke('unlock_session_with_password', { password });
+          await invokeWithTimeout('unlock_session_with_password', { password });
           await refreshSession();
         } catch (e) {
-          setError('Failed to unlock vault');
+          setError(e instanceof Error && e.message.includes('timed out') ? 'Unlock timed out. Check whether the server is reachable, then try again.' : 'Failed to unlock vault');
           setRetryCount(prev => prev + 1);
         }
       } else {
@@ -84,7 +96,7 @@ export default function BiometricGate({ onUnlock }: Props) {
         setRetryCount(prev => prev + 1);
       }
     } catch (e) {
-      setError('Authentication failed');
+      setError(e instanceof Error && e.message.includes('timed out') ? 'Authentication timed out' : 'Authentication failed');
       setRetryCount(prev => prev + 1);
     } finally {
       setIsAuthenticating(false);

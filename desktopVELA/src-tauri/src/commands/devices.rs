@@ -58,6 +58,21 @@ struct ServerDeviceListResponse {
 const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
 const VAULT_CHUNK_PREFIX: &str = "vault-data-";
 
+fn get_device_name() -> String {
+    #[cfg(windows)]
+    {
+        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows PC".to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "Mac".to_string())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "Desktop".to_string())
+    }
+}
+
 async fn download_enrolled_vault(
     client: &ApiClient,
     token: &mut String,
@@ -470,6 +485,8 @@ pub async fn import_enrollment_code(
             challenge: challenge_resp.challenge,
             committed_hash: committed_hash_hex,
             proof,
+            device_name: Some(get_device_name()),
+            device_type: Some("desktop".to_string()),
         })
         .await
         .map_err(|e| format!("Server authentication failed: {e}"))?;

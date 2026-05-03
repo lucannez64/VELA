@@ -75,6 +75,21 @@ fn log_sync_audit(state: &AppState, chunk_count: usize) {
     record_audit_event(state, AuditAction::VaultSync { chunk_count });
 }
 
+fn get_device_name() -> String {
+    #[cfg(windows)]
+    {
+        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows PC".to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "Mac".to_string())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "Desktop".to_string())
+    }
+}
+
 async fn authenticate_for_sync(
     state: &AppState,
     client: &ApiClient,
@@ -110,6 +125,8 @@ async fn authenticate_for_sync(
             challenge: challenge_resp.challenge,
             committed_hash,
             proof,
+            device_name: Some(get_device_name()),
+            device_type: Some("desktop".to_string()),
         })
         .await
         .map_err(|e| format!("Failed to verify proof: {e}"))?;
@@ -138,7 +155,6 @@ fn merge_server_vaults(
     device_id: &str,
 ) -> Vec<ConflictItem> {
     use crate::vault::Tombstone;
-    use std::collections::HashSet;
 
     let mut conflicts = Vec::new();
 
@@ -153,8 +169,6 @@ fn merge_server_vaults(
             .and_modify(|d| *d = (*d).max(t.deleted_at))
             .or_insert(t.deleted_at);
     }
-    let tombstoned_ids: HashSet<String> = tombstone_map.keys().cloned().collect();
-
     // ── 2. Detect conflicts for items that exist on both sides ──────────────
     let server_map: HashMap<String, crate::vault::VaultItem> = server
         .items
@@ -186,12 +200,22 @@ fn merge_server_vaults(
     let mut final_items: HashMap<String, crate::vault::VaultItem> = local
         .items
         .drain(..)
-        .filter(|item| !tombstoned_ids.contains(item.id()))
+        .filter(|item| {
+            tombstone_map
+                .get(item.id())
+                .map(|deleted_at| *deleted_at >= item.updated_at())
+                .unwrap_or(false)
+                == false
+        })
         .map(|item| (item.id().to_string(), item))
         .collect();
 
     for (id, server_item) in server_map {
-        if tombstoned_ids.contains(&id) {
+        if tombstone_map
+            .get(&id)
+            .map(|deleted_at| *deleted_at >= server_item.updated_at())
+            .unwrap_or(false)
+        {
             continue; // deleted item stays deleted
         }
         if let Some(existing) = final_items.get(&id) {

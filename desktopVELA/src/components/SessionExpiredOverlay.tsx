@@ -1,6 +1,18 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
+const UNLOCK_TIMEOUT_MS = 15000;
+
+function invokeWithTimeout<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${command} timed out`)), UNLOCK_TIMEOUT_MS);
+  });
+  return Promise.race([invoke<T>(command, args), timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 interface Props {
   onReauth: () => Promise<void>;
 }
@@ -31,14 +43,15 @@ export default function SessionExpiredOverlay({ onReauth }: Props) {
     setIsAuthenticating(true);
     setError(null);
     try {
-      const result = await invoke<{ success: boolean; error_message?: string }>('authenticate');
+      const result = await invokeWithTimeout<{ success: boolean; error_message?: string }>('authenticate');
       if (result.success) {
-        await invoke('unlock_session', { deviceId: 'device-1', userId: 'user-1' });
+        await invokeWithTimeout('unlock_session', { deviceId: 'device-1', userId: 'user-1' });
         await onReauth();
       } else {
         setShowPassword(true);
       }
     } catch (e) {
+      setError(e instanceof Error && e.message.includes('timed out') ? 'Authentication timed out' : 'Authentication failed');
       setShowPassword(true);
     } finally {
       setIsAuthenticating(false);
@@ -55,15 +68,15 @@ export default function SessionExpiredOverlay({ onReauth }: Props) {
     setError(null);
 
     try {
-      const result = await invoke<{ success: boolean; error_message?: string }>('authenticate_password', { password });
+      const result = await invokeWithTimeout<{ success: boolean; error_message?: string }>('authenticate_password', { password });
       if (result.success) {
-        await invoke('unlock_session_with_password', { password });
+        await invokeWithTimeout('unlock_session_with_password', { password });
         await onReauth();
       } else {
         setError(result.error_message || 'Invalid password');
       }
     } catch (e) {
-      setError('Authentication failed');
+      setError(e instanceof Error && e.message.includes('timed out') ? 'Unlock timed out. Check whether the server is reachable, then try again.' : 'Authentication failed');
     } finally {
       setIsAuthenticating(false);
     }

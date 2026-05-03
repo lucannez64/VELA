@@ -37,6 +37,8 @@ pub struct VerifyRequest {
     pub challenge: String,
     pub committed_hash: String,
     pub proof: String,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

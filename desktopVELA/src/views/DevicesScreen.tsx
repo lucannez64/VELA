@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import QRCode from 'qrcode';
 import { useApp } from '../context/AppContext';
 
 interface Device {
@@ -26,10 +27,22 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   const [enrolling, setEnrolling] = useState(false);
   const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
+  const [qrImages, setQrImages] = useState<string[]>([]);
+  const [qrIndex, setQrIndex] = useState(0);
+  const [hideRevoked, setHideRevoked] = useState(false);
 
   useEffect(() => {
     loadDevices();
   }, []);
+
+  const displayDevices = devices
+    .filter(d => !hideRevoked || !d.revoked)
+    .sort((a, b) => {
+      const statusOrder = (d: Device) => d.pending ? 0 : d.revoked ? 2 : 1;
+      const statusDiff = statusOrder(a) - statusOrder(b);
+      if (statusDiff !== 0) return statusDiff;
+      return new Date(b.enrolled_at).getTime() - new Date(a.enrolled_at).getTime();
+    });
 
   const loadDevices = async () => {
     try {
@@ -69,6 +82,13 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
     try {
       const code = await invoke<string>('generate_enrollment_code');
       setEnrollmentCode(code);
+      const chunks = createEnrollmentQrChunks(code);
+      setQrImages(await Promise.all(chunks.map(chunk => QRCode.toDataURL(chunk, {
+        errorCorrectionLevel: 'L',
+        margin: 2,
+        width: 280,
+      }))));
+      setQrIndex(0);
       loadDevices();
       onItemsChanged?.();
     } catch (e: any) {
@@ -130,8 +150,23 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
         </button>
       </div>
 
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-sm text-on-surface-variant">
+          {displayDevices.length} device{displayDevices.length !== 1 ? 's' : ''}
+        </span>
+        <label className="flex items-center gap-2 text-sm text-on-surface-variant cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={hideRevoked}
+            onChange={e => setHideRevoked(e.target.checked)}
+            className="w-4 h-4 rounded border-outline-variant bg-surface-container text-primary accent-primary"
+          />
+          Hide revoked
+        </label>
+      </div>
+
       <div className="space-y-4">
-        {devices.map(device => (
+        {displayDevices.map(device => (
           <div 
             key={device.id}
             className={`p-6 rounded-xl bg-surface-container border ${device.revoked ? 'border-red-500/30 opacity-60' : 'border-outline-variant/5'}`}
@@ -186,10 +221,34 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
               <h2 className="font-headline text-2xl font-bold text-on-surface">Enrollment Code</h2>
             </div>
             <p className="text-on-surface-variant text-sm mb-4">
-              Copy this code and paste it on the new device under <strong>Join existing account</strong>.
+              Scan the QR parts from the Android app or copy this code and paste it on the new device under <strong>Join existing account</strong>.
               The code is valid for one use and contains sensitive key material — do not share it over unencrypted channels.
               Closing this dialog keeps the device pending until it is used or cancelled from the Devices list.
             </p>
+            {qrImages.length > 0 && (
+              <div className="mb-4 p-4 bg-white rounded-xl flex flex-col items-center">
+                <img src={qrImages[qrIndex]} alt={`Enrollment QR ${qrIndex + 1} of ${qrImages.length}`} className="w-[280px] h-[280px]" />
+                <div className="mt-3 text-slate-900 font-label text-sm">
+                  QR part {qrIndex + 1} of {qrImages.length}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => setQrIndex(i => Math.max(0, i - 1))}
+                    disabled={qrIndex === 0}
+                    className="px-3 py-2 rounded-lg bg-slate-200 disabled:opacity-40 text-slate-900 text-sm"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setQrIndex(i => Math.min(qrImages.length - 1, i + 1))}
+                    disabled={qrIndex === qrImages.length - 1}
+                    className="px-3 py-2 rounded-lg bg-slate-900 disabled:opacity-40 text-white text-sm"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="bg-surface-bright rounded-xl p-3 mb-4 font-mono text-xs text-on-surface break-all select-all max-h-36 overflow-y-auto">
               {enrollmentCode}
             </div>
@@ -248,4 +307,15 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
       )}
     </div>
   );
+}
+
+const QR_CHUNK_SIZE = 900;
+const QR_PREFIX = 'VELA-ENROLL';
+
+function createEnrollmentQrChunks(code: string): string[] {
+  const chunks: string[] = [];
+  for (let offset = 0; offset < code.length; offset += QR_CHUNK_SIZE) {
+    chunks.push(code.slice(offset, offset + QR_CHUNK_SIZE));
+  }
+  return chunks.map((chunk, index) => `${QR_PREFIX}:${index + 1}/${chunks.length}:${chunk}`);
 }
