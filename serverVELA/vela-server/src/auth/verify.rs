@@ -20,6 +20,8 @@ pub struct VerifyRequest {
     pub challenge: String,
     pub committed_hash: String,
     pub proof: String,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -96,10 +98,22 @@ pub async fn post_verify(
     }
 
     rate_limit::reset_verify_streak(&state.store, &device_id_str)?;
-    let _ = state.db.execute(
-        "UPDATE devices SET last_active = $1 WHERE id = $2",
-        stoolap::params![chrono::Utc::now().to_rfc3339(), device_id_str.clone()],
-    );
+    let now = chrono::Utc::now().to_rfc3339();
+    let requested_name = body.device_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let requested_type = body.device_type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if requested_name.is_some() || requested_type.is_some() {
+        let next_name = requested_name.unwrap_or(&device.device_name);
+        let next_type = requested_type.unwrap_or(&device.device_type);
+        let _ = state.db.execute(
+            "UPDATE devices SET last_active = $1, device_name = $2, device_type = $3 WHERE id = $4",
+            stoolap::params![now, next_name, next_type, device_id_str.clone()],
+        );
+    } else {
+        let _ = state.db.execute(
+            "UPDATE devices SET last_active = $1 WHERE id = $2",
+            stoolap::params![now, device_id_str.clone()],
+        );
+    }
 
     let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
     let (token, jti) = ts.issue(device.user_id, device.id, None)?;

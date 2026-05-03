@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::{
+    auth::token::TokenService,
     error::{AppError, Result},
     rate_limit,
     state::AppState,
@@ -33,6 +34,8 @@ pub struct RegisterRequest {
 pub struct RegisterResponse {
     pub user_id: Uuid,
     pub device_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
 }
 
 pub async fn post_register(
@@ -89,7 +92,15 @@ pub async fn post_register(
 
     tracing::info!(user_id = %user_id, device_id = %device_id, "account registered");
 
-    Ok(Json(RegisterResponse { user_id, device_id }))
+    let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
+    let (token, jti) = ts.issue(user_id, device_id, None)?;
+    rate_limit::track_device_jti(&state.store, &device_id.to_string(), &jti)?;
+
+    Ok(Json(RegisterResponse {
+        user_id,
+        device_id,
+        token: Some(token),
+    }))
 }
 
 fn decode_b64_exact(encoded: &str, expected_len: usize, field: &str) -> Result<Vec<u8>> {
