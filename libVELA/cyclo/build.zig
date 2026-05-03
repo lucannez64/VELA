@@ -16,23 +16,19 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
-    // It's also possible to define more custom flags to toggle optional features
-    // of this build script using `b.option()`. All defined flags (including
-    // target and optimize options) will be listed when running `zig build --help`
-    // in this directory.
+    const rust_target = b.option([]const u8, "rust-target", "Rust target triple for ntt_shim cross-compilation (e.g. aarch64-linux-android)");
 
-    // This creates a module, which represents a collection of source files alongside
-    // some compilation options, such as optimization mode and linked system libraries.
-    // Zig modules are the preferred way of making Zig code available to consumers.
-    // addModule defines a module that we intend to make available for importing
-    // to our consumers. We must give it a name because a Zig package can expose
-    // multiple modules and consumers will need to be able to specify which
-    // module they want to access.
+    const ntt_shim_lib_dir = if (rust_target) |t|
+        b.fmt("ntt_shim/target/{s}/release", .{t})
+    else
+        "ntt_shim/target/release";
+
     // ── 1. Build the Rust shim (cargo) ──────────────────────────────────
-    const cargo = b.addSystemCommand(&.{
-        "cargo",           "build",               "--release",
-        "--manifest-path", "ntt_shim/Cargo.toml",
-    });
+    const cargo_args = if (rust_target) |t|
+        &[_][]const u8{ "cargo", "build", "--release", "--manifest-path", "ntt_shim/Cargo.toml", "--target", t }
+    else
+        &[_][]const u8{ "cargo", "build", "--release", "--manifest-path", "ntt_shim/Cargo.toml" };
+    const cargo = b.addSystemCommand(cargo_args);
     const msvc_compat = b.addModule("msvc_compat", .{
         .root_source_file = b.path("src/compat_msvc.zig"),
         .target = target,
@@ -97,7 +93,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.step.dependOn(&cargo.step);
-    exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    exe.root_module.addLibraryPath(b.path(ntt_shim_lib_dir));
     exe.root_module.linkSystemLibrary("ntt_shim", .{});
     if (target.result.os.tag == .windows) {
         exe.root_module.linkSystemLibrary("ws2_32", .{});
@@ -109,8 +105,6 @@ pub fn build(b: *std.Build) void {
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
     // by passing `--prefix` or `-p`.
-    b.installArtifact(exe);
-
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
     // This will evaluate the `run` step rather than the default step.
@@ -126,10 +120,6 @@ pub fn build(b: *std.Build) void {
     // the user runs `zig build run`, so we create a dependency link.
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
-
-    // By making the run step depend on the default step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    run_cmd.step.dependOn(b.getInstallStep());
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
@@ -166,6 +156,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/cyclo_ffi.zig"),
             .target = target,
             .optimize = optimize,
+            .pic = if (target.result.os.tag == .linux and rust_target != null) true else null,
             .imports = &.{
                 .{ .name = "zig_ring_arithmetic", .module = mod },
                 .{ .name = "msvc_compat", .module = msvc_compat },
@@ -195,7 +186,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    bench_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    bench_exe.root_module.addLibraryPath(b.path(ntt_shim_lib_dir));
     bench_exe.root_module.linkSystemLibrary("ntt_shim", .{});
     bench_exe.root_module.addIncludePath(b.path("src"));
     bench_exe.root_module.link_libc = true;
@@ -224,7 +215,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    vote_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    vote_exe.root_module.addLibraryPath(b.path(ntt_shim_lib_dir));
     vote_exe.root_module.linkSystemLibrary("ntt_shim", .{});
     vote_exe.root_module.addIncludePath(b.path("src"));
     vote_exe.root_module.link_libc = true;
@@ -235,10 +226,7 @@ pub fn build(b: *std.Build) void {
         vote_exe.root_module.linkSystemLibrary("bcrypt", .{});
     }
     vote_exe.step.dependOn(&cargo.step);
-    b.installArtifact(vote_exe);
-
     const run_vote = b.addRunArtifact(vote_exe);
-    run_vote.step.dependOn(b.getInstallStep());
     const vote_step = b.step("run-vote", "Run the electronic vote example");
     vote_step.dependOn(&run_vote.step);
 
@@ -254,7 +242,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    ticket_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    ticket_exe.root_module.addLibraryPath(b.path(ntt_shim_lib_dir));
     ticket_exe.root_module.linkSystemLibrary("ntt_shim", .{});
     ticket_exe.root_module.addIncludePath(b.path("src"));
     ticket_exe.root_module.link_libc = true;
@@ -265,10 +253,7 @@ pub fn build(b: *std.Build) void {
         ticket_exe.root_module.linkSystemLibrary("bcrypt", .{});
     }
     ticket_exe.step.dependOn(&cargo.step);
-    b.installArtifact(ticket_exe);
-
     const run_ticket = b.addRunArtifact(ticket_exe);
-    run_ticket.step.dependOn(b.getInstallStep());
     const ticket_step = b.step("run-ticket", "Run the anonymous ticket spend example");
     ticket_step.dependOn(&run_ticket.step);
 
@@ -284,7 +269,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    griffin_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    griffin_exe.root_module.addLibraryPath(b.path(ntt_shim_lib_dir));
     griffin_exe.root_module.linkSystemLibrary("ntt_shim", .{});
     griffin_exe.root_module.addIncludePath(b.path("src"));
     griffin_exe.root_module.link_libc = true;
@@ -295,10 +280,7 @@ pub fn build(b: *std.Build) void {
         griffin_exe.root_module.linkSystemLibrary("bcrypt", .{});
     }
     griffin_exe.step.dependOn(&cargo.step);
-    b.installArtifact(griffin_exe);
-
     const run_griffin = b.addRunArtifact(griffin_exe);
-    run_griffin.step.dependOn(b.getInstallStep());
     const griffin_step = b.step("run-griffin", "Run the Griffin hash Merkle spend example");
     griffin_step.dependOn(&run_griffin.step);
 
@@ -314,7 +296,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    governance_exe.root_module.addLibraryPath(b.path("ntt_shim/target/release"));
+    governance_exe.root_module.addLibraryPath(b.path(ntt_shim_lib_dir));
     governance_exe.root_module.linkSystemLibrary("ntt_shim", .{});
     governance_exe.root_module.addIncludePath(b.path("src"));
     governance_exe.root_module.link_libc = true;
@@ -325,10 +307,7 @@ pub fn build(b: *std.Build) void {
         governance_exe.root_module.linkSystemLibrary("bcrypt", .{});
     }
     governance_exe.step.dependOn(&cargo.step);
-    b.installArtifact(governance_exe);
-
     const run_governance = b.addRunArtifact(governance_exe);
-    run_governance.step.dependOn(b.getInstallStep());
     const governance_step = b.step("run-group-governance", "Run the group governance circuits example");
     governance_step.dependOn(&run_governance.step);
 

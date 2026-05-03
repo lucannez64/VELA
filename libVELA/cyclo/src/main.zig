@@ -16,7 +16,7 @@ pub fn main() !void {
     const Constraint = zig_ring_arithmetic.CycloR1csConstraint;
     const Relation = zig_ring_arithmetic.CycloRelation;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

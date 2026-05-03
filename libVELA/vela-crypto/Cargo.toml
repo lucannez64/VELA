@@ -10,8 +10,9 @@ build = "build.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = []
+default = ["cyclo-ffi"]
 wasm = ["getrandom/js"]
+cyclo-ffi = []
 
 [dependencies]
 # Hybrid KEM

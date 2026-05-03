@@ -78,8 +78,10 @@ export fn cyclo_proof_allocate() ?*anyopaque {
 export fn cyclo_proof_free(ptr: ?*anyopaque) void {
     if (ptr) |p| {
         const allocator = std.heap.page_allocator;
+        var size: usize = 512 * 1024;
+        size += 0;
         const slice: [*]u8 = @ptrCast(p);
-        allocator.free(slice[0 .. 512 * 1024]);
+        allocator.free(slice[0..size]);
     }
 }
 

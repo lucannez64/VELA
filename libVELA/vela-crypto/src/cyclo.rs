@@ -13,7 +13,7 @@
 //! let private_inputs = [7u64, 13u64];
 //!
 //! let proof = cyclo::prove(&public_inputs, &private_inputs).unwrap();
-//! let valid = cyclo::verify(&public_inputs, &proof).unwrap();
+//! let valid = cyclo::verify(&public_inputs, private_inputs.len(), &proof).unwrap();
 //! assert!(valid);
 //! ```
 

@@ -7,6 +7,49 @@ const std = @import("std");
 const builtin = @import("builtin");
 pub const cyclo_ring_ntt = @import("ring_ntt.zig");
 
+extern fn BCryptGenRandom(
+    hAlgorithm: ?*anyopaque,
+    pbBuffer: [*]u8,
+    cbBuffer: u32,
+    dwFlags: u32,
+) callconv(.winapi) c_long;
+
+fn secureRandom(bytes: []u8) void {
+    if (builtin.os.tag == .windows) {
+        const bcrypt_use_system_preferred_rng: u32 = 0x00000002;
+        var offset: usize = 0;
+        while (offset < bytes.len) {
+            const remaining = bytes.len - offset;
+            const chunk_len: u32 = @intCast(@min(remaining, std.math.maxInt(u32)));
+            const status = BCryptGenRandom(
+                null,
+                bytes[offset..].ptr,
+                chunk_len,
+                bcrypt_use_system_preferred_rng,
+            );
+            if (status < 0) @panic("secure random unavailable");
+            offset += chunk_len;
+        }
+        return;
+    }
+
+    if (builtin.os.tag == .linux) {
+        var offset: usize = 0;
+        while (offset < bytes.len) {
+            const slice = bytes[offset..];
+            const rc = std.os.linux.getrandom(slice.ptr, slice.len, 0);
+            switch (std.posix.errno(rc)) {
+                .SUCCESS => offset += @intCast(rc),
+                .INTR => continue,
+                else => @panic("secure random unavailable"),
+            }
+        }
+        return;
+    }
+
+    @compileError("secureRandom needs a Zig 0.16 entropy implementation for this target");
+}
+
 comptime {
     if (builtin.os.tag == .windows and builtin.is_test) {
         _ = @import("msvc_compat");
@@ -1156,7 +1199,7 @@ pub fn Ring(comptime degree: usize, comptime modulus: u64) type {
         pub fn rangeProductEval(t: u64, comptime b: u64) u64 {
             var acc: u64 = 1;
             acc = mulMod(acc, t);
-            for (1..b + 1) |j| {
+            for (1..@as(usize, @intCast(b)) + 1) |j| {
                 const j_u64: u64 = @intCast(j);
                 const t_minus_j = subMod(t, j_u64);
                 const t_plus_j = addMod(t, j_u64);
@@ -2541,7 +2584,7 @@ pub fn rangeLeafCheck(
     }
     const t_mod = t % Q;
     var prod: u64 = t_mod;
-    for (1..b + 1) |j| {
+    for (1..@as(usize, @intCast(b)) + 1) |j| {
         const j64: u64 = @intCast(j);
         const t_neg = rangeLeafSubModQ(Q, t_mod, j64);
         const t_pos = rangeLeafAddModQ(Q, t_mod, j64);
@@ -2564,7 +2607,7 @@ pub fn rangeLeafCheckFq2(
     }
     const E = Fq2(Q, beta);
     var prod = t;
-    for (1..b + 1) |j| {
+    for (1..@as(usize, @intCast(b)) + 1) |j| {
         const j_elem = E.fromU64(@intCast(j));
         const t_neg = t.sub(j_elem);
         const t_pos = t.add(j_elem);
@@ -2941,7 +2984,7 @@ pub fn buildRangeHatTableFq2(
     for (cf_w, 0..) |coeff, i| {
         const c = centeredCoeffModQ(coeff, Q);
         var prod = fq2FromSignedModQ(Q, beta, c);
-        for (1..b + 1) |j| {
+        for (1..@as(usize, @intCast(b)) + 1) |j| {
             const j_i128: i128 = @intCast(j);
             const v_neg = fq2FromSignedModQ(Q, beta, c - j_i128);
             const v_pos = fq2FromSignedModQ(Q, beta, c + j_i128);
@@ -3104,7 +3147,7 @@ pub fn buildRangeHatTable(
         const c = centeredCoeffModQ(coeff, Q);
         var prod: u64 = 1;
         prod = rangeTableMulMod(prod, modReduceSignedQ(c, Q), Q);
-        for (1..b + 1) |j| {
+        for (1..@as(usize, @intCast(b)) + 1) |j| {
             const j_i128: i128 = @intCast(j);
             const v_neg = modReduceSignedQ(c - j_i128, Q);
             const v_pos = modReduceSignedQ(c + j_i128, Q);
@@ -3160,7 +3203,7 @@ pub fn buildRangeTablesMulti(
             const c = centeredCoeffModQ(coeff, Q);
             var prod: u64 = 1;
             prod = rangeTableMulMod(prod, modReduceSignedQ(c, Q), Q);
-            for (1..b + 1) |j| {
+            for (1..@as(usize, @intCast(b)) + 1) |j| {
                 const j_i128: i128 = @intCast(j);
                 const v_neg = modReduceSignedQ(c - j_i128, Q);
                 const v_pos = modReduceSignedQ(c + j_i128, Q);
@@ -3885,10 +3928,10 @@ pub fn CycloProof(comptime N: usize, comptime Q: u64) type {
         }
 
         pub fn serialize(self: *const Self, allocator: std.mem.Allocator) ![]u8 {
-            var out = std.ArrayList(u8){};
-            defer out.deinit(allocator);
+            var out: std.Io.Writer.Allocating = .init(allocator);
+            defer out.deinit();
 
-            const writer = out.writer(allocator);
+            const writer = &out.writer;
             try writer.writeInt(u32, wire_version, .little);
             try writer.writeInt(u64, @intCast(self.input_commitment.len), .little);
             for (self.input_commitment) |poly| {
@@ -3940,126 +3983,125 @@ pub fn CycloProof(comptime N: usize, comptime Q: u64) type {
             try writer.writeInt(u8, if (self.ivc_has_prior_accumulator) 1 else 0, .little);
             try writer.writeAll(self.ivc_prior_accumulator_digest[0..]);
             try writer.writeAll(self.transcript_digest[0..]);
-            return out.toOwnedSlice(allocator);
+            return out.toOwnedSlice();
         }
 
         pub fn deserialize(allocator: std.mem.Allocator, encoded: []const u8) !Self {
-            var stream = std.io.fixedBufferStream(encoded);
-            const reader = stream.reader();
-            const version = try reader.readInt(u32, .little);
+            var reader: std.Io.Reader = .fixed(encoded);
+            const version = try reader.takeInt(u32, .little);
             if (version != wire_version) return CycloBuildError.InvalidConstraintShape;
 
             const ring_bytes = N * @sizeOf(u64);
 
-            const input_len_u64 = try reader.readInt(u64, .little);
+            const input_len_u64 = try reader.takeInt(u64, .little);
             if (input_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
             const input_len: usize = @intCast(input_len_u64);
-            if (input_len > (encoded.len - stream.pos) / ring_bytes) return CycloBuildError.InvalidConstraintShape;
+            if (input_len > (encoded.len - reader.seek) / ring_bytes) return CycloBuildError.InvalidConstraintShape;
             var input_commitment = try allocator.alloc(Ring(N, Q), input_len);
             errdefer allocator.free(input_commitment);
             for (0..input_commitment.len) |i| {
                 var data: [N]u64 = undefined;
-                for (0..N) |j| data[j] = try reader.readInt(u64, .little);
+                for (0..N) |j| data[j] = try reader.takeInt(u64, .little);
                 input_commitment[i] = .{ .data = data };
             }
             var input_blinding_seed: [32]u8 = undefined;
-            if (try reader.readAll(input_blinding_seed[0..]) != input_blinding_seed.len) return CycloBuildError.InvalidConstraintShape;
+            reader.readSliceAll(input_blinding_seed[0..]) catch return CycloBuildError.InvalidConstraintShape;
             var proof_nonce: [32]u8 = undefined;
-            if (try reader.readAll(proof_nonce[0..]) != proof_nonce.len) return CycloBuildError.InvalidConstraintShape;
+            reader.readSliceAll(proof_nonce[0..]) catch return CycloBuildError.InvalidConstraintShape;
             var zk_blinding_salt: [32]u8 = undefined;
-            if (try reader.readAll(zk_blinding_salt[0..]) != zk_blinding_salt.len) return CycloBuildError.InvalidConstraintShape;
+            reader.readSliceAll(zk_blinding_salt[0..]) catch return CycloBuildError.InvalidConstraintShape;
 
-            const ext_len_u64 = try reader.readInt(u64, .little);
+            const ext_len_u64 = try reader.takeInt(u64, .little);
             if (ext_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
             const ext_len: usize = @intCast(ext_len_u64);
-            if (ext_len > (encoded.len - stream.pos) / ring_bytes) return CycloBuildError.InvalidConstraintShape;
+            if (ext_len > (encoded.len - reader.seek) / ring_bytes) return CycloBuildError.InvalidConstraintShape;
             var extension_commitment = try allocator.alloc(Ring(N, Q), ext_len);
             errdefer allocator.free(extension_commitment);
             for (0..extension_commitment.len) |i| {
                 var data: [N]u64 = undefined;
-                for (0..N) |j| data[j] = try reader.readInt(u64, .little);
+                for (0..N) |j| data[j] = try reader.takeInt(u64, .little);
                 extension_commitment[i] = .{ .data = data };
             }
             var extension_blinding_seed: [32]u8 = undefined;
-            if (try reader.readAll(extension_blinding_seed[0..]) != extension_blinding_seed.len) return CycloBuildError.InvalidConstraintShape;
+            reader.readSliceAll(extension_blinding_seed[0..]) catch return CycloBuildError.InvalidConstraintShape;
 
-            const extension_ell = try reader.readInt(u64, .little);
+            const extension_ell = try reader.takeInt(u64, .little);
             var extension_opening_digest: [32]u8 = undefined;
-            if (try reader.readAll(extension_opening_digest[0..]) != extension_opening_digest.len) return CycloBuildError.InvalidConstraintShape;
-            const extension_opening_len_u64 = try reader.readInt(u64, .little);
+            reader.readSliceAll(extension_opening_digest[0..]) catch return CycloBuildError.InvalidConstraintShape;
+            const extension_opening_len_u64 = try reader.takeInt(u64, .little);
             if (extension_opening_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
             const extension_opening_len: usize = @intCast(extension_opening_len_u64);
-            if (extension_opening_len > (encoded.len - stream.pos) / @sizeOf(i16)) return CycloBuildError.InvalidConstraintShape;
+            if (extension_opening_len > (encoded.len - reader.seek) / @sizeOf(i16)) return CycloBuildError.InvalidConstraintShape;
             var extension_opening_packed = try allocator.alloc(i16, extension_opening_len);
             errdefer allocator.free(extension_opening_packed);
-            for (0..extension_opening_packed.len) |i| extension_opening_packed[i] = try reader.readInt(i16, .little);
-            const range_initial_claim = try reader.readInt(u64, .little);
-            const range_initial_claim_c1 = try reader.readInt(u64, .little);
-            const range_leaf_claim = try reader.readInt(u64, .little);
-            const range_leaf_claim_c1 = try reader.readInt(u64, .little);
+            for (0..extension_opening_packed.len) |i| extension_opening_packed[i] = try reader.takeInt(i16, .little);
+            const range_initial_claim = try reader.takeInt(u64, .little);
+            const range_initial_claim_c1 = try reader.takeInt(u64, .little);
+            const range_leaf_claim = try reader.takeInt(u64, .little);
+            const range_leaf_claim_c1 = try reader.takeInt(u64, .little);
 
-            const range_len_u64 = try reader.readInt(u64, .little);
+            const range_len_u64 = try reader.takeInt(u64, .little);
             if (range_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
             const range_len: usize = @intCast(range_len_u64);
-            if (range_len > (encoded.len - stream.pos) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
+            if (range_len > (encoded.len - reader.seek) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
             var range_round_polys = try allocator.alloc(u64, range_len);
             errdefer allocator.free(range_round_polys);
-            for (0..range_round_polys.len) |i| range_round_polys[i] = try reader.readInt(u64, .little);
+            for (0..range_round_polys.len) |i| range_round_polys[i] = try reader.takeInt(u64, .little);
             var range_round_polys_c1 = try allocator.alloc(u64, range_len);
             errdefer allocator.free(range_round_polys_c1);
-            for (0..range_round_polys_c1.len) |i| range_round_polys_c1[i] = try reader.readInt(u64, .little);
+            for (0..range_round_polys_c1.len) |i| range_round_polys_c1[i] = try reader.takeInt(u64, .little);
 
-            const unify_initial_claim = try reader.readInt(u64, .little);
-            const unify_initial_claim_c1 = try reader.readInt(u64, .little);
-            const unify_leaf_claim = try reader.readInt(u64, .little);
-            const unify_leaf_claim_c1 = try reader.readInt(u64, .little);
-            const unify_len_u64 = try reader.readInt(u64, .little);
+            const unify_initial_claim = try reader.takeInt(u64, .little);
+            const unify_initial_claim_c1 = try reader.takeInt(u64, .little);
+            const unify_leaf_claim = try reader.takeInt(u64, .little);
+            const unify_leaf_claim_c1 = try reader.takeInt(u64, .little);
+            const unify_len_u64 = try reader.takeInt(u64, .little);
             if (unify_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
             const unify_len: usize = @intCast(unify_len_u64);
-            if (unify_len > (encoded.len - stream.pos) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
+            if (unify_len > (encoded.len - reader.seek) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
             var unify_round_polys = try allocator.alloc(u64, unify_len);
             errdefer allocator.free(unify_round_polys);
-            for (0..unify_round_polys.len) |i| unify_round_polys[i] = try reader.readInt(u64, .little);
+            for (0..unify_round_polys.len) |i| unify_round_polys[i] = try reader.takeInt(u64, .little);
             var unify_round_polys_c1 = try allocator.alloc(u64, unify_len);
             errdefer allocator.free(unify_round_polys_c1);
-            for (0..unify_round_polys_c1.len) |i| unify_round_polys_c1[i] = try reader.readInt(u64, .little);
+            for (0..unify_round_polys_c1.len) |i| unify_round_polys_c1[i] = try reader.takeInt(u64, .little);
 
-            const linearization_initial_claim = try reader.readInt(u64, .little);
-            const linearization_initial_claim_c1 = try reader.readInt(u64, .little);
-            const linearization_leaf_claim = try reader.readInt(u64, .little);
-            const linearization_leaf_claim_c1 = try reader.readInt(u64, .little);
-            const linearization_round_len_u64 = try reader.readInt(u64, .little);
+            const linearization_initial_claim = try reader.takeInt(u64, .little);
+            const linearization_initial_claim_c1 = try reader.takeInt(u64, .little);
+            const linearization_leaf_claim = try reader.takeInt(u64, .little);
+            const linearization_leaf_claim_c1 = try reader.takeInt(u64, .little);
+            const linearization_round_len_u64 = try reader.takeInt(u64, .little);
             if (linearization_round_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
             const linearization_round_len: usize = @intCast(linearization_round_len_u64);
-            if (linearization_round_len > (encoded.len - stream.pos) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
+            if (linearization_round_len > (encoded.len - reader.seek) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
             var linearization_round_polys = try allocator.alloc(u64, linearization_round_len);
             errdefer allocator.free(linearization_round_polys);
-            for (0..linearization_round_polys.len) |i| linearization_round_polys[i] = try reader.readInt(u64, .little);
+            for (0..linearization_round_polys.len) |i| linearization_round_polys[i] = try reader.takeInt(u64, .little);
             var linearization_round_polys_c1 = try allocator.alloc(u64, linearization_round_len);
             errdefer allocator.free(linearization_round_polys_c1);
-            for (0..linearization_round_polys_c1.len) |i| linearization_round_polys_c1[i] = try reader.readInt(u64, .little);
+            for (0..linearization_round_polys_c1.len) |i| linearization_round_polys_c1[i] = try reader.takeInt(u64, .little);
 
-            const linearization_len_u64 = try reader.readInt(u64, .little);
+            const linearization_len_u64 = try reader.takeInt(u64, .little);
             if (linearization_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
             const linearization_len: usize = @intCast(linearization_len_u64);
-            if (linearization_len > (encoded.len - stream.pos) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
+            if (linearization_len > (encoded.len - reader.seek) / @sizeOf(u64)) return CycloBuildError.InvalidConstraintShape;
             var linearization_polys = try allocator.alloc(u64, linearization_len);
             errdefer allocator.free(linearization_polys);
-            for (0..linearization_polys.len) |i| linearization_polys[i] = try reader.readInt(u64, .little);
+            for (0..linearization_polys.len) |i| linearization_polys[i] = try reader.takeInt(u64, .little);
             var linearization_polys_c1 = try allocator.alloc(u64, linearization_len);
             errdefer allocator.free(linearization_polys_c1);
-            for (0..linearization_polys_c1.len) |i| linearization_polys_c1[i] = try reader.readInt(u64, .little);
+            for (0..linearization_polys_c1.len) |i| linearization_polys_c1[i] = try reader.takeInt(u64, .little);
 
             var folded_witness_digest: [32]u8 = undefined;
-            if (try reader.readAll(folded_witness_digest[0..]) != folded_witness_digest.len) return CycloBuildError.InvalidConstraintShape;
-            const folded_beta = try reader.readInt(u64, .little);
-            const ivc_step_index = try reader.readInt(u64, .little);
-            const ivc_has_prior_accumulator = (try reader.readInt(u8, .little)) != 0;
+            reader.readSliceAll(folded_witness_digest[0..]) catch return CycloBuildError.InvalidConstraintShape;
+            const folded_beta = try reader.takeInt(u64, .little);
+            const ivc_step_index = try reader.takeInt(u64, .little);
+            const ivc_has_prior_accumulator = (try reader.takeInt(u8, .little)) != 0;
             var ivc_prior_accumulator_digest: [32]u8 = undefined;
-            if (try reader.readAll(ivc_prior_accumulator_digest[0..]) != ivc_prior_accumulator_digest.len) return CycloBuildError.InvalidConstraintShape;
+            reader.readSliceAll(ivc_prior_accumulator_digest[0..]) catch return CycloBuildError.InvalidConstraintShape;
             var transcript_digest: [32]u8 = undefined;
-            if (try reader.readAll(transcript_digest[0..]) != transcript_digest.len) return CycloBuildError.InvalidConstraintShape;
-            if (stream.pos != encoded.len) return CycloBuildError.InvalidConstraintShape;
+            reader.readSliceAll(transcript_digest[0..]) catch return CycloBuildError.InvalidConstraintShape;
+            if (reader.seek != encoded.len) return CycloBuildError.InvalidConstraintShape;
 
             return .{
                 .input_commitment = input_commitment,
@@ -4559,9 +4601,9 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             }
 
             pub fn serialize(self: *const IvcSession, allocator: std.mem.Allocator) ![]u8 {
-                var out = std.ArrayList(u8){};
-                defer out.deinit(allocator);
-                const writer = out.writer(allocator);
+                var out: std.Io.Writer.Allocating = .init(allocator);
+                defer out.deinit();
+                const writer = &out.writer;
                 try writer.writeInt(u32, wire_version, .little);
                 try writer.writeInt(u64, self.params.b, .little);
                 try writer.writeInt(u64, self.params.gamma, .little);
@@ -4592,21 +4634,20 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
                     try writer.writeInt(u64, acc.beta, .little);
                     try writer.writeAll(acc.transcript_digest[0..]);
                 }
-                return out.toOwnedSlice(allocator);
+                return out.toOwnedSlice();
             }
 
             pub fn deserialize(allocator: std.mem.Allocator, encoded: []const u8) !IvcSession {
-                var stream = std.io.fixedBufferStream(encoded);
-                const reader = stream.reader();
-                const version = try reader.readInt(u32, .little);
+                var reader: std.Io.Reader = .fixed(encoded);
+                const version = try reader.takeInt(u32, .little);
                 if (version != wire_version) return CycloBuildError.InvalidConstraintShape;
-                const b = try reader.readInt(u64, .little);
-                const gamma = try reader.readInt(u64, .little);
-                const B_sis = try reader.readInt(u64, .little);
-                const refresh_beta_limit = try reader.readInt(u64, .little);
-                const refresh_interval_steps = try reader.readInt(u64, .little);
-                const rank_a_u64 = try reader.readInt(u64, .little);
-                const rank_a_prime_u64 = try reader.readInt(u64, .little);
+                const b = try reader.takeInt(u64, .little);
+                const gamma = try reader.takeInt(u64, .little);
+                const B_sis = try reader.takeInt(u64, .little);
+                const refresh_beta_limit = try reader.takeInt(u64, .little);
+                const refresh_interval_steps = try reader.takeInt(u64, .little);
+                const rank_a_u64 = try reader.takeInt(u64, .little);
+                const rank_a_prime_u64 = try reader.takeInt(u64, .little);
                 if (rank_a_u64 > std.math.maxInt(usize) or rank_a_prime_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
                 var params = Params{
                     .b = b,
@@ -4616,52 +4657,52 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
                     .refresh_interval_steps = refresh_interval_steps,
                     .rank_a = @intCast(rank_a_u64),
                     .rank_a_prime = @intCast(rank_a_prime_u64),
-                    .challenge_set_size_c = try reader.readInt(u64, .little),
-                    .challenge_set_size_d = try reader.readInt(u64, .little),
-                    .extension_degree_e = try reader.readInt(u64, .little),
-                    .use_extension_commitment = (try reader.readInt(u8, .little)) != 0,
-                    .theta_base_k = try reader.readInt(u64, .little),
+                    .challenge_set_size_c = try reader.takeInt(u64, .little),
+                    .challenge_set_size_d = try reader.takeInt(u64, .little),
+                    .extension_degree_e = try reader.takeInt(u64, .little),
+                    .use_extension_commitment = (try reader.takeInt(u8, .little)) != 0,
+                    .theta_base_k = try reader.takeInt(u64, .little),
                     .public_input_len = 0,
                     .kappa_nu = 0.0,
                     .security_target_bits = 0.0,
                 };
-                const public_input_len_u64 = try reader.readInt(u64, .little);
+                const public_input_len_u64 = try reader.takeInt(u64, .little);
                 if (public_input_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
                 const public_input_len: usize = @intCast(public_input_len_u64);
-                params.kappa_nu = @bitCast(try reader.readInt(u64, .little));
-                params.security_target_bits = @bitCast(try reader.readInt(u64, .little));
+                params.kappa_nu = @bitCast(try reader.takeInt(u64, .little));
+                params.security_target_bits = @bitCast(try reader.takeInt(u64, .little));
                 params.public_input_len = public_input_len;
                 try params.validate();
                 var relation_digest: [32]u8 = undefined;
-                if (try reader.readAll(relation_digest[0..]) != relation_digest.len) return CycloBuildError.InvalidConstraintShape;
-                const step_count = try reader.readInt(u64, .little);
-                const last_refresh_step_count = try reader.readInt(u64, .little);
+                reader.readSliceAll(relation_digest[0..]) catch return CycloBuildError.InvalidConstraintShape;
+                const step_count = try reader.takeInt(u64, .little);
+                const last_refresh_step_count = try reader.takeInt(u64, .little);
                 if (last_refresh_step_count > step_count) return CycloBuildError.InvalidConstraintShape;
-                const has_accumulator = try reader.readInt(u8, .little);
+                const has_accumulator = try reader.takeInt(u8, .little);
                 var accumulator: ?Accumulator = null;
                 if (has_accumulator != 0) {
-                    const folded_len_u64 = try reader.readInt(u64, .little);
+                    const folded_len_u64 = try reader.takeInt(u64, .little);
                     if (folded_len_u64 > std.math.maxInt(usize)) return CycloBuildError.InvalidConstraintShape;
                     const folded_len: usize = @intCast(folded_len_u64);
                     const ring_bytes = N * @sizeOf(u64);
-                    if (folded_len > (encoded.len - stream.pos) / ring_bytes) return CycloBuildError.InvalidConstraintShape;
+                    if (folded_len > (encoded.len - reader.seek) / ring_bytes) return CycloBuildError.InvalidConstraintShape;
                     var folded_witness = try allocator.alloc(RingT, folded_len);
                     errdefer allocator.free(folded_witness);
                     for (0..folded_witness.len) |i| {
                         var data: [N]u64 = undefined;
-                        for (0..N) |j| data[j] = try reader.readInt(u64, .little);
+                        for (0..N) |j| data[j] = try reader.takeInt(u64, .little);
                         folded_witness[i] = .{ .data = data };
                     }
-                    const beta = try reader.readInt(u64, .little);
+                    const beta = try reader.takeInt(u64, .little);
                     var transcript_digest: [32]u8 = undefined;
-                    if (try reader.readAll(transcript_digest[0..]) != transcript_digest.len) return CycloBuildError.InvalidConstraintShape;
+                    reader.readSliceAll(transcript_digest[0..]) catch return CycloBuildError.InvalidConstraintShape;
                     accumulator = Accumulator{
                         .folded_witness = folded_witness,
                         .beta = beta,
                         .transcript_digest = transcript_digest,
                     };
                 }
-                if (stream.pos != encoded.len) return CycloBuildError.InvalidConstraintShape;
+                if (reader.seek != encoded.len) return CycloBuildError.InvalidConstraintShape;
                 return IvcSession{
                     .params = params,
                     .public_input_len = public_input_len,
@@ -5209,7 +5250,7 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
                 const c = centeredCoeffModQ(coeff, Q);
                 var prod: u64 = 1;
                 prod = rangeTableMulMod(prod, modReduceSignedQ(c, Q), Q);
-                for (1..b + 1) |j| {
+                for (1..@as(usize, @intCast(b)) + 1) |j| {
                     const j_i128: i128 = @intCast(j);
                     const v_neg = modReduceSignedQ(c - j_i128, Q);
                     const v_pos = modReduceSignedQ(c + j_i128, Q);
@@ -5238,7 +5279,7 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             for (cf_w, 0..) |coeff, i| {
                 const c = centeredCoeffModQ(coeff, Q);
                 var prod = fq2FromSignedModQ(Q, RangeExtBeta, c);
-                for (1..b + 1) |j| {
+                for (1..@as(usize, @intCast(b)) + 1) |j| {
                     const j_i128: i128 = @intCast(j);
                     const v_neg = fq2FromSignedModQ(Q, RangeExtBeta, c - j_i128);
                     const v_pos = fq2FromSignedModQ(Q, RangeExtBeta, c + j_i128);
@@ -6122,9 +6163,9 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             relation: CycloRelation,
             public_assignment: []const u64,
         ) CycloBuildError![]u8 {
-            var out = std.ArrayList(u8){};
-            defer out.deinit(allocator);
-            const writer = out.writer(allocator);
+            var out: std.Io.Writer.Allocating = .init(allocator);
+            defer out.deinit();
+            const writer = &out.writer;
             const relation_digest = try computeRelationDigest(allocator, relation);
             try writer.writeInt(u32, StatementWire.wire_version, .little);
             try writer.writeAll(relation_digest[0..]);
@@ -6132,26 +6173,25 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             for (public_assignment) |value| {
                 try writer.writeInt(u64, value, .little);
             }
-            return out.toOwnedSlice(allocator);
+            return out.toOwnedSlice();
         }
 
         pub fn deserializeStatementPublicInput(
             allocator: std.mem.Allocator,
             encoded: []const u8,
         ) CycloBuildError!StatementWire {
-            var stream = std.io.fixedBufferStream(encoded);
-            const reader = stream.reader();
-            const version = reader.readInt(u32, .little) catch return CycloBuildError.InvalidConstraintShape;
+            var reader: std.Io.Reader = .fixed(encoded);
+            const version = reader.takeInt(u32, .little) catch return CycloBuildError.InvalidConstraintShape;
             if (version != StatementWire.wire_version) return CycloBuildError.InvalidConstraintShape;
             var relation_digest: [32]u8 = undefined;
-            if (try reader.readAll(relation_digest[0..]) != relation_digest.len) return CycloBuildError.InvalidConstraintShape;
-            const public_len = @as(usize, @intCast(reader.readInt(u64, .little) catch return CycloBuildError.InvalidConstraintShape));
+            reader.readSliceAll(relation_digest[0..]) catch return CycloBuildError.InvalidConstraintShape;
+            const public_len = @as(usize, @intCast(reader.takeInt(u64, .little) catch return CycloBuildError.InvalidConstraintShape));
             var public_assignment = try allocator.alloc(u64, public_len);
             errdefer allocator.free(public_assignment);
             for (0..public_assignment.len) |i| {
-                public_assignment[i] = reader.readInt(u64, .little) catch return CycloBuildError.InvalidConstraintShape;
+                public_assignment[i] = reader.takeInt(u64, .little) catch return CycloBuildError.InvalidConstraintShape;
             }
-            if (stream.pos != encoded.len) return CycloBuildError.InvalidConstraintShape;
+            if (reader.seek != encoded.len) return CycloBuildError.InvalidConstraintShape;
             return StatementWire{
                 .relation_digest = relation_digest,
                 .public_assignment = public_assignment,
@@ -6235,10 +6275,10 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             const ivc_has_prior_accumulator = prior_accumulator != null;
             const ivc_prior_accumulator_digest = if (prior_accumulator) |acc| acc.transcript_digest else [_]u8{0} ** 32;
             var proof_nonce: [32]u8 = undefined;
-            std.crypto.random.bytes(proof_nonce[0..]);
+            secureRandom(proof_nonce[0..]);
             var zk_blinding_salt = [_]u8{0} ** 32;
             if (params.enable_zk_blinding) {
-                std.crypto.random.bytes(zk_blinding_salt[0..]);
+                secureRandom(zk_blinding_salt[0..]);
             }
             var pipeline: Pipeline = try buildCommittedHybridPipeline(allocator, relation, assignment, params.theta_base_k);
             defer pipeline.deinit(allocator);
@@ -7453,29 +7493,28 @@ pub const CycloSuccinctProof = struct {
     }
 
     pub fn serialize(self: *const CycloSuccinctProof, allocator: std.mem.Allocator) ![]u8 {
-        var out = std.ArrayList(u8){};
-        defer out.deinit(allocator);
-        const writer = out.writer(allocator);
+        var out: std.Io.Writer.Allocating = .init(allocator);
+        defer out.deinit();
+        const writer = &out.writer;
         try writer.writeInt(u32, wire_version, .little);
         try writer.writeAll(self.commitment[0..]);
         try writer.writeInt(u64, self.step_count, .little);
         try writer.writeInt(u64, self.final_folded_beta, .little);
         try writer.writeAll(self.final_transcript_digest[0..]);
-        return out.toOwnedSlice(allocator);
+        return out.toOwnedSlice();
     }
 
     pub fn deserialize(encoded: []const u8) !CycloSuccinctProof {
-        var stream = std.io.fixedBufferStream(encoded);
-        const reader = stream.reader();
-        const version = try reader.readInt(u32, .little);
+        var reader: std.Io.Reader = .fixed(encoded);
+        const version = try reader.takeInt(u32, .little);
         if (version != wire_version) return error.InvalidWireVersion;
         var commitment: [32]u8 = undefined;
-        if (try reader.readAll(commitment[0..]) != 32) return error.InvalidWireVersion;
-        const step_count = try reader.readInt(u64, .little);
-        const final_folded_beta = try reader.readInt(u64, .little);
+        reader.readSliceAll(commitment[0..]) catch return error.InvalidWireVersion;
+        const step_count = try reader.takeInt(u64, .little);
+        const final_folded_beta = try reader.takeInt(u64, .little);
         var final_transcript_digest: [32]u8 = undefined;
-        if (try reader.readAll(final_transcript_digest[0..]) != 32) return error.InvalidWireVersion;
-        if (stream.pos != encoded.len) return error.InvalidWireVersion;
+        reader.readSliceAll(final_transcript_digest[0..]) catch return error.InvalidWireVersion;
+        if (reader.seek != encoded.len) return error.InvalidWireVersion;
         return .{
             .commitment = commitment,
             .step_count = step_count,
@@ -9865,7 +9904,7 @@ test "rangeLeafCheck validates claimed leaf value" {
     const eq_u_eta: u64 = 3;
 
     var prod: u64 = t % Q;
-    for (1..b + 1) |j| {
+    for (1..@as(usize, @intCast(b)) + 1) |j| {
         const j64: u64 = @intCast(j);
         const t_neg = if (t >= j64) t - j64 else Q - (j64 - t);
         const t_pos = (t + j64) % Q;

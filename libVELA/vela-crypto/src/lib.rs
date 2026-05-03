@@ -12,6 +12,7 @@
 //! - [`cyclo`]  — Cyclo ZKP verifier for authentication (Rust port of Zig implementation)
 
 pub mod aead;
+#[cfg(feature = "cyclo-ffi")]
 pub mod cyclo;
 pub mod error;
 pub mod kem;
