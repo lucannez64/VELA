@@ -11,7 +11,9 @@ data class SyncSettings(
     val localVersion: Long = 0,
     val lamportClock: Long = 0,
     val lastSyncedAt: String? = null,
-    val hasLocalChanges: Boolean = false
+    val hasLocalChanges: Boolean = false,
+    val syncOnStartup: Boolean = true,
+    val backgroundSyncMinutes: Int = 5
 )
 
 class SyncSettingsStore(context: Context) {
@@ -46,6 +48,10 @@ class SyncSettingsStore(context: Context) {
         write(_settings.value.copy(hasLocalChanges = true))
     }
 
+    fun updateSyncPreferences(syncOnStartup: Boolean, backgroundSyncMinutes: Int) {
+        write(_settings.value.copy(syncOnStartup = syncOnStartup, backgroundSyncMinutes = backgroundSyncMinutes))
+    }
+
     private fun read(): SyncSettings = SyncSettings(
         serverUrl = prefs.getString(KEY_SERVER_URL, "").orEmpty(),
         bearerToken = prefs.getString(KEY_BEARER_TOKEN, "").orEmpty(),
@@ -53,7 +59,9 @@ class SyncSettingsStore(context: Context) {
         localVersion = prefs.getLong(KEY_LOCAL_VERSION, 0),
         lamportClock = prefs.getLong(KEY_LAMPORT, 0),
         lastSyncedAt = prefs.getString(KEY_LAST_SYNCED, null),
-        hasLocalChanges = prefs.getBoolean(KEY_HAS_LOCAL_CHANGES, false)
+        hasLocalChanges = prefs.getBoolean(KEY_HAS_LOCAL_CHANGES, false),
+        syncOnStartup = prefs.getBoolean(KEY_SYNC_ON_STARTUP, true),
+        backgroundSyncMinutes = prefs.getInt(KEY_BACKGROUND_SYNC_MINUTES, 5)
     )
 
     private fun write(settings: SyncSettings) {
@@ -65,6 +73,8 @@ class SyncSettingsStore(context: Context) {
             .putLong(KEY_LAMPORT, settings.lamportClock)
             .putString(KEY_LAST_SYNCED, settings.lastSyncedAt)
             .putBoolean(KEY_HAS_LOCAL_CHANGES, settings.hasLocalChanges)
+            .putBoolean(KEY_SYNC_ON_STARTUP, settings.syncOnStartup)
+            .putInt(KEY_BACKGROUND_SYNC_MINUTES, settings.backgroundSyncMinutes)
             .apply()
         _settings.value = settings
     }
@@ -83,5 +93,7 @@ class SyncSettingsStore(context: Context) {
         private const val KEY_LAMPORT = "lamport"
         private const val KEY_LAST_SYNCED = "last_synced"
         private const val KEY_HAS_LOCAL_CHANGES = "has_local_changes"
+        private const val KEY_SYNC_ON_STARTUP = "sync_on_startup"
+        private const val KEY_BACKGROUND_SYNC_MINUTES = "background_sync_minutes"
     }
 }

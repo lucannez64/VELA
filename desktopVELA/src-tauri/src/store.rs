@@ -1,9 +1,8 @@
 //! Persistent encrypted storage for VELA vault.
 
 use directories::ProjectDirs;
-use sha2::Digest;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use vela_crypto::aead::{decrypt, encrypt};
 use vela_crypto::kdf;
 
@@ -17,6 +16,7 @@ const SETTINGS_FILE: &str = "settings.json";
 const DEVICE_ID_FILE: &str = "device_id.json";
 const IDENTITY_KEYS_FILE: &str = "identity_keys.enc";
 const DEVICE_KEY_CONTEXT: &str = "vela device rms protection v1";
+const IDENTITY_KEY_FILE_CONTEXT: &str = "vela desktop identity key file v1";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct DeviceIdStore {
@@ -47,6 +47,7 @@ impl Store {
 
         let data_dir = project_dirs.data_dir().join(STORE_DIR);
         fs::create_dir_all(&data_dir)?;
+        restrict_directory(&data_dir)?;
 
         Ok(Self {
             store_path: data_dir,
@@ -63,23 +64,15 @@ impl Store {
             .clone()
     }
 
+    fn derive_identity_file_key(crypto: &Crypto) -> [u8; 32] {
+        kdf::derive(IDENTITY_KEY_FILE_CONTEXT, crypto.identity_key().as_bytes())
+            .as_bytes()
+            .clone()
+    }
+
     pub fn save_vault(&self, vault: &VaultStore, crypto: &Crypto) -> anyhow::Result<()> {
         let plaintext = serde_json::to_vec(vault)?;
-        tracing::info!("Vault plaintext size: {} bytes", plaintext.len());
-        tracing::info!(
-            "Vault key hash: {:x}",
-            sha2::Sha256::digest(crypto.vault_key().as_bytes())
-        );
-
-        if let Ok(json_str) = std::str::from_utf8(&plaintext) {
-            tracing::debug!(
-                "Vault JSON (first 500 chars): {}",
-                &json_str[..json_str.len().min(500)]
-            );
-        }
-
         let ciphertext = crypto.encrypt_vault(&plaintext)?;
-        tracing::info!("Vault ciphertext size: {} bytes", ciphertext.len());
 
         let vault_path = self.store_path.join(VAULT_FILE);
 
@@ -89,8 +82,7 @@ impl Store {
             }
         }
 
-        fs::write(&vault_path, ciphertext)?;
-        tracing::info!("Vault saved to {:?}", vault_path);
+        write_secret_file(&vault_path, &ciphertext)?;
 
         Ok(())
     }
@@ -104,26 +96,11 @@ impl Store {
         }
 
         let ciphertext = fs::read(&vault_path)?;
-        tracing::info!("Vault file size: {} bytes", ciphertext.len());
-        tracing::info!(
-            "Vault key hash: {:x}",
-            sha2::Sha256::digest(crypto.vault_key().as_bytes())
-        );
-
         if ciphertext.len() < 40 {
-            tracing::error!("Vault file too small: {} bytes", ciphertext.len());
             return Err(anyhow::anyhow!("Vault file corrupted: too small"));
         }
 
         let plaintext = crypto.decrypt_vault(&ciphertext)?;
-
-        if let Ok(json_str) = std::str::from_utf8(&plaintext) {
-            tracing::debug!(
-                "Loaded vault JSON (first 500 chars): {}",
-                &json_str[..json_str.len().min(500)]
-            );
-        }
-
         let vault: VaultStore = serde_json::from_slice(&plaintext)?;
         Ok(vault)
     }
@@ -140,7 +117,7 @@ impl Store {
             }
         }
 
-        fs::write(rms_path, ciphertext)?;
+        write_secret_file(&rms_path, &ciphertext)?;
 
         Ok(())
     }
@@ -178,7 +155,7 @@ impl Store {
         }
 
         let json = serde_json::to_string_pretty(settings)?;
-        fs::write(settings_path, json)?;
+        write_secret_file(&settings_path, json.as_bytes())?;
         Ok(())
     }
 
@@ -216,7 +193,7 @@ impl Store {
             user_id: user_id.to_string(),
         };
         let json = serde_json::to_string_pretty(&store)?;
-        fs::write(device_path, json)?;
+        write_secret_file(&device_path, json.as_bytes())?;
         Ok(())
     }
 
@@ -256,6 +233,7 @@ impl Store {
         cyclo_pk: &[u8],
         cyclo_sk: &[u8],
         hybrid_sk: &[u8],
+        crypto: &Crypto,
     ) -> anyhow::Result<()> {
         let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
 
@@ -272,22 +250,75 @@ impl Store {
             cyclo_sk: cyclo_sk.to_vec(),
             hybrid_sk: hybrid_sk.to_vec(),
         };
-        let json = serde_json::to_string_pretty(&store)?;
-        fs::write(identity_path, json)?;
+        let plaintext = serde_json::to_vec(&store)?;
+        let key = Self::derive_identity_file_key(crypto);
+        let ciphertext = encrypt(&key, &plaintext)?;
+        write_secret_file(&identity_path, &ciphertext)?;
         Ok(())
     }
 
-    pub fn load_identity_keys(&self) -> anyhow::Result<Option<IdentityKeysStore>> {
+    pub fn load_identity_keys(&self, crypto: &Crypto) -> anyhow::Result<Option<IdentityKeysStore>> {
         let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
 
         if !identity_path.exists() {
             return Ok(None);
         }
 
-        let json = fs::read_to_string(identity_path)?;
-        let store: IdentityKeysStore = serde_json::from_str(&json)?;
+        let bytes = fs::read(&identity_path)?;
+        let store: IdentityKeysStore = if bytes.first() == Some(&b'{') {
+            let legacy: IdentityKeysStore = serde_json::from_slice(&bytes)?;
+            self.save_identity_keys(
+                &legacy.hybrid_ek,
+                &legacy.hybrid_vk,
+                &legacy.cyclo_pk,
+                &legacy.cyclo_sk,
+                &legacy.hybrid_sk,
+                crypto,
+            )?;
+            legacy
+        } else {
+            let key = Self::derive_identity_file_key(crypto);
+            let plaintext = decrypt(&key, &bytes)?;
+            serde_json::from_slice(&plaintext)?
+        };
         Ok(Some(store))
     }
+}
+
+fn write_secret_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        restrict_directory(parent)?;
+    }
+    fs::write(path, bytes)?;
+    restrict_file(path)?;
+    Ok(())
+}
+
+fn restrict_directory(path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn restrict_file(path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 impl Default for Store {

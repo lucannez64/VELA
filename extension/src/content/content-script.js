@@ -82,6 +82,9 @@
   let velaFieldIconEl = null;
   let velaSaveBarEl = null;
   let velaCurrentLogins = null;
+  let velaRequiresBiometric = false;
+  let velaLoginRequestPromise = null;
+  let velaLoginRequestKey = "";
   let velaCapturedCredentials = null;
   let velaGenModal = null;
   let velaSaveModal = null;
@@ -228,6 +231,34 @@
     };
     lastLocationHref = globalThis.location.href;
     return pageDetails;
+  }
+
+  async function velaRequestLogins(userInitiated = false) {
+    const key = `${location.href}:${userInitiated ? "explicit" : "passive"}`;
+    if (velaLoginRequestPromise && velaLoginRequestKey === key) {
+      return velaLoginRequestPromise;
+    }
+
+    velaLoginRequestKey = key;
+    velaLoginRequestPromise = sendExtensionMessage("getAvailableLogins", {
+      url: location.href,
+      userInitiated
+    }).then((resp) => ({
+      logins: resp && resp.logins ? resp.logins : [],
+      requiresBiometric: resp && resp.requires_biometric === true
+    })).catch(() => ({
+      logins: [],
+      requiresBiometric: false
+    })).finally(() => {
+      setTimeout(() => {
+        if (velaLoginRequestKey === key) {
+          velaLoginRequestPromise = null;
+          velaLoginRequestKey = "";
+        }
+      }, 1000);
+    });
+
+    return velaLoginRequestPromise;
   }
 
   function queryAutofillForms() {
@@ -743,6 +774,7 @@
 
     velaActiveField = el;
     velaCurrentLogins = null;
+    velaRequiresBiometric = false;
 
     velaShowDropdown(el, null, false);
 
@@ -751,16 +783,22 @@
     }
 
     try {
-      const resp = await sendExtensionMessage("getAvailableLogins", { url: location.href });
-      velaCurrentLogins = resp && resp.logins ? resp.logins : [];
+      const result = await velaRequestLogins(false);
+      velaCurrentLogins = result.logins;
+      velaRequiresBiometric = result.requiresBiometric;
     } catch (_) {
       velaCurrentLogins = [];
+      velaRequiresBiometric = false;
     }
 
     if (velaActiveField !== el) return;
 
     const isNewPw = velaIsNewPasswordField(el);
-    velaShowDropdown(el, velaCurrentLogins, isNewPw);
+    velaShowDropdown(
+      el,
+      velaRequiresBiometric ? { requiresBiometric: true } : velaCurrentLogins,
+      isNewPw
+    );
   }
 
   function velaOnFocusOut(e) {
@@ -872,16 +910,26 @@
       } else {
         velaActiveField = field;
         if (velaCurrentLogins !== null) {
-          velaShowDropdown(field, velaCurrentLogins, velaIsNewPasswordField(field));
+          if (velaRequiresBiometric) {
+            velaShowDropdown(field, { requiresBiometric: true }, velaIsNewPasswordField(field));
+          } else {
+            velaShowDropdown(field, velaCurrentLogins, velaIsNewPasswordField(field));
+          }
         } else {
           velaShowDropdown(field, null, false);
-          sendExtensionMessage("getAvailableLogins", { url: location.href }).then((resp) => {
-            velaCurrentLogins = resp && resp.logins ? resp.logins : [];
+          velaRequestLogins(false).then((result) => {
+            velaCurrentLogins = result.logins;
+            velaRequiresBiometric = result.requiresBiometric;
             if (velaActiveField === field) {
-              velaShowDropdown(field, velaCurrentLogins, velaIsNewPasswordField(field));
+              velaShowDropdown(
+                field,
+                velaRequiresBiometric ? { requiresBiometric: true } : velaCurrentLogins,
+                velaIsNewPasswordField(field)
+              );
             }
           }).catch(() => {
             velaCurrentLogins = [];
+            velaRequiresBiometric = false;
             if (velaActiveField === field) velaShowDropdown(field, [], false);
           });
         }
@@ -929,6 +977,19 @@
           <div class="vela-dd-spinner"></div>
           <span>Searching vault…</span>
         </div>`;
+    } else if (logins && logins.requiresBiometric) {
+      dd.innerHTML = `
+        <div class="vela-dd-header">
+          <span class="vela-dd-logo">${velaShieldSvg(14)}</span>
+          <span class="vela-dd-title">VELA</span>
+        </div>
+        <div class="vela-dd-empty">
+          Unlock VELA Desktop to show logins for <strong>${velaEscapeHtml(velaExtractDomain(location.href))}</strong>
+        </div>
+        <button class="vela-dd-action-btn" data-vela-action="unlock-logins">
+          <span class="vela-dd-action-icon">🔒</span>
+          Open VELA Desktop
+        </button>`;
     } else if (isNewPassword) {
       dd.innerHTML = `
         <div class="vela-dd-header">
@@ -976,12 +1037,25 @@
     velaPositionDropdown(field);
 
     dd.querySelectorAll("[data-vela-login-id]").forEach((item) => {
-      item.addEventListener("click", () => {
+      item.addEventListener("click", async () => {
         const loginId = item.getAttribute("data-vela-login-id");
-        const login = (logins || []).find((l) => String(l.id) === loginId);
-        if (login) {
+        let login = (logins || []).find((l) => String(l.id) === loginId);
+        if (!login) return;
+
+        velaHideDropdown();
+        if (!login.password) {
+          velaShowDropdown(field, null, false);
+          const result = await velaRequestLogins(true);
+          velaCurrentLogins = result.logins;
+          velaRequiresBiometric = result.requiresBiometric;
+          login = velaCurrentLogins.find((l) => String(l.id) === loginId);
           velaHideDropdown();
+        }
+
+        if (login && login.password) {
           fillWithLogin(login);
+        } else if (velaRequiresBiometric && velaActiveField === field) {
+          velaShowDropdown(field, { requiresBiometric: true }, velaIsNewPasswordField(field));
         }
       });
       item.addEventListener("mousedown", (e) => e.preventDefault());
@@ -994,6 +1068,25 @@
         velaShowPasswordGenerator(field);
       });
       genBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    }
+
+    const unlockBtn = dd.querySelector("[data-vela-action='unlock-logins']");
+    if (unlockBtn) {
+      unlockBtn.addEventListener("click", async () => {
+        await sendExtensionMessage("openVault");
+        velaShowDropdown(field, null, false);
+        const result = await velaRequestLogins(true);
+        velaCurrentLogins = result.logins;
+        velaRequiresBiometric = result.requiresBiometric;
+        if (velaActiveField === field) {
+          velaShowDropdown(
+            field,
+            velaRequiresBiometric ? { requiresBiometric: true } : velaCurrentLogins,
+            velaIsNewPasswordField(field)
+          );
+        }
+      });
+      unlockBtn.addEventListener("mousedown", (e) => e.preventDefault());
     }
 
     const saveBtn = dd.querySelector("[data-vela-action='save-new']");

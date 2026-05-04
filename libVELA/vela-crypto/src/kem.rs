@@ -14,10 +14,10 @@
 
 use hkdf::Hkdf;
 use ml_kem::{
+    kem::{Decapsulate, Encapsulate},
     ml_kem_1024::{
         Ciphertext as MlKemCt, DecapsulationKey as MlKemDk, EncapsulationKey as MlKemEk,
     },
-    kem::{Decapsulate, Encapsulate},
     Kem, MlKem1024,
 };
 use rand_core::OsRng;
@@ -82,8 +82,14 @@ pub fn generate_keypair() -> (HybridPublicKey, HybridSecretKey) {
     let x25519_sk = StaticSecret::random_from_rng(OsRng);
     let x25519_pk = X25519PublicKey::from(&x25519_sk);
 
-    let pk = HybridPublicKey { mlkem_ek, x25519_pk };
-    let sk = HybridSecretKey { mlkem_dk, x25519_sk };
+    let pk = HybridPublicKey {
+        mlkem_ek,
+        x25519_pk,
+    };
+    let sk = HybridSecretKey {
+        mlkem_dk,
+        x25519_sk,
+    };
     (pk, sk)
 }
 
@@ -102,7 +108,10 @@ pub fn encapsulate(pk: &HybridPublicKey) -> Result<(HybridCapsule, SharedSecret)
 
     let shared = combine_secrets(AsRef::<[u8]>::as_ref(&mlkem_ss), x25519_ss.as_bytes())?;
 
-    let capsule = HybridCapsule { mlkem_ct, x25519_epk };
+    let capsule = HybridCapsule {
+        mlkem_ct,
+        x25519_epk,
+    };
     Ok((capsule, shared))
 }
 
@@ -155,7 +164,10 @@ impl HybridCapsule {
         let mut epk_arr = [0u8; 32];
         epk_arr.copy_from_slice(epk_bytes);
         let x25519_epk = X25519PublicKey::from(epk_arr);
-        Ok(Self { mlkem_ct, x25519_epk })
+        Ok(Self {
+            mlkem_ct,
+            x25519_epk,
+        })
     }
 }
 

@@ -81,17 +81,69 @@ async function loadLogins() {
   try {
     const response = await sendMessage({
       command: "getAvailableLogins",
-      url: currentTabUrl
+      url: currentTabUrl,
+      userInitiated: true
     });
 
     if (response && response.logins && response.logins.length > 0) {
       availableLogins = response.logins;
       renderLogins();
+    } else if (response && response.ignored) {
+      showEmptyState("Unsupported page", "VELA autofill works on HTTP and HTTPS websites.");
+    } else if (response && response.requires_biometric) {
+      showApprovalRequiredState();
     } else {
       showNoLoginsState();
     }
   } catch (e) {
     showEmptyState("Error loading logins", e.message || "Could not load logins from desktop app.");
+  }
+}
+
+function showApprovalRequiredState() {
+  mainContent.innerHTML = `
+    <div class="empty-state">
+      <svg class="empty-state-icon" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M10 1a4 4 0 00-4 4v2H5a2 2 0 00-2 2v7a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a4 4 0 00-4-4zm2 6V5a2 2 0 10-4 0v2h4z" clip-rule="evenodd" />
+      </svg>
+      <div class="empty-state-title">Unlock VELA Desktop</div>
+      <div class="empty-state-text" style="margin-bottom:14px;">Open VELA Desktop and unlock your vault, then retry.</div>
+      <button id="openDesktopBtn" style="
+        display:inline-flex;align-items:center;gap:6px;
+        padding:8px 18px;
+        background:linear-gradient(135deg,#73db9a 0%,#1c8f56 100%);
+        color:#00391d;
+        border:none;border-radius:10px;cursor:pointer;
+        font-size:13px;font-weight:600;font-family:inherit;
+      ">
+        Open VELA Desktop
+      </button>
+      <button id="retryLoginsBtn" style="
+        display:inline-flex;align-items:center;gap:6px;
+        margin-left:8px;padding:8px 18px;
+        background:transparent;color:#73db9a;
+        border:1px solid rgba(115,219,154,0.45);border-radius:10px;cursor:pointer;
+        font-size:13px;font-weight:600;font-family:inherit;
+      ">
+        Retry
+      </button>
+    </div>
+  `;
+
+  const openBtn = mainContent.querySelector("#openDesktopBtn");
+  if (openBtn) {
+    openBtn.addEventListener("click", async () => {
+      await sendMessage({ command: "openVault" });
+      window.close();
+    });
+  }
+
+  const retryBtn = mainContent.querySelector("#retryLoginsBtn");
+  if (retryBtn) {
+    retryBtn.addEventListener("click", () => {
+      mainContent.innerHTML = `<div class="empty-state"><div class="empty-state-title">Loading...</div></div>`;
+      loadLogins();
+    });
   }
 }
 

@@ -151,7 +151,8 @@ fn main() {
                 error!("Failed to setup global shortcuts: {}", e);
             }
 
-            let ipc_server = IpcServer::new();
+            let state = app.state::<Arc<AppState>>();
+            let ipc_server = IpcServer::new(state.ipc_capability.clone());
             let app_handle = app.handle().clone();
 
             std::thread::spawn(move || {
@@ -163,7 +164,7 @@ fn main() {
                     ipc_server.start(app_handle).await;
                 });
             });
-            info!("IPC server started on port 14597");
+            info!("IPC server started");
 
             if let Some(window) = app.get_webview_window("main") {
                 let app_handle = app.handle().clone();

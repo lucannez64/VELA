@@ -836,7 +836,7 @@ impl VaultItem {
 fn extract_base_domain(url: &str) -> String {
     let url = url.trim();
 
-    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://") {
+    if url.starts_with("http://") || url.starts_with("https://") {
         if let Ok(parsed) = url::Url::parse(url) {
             if let Some(host) = parsed.host_str() {
                 let host = host.to_lowercase();

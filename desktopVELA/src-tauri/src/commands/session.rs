@@ -6,7 +6,6 @@ use crate::device::DeviceInfo;
 use crate::session::{LockState, SessionStatus};
 use crate::AppState;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use sha2::Digest;
 use std::sync::Arc;
 use tauri::{async_runtime, command, State};
 
@@ -82,6 +81,7 @@ async fn authenticate_with_server(
 async fn register_with_server(
     state: &Arc<AppState>,
     device_name: &str,
+    crypto: &Crypto,
 ) -> Result<(String, String), String> {
     let server_url = state.server_url.read().clone();
     if server_url.trim().is_empty() {
@@ -113,6 +113,7 @@ async fn register_with_server(
             &identity.cyclo_pk,
             &identity.cyclo_sk,
             &identity.hybrid_sk,
+            crypto,
         )
         .map_err(|e| format!("Failed to save identity keys: {}", e))?;
 
@@ -129,7 +130,12 @@ fn authenticate_with_server_in_background(
         return;
     }
 
-    let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() else {
+    let Some(identity_keys) = state
+        .crypto
+        .read()
+        .as_ref()
+        .and_then(|crypto| state.store.load_identity_keys(crypto).ok().flatten())
+    else {
         return;
     };
 
@@ -223,8 +229,7 @@ pub async fn unlock_session(
                     .unwrap_or_else(|| "Authentication failed".to_string()));
             }
 
-            biometric::get_cached_rms()
-                .ok_or_else(|| "Failed to retrieve vault key".to_string())?
+            biometric::get_cached_rms().ok_or_else(|| "Failed to retrieve vault key".to_string())?
         };
 
         let crypto = Crypto::new(&rms);
@@ -286,33 +291,15 @@ pub async fn unlock_session_with_password(
     state: State<'_, Arc<AppState>>,
     password: String,
 ) -> Result<SessionStatus, String> {
-    tracing::info!("Unlocking session with password");
-
     let app_state = state.inner().clone();
     let app_state2 = app_state.clone();
 
     let (device_name, device_id) = tokio::task::spawn_blocking(move || {
         let rms = biometric::get_cached_rms()
             .or_else(|| biometric::authenticate_with_password(&password))
-            .ok_or_else(|| {
-                tracing::warn!("Password authentication failed in unlock_session_with_password");
-                "Invalid password".to_string()
-            })?;
+            .ok_or_else(|| "Invalid password".to_string())?;
 
-        tracing::info!("Password authenticated, creating crypto");
-        tracing::info!("Retrieved RMS: hash={:x}", sha2::Sha256::digest(&rms));
         let crypto = Crypto::new(&rms);
-
-        tracing::info!("Loading vault");
-        tracing::info!("Store path: {:?}", app_state2.store.store_path());
-        if app_state2.store.store_path().join("vault.enc").exists() {
-            let size = std::fs::metadata(app_state2.store.store_path().join("vault.enc"))
-                .map(|m| m.len())
-                .unwrap_or(0);
-            tracing::info!("vault.enc exists, size: {} bytes", size);
-        } else {
-            tracing::error!("vault.enc NOT found!");
-        }
 
         let vault = app_state2.store.load_vault(&crypto).map_err(|e| {
             tracing::error!("Failed to load vault: {}", e);
@@ -330,7 +317,6 @@ pub async fn unlock_session_with_password(
             .load_user_id()
             .unwrap_or_else(|_| format!("user-{}", &device_id[..8]));
 
-        tracing::info!("Vault loaded, unlocking session");
         {
             let mut session = app_state2.session.write();
             session.unlock(device_id.clone(), user_id.clone(), 15 * 60);
@@ -389,7 +375,7 @@ pub async fn create_vault(state: State<'_, Arc<AppState>>) -> Result<(), String>
     let (local_device_id, device_name) = get_device_info();
 
     let (device_id, mut user_id) = if server_url_configured(&state) {
-        match register_with_server(&state, &device_name).await {
+        match register_with_server(&state, &device_name, &crypto).await {
             Ok((server_user_id, server_device_id)) => {
                 tracing::info!(
                     "Server registration successful, device_id={}, user_id={}",
@@ -415,7 +401,7 @@ pub async fn create_vault(state: State<'_, Arc<AppState>>) -> Result<(), String>
         .ok();
 
     if server_url_configured(&state) {
-        if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
+        if let Some(identity_keys) = state.store.load_identity_keys(&crypto).ok().flatten() {
             match authenticate_with_server(
                 &state,
                 &device_id,
@@ -468,10 +454,7 @@ pub async fn create_vault_with_password(
     state: State<'_, Arc<AppState>>,
     password: String,
 ) -> Result<(), String> {
-    tracing::info!("Creating vault with password");
-
     let rms = Crypto::generate_rms();
-    tracing::info!("Generated RMS: hash={:x}", sha2::Sha256::digest(&rms));
 
     biometric::delete_stored_rms()
         .map_err(|e| {
@@ -483,11 +466,9 @@ pub async fn create_vault_with_password(
         })
         .ok();
 
-    tracing::info!("Storing password-encrypted RMS");
     biometric::store_password_encrypted(&rms, &password)
         .map_err(|e| format!("Failed to store password recovery: {}", e))?;
 
-    tracing::info!("Creating crypto and vault");
     let crypto = Crypto::new(&rms);
 
     let vault = crate::vault::VaultStore::new();
@@ -495,22 +476,11 @@ pub async fn create_vault_with_password(
         .store
         .save_vault(&vault, &crypto)
         .map_err(|e| format!("Failed to create vault: {}", e))?;
-    tracing::info!("Vault saved to disk");
-
-    tracing::info!("Store path: {:?}", state.store.store_path());
-    if state.store.store_path().join("vault.enc").exists() {
-        let size = std::fs::metadata(state.store.store_path().join("vault.enc"))
-            .map(|m| m.len())
-            .unwrap_or(0);
-        tracing::info!("vault.enc exists, size: {} bytes", size);
-    } else {
-        tracing::error!("vault.enc NOT found after save!");
-    }
 
     let (local_device_id, device_name) = get_device_info();
 
     let (device_id, mut user_id) = if server_url_configured(&state) {
-        match register_with_server(&state, &device_name).await {
+        match register_with_server(&state, &device_name, &crypto).await {
             Ok((server_user_id, server_device_id)) => {
                 tracing::info!(
                     "Server registration successful, device_id={}, user_id={}",
@@ -536,7 +506,7 @@ pub async fn create_vault_with_password(
         .ok();
 
     if server_url_configured(&state) {
-        if let Some(identity_keys) = state.store.load_identity_keys().ok().flatten() {
+        if let Some(identity_keys) = state.store.load_identity_keys(&crypto).ok().flatten() {
             match authenticate_with_server(
                 &state,
                 &device_id,
@@ -554,7 +524,6 @@ pub async fn create_vault_with_password(
                         .ok();
                     let mut session = state.session.write();
                     session.set_server_token(token);
-                    tracing::info!("Server authentication successful (password vault creation)");
                 }
                 Err(e) => {
                     tracing::warn!(

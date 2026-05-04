@@ -564,16 +564,12 @@
         return [];
       }
 
-      const urlPattern = /^(https?|file):\/\/\/?/;
+      const urlPattern = /^https?:\/\/\/?/;
       if (!urlPattern.test(url)) {
         url = `https://${url}`;
       }
 
       let protocolGlob = "*://";
-      if (url.startsWith("file:///")) {
-        protocolGlob = "*:///";
-      }
-
       const parsedUrl = new URL(url);
       const originMatchPattern = `${protocolGlob}${parsedUrl.hostname}/*`;
 

@@ -99,8 +99,16 @@ pub async fn post_verify(
 
     rate_limit::reset_verify_streak(&state.store, &device_id_str)?;
     let now = chrono::Utc::now().to_rfc3339();
-    let requested_name = body.device_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let requested_type = body.device_type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let requested_name = body
+        .device_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let requested_type = body
+        .device_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     if requested_name.is_some() || requested_type.is_some() {
         let next_name = requested_name.unwrap_or(&device.device_name);
         let next_type = requested_type.unwrap_or(&device.device_type);

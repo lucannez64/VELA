@@ -127,7 +127,7 @@ pub mod windows_biometric {
             match crate::device::tpm::retrieve_from_tpm() {
                 Ok(rms) => {
                     if CACHED_RMS.set(rms).is_err() || CACHED_RMS.get().is_some() {
-                        if let Some(cached) = CACHED_RMS.get() {
+                        if CACHED_RMS.get().is_some() {
                             return BiometricAuthResult {
                                 success: true,
                                 error_message: None,
@@ -202,7 +202,6 @@ pub mod windows_biometric {
         if crate::device::tpm::is_tpm_available() {
             match crate::device::tpm::store_in_tpm(rms) {
                 Ok(_) => {
-                    tracing::info!("RMS stored in TPM 2.0");
                     return Ok(());
                 }
                 Err(e) => {
@@ -270,15 +269,15 @@ pub mod linux_biometric {
     fn retrieve_rms_from_any_source() -> Option<[u8; 32]> {
         if tpm::is_tpm_available() && tpm::is_tpm_key_available() {
             if let Ok(rms) = tpm::retrieve_from_tpm() {
-                tracing::info!("RMS unsealed from TPM 2.0 successfully");
                 return Some(rms);
             }
-            tracing::warn!("TPM retrieval failed, trying Secret Service");
         }
 
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
+                    .await
+                {
                     Ok(ss) => match ss.get_default_collection().await {
                         Ok(collection) => {
                             let mut attrs = HashMap::new();
@@ -291,19 +290,14 @@ pub mod linux_biometric {
                                                 if secret.len() >= 32 {
                                                     let mut rms = [0u8; 32];
                                                     rms.copy_from_slice(&secret[..32]);
-                                                    tracing::info!("RMS retrieved from Secret Service");
                                                     return Some(rms);
                                                 }
                                             }
-                                            Err(e) => {
-                                                tracing::warn!("Failed to get secret from Secret Service: {}", e);
-                                            }
+                                            Err(_) => {}
                                         }
                                     }
                                 }
-                                Err(e) => {
-                                    tracing::warn!("Failed to search Secret Service: {}", e);
-                                }
+                                Err(_) => {}
                             }
                         }
                         Err(_) => {}
@@ -426,12 +420,9 @@ pub mod linux_biometric {
         if tpm::is_tpm_available() {
             match tpm::store_in_tpm(rms) {
                 Ok(_) => {
-                    tracing::info!("RMS stored in TPM 2.0");
                     return Ok(());
                 }
-                Err(e) => {
-                    tracing::warn!("TPM storage failed, trying Secret Service: {}", e);
-                }
+                Err(_) => {}
             }
         }
 
@@ -449,9 +440,6 @@ pub mod linux_biometric {
                                 .await
                             {
                                 Ok(_) => {
-                                    tracing::info!(
-                                        "RMS stored in Secret Service (GNOME Keyring/KWallet)"
-                                    );
                                     return Ok(());
                                 }
                                 Err(e) => {
@@ -719,13 +707,6 @@ pub mod windows_password {
         blob.extend_from_slice(&salt);
         blob.extend_from_slice(&ciphertext);
 
-        tracing::info!(
-            "Storing password-encrypted RMS: salt len={}, ciphertext len={}, total blob len={}",
-            salt.len(),
-            ciphertext.len(),
-            blob.len()
-        );
-
         unsafe {
             let mut target = to_wide_string_mut(PASSWORD_CREDENTIAL_NAME);
             let mut username = to_wide_string_mut("VELA");
@@ -746,13 +727,11 @@ pub mod windows_password {
             };
 
             CredWriteW(&cred, 0)?;
-            tracing::info!("Successfully stored VELA_RMS_PASSWORD credential");
             Ok(())
         }
     }
 
     pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
-        tracing::info!("Attempting to authenticate with password");
         unsafe {
             let target = to_wide_string(PASSWORD_CREDENTIAL_NAME);
             let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
@@ -765,46 +744,32 @@ pub mod windows_password {
             );
 
             if result.is_ok() && !credential.is_null() {
-                tracing::info!("Found VELA_RMS_PASSWORD credential");
                 let cred = &*credential;
                 if cred.CredentialBlobSize > 0 && !cred.CredentialBlob.is_null() {
                     let blob_size = cred.CredentialBlobSize as usize;
-                    tracing::info!("Credential blob size: {}", blob_size);
                     let blob = std::slice::from_raw_parts(cred.CredentialBlob, blob_size);
 
                     if blob_size >= 48 {
                         let salt = &blob[0..16];
                         let ciphertext = &blob[16..];
-                        tracing::info!("Extracted salt and ciphertext");
 
                         let key = derive_key_from_password(password, salt);
                         let Ok(decrypted) = decrypt(&key, ciphertext) else {
-                            tracing::warn!("Decryption failed - wrong password?");
                             CredFree(credential as *mut _);
                             return None;
                         };
 
                         if decrypted.len() >= 32 {
-                            tracing::info!("Successfully decrypted RMS");
                             let mut rms = [0u8; 32];
                             rms.copy_from_slice(&decrypted[..32]);
                             CredFree(credential as *mut _);
 
                             let _ = CACHED_RMS.set(rms);
                             return Some(rms);
-                        } else {
-                            tracing::warn!("Decrypted data too short: {} bytes", decrypted.len());
                         }
-                    } else {
-                        tracing::warn!(
-                            "Blob size too small: {} bytes (need at least 48)",
-                            blob_size
-                        );
                     }
                 }
                 CredFree(credential as *mut _);
-            } else {
-                tracing::warn!("VELA_RMS_PASSWORD credential not found");
             }
             None
         }
@@ -844,10 +809,6 @@ pub mod default_password {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         }
 
-        tracing::info!(
-            "Stored password-encrypted RMS to file ({} bytes)",
-            blob.len()
-        );
         Ok(())
     }
 
@@ -855,14 +816,12 @@ pub mod default_password {
         let path = password_file_path();
         let blob = match std::fs::read(&path) {
             Ok(b) => b,
-            Err(e) => {
-                tracing::warn!("Failed to read password file: {}", e);
+            Err(_) => {
                 return None;
             }
         };
 
         if blob.len() < 48 {
-            tracing::warn!("Password file too small: {} bytes", blob.len());
             return None;
         }
 
@@ -873,7 +832,6 @@ pub mod default_password {
         let decrypted = match decrypt(&key, ciphertext) {
             Ok(d) => d,
             Err(_) => {
-                tracing::warn!("Decryption failed - wrong password");
                 return None;
             }
         };

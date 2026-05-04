@@ -7,6 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 HOST_SCRIPT="$SCRIPT_DIR/vela-native-messaging-host.py"
+HOST_WRAPPER="$SCRIPT_DIR/vela-native-messaging-host"
+HOST_NAME="com.vela.desktop"
 
 if [ ! -f "$HOST_SCRIPT" ]; then
 	echo "ERROR: $HOST_SCRIPT not found"
@@ -87,12 +89,19 @@ register_browser() {
 		return
 	fi
 
-	cat >"$nm_dir/vela-desktop.json" <<EOF
+	cat >"$HOST_WRAPPER" <<EOF
+#!/bin/sh
+exec "$python_path" "$HOST_SCRIPT"
+EOF
+	chmod +x "$HOST_WRAPPER"
+
+	rm -f "$nm_dir/vela-desktop.json"
+
+	cat >"$nm_dir/$HOST_NAME.json" <<EOF
 {
-  "name": "vela-desktop",
+  "name": "$HOST_NAME",
   "description": "VELA Desktop Password Manager Native Messaging Host",
-  "path": "$python_path",
-  "args": ["$HOST_SCRIPT"],
+  "path": "$HOST_WRAPPER",
   "type": "stdio",
   "allowed_extensions": ["vela@vela.app"]
 }

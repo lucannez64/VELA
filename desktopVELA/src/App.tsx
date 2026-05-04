@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AppProvider, useApp, SessionStatus, VaultItem, fromBackendItem } from './context/AppContext';
+import { AppProvider, useApp, SessionStatus, VaultItem, fromBackendItem, Settings } from './context/AppContext';
 import TitleBar from './components/TitleBar';
 import Sidebar from './components/Sidebar';
 import WelcomeScreen from './views/WelcomeScreen';
@@ -38,12 +38,22 @@ function AppContent() {
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
-  const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, settings } = useApp();
-  const [syncing, setSyncing] = useState(false);
+  const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, settings, setSettings } = useApp();
+  const syncingRef = useRef(false);
 
-  const doSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
+  const loadItems = useCallback(async () => {
+    try {
+      const vaultItems = await invoke<any[]>('get_items');
+      const mapped = vaultItems.map(fromBackendItem);
+      setItems(mapped as VaultItem[]);
+    } catch (e) {
+      console.error('Failed to load items:', e);
+    }
+  }, [setItems]);
+
+  const doSync = useCallback(async () => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
     try {
       const result = await invoke<{ last_synced: string | null; conflicts: SyncConflict[]; error: string | null }>('trigger_sync');
       await loadItems();
@@ -59,9 +69,12 @@ function AppContent() {
     } catch (e) {
       showToast('Sync failed: ' + String(e), 'error');
     } finally {
-      setSyncing(false);
+      syncingRef.current = false;
     }
-  };
+  }, [loadItems, showToast]);
+
+  const doSyncRef = useRef(doSync);
+  doSyncRef.current = doSync;
 
   const refreshSession = async () => {
     try {
@@ -78,16 +91,6 @@ function AppContent() {
     await refreshSession();
   };
 
-  const loadItems = async () => {
-    try {
-      const vaultItems = await invoke<any[]>('get_items');
-      const items = vaultItems.map(fromBackendItem);
-      setItems(items as VaultItem[]);
-    } catch (e) {
-      console.error('Failed to load items:', e);
-    }
-  };
-
   useEffect(() => {
     const init = async () => {
       try {
@@ -99,6 +102,13 @@ function AppContent() {
           setIsFirstLaunch(false);
           setSetupComplete(true);
         }
+
+        try {
+          const loadedSettings = await invoke<Settings>('get_settings');
+          setSettings(loadedSettings);
+        } catch (e) {
+          console.error('Failed to load settings:', e);
+        }
         
         const sessionStatus = await refreshSession();
         console.log('Session status:', sessionStatus);
@@ -108,9 +118,6 @@ function AppContent() {
         
         if (sessionStatus?.active) {
           await loadItems();
-          if (settings?.sync_on_startup) {
-            doSync();
-          }
         }
       } catch (e) {
         console.error('Init failed:', e);
@@ -132,7 +139,7 @@ function AppContent() {
     });
 
     const unlistenSync = listen('trigger-sync', () => {
-      doSync();
+      doSyncRef.current();
     });
 
     const unlistenVaultItemsChanged = listen('vault-items-changed', () => {
@@ -148,10 +155,16 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    if (session?.active && settings?.sync_on_startup) {
+      doSyncRef.current();
+    }
+  }, [session?.active, settings?.sync_on_startup]);
+
+  useEffect(() => {
     if (session?.active) {
       loadItems();
     }
-  }, [session?.active]);
+  }, [session?.active, loadItems]);
 
   useEffect(() => {
     if (!selectedItem) return;
@@ -182,7 +195,7 @@ function AppContent() {
     const syncMinutes = settings?.background_sync_minutes ?? 5;
     if (syncMinutes <= 0) return;
     const interval = setInterval(() => {
-      doSync();
+      doSyncRef.current();
     }, syncMinutes * 60 * 1000);
     return () => clearInterval(interval);
   }, [session?.active, settings?.background_sync_minutes]);

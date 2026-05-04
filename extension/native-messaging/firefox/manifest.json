@@ -1,5 +1,5 @@
 {
-  "name": "vela-desktop",
+  "name": "com.vela.desktop",
   "description": "VELA Desktop Password Manager Native Messaging Host",
   "path": "/usr/bin/vela-native-messaging-host",
   "type": "stdio",

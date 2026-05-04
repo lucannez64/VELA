@@ -4,7 +4,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { useApp, Settings } from '../context/AppContext';
 
 export default function SettingsScreen() {
-  const { showToast, setSession, setItems, setSelectedItem } = useApp();
+  const { showToast, setSession, setItems, setSelectedItem, settings: contextSettings, setSettings: setContextSettings } = useApp();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -33,6 +33,9 @@ export default function SettingsScreen() {
   };
 
   useEffect(() => {
+    if (contextSettings) {
+      setSettings(contextSettings);
+    }
     loadSettings();
   }, []);
 
@@ -40,6 +43,7 @@ export default function SettingsScreen() {
     try {
       const result = await invoke<Settings>('get_settings');
       setSettings(result);
+      setContextSettings(result);
     } catch (e) {
       showToast('Failed to load settings', 'error');
     }
@@ -49,6 +53,7 @@ export default function SettingsScreen() {
     try {
       await invoke('update_settings', { settings: newSettings });
       setSettings(newSettings);
+      setContextSettings(newSettings);
       showToast('Settings saved', 'success');
       return true;
     } catch (e) {

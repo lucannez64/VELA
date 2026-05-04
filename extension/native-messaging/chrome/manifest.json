@@ -1,9 +1,9 @@
 {
-  "name": "vela-desktop",
+  "name": "com.vela.desktop",
   "description": "VELA Desktop Password Manager Native Messaging Host",
   "path": "C:\\Program Files\\VELA\\native-messaging-host\\vela-native-messaging-host.exe",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://*"
+    "chrome-extension://__VELA_CHROME_EXTENSION_ID__/"
   ]
 }

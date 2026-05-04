@@ -44,12 +44,19 @@ fn main() {
         .current_dir(&cyclo_dir)
         .status()
         .expect("failed to invoke `zig build` — is Zig installed?");
-    assert!(status.success(), "`zig build` exited with a non-zero status");
+    assert!(
+        status.success(),
+        "`zig build` exited with a non-zero status"
+    );
 
     // Library output paths produced by `zig build`.
     let zig_lib_dir = cyclo_dir.join("zig-out/lib");
     let ntt_lib_dir = match (is_cross, &cargo_target) {
-        (true, Some(t)) => cyclo_dir.join("ntt_shim").join("target").join(t).join("release"),
+        (true, Some(t)) => cyclo_dir
+            .join("ntt_shim")
+            .join("target")
+            .join(t)
+            .join("release"),
         _ => cyclo_dir.join("ntt_shim/target/release"),
     };
 

@@ -1,8 +1,9 @@
 //! HTTP client for serverVELA API.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::error::Error as _;
 
 pub struct ApiClient {
     client: Client,
@@ -39,6 +40,28 @@ pub struct VerifyRequest {
     pub proof: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
+}
+
+fn describe_request_error(err: &reqwest::Error) -> String {
+    let mut message = err.to_string();
+
+    if err.is_timeout() {
+        message.push_str("; request timed out");
+    }
+    if err.is_connect() {
+        message.push_str(
+            "; connection failed. Check that the VELA server is running, bound to a LAN address such as 0.0.0.0:8443, and allowed through the firewall",
+        );
+    }
+
+    let mut source = err.source();
+    while let Some(cause) = source {
+        message.push_str("; caused by: ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+
+    message
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,7 +111,8 @@ impl ApiClient {
             .client
             .get(format!("{}/health", self.base_url))
             .send()
-            .await?;
+            .await
+            .map_err(|e| anyhow!(describe_request_error(&e)))?;
         Ok(resp.status().is_success())
     }
 
@@ -97,7 +121,8 @@ impl ApiClient {
             .client
             .get(format!("{}/auth/challenge", self.base_url))
             .send()
-            .await?;
+            .await
+            .map_err(|e| anyhow!(describe_request_error(&e)))?;
 
         if !resp.status().is_success() {
             anyhow::bail!("Challenge request failed: {}", resp.status());

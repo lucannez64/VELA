@@ -214,10 +214,18 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
         return Err("Vault is locked. Please unlock before enrolling a new device.".to_string());
     }
 
+    // ── get RMS ───────────────────────────────────────────────────────────────
+    let rms: [u8; 32] = {
+        let crypto = state.crypto.read();
+        let c = crypto.as_ref().ok_or("Vault is locked")?;
+        c.rms_as_bytes()
+    };
+    let crypto_for_keys = crate::crypto::Crypto::new(&rms);
+
     // ── load own identity keys ────────────────────────────────────────────────
     let own_keys = state
         .store
-        .load_identity_keys()
+        .load_identity_keys(&crypto_for_keys)
         .map_err(|e| format!("Failed to load identity keys: {e}"))?
         .ok_or("No identity keys found. Please re-create your vault.")?;
 
@@ -233,13 +241,6 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
         .store
         .load_device_id()
         .map_err(|e| format!("Failed to load device ID: {e}"))?;
-
-    // ── get RMS ───────────────────────────────────────────────────────────────
-    let rms: [u8; 32] = {
-        let crypto = state.crypto.read();
-        let c = crypto.as_ref().ok_or("Vault is locked")?;
-        c.rms_as_bytes()
-    };
 
     // ── generate new device keypair ───────────────────────────────────────────
     // ML-DSA keygen is stack-heavy; spawn on a blocking thread with enough stack.
@@ -444,15 +445,11 @@ pub async fn import_enrollment_code(
     let mut transfer_key = [0u8; 32];
     transfer_key.copy_from_slice(&transfer_key_vec);
 
-    // ── persist device ID and identity keys ───────────────────────────────────
+    // ── persist device ID ─────────────────────────────────────────────────────
     state
         .store
         .save_device_id(&payload.device_id)
         .map_err(|e| format!("Failed to save device ID: {e}"))?;
-    state
-        .store
-        .save_identity_keys(&hybrid_ek, &hybrid_vk, &cyclo_pk, &cyclo_sk, &hybrid_sk)
-        .map_err(|e| format!("Failed to save identity keys: {e}"))?;
 
     // ── set server URL ────────────────────────────────────────────────────────
     if !payload.server_url.is_empty() {
@@ -513,6 +510,17 @@ pub async fn import_enrollment_code(
 
     // ── build Crypto and download vault ───────────────────────────────────────
     let crypto_obj = crate::crypto::Crypto::new(&rms);
+    state
+        .store
+        .save_identity_keys(
+            &hybrid_ek,
+            &hybrid_vk,
+            &cyclo_pk,
+            &cyclo_sk,
+            &hybrid_sk,
+            &crypto_obj,
+        )
+        .map_err(|e| format!("Failed to save identity keys: {e}"))?;
 
     // Download the vault chunk from the server.  Try the canonical name first,
     // then fall back to an ORAM-style vault-data-* chunk from the manifest.

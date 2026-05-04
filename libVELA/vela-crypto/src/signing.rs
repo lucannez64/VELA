@@ -94,15 +94,21 @@ pub struct HybridSignature {
 /// Both key components are generated with fresh randomness from the OS CSPRNG.
 pub fn generate_keypair() -> Result<(HybridVerifyingKey, HybridSigningKey)> {
     // ML-DSA-87 keygen (uses OsRng internally via fips204)
-    let (ml_dsa_vk, ml_dsa_sk) =
-        ml_dsa_87::try_keygen().map_err(|e| VelaError::SigningError(format!("ML-DSA keygen: {e:?}")))?;
+    let (ml_dsa_vk, ml_dsa_sk) = ml_dsa_87::try_keygen()
+        .map_err(|e| VelaError::SigningError(format!("ML-DSA keygen: {e:?}")))?;
 
     // Ed25519 keygen
     let ed25519_sk = Ed25519Sk::generate(&mut OsRng);
     let ed25519_vk = ed25519_sk.verifying_key();
 
-    let vk = HybridVerifyingKey { ml_dsa: ml_dsa_vk, ed25519: ed25519_vk };
-    let sk = HybridSigningKey { ml_dsa: ml_dsa_sk, ed25519: ed25519_sk };
+    let vk = HybridVerifyingKey {
+        ml_dsa: ml_dsa_vk,
+        ed25519: ed25519_vk,
+    };
+    let sk = HybridSigningKey {
+        ml_dsa: ml_dsa_sk,
+        ed25519: ed25519_sk,
+    };
     Ok((vk, sk))
 }
 
@@ -119,7 +125,10 @@ pub fn sign(sk: &HybridSigningKey, message: &[u8]) -> Result<HybridSignature> {
 
     let ed25519_sig: Ed25519Sig = sk.ed25519.sign(message);
 
-    Ok(HybridSignature { ml_dsa: ml_dsa_sig, ed25519: ed25519_sig })
+    Ok(HybridSignature {
+        ml_dsa: ml_dsa_sig,
+        ed25519: ed25519_sig,
+    })
 }
 
 /// Verify a hybrid signature.

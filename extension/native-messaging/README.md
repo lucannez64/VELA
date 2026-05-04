@@ -4,9 +4,11 @@ This directory contains the native messaging bridge between the VELA browser ext
 
 ## How It Works
 
-The extension communicates with the desktop app via two channels:
-1. **HTTP** (primary) — `http://localhost:14597/` — works without native messaging setup
-2. **Native Messaging** (fallback) — OS-specific IPC protocol — requires registration
+The extension communicates with the desktop app only through browser native messaging. The native host relays framed messages to the desktop app over an OS-protected pipe/socket using a per-session capability token written by the desktop app.
+
+The Chromium/Gecko native messaging host name is `com.vela.desktop`. Do not use
+the previous `vela-desktop` name; Chromium rejects host names that contain
+hyphens before it even reads the registered manifest.
 
 ## Registration Scripts
 
@@ -34,7 +36,7 @@ chmod +x native-messaging/register-firefox-host.sh
 
 ### Chromium Forks (use `chrome-extension://` scheme)
 
-All Chromium forks share the same extension loading mechanism and native messaging protocol. The `chrome-extension://*` wildcard in the native messaging host manifest covers all of them.
+All Chromium forks share the same extension loading mechanism and native messaging protocol. Registration requires `VELA_CHROME_EXTENSION_ID` and writes a single `chrome-extension://<id>/` origin. Wildcard origins are not allowed.
 
 | Browser | Registry (Windows) | Config (Linux) | Config (macOS) |
 |---|---|---|---|
@@ -63,5 +65,4 @@ All Gecko-based browsers (Firefox and forks) share the same native messaging pro
 
 ```bash
 python3 native-messaging/vela-native-messaging-host.py
-echo -e "Content-Length: 16\n\n{\"action\":\"ping\"}" | python3 native-messaging/vela-native-messaging-host.py
 ```

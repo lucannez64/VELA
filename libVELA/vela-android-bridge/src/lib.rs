@@ -133,7 +133,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEncryptVa
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| encrypt_vault_json(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        encrypt_vault_json(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -143,7 +145,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVa
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| decrypt_vault_json(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        decrypt_vault_json(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -153,7 +157,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEncryptVa
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| encrypt_vault_chunk_json(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        encrypt_vault_chunk_json(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -163,7 +169,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVa
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| decrypt_vault_chunk_json(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        decrypt_vault_chunk_json(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -173,7 +181,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeGenerateS
     _object: JObject,
 ) -> jstring {
     let response = match generate_server_identity() {
-        Ok(value) => serde_json::to_string(&value).unwrap_or_else(|error| error_json(&error.to_string())),
+        Ok(value) => {
+            serde_json::to_string(&value).unwrap_or_else(|error| error_json(&error.to_string()))
+        }
         Err(error) => error_json(&error.to_string()),
     };
     jni_string(&mut env, &response)
@@ -185,7 +195,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCreateAut
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| create_auth_proof_json(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        create_auth_proof_json(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -195,7 +207,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptRm
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| decrypt_rms_capsule_json(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        decrypt_rms_capsule_json(request)
+    });
     jni_string(&mut env, &response)
 }
 

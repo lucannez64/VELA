@@ -32,6 +32,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vela.android.core.VaultItem
+import com.vela.android.sync.SyncSettings
 import com.vela.android.sync.SyncState
 import com.vela.android.ui.screens.AddItemScreen
 import com.vela.android.ui.screens.AuditLogScreen
@@ -101,11 +102,13 @@ fun VelaNavHost(
     onResolveConflictUseLocal: () -> Unit,
     onResolveConflictUseRemote: () -> Unit,
     onUpdateSyncServer: (String, String) -> Unit,
+    onUpdateSyncPreferences: (Boolean, Int) -> Unit,
     onNavigateToEnroll: () -> Unit,
     onEnrollDevice: (String, String) -> Unit,
     onProtectEnrolledBiometric: () -> Unit,
     onProtectEnrolledPassword: (String) -> Unit,
     serverUrl: String,
+    syncSettings: SyncSettings,
     syncState: com.vela.android.sync.SyncState,
     userId: String?
 ) {
@@ -330,12 +333,14 @@ fun VelaNavHost(
             composable(VelaRoutes.SETTINGS) {
                 SettingsScreen(
                     serverUrl = serverUrl,
+                    syncSettings = syncSettings,
                     syncState = syncState,
                     userId = userId,
                     onOpenDevices = { navController.navigate(VelaRoutes.DEVICES) },
                     onOpenAuditLog = { navController.navigate(VelaRoutes.AUDIT_LOG) },
                     onOpenBreachMonitor = { navController.navigate(VelaRoutes.BREACH_MONITOR) },
                     onUpdateSyncServer = onUpdateSyncServer,
+                    onUpdateSyncPreferences = onUpdateSyncPreferences,
                     onSyncNow = onSyncNow,
                     onResolveConflictUseLocal = onResolveConflictUseLocal,
                     onResolveConflictUseRemote = onResolveConflictUseRemote,

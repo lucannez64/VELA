@@ -15,8 +15,8 @@ pub mod aead;
 #[cfg(feature = "cyclo-ffi")]
 pub mod cyclo;
 pub mod error;
-pub mod kem;
 pub mod kdf;
+pub mod kem;
 pub mod oram;
 pub mod shamir;
 pub mod signing;

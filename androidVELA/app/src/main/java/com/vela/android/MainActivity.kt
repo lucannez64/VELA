@@ -18,12 +18,16 @@ import com.vela.android.ui.navigation.VelaNavHost
 import com.vela.android.ui.theme.VelaTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Arrays
 import javax.crypto.Cipher
 
 class MainActivity : FragmentActivity() {
     private var pendingCreateRms: ByteArray? = null
+    private var backgroundSyncJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,10 +64,12 @@ class MainActivity : FragmentActivity() {
                         VelaRepositories.audit.record("vault_locked")
                         VelaRepositories.security.lock()
                         VelaRepositories.vault.clearMemory()
+                        cancelBackgroundSync()
                     },
                     onReset = {
                         VelaRepositories.security.resetLocalSecurity()
                         VelaRepositories.vault.clearMemory()
+                        cancelBackgroundSync()
                     },
                     onCreateBiometricVault = ::createBiometricVault,
                     onUnlockBiometric = ::unlockBiometricVault,
@@ -71,23 +77,23 @@ class MainActivity : FragmentActivity() {
                         runCatching {
                             VelaRepositories.security.createPasswordVault(password.toCharArray())
                             VelaRepositories.vault.loadFromUnlockedSession()
+                            startBackgroundSync()
                         }.onFailure { VelaRepositories.security.setError(it.message ?: "Password vault creation failed") }
                     },
                     onUnlockPassword = { password ->
                         runCatching {
                             VelaRepositories.security.unlockWithPassword(password.toCharArray())
                             VelaRepositories.vault.loadFromUnlockedSession()
+                            onVaultUnlocked()
                         }.onFailure { VelaRepositories.security.setError("Invalid password or corrupted vault") }
                     },
                     onOpenAutofillSettings = {
-                        // Primary: system dialog to pick autofill service for this package
                         val primary = Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE).apply {
                             data = Uri.parse("package:$packageName")
                         }
                         if (primary.resolveActivity(packageManager) != null) {
                             startActivity(primary)
                         } else {
-                            // Secondary: try stock Android autofill settings page
                             val secondary = Intent(Settings.ACTION_SETTINGS).apply {
                                 setClassName("com.android.settings", "com.android.settings.Settings\$AutofillPickerActivity")
                                 putExtra("package_name", packageName)
@@ -100,7 +106,6 @@ class MainActivity : FragmentActivity() {
                             }.getOrDefault(false)
 
                             if (!resolved) {
-                                // Fallback: general settings so user can search for autofill
                                 val fallback = Intent(Settings.ACTION_SETTINGS)
                                 if (fallback.resolveActivity(packageManager) != null) {
                                     startActivity(fallback)
@@ -129,20 +134,71 @@ class MainActivity : FragmentActivity() {
                     onUpdateSyncServer = { serverUrl, token ->
                         VelaRepositories.sync.updateServer(serverUrl, token)
                     },
+                    onUpdateSyncPreferences = { syncOnStartup, backgroundSyncMinutes ->
+                        VelaRepositories.syncSettings.updateSyncPreferences(syncOnStartup, backgroundSyncMinutes)
+                        restartBackgroundSync()
+                    },
                     onNavigateToEnroll = {},
                     onEnrollDevice = { serverUrl, enrollmentCode ->
                         val rms = VelaRepositories.sync.enrollWithCode(serverUrl, enrollmentCode)
                         VelaRepositories.security.adoptRms(rms)
                         VelaRepositories.sync.syncNow()
+                        startBackgroundSync()
                     },
                     onProtectEnrolledBiometric = ::protectEnrolledBiometric,
                     onProtectEnrolledPassword = ::protectEnrolledPassword,
                     serverUrl = syncSettings.serverUrl,
+                    syncSettings = syncSettings,
                     syncState = syncState,
                     userId = VelaRepositories.serverIdentity.load()?.userId
                 )
             }
         }
+    }
+
+    private fun onVaultUnlocked() {
+        val syncSettings = VelaRepositories.syncSettings.settings.value
+        if (syncSettings.syncOnStartup && syncSettings.serverUrl.isNotBlank()) {
+            CoroutineScope(Dispatchers.IO).launch {
+                VelaRepositories.sync.syncNow()
+                VelaRepositories.audit.record("vault_sync", "sync on startup")
+            }
+        }
+        startBackgroundSync()
+    }
+
+    private fun startBackgroundSync() {
+        cancelBackgroundSync()
+        val syncSettings = VelaRepositories.syncSettings.settings.value
+        val intervalMinutes = syncSettings.backgroundSyncMinutes
+        if (intervalMinutes <= 0) return
+        backgroundSyncJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                delay(intervalMinutes * 60 * 1000L)
+                val currentSettings = VelaRepositories.syncSettings.settings.value
+                if (currentSettings.serverUrl.isNotBlank() &&
+                    VelaRepositories.security.session.value.unlocked
+                ) {
+                    VelaRepositories.sync.syncNow()
+                }
+            }
+        }
+    }
+
+    private fun restartBackgroundSync() {
+        if (VelaRepositories.security.session.value.unlocked) {
+            startBackgroundSync()
+        }
+    }
+
+    private fun cancelBackgroundSync() {
+        backgroundSyncJob?.cancel()
+        backgroundSyncJob = null
+    }
+
+    override fun onDestroy() {
+        cancelBackgroundSync()
+        super.onDestroy()
     }
 
     companion object {
@@ -169,6 +225,7 @@ class MainActivity : FragmentActivity() {
                 try {
                     VelaRepositories.security.finishBiometricVaultCreation(authenticatedCipher, generated)
                     VelaRepositories.vault.loadFromUnlockedSession()
+                    startBackgroundSync()
                 } finally {
                     generated.fill(0)
                     pendingCreateRms = null
@@ -190,6 +247,7 @@ class MainActivity : FragmentActivity() {
                 runCatching {
                     VelaRepositories.security.finishBiometricUnlock(authenticatedCipher)
                     VelaRepositories.vault.loadFromUnlockedSession()
+                    onVaultUnlocked()
                 }.onFailure { VelaRepositories.security.setError(it.message ?: "Biometric unlock failed") }
             }
         )
@@ -209,6 +267,7 @@ class MainActivity : FragmentActivity() {
                 try {
                     VelaRepositories.security.finishBiometricVaultCreation(authenticatedCipher, rmsCopy)
                     VelaRepositories.vault.loadFromUnlockedSession()
+                    onVaultUnlocked()
                 } finally {
                     rmsCopy.fill(0)
                 }
@@ -221,6 +280,7 @@ class MainActivity : FragmentActivity() {
         try {
             VelaRepositories.security.createPasswordVaultFromRms(rmsCopy, password.toCharArray())
             VelaRepositories.vault.loadFromUnlockedSession()
+            onVaultUnlocked()
         } finally {
             rmsCopy.fill(0)
         }

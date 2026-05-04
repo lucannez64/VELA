@@ -1,5 +1,8 @@
 use axum::{
+    extract::Request,
     http::header::{HeaderName, AUTHORIZATION, CONTENT_TYPE},
+    middleware::{self, Next},
+    response::Response,
     routing::{delete, get, post, put},
     Router,
 };
@@ -21,7 +24,7 @@ pub fn build(state: AppState) -> Router {
         X_LAMPORT_CLOCK.clone(),
     ];
 
-    let cors = if state.config.cors_origins == ["*"] {
+    let cors = if state.config.cors_origins == ["*"] && state.config.allow_wildcard_cors {
         CorsLayer::new()
             .allow_origin(Any)
             .allow_headers(allowed_headers.to_vec())
@@ -102,8 +105,64 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            enforce_https_for_auth,
+        ))
         .layer(cors)
         .with_state(state)
+}
+
+async fn enforce_https_for_auth(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, axum::http::StatusCode> {
+    if state.config.production
+        && !state.config.allow_insecure_lan
+        && is_auth_endpoint(req.uri().path())
+        && !request_was_https(&req)
+    {
+        return Err(axum::http::StatusCode::UPGRADE_REQUIRED);
+    }
+
+    Ok(next.run(req).await)
+}
+
+fn is_auth_endpoint(path: &str) -> bool {
+    path.starts_with("/auth/")
+        || path == "/account/register"
+        || path.starts_with("/recovery/webauthn/")
+        || path == "/recovery/initiate"
+        || path == "/recovery/recover"
+}
+
+fn request_was_https(req: &Request) -> bool {
+    let headers = req.headers();
+
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(',')
+                .next()
+                .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("https"))
+        })
+        .unwrap_or(false)
+        || headers
+            .get("forwarded")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| {
+                value
+                    .split(';')
+                    .any(|part| part.trim().eq_ignore_ascii_case("proto=https"))
+            })
+            .unwrap_or(false)
+        || headers
+            .get("x-forwarded-ssl")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("on"))
 }
 
 async fn health(

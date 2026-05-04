@@ -14,29 +14,19 @@ pub async fn authenticate() -> Result<BiometricAuthResult, String> {
 
 #[command]
 pub async fn authenticate_password(password: String) -> Result<BiometricAuthResult, String> {
-    tracing::info!("Attempting password authentication");
     tokio::task::spawn_blocking(move || match do_auth_password(&password) {
-        Some(rms) => {
-            tracing::info!(
-                "Password authentication successful, RMS length: {}",
-                rms.len()
-            );
-            Ok(BiometricAuthResult {
-                success: true,
-                error_message: None,
-                retry_count: None,
-                uses_password: true,
-            })
-        }
-        None => {
-            tracing::warn!("Password authentication failed");
-            Ok(BiometricAuthResult {
-                success: false,
-                error_message: Some("Invalid password or credential not found".to_string()),
-                retry_count: None,
-                uses_password: true,
-            })
-        }
+        Some(_) => Ok(BiometricAuthResult {
+            success: true,
+            error_message: None,
+            retry_count: None,
+            uses_password: true,
+        }),
+        None => Ok(BiometricAuthResult {
+            success: false,
+            error_message: Some("Invalid password or credential not found".to_string()),
+            retry_count: None,
+            uses_password: true,
+        }),
     })
     .await
     .map_err(|e| format!("Password auth task panicked: {}", e))?

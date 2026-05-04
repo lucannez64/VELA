@@ -39,6 +39,7 @@ pub struct AppState {
     pub rate_limiter: RwLock<HashMap<String, RateLimitState>>,
     pub token_store: RwLock<token::TokenStore>,
     pub secret_key: token::SecretKey,
+    pub ipc_capability: String,
     pub extension_connected: Arc<AtomicBool>,
 }
 
@@ -142,6 +143,7 @@ impl Default for AppState {
             rate_limiter: RwLock::new(HashMap::new()),
             token_store: RwLock::new(token::TokenStore::new()),
             secret_key: token::SecretKey::generate(),
+            ipc_capability: ipc::generate_capability(),
             extension_connected: Arc::new(AtomicBool::new(false)),
         }
     }

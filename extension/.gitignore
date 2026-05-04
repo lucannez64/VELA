@@ -2,3 +2,6 @@ node_modules/
 dist/
 package-lock.json
 bun.lockb
+native-messaging/chromium/manifest.local.json
+native-messaging/vela-native-messaging-host.exe
+native-messaging/vela-native-messaging-host.pdb

@@ -1,16 +1,25 @@
+use data_encoding::BASE64URL_NOPAD;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::Manager;
-use tracing::{error, info};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::{error, info, warn};
 
-use crate::commands::totp::generate_totp_code;
 use crate::vault::VaultItem;
 use crate::AppState;
+
+const IPC_AUTH_FILE: &str = "ipc_auth.json";
+const MAX_IPC_MESSAGE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcMessage {
     pub msg_type: IpcMessageType,
+    #[serde(default)]
     pub payload: serde_json::Value,
+    #[serde(default)]
+    pub capability: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -26,23 +35,26 @@ pub enum IpcMessageType {
     BiometricResponse,
     SessionStatus,
     SyncStatus,
+    OpenVault,
     Ping,
     Pong,
     Error,
 }
 
-impl IpcMessage {
-    pub fn autofill_request(domain: String) -> Self {
-        Self {
-            msg_type: IpcMessageType::AutofillRequest,
-            payload: serde_json::json!({ "domain": domain }),
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct IpcAuthFile {
+    version: u8,
+    protocol: String,
+    endpoint: String,
+    capability: String,
+}
 
+impl IpcMessage {
     pub fn ping() -> Self {
         Self {
             msg_type: IpcMessageType::Ping,
             payload: serde_json::json!({}),
+            capability: None,
         }
     }
 
@@ -50,6 +62,7 @@ impl IpcMessage {
         Self {
             msg_type: IpcMessageType::Pong,
             payload: serde_json::json!({ "connected": true }),
+            capability: None,
         }
     }
 
@@ -57,200 +70,149 @@ impl IpcMessage {
         Self {
             msg_type: IpcMessageType::Error,
             payload: serde_json::json!({ "message": message }),
+            capability: None,
         }
     }
 }
 
+pub fn generate_capability() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    BASE64URL_NOPAD.encode(&bytes)
+}
+
 pub mod server {
     use super::*;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-    use tokio::net::TcpStream;
 
-    pub const PORT: u16 = 14597;
-
-    pub struct IpcServer;
+    pub struct IpcServer {
+        capability: String,
+    }
 
     impl IpcServer {
-        pub fn new() -> Self {
-            Self
+        pub fn new(capability: String) -> Self {
+            Self { capability }
         }
 
         pub async fn start(&self, app_handle: tauri::AppHandle) {
-            let addr = format!("127.0.0.1:{}", PORT);
-            let _app_handle = app_handle.clone();
+            let state = app_handle.state::<Arc<AppState>>();
+            let auth_path = state.store.store_path().join(IPC_AUTH_FILE);
+            drop(state);
 
-            match TcpListener::bind(&addr).await {
-                Ok(listener) => {
-                    info!("IPC server listening on {}", addr);
+            if let Err(e) = write_auth_file(
+                &auth_path,
+                &self.capability,
+                platform_protocol(),
+                &platform_endpoint(),
+            ) {
+                error!("Failed to write IPC auth file: {}", e);
+                return;
+            }
 
-                    loop {
-                        match listener.accept().await {
-                            Ok((stream, client_addr)) => {
-                                info!("IPC server: client connected from {}", client_addr);
-                                let app_handle = _app_handle.clone();
-                                {
-                                    let state =
-                                        app_handle.state::<std::sync::Arc<crate::AppState>>();
-                                    state
-                                        .extension_connected
-                                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                                }
-                                tokio::spawn(async move {
-                                    if let Err(e) =
-                                        handle_connection(stream, app_handle.clone()).await
-                                    {
-                                        error!("Connection error: {:?}", e);
-                                    }
-                                    info!("IPC server: client disconnected");
-                                    let state =
-                                        app_handle.state::<std::sync::Arc<crate::AppState>>();
-                                    state
-                                        .extension_connected
-                                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                                });
-                            }
-                            Err(e) => {
-                                error!("Failed to accept connection: {:?}", e);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to bind to {}: {}", addr, e);
-                }
+            if let Err(e) = start_platform_server(app_handle, self.capability.clone()).await {
+                error!("IPC server stopped: {}", e);
             }
         }
     }
 
-    async fn handle_connection(
-        mut stream: TcpStream,
+    fn write_auth_file(
+        path: &PathBuf,
+        capability: &str,
+        protocol: &str,
+        endpoint: &str,
+    ) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let auth = IpcAuthFile {
+            version: 1,
+            protocol: protocol.to_string(),
+            endpoint: endpoint.to_string(),
+            capability: capability.to_string(),
+        };
+        let json = serde_json::to_vec(&auth)?;
+        std::fs::write(path, json)?;
+        restrict_file(path)?;
+        Ok(())
+    }
+
+    fn restrict_file(path: &PathBuf) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+        }
+        Ok(())
+    }
+
+    async fn handle_connection<S>(
+        mut stream: S,
         app_handle: tauri::AppHandle,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let (mut rd, mut wr) = stream.split();
-        let mut buffer = String::new();
-        let mut content_length: Option<usize> = None;
-
-        loop {
-            let mut tmp_buf = vec![0u8; 4096];
-            match rd.read(&mut tmp_buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = &tmp_buf[..n];
-                    if let Ok(text) = std::str::from_utf8(data) {
-                        buffer.push_str(text);
-                    }
-
-                    if let Some(cl) = content_length {
-                        let header_end = buffer.find("\r\n\r\n").map(|p| p + 4);
-                        let body_start = header_end.unwrap_or(buffer.len());
-                        let current_body_len = buffer.len() - body_start;
-
-                        if current_body_len >= cl {
-                            let body = &buffer[body_start..body_start + cl];
-                            handle_json_message(&mut wr, body, &app_handle).await?;
-                            buffer.clear();
-                            content_length = None;
-                        }
-                    } else {
-                        if let Some(start) = buffer.find("Content-Length: ") {
-                            let rest = &buffer[start + 16..];
-                            if let Some(end) = rest.find("\r\n") {
-                                if let Ok(cl) = rest[..end].trim().parse::<usize>() {
-                                    content_length = Some(cl);
-                                }
-                            }
-                        }
-
-                        if buffer.contains("\r\n\r\n") {
-                            if let Some(cl) = content_length {
-                                let body_start = buffer.find("\r\n\r\n").unwrap() + 4;
-                                let current_body_len = buffer.len() - body_start;
-
-                                if current_body_len >= cl {
-                                    let body = &buffer[body_start..body_start + cl];
-                                    handle_json_message(&mut wr, body, &app_handle).await?;
-                                    buffer.clear();
-                                    content_length = None;
-                                }
-                            } else if buffer.starts_with("GET /ping") {
-                                handle_ping_request(&mut wr, &app_handle).await?;
-                                buffer.clear();
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Read error: {:?}", e);
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_ping_request(
-        wr: &mut tokio::net::tcp::WriteHalf<'_>,
-        app_handle: &tauri::AppHandle,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let response = process_message(IpcMessage::ping(), app_handle).await;
-        let body = serde_json::to_string(&response)?;
-
-        let http_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        wr.write_all(http_response.as_bytes()).await?;
-        wr.flush().await?;
-
-        Ok(())
-    }
-
-    async fn handle_json_message(
-        wr: &mut tokio::net::tcp::WriteHalf<'_>,
-        text: &str,
-        app_handle: &tauri::AppHandle,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let text = text.trim();
-        if text.is_empty() {
-            return Ok(());
-        }
-
-        info!("Received: {}", text);
-
-        let message: IpcMessage = match serde_json::from_str(text) {
-            Ok(m) => m,
+        capability: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let message = read_frame(&mut stream).await?;
+        let response = match serde_json::from_slice::<IpcMessage>(&message) {
+            Ok(message) => process_message(message, &app_handle, &capability).await,
             Err(e) => {
-                error!("Failed to parse message: {:?}", e);
-                return Ok(());
+                warn!("Rejected malformed IPC message: {}", e);
+                IpcMessage::error("Malformed IPC message".to_string())
             }
         };
-
-        let response = process_message(message, app_handle).await;
-
-        let body = serde_json::to_string(&response)?;
-
-        let http_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        );
-
-        wr.write_all(http_response.as_bytes()).await?;
-        wr.flush().await?;
-
+        let body = serde_json::to_vec(&response)?;
+        write_frame(&mut stream, &body).await?;
+        stream.shutdown().await?;
         Ok(())
     }
 
-    async fn process_message(message: IpcMessage, app_handle: &tauri::AppHandle) -> IpcMessage {
+    async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Vec<u8>> {
+        let mut len_bytes = [0u8; 4];
+        reader.read_exact(&mut len_bytes).await?;
+        let len = u32::from_le_bytes(len_bytes) as usize;
+        if len == 0 || len > MAX_IPC_MESSAGE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid IPC frame length",
+            ));
+        }
+        let mut body = vec![0u8; len];
+        reader.read_exact(&mut body).await?;
+        Ok(body)
+    }
+
+    async fn write_frame<W: AsyncWrite + Unpin>(
+        writer: &mut W,
+        body: &[u8],
+    ) -> std::io::Result<()> {
+        writer.write_all(&(body.len() as u32).to_le_bytes()).await?;
+        writer.write_all(body).await?;
+        writer.flush().await
+    }
+
+    async fn process_message(
+        message: IpcMessage,
+        app_handle: &tauri::AppHandle,
+        capability: &str,
+    ) -> IpcMessage {
         info!("Processing IPC message: {:?}", message.msg_type);
+
+        if message.capability.as_deref() != Some(capability) {
+            warn!("Rejected IPC message with missing or invalid capability");
+            return IpcMessage::error("Unauthorized IPC request".to_string());
+        }
 
         match message.msg_type {
             IpcMessageType::Ping => IpcMessage::pong(),
+            IpcMessageType::OpenVault => {
+                focus_main_window(app_handle);
+                IpcMessage::pong()
+            }
             IpcMessageType::AutofillRequest => handle_autofill_request(&message, app_handle).await,
             _ => IpcMessage::error("Unknown message type".to_string()),
         }
@@ -267,31 +229,175 @@ pub mod server {
             .unwrap_or("")
             .to_string();
 
-        info!("Autofill request for URL: {}", url);
-
         let base_domain = extract_base_domain(&url);
-        info!("Extracted base domain: {}", base_domain);
-
+        let user_initiated = message
+            .payload
+            .get("user_initiated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let state = app_handle.state::<Arc<AppState>>();
+
+        {
+            let session = state.session.read();
+            if !session.active || session.is_expired() {
+                if user_initiated {
+                    focus_main_window(app_handle);
+                }
+                return autofill_response(Vec::new(), true);
+            }
+        }
+
         let vault = state.vault.read();
         let items = vault.search_by_domain(&base_domain);
+        if user_initiated {
+            let items_clone: Vec<_> = items.into_iter().cloned().collect();
+            return autofill_response(items_clone, false);
+        }
 
-        let items_clone: Vec<_> = items.into_iter().cloned().collect();
+        let metadata: Vec<_> = items
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "item_type": "login",
+                    "id": item.id(),
+                    "name": item.name(),
+                    "username": item.username(),
+                    "url": item.url(),
+                })
+            })
+            .collect();
+        autofill_value_response(serde_json::Value::Array(metadata), false)
+    }
 
+    fn focus_main_window(app_handle: &tauri::AppHandle) {
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+
+    fn autofill_response(items: Vec<VaultItem>, requires_biometric: bool) -> IpcMessage {
+        autofill_value_response(serde_json::json!(items), requires_biometric)
+    }
+
+    fn autofill_value_response(items: serde_json::Value, requires_biometric: bool) -> IpcMessage {
         IpcMessage {
             msg_type: IpcMessageType::AutofillResponse,
             payload: serde_json::json!({
-                "items": items_clone,
-                "requires_biometric": false
+                "items": items,
+                "requires_biometric": requires_biometric
             }),
+            capability: None,
         }
+    }
+
+    #[cfg(windows)]
+    fn platform_protocol() -> &'static str {
+        "windows_named_pipe"
+    }
+
+    #[cfg(windows)]
+    fn platform_endpoint() -> String {
+        format!(r"\\.\pipe\vela-desktop-{}", std::process::id())
+    }
+
+    #[cfg(unix)]
+    fn platform_protocol() -> &'static str {
+        "unix_socket"
+    }
+
+    #[cfg(unix)]
+    fn platform_endpoint() -> String {
+        let base = std::env::var("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir());
+        base.join(format!("vela-desktop-{}.sock", std::process::id()))
+            .to_string_lossy()
+            .to_string()
+    }
+
+    #[cfg(windows)]
+    async fn start_platform_server(
+        app_handle: tauri::AppHandle,
+        capability: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let endpoint = platform_endpoint();
+        info!("IPC server listening on Windows named pipe");
+
+        loop {
+            let server = ServerOptions::new().create(&endpoint)?;
+            server.connect().await?;
+            let app_handle = app_handle.clone();
+            let capability = capability.clone();
+            tokio::spawn(async move {
+                let state = app_handle.state::<Arc<AppState>>();
+                state
+                    .extension_connected
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Err(e) = handle_connection(server, app_handle.clone(), capability).await {
+                    error!("IPC connection error: {}", e);
+                }
+                let state = app_handle.state::<Arc<AppState>>();
+                state
+                    .extension_connected
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+            });
+        }
+    }
+
+    #[cfg(unix)]
+    async fn start_platform_server(
+        app_handle: tauri::AppHandle,
+        capability: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use tokio::net::UnixListener;
+
+        let endpoint = platform_endpoint();
+        let _ = std::fs::remove_file(&endpoint);
+        let listener = UnixListener::bind(&endpoint)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&endpoint, std::fs::Permissions::from_mode(0o600))?;
+        }
+        info!("IPC server listening on Unix domain socket");
+
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let app_handle = app_handle.clone();
+            let capability = capability.clone();
+            tokio::spawn(async move {
+                let state = app_handle.state::<Arc<AppState>>();
+                state
+                    .extension_connected
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Err(e) = handle_connection(stream, app_handle.clone(), capability).await {
+                    error!("IPC connection error: {}", e);
+                }
+                let state = app_handle.state::<Arc<AppState>>();
+                state
+                    .extension_connected
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+            });
+        }
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    async fn start_platform_server(
+        _app_handle: tauri::AppHandle,
+        _capability: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Err("No supported local IPC transport for this platform".into())
     }
 }
 
 fn extract_base_domain(url: &str) -> String {
     let url = url.trim();
 
-    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://") {
+    if url.starts_with("http://") || url.starts_with("https://") {
         if let Ok(parsed) = url::Url::parse(url) {
             if let Some(host) = parsed.host_str() {
                 let host = host.to_lowercase();

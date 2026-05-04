@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vela.android.sync.SyncSettings
 import com.vela.android.sync.SyncState
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
@@ -57,12 +58,14 @@ import com.vela.android.ui.theme.VelaColors
 @Composable
 fun SettingsScreen(
     serverUrl: String,
+    syncSettings: SyncSettings,
     syncState: SyncState,
     userId: String?,
     onOpenDevices: () -> Unit,
     onOpenAuditLog: () -> Unit,
     onOpenBreachMonitor: () -> Unit,
     onUpdateSyncServer: (String, String) -> Unit,
+    onUpdateSyncPreferences: (Boolean, Int) -> Unit,
     onSyncNow: () -> Unit,
     onResolveConflictUseLocal: () -> Unit,
     onResolveConflictUseRemote: () -> Unit,
@@ -71,6 +74,8 @@ fun SettingsScreen(
     onReset: () -> Unit
 ) {
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
+    var syncOnStartup by remember(syncSettings.syncOnStartup) { mutableStateOf(syncSettings.syncOnStartup) }
+    var backgroundSyncMinutes by remember(syncSettings.backgroundSyncMinutes) { mutableStateOf(syncSettings.backgroundSyncMinutes) }
 
     Column(
         modifier = Modifier
@@ -223,6 +228,79 @@ fun SettingsScreen(
                     enabled = serverUrl.isNotBlank() && !syncState.syncing,
                     modifier = Modifier.weight(1f)
                 )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Sync on startup",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VelaColors.TextPrimary
+                    )
+                    Text(
+                        "Automatically sync when vault is unlocked",
+                        fontSize = 12.sp,
+                        color = VelaColors.TextMuted
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (syncOnStartup) "On" else "Off",
+                        fontSize = 13.sp,
+                        color = if (syncOnStartup) VelaColors.Green else VelaColors.TextMuted
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    VelaButton(
+                        text = if (syncOnStartup) "Disable" else "Enable",
+                        onClick = {
+                            syncOnStartup = !syncOnStartup
+                            onUpdateSyncPreferences(syncOnStartup, backgroundSyncMinutes)
+                        },
+                        style = if (syncOnStartup) VelaButtonStyle.Surface else VelaButtonStyle.Primary,
+                        fullWidth = false
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Background sync",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VelaColors.TextPrimary
+                    )
+                    Text(
+                        "Periodically sync while vault is unlocked",
+                        fontSize = 12.sp,
+                        color = VelaColors.TextMuted
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    listOf(1, 5, 15, 30).forEach { minutes ->
+                        VelaButton(
+                            text = "${minutes}m",
+                            onClick = {
+                                backgroundSyncMinutes = minutes
+                                onUpdateSyncPreferences(syncOnStartup, backgroundSyncMinutes)
+                            },
+                            style = if (backgroundSyncMinutes == minutes) VelaButtonStyle.Primary else VelaButtonStyle.Surface,
+                            fullWidth = false
+                        )
+                        if (minutes != 30) Spacer(Modifier.width(6.dp))
+                    }
+                }
             }
 
             if (syncState.lastSyncedAt != null) {

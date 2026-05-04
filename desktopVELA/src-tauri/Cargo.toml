@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "2.0", features = [] }
+tauri-build = { version = "2.6.0", features = [] }
 [dependencies]
-tauri = { version = "2.0", features = ["tray-icon", "image-png"] }
+tauri = { version = "2.11.0", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2.0"
 tauri-plugin-global-shortcut = "2.0"
 tauri-plugin-notification = "2.0"
@@ -29,11 +29,9 @@ sha1 = "0.10"
 hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
-bincode = "1.3"
 directories = "5"
 data-encoding = "2"
 subtle = "2"
-paseto = "2"
 url = "2"
 base64 = "0.22"
 urlencoding = "2"

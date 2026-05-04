@@ -82,9 +82,14 @@ impl Share {
         }
         let x = bytes[0];
         if x == 0 {
-            return Err(VelaError::ShamirError("x-coordinate must be non-zero".into()));
+            return Err(VelaError::ShamirError(
+                "x-coordinate must be non-zero".into(),
+            ));
         }
-        Ok(Self { x, y: bytes[1..].to_vec() })
+        Ok(Self {
+            x,
+            y: bytes[1..].to_vec(),
+        })
     }
 }
 
@@ -122,10 +127,7 @@ pub fn split(secret: &[u8], threshold: u8, n: u8) -> Result<Vec<Share>> {
     // Evaluate each polynomial at x = 1, 2, …, n.
     let shares: Vec<Share> = (1..=n)
         .map(|x| {
-            let y: Vec<u8> = coefficients
-                .iter()
-                .map(|poly| eval_poly(poly, x))
-                .collect();
+            let y: Vec<u8> = coefficients.iter().map(|poly| eval_poly(poly, x)).collect();
             Share { x, y }
         })
         .collect();
@@ -176,7 +178,10 @@ pub fn reconstruct(shares: &[Share], secret_len: usize) -> Result<Vec<u8>> {
     let mut secret = vec![0u8; secret_len];
     for byte_idx in 0..secret_len {
         secret[byte_idx] = lagrange_interpolate_at_zero(
-            &shares.iter().map(|s| (s.x, s.y[byte_idx])).collect::<Vec<_>>(),
+            &shares
+                .iter()
+                .map(|s| (s.x, s.y[byte_idx]))
+                .collect::<Vec<_>>(),
         );
     }
     Ok(secret)
@@ -260,7 +265,10 @@ mod tests {
         assert_eq!(r, RMS);
         // 2 shares → wrong result (not an error per SSS, just wrong value)
         let r2 = reconstruct(&shares[0..2], RMS.len()).unwrap();
-        assert_ne!(r2, RMS, "2 shares must not reconstruct the secret in a 3-of-5 scheme");
+        assert_ne!(
+            r2, RMS,
+            "2 shares must not reconstruct the secret in a 3-of-5 scheme"
+        );
     }
 
     #[test]

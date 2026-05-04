@@ -3,12 +3,14 @@ if (typeof browser === "undefined") {
 }
 
 const AUTOFILL_PORT = "injected-script";
-const NATIVEMessaging_PORT = "vela-desktop";
+const NATIVEMessaging_PORT = "com.vela.desktop";
+const LOGIN_REQUEST_DEDUP_MS = 1500;
 
 const { runtime, tabs, contextMenus, commands, action } = browser;
 
 let desktopConnection = null;
 let activeTabId = null;
+const loginRequestCache = new Map();
 
 function base32ToBytes(base32) {
   const base32Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -196,6 +198,10 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "saveCredentials":
       handleSaveCredentials(data, sendResponse);
       break;
+    case "openVault":
+    case "openSettings":
+      handleOpenDesktop(command, sendResponse);
+      return true;
     case "triggerAutofillWithLogin":
       handleTriggerAutofillWithLogin(data, sender, sendResponse);
       return true;
@@ -254,28 +260,25 @@ async function handleFillForm(data, sender, sendResponse) {
 async function handleGetLogins(data, sendResponse) {
   try {
     const { url } = data;
-    console.log("[VELA] handleGetLogins for URL:", url);
-    let domain;
-    try { domain = new URL(url).hostname.replace(/^www\./, ""); } catch (_) { domain = url; }
-    const response = await sendHttpMessage({
-      msg_type: "AutofillRequest",
-      payload: { domain }
-    });
+    const domain = getHttpDomain(url);
+    if (!domain) {
+      sendResponse({ success: false, ignored: true, logins: [] });
+      return;
+    }
+    console.log("[VELA] handleGetLogins for domain:", domain);
+    const response = await requestLogins(domain, true);
     console.log("[VELA] handleGetLogins response:", JSON.stringify(response));
 
-    if (response && response.msg_type === "AutofillResponse") {
-      const items = response.payload?.items || [];
+    if (response && response.success && Array.isArray(response.logins)) {
       const logins = await Promise.all(
-        items.filter(item => item.item_type === "login").map(async item => ({
-          id: item.id,
-          name: item.name,
-          username: item.username,
-          password: item.password,
-          totp: await computeLoginTOTP(item),
-          url: item.url
+        response.logins.map(async item => ({
+          ...item,
+          totp: await computeLoginTOTP(item)
         }))
       );
       sendResponse({ success: true, logins });
+    } else if (response && response.requires_biometric) {
+      sendResponse({ success: false, requires_biometric: true, logins: [] });
     } else {
       sendResponse({ success: false, logins: [] });
     }
@@ -288,31 +291,28 @@ async function handleGetLogins(data, sendResponse) {
 async function handleGetAvailableLogins(data, sendResponse) {
   try {
     const { url } = data;
-    console.log("[VELA] handleGetAvailableLogins for URL:", url);
-    let domain;
-    try { domain = new URL(url).hostname.replace(/^www\./, ""); } catch (_) { domain = url; }
-    const response = await sendHttpMessage({
-      msg_type: "AutofillRequest",
-      payload: { domain }
-    });
+    const userInitiated = data.userInitiated === true;
+    const domain = getHttpDomain(url);
+    if (!domain) {
+      sendResponse({ success: false, ignored: true, logins: [] });
+      return;
+    }
+    console.log("[VELA] handleGetAvailableLogins for domain:", domain, "userInitiated:", userInitiated);
+    const response = await requestLogins(domain, userInitiated);
     console.log("[VELA] handleGetAvailableLogins response:", JSON.stringify(response));
 
-    if (response && (response.msg_type === "AutofillResponse" || response.msg_type === "autofill_response")) {
-      const items = response.payload?.items || [];
+    if (response && response.success && Array.isArray(response.logins)) {
       const logins = await Promise.all(
-        items.filter(item => item.item_type === "login").map(async item => ({
-          id: item.id,
-          name: item.name,
-          username: item.username,
-          password: item.password,
-          totp: await computeLoginTOTP(item),
-          url: item.url
+        response.logins.map(async item => ({
+          ...item,
+          totp: await computeLoginTOTP(item)
         }))
       );
       console.log("[VELA] Found logins:", logins.length);
       sendResponse({ success: true, logins });
+    } else if (response && response.requires_biometric) {
+      sendResponse({ success: false, requires_biometric: true, logins: [] });
     } else {
-      console.log("[VELA] No AutofillResponse in response");
       sendResponse({ success: false, logins: [] });
     }
   } catch (error) {
@@ -321,9 +321,58 @@ async function handleGetAvailableLogins(data, sendResponse) {
   }
 }
 
+function getHttpDomain(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.hostname.replace(/^www\./, "");
+  } catch (_) {
+    return null;
+  }
+}
+
+function requestLogins(domain, userInitiated) {
+  const key = `${domain}:${userInitiated ? "explicit" : "passive"}`;
+  const now = Date.now();
+  const cached = loginRequestCache.get(key);
+  if (cached && now - cached.startedAt < LOGIN_REQUEST_DEDUP_MS) {
+    return cached.promise;
+  }
+
+  const promise = sendNativeMessage({
+    action: userInitiated ? "getLogins" : "getAvailableLogins",
+    url: domain,
+    userInitiated
+  }).finally(() => {
+    const current = loginRequestCache.get(key);
+    if (current && current.promise === promise) {
+      setTimeout(() => {
+        const latest = loginRequestCache.get(key);
+        if (latest && latest.promise === promise) {
+          loginRequestCache.delete(key);
+        }
+      }, LOGIN_REQUEST_DEDUP_MS);
+    }
+  });
+
+  loginRequestCache.set(key, { startedAt: now, promise });
+  return promise;
+}
+
 async function handleNativeMessage(data, sendResponse) {
   try {
     const response = await sendNativeMessage(data);
+    sendResponse(response || { success: false });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleOpenDesktop(command, sendResponse) {
+  try {
+    const response = await sendNativeMessage({ action: command });
     sendResponse(response || { success: false });
   } catch (error) {
     sendResponse({ success: false, error: error.message });
@@ -357,21 +406,11 @@ async function getActiveTabId() {
 
 async function handleSaveCredentials(data, sendResponse) {
   try {
-    const response = await sendHttpMessage({
-      msg_type: "SaveCredentials",
-      payload: {
-        name: data.name || "",
-        username: data.username || "",
-        password: data.password || "",
-        url: data.url || ""
-      }
-    });
-
-    if (response && (response.success || response.msg_type === "SaveCredentialsResponse")) {
+    const response = await sendNativeMessage({ action: "saveCredentials", ...data });
+    if (response && response.success) {
       sendResponse({ success: true });
     } else {
-      const nativeResp = await sendNativeMessage({ action: "saveCredentials", ...data });
-      sendResponse(nativeResp || { success: false });
+      sendResponse(response || { success: false });
     }
   } catch (error) {
     sendResponse({ success: false, error: error.message });
@@ -401,7 +440,6 @@ function checkDesktopConnection(sendResponse) {
     }
   };
 
-  checkHttpConnection().then(checkResult);
   sendNativeMessage({ action: "ping" }).then(checkResult);
 
   setTimeout(() => {
@@ -424,32 +462,6 @@ function isConnectedResponse(response) {
   return false;
 }
 
-async function checkHttpConnection() {
-  console.log("[VELA] Trying HTTP connection to port 14597...");
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-    const response = await fetch("http://localhost:14597/ping", {
-      method: "GET",
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-    console.log("[VELA] HTTP response status:", response.status);
-
-    if (response.ok) {
-      const data = await response.json().catch(() => ({}));
-      console.log("[VELA] HTTP response data:", JSON.stringify(data));
-      return { success: true, ...data };
-    }
-    return { success: false };
-  } catch (err) {
-    console.log("[VELA] HTTP connection error:", err.message);
-    return { success: false };
-  }
-}
-
 function sendNativeMessage(message) {
   console.log("[VELA] Trying native messaging...");
   return new Promise((resolve) => {
@@ -470,34 +482,6 @@ function sendNativeMessage(message) {
         resolve({ success: false, error: error.message });
       });
   });
-}
-
-async function sendHttpMessage(message) {
-  console.log("[VELA] Sending HTTP message:", JSON.stringify(message));
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch("http://localhost:14597/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-    console.log("[VELA] HTTP POST response status:", response.status);
-
-    if (response.ok) {
-      const data = await response.json().catch(() => ({ success: true }));
-      console.log("[VELA] HTTP POST response data:", JSON.stringify(data));
-      return data;
-    }
-    return { success: false, error: `HTTP ${response.status}` };
-  } catch (error) {
-    console.log("[VELA] HTTP POST error:", error.message);
-    return { success: false, error: error.message };
-  }
 }
 
 function handleAutofillMessage(message, port) {

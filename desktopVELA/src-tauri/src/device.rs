@@ -226,7 +226,6 @@ pub mod tpm {
         std::fs::write(&encrypted_path, &protected_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to write TPM-protected key: {}", e))?;
 
-        tracing::info!("RMS sealed to TPM 2.0 successfully");
         Ok(())
     }
 
@@ -248,7 +247,6 @@ pub mod tpm {
         let mut result = [0u8; 32];
         result.copy_from_slice(&key);
 
-        tracing::info!("RMS unsealed from TPM 2.0 successfully");
         Ok(result)
     }
 
@@ -549,7 +547,6 @@ pub mod tpm {
         match output {
             Ok(o) if o.status.success() => {
                 std::fs::write(&sealed_path, b"sealed")?;
-                tracing::info!("RMS sealed to TPM 2.0 successfully");
                 Ok(())
             }
             Ok(o) => {
@@ -626,7 +623,6 @@ pub mod tpm {
                 let mut result = [0u8; 32];
                 result.copy_from_slice(&data);
 
-                tracing::info!("RMS unsealed from TPM 2.0 successfully");
                 Ok(result)
             }
             Ok(o) => {
@@ -652,7 +648,6 @@ pub mod tpm {
             }
         }
 
-        tracing::info!("TPM sealed key deleted");
         Ok(())
     }
 

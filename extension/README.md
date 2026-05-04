@@ -108,17 +108,18 @@ bun run build:firefox
 
 ### Native Messaging Setup
 
-Native messaging is **optional** — the extension communicates with the desktop app over HTTP (`localhost:14597`) by default. Register native messaging for a more reliable fallback.
+Native messaging is required. The extension does not talk to localhost HTTP; it sends requests through the browser native messaging API, and the host relays them to the desktop app over an OS-protected pipe/socket with a per-session capability token.
 
 #### All Chromium Browsers
 
 ```bash
 # Linux / macOS
 chmod +x native-messaging/register-host.sh native-messaging/vela-native-messaging-host.py
+export VELA_CHROME_EXTENSION_ID=<your-audited-extension-id>
 ./native-messaging/register-host.sh
 ```
 
-On Windows, run `native-messaging\register-host.bat`.
+On Windows, set `VELA_CHROME_EXTENSION_ID` and run `native-messaging\register-host.bat`.
 
 This registers for: Chrome, Edge, Brave, Thorium, Helium, Vivaldi, Opera, Arc.
 
@@ -179,7 +180,7 @@ The `dist/chrome/` build works with **any Chromium-based browser**. The `dist/fi
 
 ### Native Messaging: Chromium Forks
 
-All Chromium forks use the same native messaging protocol. The `chrome-extension://*` wildcard in the host manifest covers every Chromium-based browser. Each fork reads the host manifest from its own config directory — the registration scripts handle all known paths.
+All Chromium forks use the same native messaging protocol. The host manifest must name the audited extension ID exactly as `chrome-extension://<id>/`; wildcard origins are rejected by the registration scripts. Each fork reads the host manifest from its own config directory, and the registration scripts handle all known paths.
 
 ### Native Messaging: Gecko Forks
 

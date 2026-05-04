@@ -96,9 +96,16 @@ async fn authenticate_for_sync(
     device_id: &str,
 ) -> Result<String, String> {
     let identity_keys = state
+        .crypto
+        .read()
+        .as_ref()
+        .ok_or_else(|| "Vault is locked".to_string())
+        .and_then(|crypto| {
+            state
         .store
-        .load_identity_keys()
-        .map_err(|e| format!("Failed to load identity keys: {e}"))?
+                .load_identity_keys(crypto)
+                .map_err(|e| format!("Failed to load identity keys: {e}"))
+        })?
         .ok_or_else(|| {
             "No server identity keys found. Re-enroll this vault or create it with a server URL configured.".to_string()
         })?;

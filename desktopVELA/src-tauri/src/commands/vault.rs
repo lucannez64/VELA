@@ -716,8 +716,6 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
     let prefix = &hash_hex[..5];
     let suffix = &hash_hex[5..];
 
-    tracing::info!("Checking password hash prefix: {}...", prefix);
-
     let client = reqwest::Client::new();
     let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
 
@@ -738,7 +736,6 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
                         let count: u32 = parts[1].parse().unwrap_or(0);
 
                         if hash_suffix == suffix {
-                            tracing::info!("Password found in breach with count: {}", count);
                             return Ok(PasswordBreachResult {
                                 breached: true,
                                 count,
@@ -752,7 +749,6 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
                     }
                 }
 
-                tracing::info!("Password not found in breaches");
                 Ok(PasswordBreachResult {
                     breached: false,
                     count: 0,
@@ -766,10 +762,7 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
                 ))
             }
         }
-        Err(e) => {
-            tracing::error!("Failed to check password: {}", e);
-            Err(format!("Network error: {}", e))
-        }
+        Err(e) => Err(format!("Network error: {}", e)),
     }
 }
 
@@ -793,8 +786,6 @@ pub async fn check_all_vault_passwords(
             })
             .collect()
     };
-
-    tracing::info!("Checking {} unique passwords", passwords.len());
 
     let client = reqwest::Client::new();
     let mut results: Vec<PasswordBreachResult> = Vec::new();

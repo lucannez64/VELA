@@ -3,9 +3,31 @@
     <cloud-backup>
         <exclude domain="file" path="rms.enc" />
         <exclude domain="file" path="session.json" />
+        <exclude domain="file" path="security/" />
+        <exclude domain="file" path="security/rms_biometric.blob" />
+        <exclude domain="file" path="security/rms_password.blob" />
+        <exclude domain="file" path="vault/" />
+        <exclude domain="file" path="vault/vault.enc" />
+        <exclude domain="file" path="identity_keys.enc" />
+        <exclude domain="file" path="device_id.json" />
+        <exclude domain="file" path="tokens/" />
+        <exclude domain="file" path="session/" />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="rms.enc" />
         <exclude domain="file" path="session.json" />
+        <exclude domain="file" path="security/" />
+        <exclude domain="file" path="security/rms_biometric.blob" />
+        <exclude domain="file" path="security/rms_password.blob" />
+        <exclude domain="file" path="vault/" />
+        <exclude domain="file" path="vault/vault.enc" />
+        <exclude domain="file" path="identity_keys.enc" />
+        <exclude domain="file" path="device_id.json" />
+        <exclude domain="file" path="tokens/" />
+        <exclude domain="file" path="session/" />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
     </device-transfer>
 </data-extraction-rules>

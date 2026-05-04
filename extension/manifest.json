@@ -16,8 +16,8 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*/*", "file:///*"],
-      "exclude_matches": ["*://*/*.xml*", "file:///*.xml*"],
+      "matches": ["https://*/*", "http://*/*"],
+      "exclude_matches": ["*://*/*.xml*"],
       "js": ["src/shared/autofill-utils.js", "src/content/content-script.js"],
       "css": ["src/content/content-styles.css"],
       "run_at": "document_start",
@@ -38,29 +38,21 @@
   },
   "permissions": [
     "activeTab",
-    "clipboardRead",
     "clipboardWrite",
     "storage",
     "tabs",
     "nativeMessaging",
-    "alarms",
     "contextMenus",
-    "idle",
-    "scripting",
     "webNavigation",
-    "webRequest",
     "notifications"
   ],
-  "host_permissions": [
-    "https://*/*",
-    "http://*/*"
-  ],
+  "host_permissions": [],
   "web_accessible_resources": [
     {
       "resources": [
         "src/content/content-script.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": ["https://*/*", "http://*/*"]
     }
   ],
   "commands": {
