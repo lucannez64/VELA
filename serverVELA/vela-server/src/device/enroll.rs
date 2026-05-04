@@ -2,6 +2,7 @@ use axum::{extract::State, Json};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
@@ -38,6 +39,7 @@ pub async fn post_enroll(
     State(state): State<AppState>,
     Json(body): Json<EnrollRequest>,
 ) -> Result<Json<EnrollResponse>> {
+    let enrolling_device_id_str = body.enrolling_device_id.to_string();
     let challenge_key = format!("challenge:{}", body.challenge);
     let consumed = state.store.get_del(&challenge_key)?;
     if consumed.is_none() {
@@ -55,7 +57,7 @@ pub async fn post_enroll(
                 revoked_at, revoked_by, created_at
          FROM devices
          WHERE id = $1 AND revoked = FALSE",
-            stoolap::params![body.enrolling_device_id.to_string()],
+            stoolap::params![enrolling_device_id_str.clone()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -65,6 +67,21 @@ pub async fn post_enroll(
         .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let device_a = crate::db::parse_device_row(&row)?;
+
+    let challenge_bytes = B64
+        .decode(&body.challenge)
+        .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&challenge_bytes);
+    hasher.update(enrolling_device_id_str.as_bytes());
+    let expected_hash_hex = hex::encode(hasher.finalize());
+
+    if body.committed_hash != expected_hash_hex {
+        return Err(AppError::BadRequest(
+            "committed_hash does not match challenge".into(),
+        ));
+    }
 
     verify_cyclo_proof(&device_a.cyclo_pk, &body.committed_hash, &body.proof)?;
 
@@ -139,7 +156,7 @@ pub async fn post_enroll(
             crate::db::encode_b64(&new_hybrid_ek),
             crate::db::encode_b64(&new_hybrid_vk_bytes),
             crate::db::encode_b64(&new_cyclo_pk),
-            body.enrolling_device_id.to_string(),
+            enrolling_device_id_str,
             crate::db::encode_b64(&rms_capsule),
             now,
         ],
