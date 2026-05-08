@@ -83,6 +83,7 @@ pub fn generate_capability() -> String {
 
 pub mod server {
     use super::*;
+    use std::process::Command;
 
     pub struct IpcServer {
         capability: String,
@@ -97,18 +98,18 @@ pub mod server {
             let state = app_handle.state::<Arc<AppState>>();
             let auth_path = state.store.store_path().join(IPC_AUTH_FILE);
             drop(state);
+            let endpoint = platform_endpoint();
 
-            if let Err(e) = write_auth_file(
-                &auth_path,
-                &self.capability,
-                platform_protocol(),
-                &platform_endpoint(),
-            ) {
+            if let Err(e) =
+                write_auth_file(&auth_path, &self.capability, platform_protocol(), &endpoint)
+            {
                 error!("Failed to write IPC auth file: {}", e);
                 return;
             }
 
-            if let Err(e) = start_platform_server(app_handle, self.capability.clone()).await {
+            if let Err(e) =
+                start_platform_server(app_handle, self.capability.clone(), endpoint).await
+            {
                 error!("IPC server stopped: {}", e);
             }
         }
@@ -142,11 +143,50 @@ pub mod server {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            restrict_file_windows(path)?;
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = path;
         }
         Ok(())
+    }
+
+    #[cfg(windows)]
+    fn restrict_file_windows(path: &PathBuf) -> std::io::Result<()> {
+        let user = std::env::var("USERNAME").map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "USERNAME is not set")
+        })?;
+        let domain = std::env::var("USERDOMAIN")
+            .or_else(|_| std::env::var("COMPUTERNAME"))
+            .unwrap_or_default();
+        let principal = if domain.is_empty() {
+            user
+        } else {
+            format!("{domain}\\{user}")
+        };
+
+        let status = Command::new("icacls")
+            .arg(path)
+            .arg("/inheritance:r")
+            .arg("/grant:r")
+            .arg(format!("{principal}:F"))
+            .arg("/grant:r")
+            .arg("*S-1-5-18:F")
+            .arg("/grant:r")
+            .arg("*S-1-5-32-544:F")
+            .status()?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "failed to restrict IPC auth file ACL",
+            ))
+        }
     }
 
     async fn handle_connection<S>(
@@ -299,7 +339,11 @@ pub mod server {
 
     #[cfg(windows)]
     fn platform_endpoint() -> String {
-        format!(r"\\.\pipe\vela-desktop-{}", std::process::id())
+        format!(
+            r"\\.\pipe\vela-desktop-{}-{}",
+            std::process::id(),
+            random_endpoint_suffix()
+        )
     }
 
     #[cfg(unix)]
@@ -312,23 +356,35 @@ pub mod server {
         let base = std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::temp_dir());
-        base.join(format!("vela-desktop-{}.sock", std::process::id()))
-            .to_string_lossy()
-            .to_string()
+        base.join(format!(
+            "vela-desktop-{}-{}.sock",
+            std::process::id(),
+            random_endpoint_suffix()
+        ))
+        .to_string_lossy()
+        .to_string()
+    }
+
+    fn random_endpoint_suffix() -> String {
+        let mut bytes = [0u8; 16];
+        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        BASE64URL_NOPAD.encode(&bytes)
     }
 
     #[cfg(windows)]
     async fn start_platform_server(
         app_handle: tauri::AppHandle,
         capability: String,
+        endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::net::windows::named_pipe::ServerOptions;
 
-        let endpoint = platform_endpoint();
         info!("IPC server listening on Windows named pipe");
 
         loop {
-            let server = ServerOptions::new().create(&endpoint)?;
+            let server = ServerOptions::new()
+                .reject_remote_clients(true)
+                .create(&endpoint)?;
             server.connect().await?;
             let app_handle = app_handle.clone();
             let capability = capability.clone();
@@ -352,10 +408,10 @@ pub mod server {
     async fn start_platform_server(
         app_handle: tauri::AppHandle,
         capability: String,
+        endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::net::UnixListener;
 
-        let endpoint = platform_endpoint();
         let _ = std::fs::remove_file(&endpoint);
         let listener = UnixListener::bind(&endpoint)?;
         #[cfg(unix)]
@@ -389,6 +445,7 @@ pub mod server {
     async fn start_platform_server(
         _app_handle: tauri::AppHandle,
         _capability: String,
+        _endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Err("No supported local IPC transport for this platform".into())
     }
