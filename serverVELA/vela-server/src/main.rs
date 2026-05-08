@@ -1,6 +1,21 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use vela_server::{config, db, routes, share, state, store};
+use axum::{
+    extract::Request,
+    http::{header::HeaderName, HeaderValue},
+    middleware::{self, Next},
+    response::Response,
+};
+use vela_server::{
+    config, db, routes, share, state, store,
+    transport::{
+        http3, tcp_tls,
+        tls::{load_rustls_server_config, TlsConfigPaths},
+    },
+};
+
+static X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
+static ALT_SVC: HeaderName = HeaderName::from_static("alt-svc");
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -50,9 +65,81 @@ async fn main() -> anyhow::Result<()> {
         config.max_body_bytes,
     ));
 
-    let addr: SocketAddr = config.listen_addr.parse()?;
+    let clear_addr: SocketAddr = config.listen_addr.parse()?;
+    let clear_app = app.clone();
+
+    let tls_paths = match (&config.tls_cert_path, &config.tls_key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            Some(TlsConfigPaths::from_strings(cert_path, key_path))
+        }
+        _ => None,
+    };
+
+    let tls_addr = config
+        .tls_listen_addr
+        .as_deref()
+        .map(str::parse::<SocketAddr>)
+        .transpose()?;
+    let h3_addr = config
+        .http3_listen_addr
+        .as_deref()
+        .map(str::parse::<SocketAddr>)
+        .transpose()?;
+
+    let tls_future = async {
+        if let Some(addr) = tls_addr {
+            let paths = tls_paths
+                .as_ref()
+                .expect("config validation requires TLS paths for TLS listener");
+            let tls_config = Arc::new(load_rustls_server_config(paths, &[b"h2", b"http/1.1"])?);
+            let alt_svc = if config.http3_enabled {
+                h3_addr
+                    .map(|addr| {
+                        HeaderValue::from_str(&format!(
+                            "h3=\":{}\"; ma={}",
+                            addr.port(),
+                            config.http3_alt_svc_max_age
+                        ))
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
+            let tls_app =
+                app.clone()
+                    .layer(middleware::from_fn(move |req: Request, next: Next| {
+                        mark_native_https(req, next, alt_svc.clone())
+                    }));
+            tcp_tls::serve(addr, tls_app, tls_config).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let h3_future = async {
+        if config.http3_enabled {
+            let addr = h3_addr.expect("config validation requires HTTP3_LISTEN_ADDR");
+            let paths = tls_paths
+                .as_ref()
+                .expect("config validation requires TLS paths for HTTP/3");
+            let h3_tls_config = load_rustls_server_config(paths, &[b"h3"])?;
+            let h3_app = app.clone();
+            http3::serve(addr, h3_app, h3_tls_config, config.max_body_bytes).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::try_join!(
+        serve_cleartext(clear_addr, clear_app),
+        tls_future,
+        h3_future
+    )?;
+
+    Ok(())
+}
+
+async fn serve_cleartext(addr: SocketAddr, app: axum::Router) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "listening");
+    tracing::info!(%addr, "cleartext TCP listener active");
 
     axum::serve(
         listener,
@@ -61,4 +148,14 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     Ok(())
+}
+
+async fn mark_native_https(mut req: Request, next: Next, alt_svc: Option<HeaderValue>) -> Response {
+    req.headers_mut()
+        .insert(X_FORWARDED_PROTO.clone(), HeaderValue::from_static("https"));
+    let mut response = next.run(req).await;
+    if let Some(value) = alt_svc {
+        response.headers_mut().insert(ALT_SVC.clone(), value);
+    }
+    response
 }

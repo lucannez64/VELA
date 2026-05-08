@@ -4,26 +4,60 @@
 //! sled is used instead of Redis to eliminate an external infrastructure
 //! dependency.  TTL is implemented by storing the expiry epoch alongside each
 //! value and checking on read.
+//!
+//! Keys are stored in separate trees for efficient prefix-scoped cleanup:
+//! - `ttl` tree: keys with TTL (expiring)
+//! - `persist` tree: keys without TTL (persistent)
+//! - Default tree: legacy keys (auto-migrated on first access)
 
 use std::sync::Arc;
 
-use sled::Db;
+use sled::{Db, Tree};
 
 use crate::error::{AppError, Result};
+
+const TTL_TREE: &str = "ttl";
+const PERSIST_TREE: &str = "persist";
+
+#[derive(Clone, Copy)]
+enum LookupSource {
+    Ttl,
+    Persist,
+    Legacy,
+}
+
+fn map_err(e: sled::Error) -> AppError {
+    AppError::Internal(format!("sled error: {e}"))
+}
 
 /// Wrapper around a sled database providing TTL-aware operations.
 #[derive(Clone)]
 pub struct Store {
     db: Arc<Db>,
+    ttl: Arc<Tree>,
+    persist: Arc<Tree>,
 }
 
 impl Store {
-    /// Open a sled database at the given path.
+    /// Open a sled database at the given path.  
+    /// Opens the `ttl` and `persist` trees for prefix-scoped access.
     pub fn open(path: &str) -> Result<Self> {
         let db = sled::open(path).map_err(|e| {
             AppError::Internal(format!("failed to open sled database at {path}: {e}"))
         })?;
-        Ok(Self { db: Arc::new(db) })
+        let ttl = db
+            .open_tree(TTL_TREE)
+            .map_err(|e| AppError::Internal(format!("failed to open ttl tree: {e}")))?;
+        let persist = db
+            .open_tree(PERSIST_TREE)
+            .map_err(|e| AppError::Internal(format!("failed to open persist tree: {e}")))?;
+        // One-time migration of legacy keys from the default tree.
+        Self::migrate_legacy_keys(&db, &ttl, &persist);
+        Ok(Self {
+            db: Arc::new(db),
+            ttl: Arc::new(ttl),
+            persist: Arc::new(persist),
+        })
     }
 
     /// Open a temporary in-memory database (for tests).
@@ -31,11 +65,52 @@ impl Store {
         let db = sled::Config::new().temporary(true).open().map_err(|e| {
             AppError::Internal(format!("failed to open temporary sled database: {e}"))
         })?;
-        Ok(Self { db: Arc::new(db) })
+        let ttl = db
+            .open_tree(TTL_TREE)
+            .map_err(|e| AppError::Internal(format!("failed to open ttl tree: {e}")))?;
+        let persist = db
+            .open_tree(PERSIST_TREE)
+            .map_err(|e| AppError::Internal(format!("failed to open persist tree: {e}")))?;
+        Ok(Self {
+            db: Arc::new(db),
+            ttl: Arc::new(ttl),
+            persist: Arc::new(persist),
+        })
     }
 
     pub fn inner(&self) -> &Db {
         &self.db
+    }
+
+    /// One-time migration: move legacy keys from the default tree into
+    /// `ttl` or `persist` based on whether they have an expiry.
+    fn migrate_legacy_keys(db: &Db, ttl: &Tree, persist: &Tree) {
+        let mut migrated = 0u64;
+        for item in db.iter() {
+            let (k, v) = match item {
+                Ok(iv) => iv,
+                Err(_) => continue,
+            };
+            if v.len() < 8 {
+                let _ = persist.insert(&k, v);
+                let _ = db.remove(&k);
+                migrated += 1;
+                continue;
+            }
+            let mut exp_bytes = [0u8; 8];
+            exp_bytes.copy_from_slice(&v[..8]);
+            let expiry = u64::from_le_bytes(exp_bytes);
+            if expiry == u64::MAX {
+                let _ = persist.insert(&k, v);
+            } else {
+                let _ = ttl.insert(&k, v);
+            }
+            let _ = db.remove(&k);
+            migrated += 1;
+        }
+        if migrated > 0 {
+            tracing::info!(migrated, "sled legacy key migration complete");
+        }
     }
 
     // ─── String-like operations ──────────────────────────────────────────────
@@ -45,7 +120,7 @@ impl Store {
         let expiry = epoch_secs() + ttl_secs;
         let mut entry = expiry.to_le_bytes().to_vec();
         entry.extend_from_slice(value);
-        self.db
+        self.ttl
             .insert(key.as_bytes(), entry)
             .map_err(|e| AppError::Internal(format!("sled set_ex error: {e}")))?;
         Ok(())
@@ -55,24 +130,51 @@ impl Store {
     pub fn set(&self, key: &str, value: &[u8]) -> Result<()> {
         let mut entry = u64::MAX.to_le_bytes().to_vec();
         entry.extend_from_slice(value);
-        self.db
+        self.persist
             .insert(key.as_bytes(), entry)
             .map_err(|e| AppError::Internal(format!("sled set error: {e}")))?;
         Ok(())
     }
 
+    fn lookup_tree(&self, key: &str) -> Result<Option<(Vec<u8>, LookupSource)>> {
+        if let Some(data) = self.ttl.get(key.as_bytes()).map_err(map_err)? {
+            return Ok(Some((data.to_vec(), LookupSource::Ttl)));
+        }
+        if let Some(data) = self.persist.get(key.as_bytes()).map_err(map_err)? {
+            return Ok(Some((data.to_vec(), LookupSource::Persist)));
+        }
+        if let Some(data) = self.db.get(key.as_bytes()).map_err(map_err)? {
+            return Ok(Some((data.to_vec(), LookupSource::Legacy)));
+        }
+        Ok(None)
+    }
+
+    fn remove_from_source(&self, key: &str, source: LookupSource) -> Result<()> {
+        match source {
+            LookupSource::Ttl => {
+                self.ttl.remove(key.as_bytes()).map_err(map_err)?;
+            }
+            LookupSource::Persist => {
+                self.persist.remove(key.as_bytes()).map_err(map_err)?;
+            }
+            LookupSource::Legacy => {
+                self.db.remove(key.as_bytes()).map_err(map_err)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Get a key's value. Returns `None` if missing or expired.
     pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let ivec = self
-            .db
-            .get(key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("sled get error: {e}")))?;
-
-        match ivec {
-            Some(data) => {
+        match self.lookup_tree(key)? {
+            Some((data, source)) => {
                 let (value, expired) = extract_value(&data);
                 if expired {
-                    let _ = self.db.remove(key.as_bytes());
+                    let _ = match source {
+                        LookupSource::Ttl => self.ttl.remove(key.as_bytes()),
+                        LookupSource::Persist => self.persist.remove(key.as_bytes()),
+                        LookupSource::Legacy => self.db.remove(key.as_bytes()),
+                    };
                     Ok(None)
                 } else {
                     Ok(Some(value))
@@ -84,17 +186,9 @@ impl Store {
 
     /// Get and delete a key atomically. Returns `None` if missing or expired.
     pub fn get_del(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let ivec = self
-            .db
-            .get(key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("sled get_del error: {e}")))?;
-
-        self.db
-            .remove(key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("sled get_del remove error: {e}")))?;
-
-        match ivec {
-            Some(data) => {
+        match self.lookup_tree(key)? {
+            Some((data, source)) => {
+                self.remove_from_source(key, source)?;
                 let (value, expired) = extract_value(&data);
                 if expired {
                     Ok(None)
@@ -108,28 +202,26 @@ impl Store {
 
     /// Delete a key. Returns how many keys were removed (0 or 1).
     pub fn del(&self, key: &str) -> Result<i64> {
-        let existed = self
-            .db
-            .contains_key(key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("sled del check error: {e}")))?;
-        self.db
-            .remove(key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("sled del error: {e}")))?;
-        Ok(if existed { 1 } else { 0 })
+        match self.lookup_tree(key)? {
+            Some((_, source)) => {
+                self.remove_from_source(key, source)?;
+                Ok(1)
+            }
+            None => Ok(0),
+        }
     }
 
     /// Check whether a key exists (and is not expired).
     pub fn exists(&self, key: &str) -> Result<bool> {
-        let ivec = self
-            .db
-            .get(key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("sled exists error: {e}")))?;
-
-        match ivec {
-            Some(data) => {
+        match self.lookup_tree(key)? {
+            Some((data, source)) => {
                 let (_, expired) = extract_value(&data);
                 if expired {
-                    let _ = self.db.remove(key.as_bytes());
+                    let _ = match source {
+                        LookupSource::Ttl => self.ttl.remove(key.as_bytes()),
+                        LookupSource::Persist => self.persist.remove(key.as_bytes()),
+                        LookupSource::Legacy => self.db.remove(key.as_bytes()),
+                    };
                     Ok(false)
                 } else {
                     Ok(true)
@@ -142,7 +234,7 @@ impl Store {
     /// Increment a counter key by `delta` and set/refresh its TTL.
     /// Returns the new count.
     pub fn incr_expire(&self, key: &str, delta: u64, ttl_secs: i64) -> Result<u64> {
-        let current = match self.db.get(key.as_bytes()) {
+        let current = match self.ttl.get(key.as_bytes()) {
             Ok(Some(data)) => {
                 let (value, expired) = extract_value(&data);
                 if expired {
@@ -165,7 +257,7 @@ impl Store {
         let mut entry = expiry.to_le_bytes().to_vec();
         entry.extend_from_slice(&new_count.to_le_bytes());
 
-        self.db
+        self.ttl
             .insert(key.as_bytes(), entry)
             .map_err(|e| AppError::Internal(format!("sled incr_expire error: {e}")))?;
 
@@ -175,13 +267,8 @@ impl Store {
     /// Get remaining TTL for a key in seconds. Returns -1 if no TTL, -2 if
     /// key doesn't exist or is expired.
     pub fn ttl(&self, key: &str) -> Result<i64> {
-        let ivec = self
-            .db
-            .get(key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("sled ttl error: {e}")))?;
-
-        match ivec {
-            Some(data) if data.len() >= 8 => {
+        match self.lookup_tree(key)? {
+            Some((data, source)) if data.len() >= 8 => {
                 let mut exp_bytes = [0u8; 8];
                 exp_bytes.copy_from_slice(&data[..8]);
                 let expiry = u64::from_le_bytes(exp_bytes);
@@ -192,7 +279,7 @@ impl Store {
 
                 let now = epoch_secs();
                 if now >= expiry {
-                    let _ = self.db.remove(key.as_bytes());
+                    self.remove_from_source(key, source)?;
                     Ok(-2)
                 } else {
                     Ok((expiry - now) as i64)
@@ -277,12 +364,13 @@ impl Store {
     }
 
     /// Run a background cleanup pass that removes expired entries.
+    /// **Only scans the `ttl` tree** for O(ttl_keys) efficiency.
     /// Call periodically from a tokio task.
     pub fn cleanup_expired(&self) -> Result<u64> {
         let now = epoch_secs();
         let mut removed = 0u64;
 
-        for item in self.db.iter() {
+        for item in self.ttl.iter() {
             let (k, v) =
                 item.map_err(|e| AppError::Internal(format!("sled cleanup iterate error: {e}")))?;
 
@@ -290,8 +378,8 @@ impl Store {
                 let mut exp_bytes = [0u8; 8];
                 exp_bytes.copy_from_slice(&v[..8]);
                 let expiry = u64::from_le_bytes(exp_bytes);
-                if expiry != u64::MAX && now >= expiry {
-                    self.db.remove(&k).map_err(|e| {
+                if now >= expiry {
+                    self.ttl.remove(&k).map_err(|e| {
                         AppError::Internal(format!("sled cleanup remove error: {e}"))
                     })?;
                     removed += 1;

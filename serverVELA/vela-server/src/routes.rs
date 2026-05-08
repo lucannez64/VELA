@@ -57,6 +57,14 @@ pub fn build(state: AppState) -> Router {
         .route("/auth/verify", post(crate::auth::verify::post_verify))
         .route("/auth/logout", post(crate::auth::logout::post_logout))
         .route("/device/enroll", post(crate::device::enroll::post_enroll))
+        .route(
+            "/device/enrollment-package",
+            post(crate::device::invitation::post_enrollment_package),
+        )
+        .route(
+            "/device/enrollment-package/:token",
+            get(crate::device::invitation::get_enrollment_package),
+        )
         .route("/device/revoke", post(crate::device::revoke::post_revoke))
         .route("/device/capsule", get(crate::device::capsule::get_capsule))
         .route("/devices", get(crate::device::list::list_devices))
@@ -132,6 +140,7 @@ async fn enforce_https_for_auth(
 fn is_auth_endpoint(path: &str) -> bool {
     path.starts_with("/auth/")
         || path == "/account/register"
+        || path.starts_with("/device/enrollment-package")
         || path.starts_with("/recovery/webauthn/")
         || path == "/recovery/initiate"
         || path == "/recovery/recover"

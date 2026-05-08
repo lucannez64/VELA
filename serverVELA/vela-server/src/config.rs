@@ -4,6 +4,12 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 #[derive(Clone, Debug)]
 pub struct Config {
     pub listen_addr: String,
+    pub tls_listen_addr: Option<String>,
+    pub tls_cert_path: Option<String>,
+    pub tls_key_path: Option<String>,
+    pub http3_enabled: bool,
+    pub http3_listen_addr: Option<String>,
+    pub http3_alt_svc_max_age: u64,
     pub db_path: String,
     pub sled_path: String,
     pub webauthn_rp_id: String,
@@ -25,12 +31,40 @@ impl Config {
         let db_path = std::env::var("DB_PATH").unwrap_or_else(|_| "./data/vela.db".into());
         let sled_path = std::env::var("SLED_PATH").unwrap_or_else(|_| "./data/sled".into());
         let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "127.0.0.1:8443".into());
+        let tls_listen_addr = env_optional("TLS_LISTEN_ADDR");
+        let tls_cert_path = env_optional("TLS_CERT_PATH");
+        let tls_key_path = env_optional("TLS_KEY_PATH");
+        let http3_enabled = env_flag("HTTP3_ENABLED");
+        let http3_listen_addr = env_optional("HTTP3_LISTEN_ADDR").or_else(|| {
+            if http3_enabled {
+                tls_listen_addr.clone()
+            } else {
+                None
+            }
+        });
+        let http3_alt_svc_max_age = std::env::var("HTTP3_ALT_SVC_MAX_AGE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(86_400);
         let webauthn_rp_id = std::env::var("WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".into());
         let webauthn_rp_origin =
             std::env::var("WEBAUTHN_RP_ORIGIN").unwrap_or_else(|_| "http://localhost:1420".into());
         let webauthn_rp_name = std::env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "VELA".into());
 
         let allow_insecure_lan = env_flag("ALLOW_INSECURE_LAN");
+
+        if tls_listen_addr.is_some() || http3_enabled {
+            anyhow::ensure!(
+                tls_cert_path.is_some() && tls_key_path.is_some(),
+                "TLS_CERT_PATH and TLS_KEY_PATH are required when TLS_LISTEN_ADDR is set or HTTP3_ENABLED=true"
+            );
+        }
+        if http3_enabled {
+            anyhow::ensure!(
+                http3_listen_addr.is_some(),
+                "HTTP3_LISTEN_ADDR is required when HTTP3_ENABLED=true unless TLS_LISTEN_ADDR is set"
+            );
+        }
 
         if production && webauthn_rp_origin.starts_with("http://") {
             anyhow::ensure!(
@@ -74,6 +108,12 @@ impl Config {
 
         Ok(Self {
             listen_addr,
+            tls_listen_addr,
+            tls_cert_path,
+            tls_key_path,
+            http3_enabled,
+            http3_listen_addr,
+            http3_alt_svc_max_age,
             db_path,
             sled_path,
             webauthn_rp_id,
@@ -89,6 +129,13 @@ impl Config {
             production,
         })
     }
+}
+
+fn env_optional(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn load_paseto_key(production: bool) -> Result<(Vec<u8>, Vec<u8>)> {

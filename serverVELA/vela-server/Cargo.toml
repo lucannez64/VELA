@@ -19,8 +19,18 @@ vela-crypto = { path = "../../libVELA/vela-crypto" }
 # ── Web framework ──────────────────────────────────────────────────────────────
 axum              = { version = "0.7", features = ["macros", "multipart"] }
 tokio             = { version = "1",   features = ["full"] }
-tower             = "0.4"
+tower             = { version = "0.4", features = ["util"] }
 tower-http        = { version = "0.5", features = ["trace", "cors", "limit"] }
+bytes             = "1"
+http-body-util    = "0.1"
+hyper             = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util        = { version = "0.1", features = ["server", "tokio", "http1", "http2", "service"] }
+rustls            = "0.23"
+rustls-pemfile    = "2"
+tokio-rustls      = "0.26"
+quinn             = "0.11"
+h3                = "0.0.8"
+h3-quinn          = "0.0.10"
 
 # ── Embedded SQL database ──────────────────────────────────────────────────────
 stoolap = "0.4"

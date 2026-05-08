@@ -16,4 +16,5 @@ pub mod routes;
 pub mod share;
 pub mod state;
 pub mod store;
+pub mod transport;
 pub mod vault;
