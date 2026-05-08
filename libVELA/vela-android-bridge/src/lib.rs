@@ -114,6 +114,17 @@ struct DecryptRmsCapsuleResponse {
     rms_b64: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct DecryptEnrollmentPackageRequest {
+    key_b64: String,
+    ciphertext_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DecryptEnrollmentPackageResponse {
+    plaintext: String,
+}
+
 #[no_mangle]
 pub extern "C" fn vela_bridge_version() -> *mut c_char {
     string_to_ptr("vela-android-bridge/0.1.0")
@@ -214,6 +225,18 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptRm
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptEnrollmentPackageJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        decrypt_enrollment_package_json(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn vela_bridge_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         drop(CString::from_raw(ptr));
@@ -293,7 +316,6 @@ fn decrypt_vault_json(request_json: &str) -> anyhow_like::Result<DecryptVaultRes
     let key = kdf::derive(VAULT_KEY_CONTEXT, &rms);
     let plaintext = aead::decrypt(key.as_bytes(), &ciphertext)?;
     let vault_json = String::from_utf8(plaintext.to_vec())?;
-    let _: VaultStore = serde_json::from_str(&vault_json)?;
     Ok(DecryptVaultResponse { vault_json })
 }
 
@@ -320,7 +342,6 @@ fn decrypt_vault_chunk_json(request_json: &str) -> anyhow_like::Result<DecryptVa
     let key = chunk_key(&rms, &request.chunk_id);
     let plaintext = aead::decrypt(&key, &ciphertext)?;
     let vault_json = String::from_utf8(plaintext.to_vec())?;
-    let _: VaultStore = serde_json::from_str(&vault_json)?;
     Ok(DecryptVaultResponse { vault_json })
 }
 
@@ -381,6 +402,24 @@ fn decrypt_rms_capsule_json(request_json: &str) -> anyhow_like::Result<DecryptRm
     }
     Ok(DecryptRmsCapsuleResponse {
         rms_b64: B64.encode(plaintext),
+    })
+}
+
+fn decrypt_enrollment_package_json(
+    request_json: &str,
+) -> anyhow_like::Result<DecryptEnrollmentPackageResponse> {
+    let request: DecryptEnrollmentPackageRequest = serde_json::from_str(request_json)?;
+    let key = B64.decode(request.key_b64.as_bytes())?;
+    if key.len() != 32 {
+        return Err("enrollment package key must be 32 bytes".into());
+    }
+    let key: [u8; 32] = key
+        .try_into()
+        .map_err(|_| "enrollment package key must be 32 bytes")?;
+    let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
+    let plaintext = aead::decrypt(&key, &ciphertext)?;
+    Ok(DecryptEnrollmentPackageResponse {
+        plaintext: String::from_utf8(plaintext.to_vec())?,
     })
 }
 

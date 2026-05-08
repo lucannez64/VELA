@@ -30,7 +30,11 @@ fn main() {
         .and_then(rust_to_zig_android_target);
 
     // Build the Zig cyclo static library (also builds ntt_shim internally).
-    let mut zig_args = vec!["build".to_string(), format!("-Doptimize={zig_optimize}")];
+    let mut zig_args = vec![
+        "build".to_string(),
+        "cyclo-lib".to_string(),
+        format!("-Doptimize={zig_optimize}"),
+    ];
     if let Some(zt) = &rust_target_for_zig {
         zig_args.push(format!("-Dtarget={zt}"));
     }

@@ -1,6 +1,15 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
+
+fn default_created_at() -> DateTime<Utc> {
+    Utc::now()
+}
+
+fn default_updated_at() -> DateTime<Utc> {
+    Utc::now()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -13,140 +22,142 @@ pub enum ItemType {
     BreachMonitor,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultMeta {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default = "default_created_at", alias = "created_at")]
+    pub created_at: DateTime<Utc>,
+    #[serde(default = "default_updated_at", alias = "updated_at")]
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, alias = "last_modified_device")]
+    pub last_modified_device: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub shared: bool,
+    #[serde(default, alias = "share_recipient")]
+    pub share_recipient: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "item_type", rename_all = "camelCase")]
 pub enum VaultItem {
     Login {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         url: String,
         username: String,
         #[serde(rename = "password")]
         pass: String,
+        #[serde(default)]
         totp: Option<String>,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     CreditCard {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         number: String,
         exp: String,
         cvv: String,
+        #[serde(default)]
         pin: Option<String>,
+        #[serde(default, alias = "cardholder_name")]
         cardholder_name: Option<String>,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     SecureNote {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         title: String,
         content: String,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     Identity {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
+        #[serde(alias = "first_name")]
         first_name: String,
+        #[serde(alias = "last_name")]
         last_name: String,
         ssn: String,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     FileBlob {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
+        #[serde(alias = "file_name")]
         filename: String,
+        #[serde(alias = "mime_type")]
         mime: String,
+        #[serde(default)]
         chunks: Vec<Uuid>,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     BreachMonitor {
-        id: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         email: String,
+        #[serde(default, alias = "checked_at")]
         checked_at: Option<DateTime<Utc>>,
+        #[serde(default, alias = "breach_count")]
         breach_count: u32,
+        #[serde(default)]
         breaches: Vec<BreachEntry>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Tombstone {
     pub id: String,
+    #[serde(default = "default_created_at")]
     pub deleted_at: DateTime<Utc>,
+    #[serde(default)]
     pub deleted_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BreachEntry {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub domain: String,
+    #[serde(default)]
     pub breach_date: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub data_classes: Vec<String>,
+    #[serde(default)]
     pub is_verified: bool,
+    #[serde(default)]
     pub is_fabricated: bool,
+    #[serde(default)]
     pub is_sensitive: bool,
+    #[serde(default)]
     pub is_retired: bool,
+    #[serde(default)]
     pub is_spam_list: bool,
 }
 
 impl VaultItem {
-    pub fn id(&self) -> &str {
+    fn meta(&self) -> &VaultMeta {
         match self {
-            VaultItem::Login { id, .. }
-            | VaultItem::CreditCard { id, .. }
-            | VaultItem::SecureNote { id, .. }
-            | VaultItem::Identity { id, .. }
-            | VaultItem::FileBlob { id, .. }
-            | VaultItem::BreachMonitor { id, .. } => id,
+            VaultItem::Login { meta, .. }
+            | VaultItem::CreditCard { meta, .. }
+            | VaultItem::SecureNote { meta, .. }
+            | VaultItem::Identity { meta, .. }
+            | VaultItem::FileBlob { meta, .. }
+            | VaultItem::BreachMonitor { meta, .. } => meta,
         }
     }
 
+    pub fn id(&self) -> &str {
+        &self.meta().id
+    }
+
     pub fn name(&self) -> &str {
-        match self {
-            VaultItem::Login { name, .. }
-            | VaultItem::CreditCard { name, .. }
-            | VaultItem::SecureNote { name, .. }
-            | VaultItem::Identity { name, .. }
-            | VaultItem::FileBlob { name, .. } => name,
-            VaultItem::BreachMonitor { email, .. } => email,
-        }
+        &self.meta().name
     }
 
     pub fn item_type(&self) -> ItemType {
@@ -183,14 +194,15 @@ impl VaultItem {
     }
 
     pub fn notes(&self) -> Option<&str> {
-        match self {
-            VaultItem::Login { notes, .. }
-            | VaultItem::CreditCard { notes, .. }
-            | VaultItem::SecureNote { notes, .. }
-            | VaultItem::Identity { notes, .. }
-            | VaultItem::FileBlob { notes, .. } => notes.as_deref(),
-            VaultItem::BreachMonitor { .. } => None,
-        }
+        self.meta().notes.as_deref()
+    }
+
+    pub fn created_at(&self) -> DateTime<Utc> {
+        self.meta().created_at
+    }
+
+    pub fn updated_at(&self) -> DateTime<Utc> {
+        self.meta().updated_at
     }
 }
 
@@ -199,6 +211,8 @@ pub struct VaultStore {
     pub items: Vec<VaultItem>,
     #[serde(default)]
     pub tombstones: Vec<Tombstone>,
+    #[serde(skip, default = "HashMap::new")]
+    item_index: HashMap<String, usize>,
 }
 
 impl Default for VaultStore {
@@ -212,21 +226,55 @@ impl VaultStore {
         Self {
             items: Vec::new(),
             tombstones: Vec::new(),
+            item_index: HashMap::new(),
+        }
+    }
+
+    fn reindex(&mut self) {
+        self.item_index.clear();
+        for (i, item) in self.items.iter().enumerate() {
+            self.item_index.insert(item.id().to_string(), i);
+        }
+    }
+
+    fn ensure_index(&mut self) {
+        if self.item_index.is_empty() && !self.items.is_empty() {
+            self.reindex();
         }
     }
 
     pub fn add_item(&mut self, item: VaultItem) {
+        self.ensure_index();
+        let id = item.id().to_string();
+        let idx = self.items.len();
         self.items.push(item);
+        self.item_index.insert(id, idx);
     }
 
     pub fn update_item(&mut self, item: VaultItem) {
-        if let Some(existing) = self.items.iter_mut().find(|i| i.id() == item.id()) {
+        self.ensure_index();
+        let id = item.id().to_string();
+        if let Some(&idx) = self.item_index.get(&id) {
+            self.items[idx] = item;
+        } else if let Some(existing) = self.items.iter_mut().find(|i| i.id() == id) {
             *existing = item;
+            self.reindex();
+            return;
+        } else {
+            self.add_item(item);
+            return;
         }
     }
 
     pub fn delete_item(&mut self, id: &str, device_id: Option<&str>) {
-        self.items.retain(|item| item.id() != id);
+        self.ensure_index();
+        if let Some(&idx) = self.item_index.get(id) {
+            self.items.remove(idx);
+            self.item_index.remove(id);
+            self.reindex();
+        } else {
+            self.items.retain(|item| item.id() != id);
+        }
         self.tombstones.push(Tombstone {
             id: id.to_string(),
             deleted_at: Utc::now(),
@@ -235,6 +283,9 @@ impl VaultStore {
     }
 
     pub fn get_item(&self, id: &str) -> Option<&VaultItem> {
+        if let Some(&idx) = self.item_index.get(id) {
+            return self.items.get(idx);
+        }
         self.items.iter().find(|item| item.id() == id)
     }
 
@@ -350,19 +401,21 @@ mod tests {
     fn login(id: &str, url: &str, username: &str) -> VaultItem {
         let now = Utc::now();
         VaultItem::Login {
-            id: id.to_string(),
-            name: url.to_string(),
+            meta: VaultMeta {
+                id: id.to_string(),
+                name: url.to_string(),
+                notes: Some("note".to_string()),
+                created_at: now,
+                updated_at: now,
+                last_modified_device: None,
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
             url: url.to_string(),
             username: username.to_string(),
             pass: "secret".to_string(),
             totp: None,
-            notes: Some("note".to_string()),
-            created_at: now,
-            updated_at: now,
-            last_modified_device: None,
-            favorite: false,
-            shared: false,
-            share_recipient: None,
         }
     }
 
@@ -392,5 +445,49 @@ mod tests {
         let json = serde_json::to_string(&login("1", "https://example.com", "alice")).unwrap();
         assert!(json.contains("\"item_type\":\"login\""));
         assert!(json.contains("\"password\":\"secret\""));
+    }
+
+    #[test]
+    fn serialization_roundtrips_through_old_format() {
+        let old_json = r#"{"item_type":"login","id":"abc","name":"test","url":"https://example.com","username":"user","password":"pwd","createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z"}"#;
+        let item: VaultItem = serde_json::from_str(old_json).unwrap();
+        assert_eq!(item.id(), "abc");
+        assert_eq!(item.name(), "test");
+        let roundtrip = serde_json::to_string(&item).unwrap();
+        let re_read: VaultItem = serde_json::from_str(&roundtrip).unwrap();
+        assert_eq!(re_read, item);
+    }
+
+    #[test]
+    fn get_item_is_o1_with_index() {
+        let mut store = VaultStore::new();
+        for i in 0..100 {
+            let id = format!("id-{:03}", i);
+            store.add_item(login(&id, "https://x.com", "user"));
+        }
+        assert!(store.get_item("id-050").is_some());
+        assert!(store.get_item("id-000").is_some());
+        assert!(store.get_item("id-099").is_some());
+        assert!(store.get_item("nonexistent").is_none());
+    }
+
+    #[test]
+    fn update_item_maintains_index() {
+        let mut store = VaultStore::new();
+        let item = login("1", "https://old.com", "alice");
+        store.add_item(item);
+        let updated = login("1", "https://new.com", "bob");
+        store.update_item(updated);
+        let found = store.get_item("1").unwrap();
+        assert_eq!(found.url(), Some("https://new.com"));
+        assert_eq!(found.username(), Some("bob"));
+    }
+
+    #[test]
+    fn delete_item_removes_from_index() {
+        let mut store = VaultStore::new();
+        store.add_item(login("1", "https://x.com", "user"));
+        store.delete_item("1", None);
+        assert!(store.get_item("1").is_none());
     }
 }

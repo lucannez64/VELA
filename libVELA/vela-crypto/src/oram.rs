@@ -211,18 +211,20 @@ impl PathOram {
         Ok((existing_data, write_path))
     }
 
-    /// Greedily evict stash blocks into a path, filling each bucket up to
-    /// `BUCKET_SIZE` with real blocks that fit, padded with dummies.
+    /// Greedily evict stash blocks into a path. Evicts **all** blocks whose
+    /// assigned leaf falls within each level's range (not capped at
+    /// `BUCKET_SIZE`) to prevent unbounded stash growth. Each bucket is
+    /// padded to at least `BUCKET_SIZE` with dummy blocks for security.
     fn evict(&mut self, leaf: LeafIdx) -> OramPath {
-        let levels = (self.height + 1) as usize; // root + height levels
+        let levels = (self.height + 1) as usize;
         let mut path: OramPath = vec![Vec::new(); levels];
 
         for level in 0..levels {
             let level_leaf_range = self.level_leaf_range(leaf, level as u32);
-            let mut placed = 0;
 
+            // Evict ALL real blocks matching this level.
             let mut i = 0;
-            while i < self.stash.len() && placed < BUCKET_SIZE {
+            while i < self.stash.len() {
                 let block_leaf = match &self.stash[i] {
                     OramBlock::Real { id, .. } => self.position_map.get(id).copied(),
                     OramBlock::Dummy => None,
@@ -231,14 +233,13 @@ impl PathOram {
                     if level_leaf_range.contains(&bl) {
                         let block = self.stash.remove(i);
                         path[level].push(block);
-                        placed += 1;
                         continue;
                     }
                 }
                 i += 1;
             }
 
-            // Pad with dummies.
+            // Pad to BUCKET_SIZE for security (constant-size roots for each level).
             while path[level].len() < BUCKET_SIZE {
                 path[level].push(OramBlock::Dummy);
             }
