@@ -2,6 +2,11 @@ const std = @import("std");
 const ring = @import("root.zig");
 const ring_ntt = @import("ring_ntt.zig");
 
+fn nowNs() i96 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return std.Io.Clock.awake.now(threaded.io()).nanoseconds;
+}
+
 pub fn main() !void {
     try run_benchmark(1024, 12289);
     std.debug.print("\n", .{});
@@ -33,23 +38,23 @@ fn run_benchmark(comptime N: usize, comptime Q: u64) !void {
     std.debug.print("Benchmarking N={d}, Q={d} with {d} iterations...\n", .{ N, Q, iterations });
 
     // Benchmark Naive Multiplication
-    var timer = try std.time.Timer.start();
+    const naive_start_ns = nowNs();
     for (0..iterations) |_| {
         const res = a.mul(b);
         std.mem.doNotOptimizeAway(res);
     }
-    const naive_time = timer.read();
+    const naive_time: u64 = @intCast(nowNs() - naive_start_ns);
     const naive_avg = naive_time / iterations;
 
     std.debug.print("Naive Mul: {d} ns/op\n", .{naive_avg});
 
     // Benchmark NTT Multiplication
-    timer.reset();
+    const ntt_start_ns = nowNs();
     for (0..iterations) |_| {
         const res = a.mulNtt(b, plan);
         std.mem.doNotOptimizeAway(res);
     }
-    const ntt_time = timer.read();
+    const ntt_time: u64 = @intCast(nowNs() - ntt_start_ns);
     const ntt_avg = ntt_time / iterations;
 
     std.debug.print("NTT Mul:   {d} ns/op\n", .{ntt_avg});

@@ -90,7 +90,10 @@ pub fn main() !void {
         .private_assignment = assignment[2..],
     };
 
-    var proof = try Protocol.proveFromStatement(allocator, statement, witness, params);
+    var proof = Protocol.proveFromStatement(allocator, statement, witness, params) catch |err| {
+        std.debug.print("prove failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
     defer proof.deinit(allocator);
     const ok = try Protocol.verifyFromStatement(allocator, statement, &proof, params);
 

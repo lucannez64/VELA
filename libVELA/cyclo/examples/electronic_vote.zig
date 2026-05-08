@@ -2,6 +2,11 @@ const std = @import("std");
 const zig_ring_arithmetic = @import("zig_ring_arithmetic");
 const builtin = @import("builtin");
 
+fn nowNs() i96 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return std.Io.Clock.awake.now(threaded.io()).nanoseconds;
+}
+
 comptime {
     if (builtin.os.tag == .windows and !builtin.is_test) {
         _ = @import("msvc_compat");
@@ -198,12 +203,12 @@ pub fn main() !void {
     var verify_max_ns: u64 = 0;
     var bench_ok: bool = true;
     for (0..MICRO_BENCH_ITERS) |_| {
-        var prove_timer = try std.time.Timer.start();
+        const prove_start_ns = nowNs();
         var bench_proof = try Protocol.proveFromStatement(allocator, statement, witness, params);
-        const prove_ns = prove_timer.read();
-        var verify_timer = try std.time.Timer.start();
+        const prove_ns: u64 = @intCast(nowNs() - prove_start_ns);
+        const verify_start_ns = nowNs();
         const verify_ok = try Protocol.verifyFromStatement(allocator, statement, &bench_proof, params);
-        const verify_ns = verify_timer.read();
+        const verify_ns: u64 = @intCast(nowNs() - verify_start_ns);
         bench_proof.deinit(allocator);
         bench_ok = bench_ok and verify_ok;
         prove_total_ns += prove_ns;

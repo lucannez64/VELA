@@ -35,14 +35,18 @@ pub const CycloProof = opaque {};
 pub const CycloParams = opaque {};
 pub const CycloError = enum(i32) {
     success = 0,
-    invalid_params = 1,
-    invalid_witness = 2,
-    proof_failed = 3,
-    verification_failed = 4,
-    allocation_failed = 5,
-    serialization_failed = 6,
+    invalid_params = -1,
+    invalid_witness = -2,
+    proof_failed = -3,
+    verification_failed = -4,
+    allocation_failed = -5,
+    serialization_failed = -6,
     _,
 };
+
+fn errorCode(err: CycloError) i32 {
+    return @intFromEnum(err);
+}
 
 // ============================================================================
 // Parameter Management
@@ -107,7 +111,7 @@ export fn cyclo_prove(
     private_len: usize,
     proof_out: [*]u8,
     proof_out_size: usize,
-) CycloError {
+) i32 {
     const allocator = std.heap.page_allocator;
 
     const public_assignment = public_inputs[0..public_len];
@@ -129,19 +133,13 @@ export fn cyclo_prove(
     };
 
     var proof_result = CycloProtocol.proveFromStatement(allocator, statement, witness, VELA_AUTH_PARAMS) catch {
-        return .proof_failed;
+        return errorCode(.proof_failed);
     };
     defer proof_result.deinit(allocator);
 
-    // Serialize proof to the output buffer
-    const serialized = proof_result.serialize(allocator) catch return .serialization_failed;
-    defer allocator.free(serialized);
-
-    if (serialized.len > proof_out_size) return .serialization_failed;
-
-    @memcpy(proof_out[0..serialized.len], serialized);
-
-    return @enumFromInt(@as(i32, @intCast(serialized.len)));
+    const written = proof_result.serializeInto(proof_out[0..proof_out_size]) catch return errorCode(.serialization_failed);
+    if (written > std.math.maxInt(i32)) return errorCode(.serialization_failed);
+    return @intCast(written);
 }
 
 /// Verify a proof
@@ -160,7 +158,7 @@ export fn cyclo_verify(
     private_len: usize,
     proof: [*]const u8,
     proof_len: usize,
-) CycloError {
+) i32 {
     const allocator = std.heap.page_allocator;
 
     const public_assignment = public_inputs[0..public_len];
@@ -180,13 +178,13 @@ export fn cyclo_verify(
 
     const proof_bytes: []const u8 = proof[0..proof_len];
     var deserialized = ProofType.deserialize(allocator, proof_bytes) catch {
-        return .serialization_failed;
+        return errorCode(.serialization_failed);
     };
     defer deserialized.deinit(allocator);
 
     const ok = CycloProtocol.verifyFromStatement(allocator, statement, &deserialized, VELA_AUTH_PARAMS) catch {
-        return .verification_failed;
+        return errorCode(.verification_failed);
     };
 
-    return @enumFromInt(@as(i32, if (ok) 1 else 0));
+    return if (ok) 1 else 0;
 }

@@ -15,6 +15,6 @@ export fn LdrRegisterDllNotification(
     _ = flags;
     _ = notification_function;
     _ = context;
-    _ = cookie;
+    if (cookie) |slot| slot.* = null;
     return -1073741822; // STATUS_NOT_IMPLEMENTED
 }

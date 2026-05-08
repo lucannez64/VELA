@@ -7,7 +7,12 @@
 //!   const c = plan.mul(a, b);                  // replaces a.mul(b)
 
 const std = @import("std");
-const c = @cImport(@cInclude("ntt_shim.h"));
+const c = @import("ntt_c");
+
+fn nowNs() i96 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return std.Io.Clock.awake.now(threaded.io()).nanoseconds;
+}
 
 fn powMod(base_in: u64, exp_in: u64, modulus: u64) u64 {
     var base = base_in % modulus;
@@ -51,6 +56,8 @@ pub fn NttMul(
         const is_native = (modulus == 0);
 
         pub fn init() error{NoPlan}!Self {
+            if (@popCount(degree) != 1) return error.NoPlan;
+            if (!is_native and modulus % (2 * degree) != 1) return error.NoPlan;
             const h = if (is_native)
                 c.ntt_native_plan_create(degree)
             else
@@ -453,7 +460,7 @@ test "NttDomainFq2 multiplication matches schoolbook extension ring" {
     try std.testing.expect(prod_ntt.eq(prod_ref));
 }
 
-test "benchmark ntt multiplication" {
+pub fn benchmarkNttMultiplication() !void {
     const degrees = [_]usize{ 64, 128, 256, 512, 1024 };
 
     // We use Q=0 (native) because it works for any power-of-two degree.
@@ -479,14 +486,14 @@ test "benchmark ntt multiplication" {
             }
 
             const iterations = 1000;
-            var timer = try std.time.Timer.start();
+            const start_ns = nowNs();
 
             for (0..iterations) |_| {
                 const res = plan.mul(&a.data, &b.data);
                 std.mem.doNotOptimizeAway(res);
             }
 
-            const elapsed = timer.read();
+            const elapsed: u64 = @intCast(nowNs() - start_ns);
             const avg_ns = elapsed / iterations;
 
             std.debug.print("N={d: <4}: {d} ns/op\n", .{ N, avg_ns });

@@ -7,53 +7,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 pub const cyclo_ring_ntt = @import("ring_ntt.zig");
 
-extern fn BCryptGenRandom(
-    hAlgorithm: ?*anyopaque,
-    pbBuffer: [*]u8,
-    cbBuffer: u32,
-    dwFlags: u32,
-) callconv(.winapi) c_long;
-
-fn secureRandom(bytes: []u8) void {
-    if (builtin.os.tag == .windows) {
-        const bcrypt_use_system_preferred_rng: u32 = 0x00000002;
-        var offset: usize = 0;
-        while (offset < bytes.len) {
-            const remaining = bytes.len - offset;
-            const chunk_len: u32 = @intCast(@min(remaining, std.math.maxInt(u32)));
-            const status = BCryptGenRandom(
-                null,
-                bytes[offset..].ptr,
-                chunk_len,
-                bcrypt_use_system_preferred_rng,
-            );
-            if (status < 0) @panic("secure random unavailable");
-            offset += chunk_len;
-        }
-        return;
-    }
-
-    if (builtin.os.tag == .linux) {
-        var offset: usize = 0;
-        while (offset < bytes.len) {
-            const slice = bytes[offset..];
-            const rc = std.os.linux.getrandom(slice.ptr, slice.len, 0);
-            switch (std.posix.errno(rc)) {
-                .SUCCESS => offset += @intCast(rc),
-                .INTR => continue,
-                else => @panic("secure random unavailable"),
-            }
-        }
-        return;
-    }
-
-    @compileError("secureRandom needs a Zig 0.16 entropy implementation for this target");
+fn secureRandomIo(io: std.Io, bytes: []u8) std.Io.RandomSecureError!void {
+    try std.Io.randomSecure(io, bytes);
 }
 
-comptime {
-    if (builtin.os.tag == .windows and builtin.is_test) {
-        _ = @import("msvc_compat");
-    }
+fn secureRandomForProof(io: std.Io, bytes: []u8) CycloBuildError!void {
+    secureRandomIo(io, bytes) catch return CycloBuildError.EntropyUnavailable;
 }
 
 // Ring type
@@ -3466,6 +3425,8 @@ pub const CycloBuildError = error{
     UnsatisfiedRelation,
     BudgetExhausted,
     OutOfMemory,
+    WriteFailed,
+    EntropyUnavailable,
 };
 
 pub const CycloErrorClass = enum(u8) {
@@ -3484,6 +3445,8 @@ pub fn cycloClassifyError(err: CycloBuildError) CycloErrorClass {
         CycloBuildError.UnsatisfiedRelation => .constraint,
         CycloBuildError.BudgetExhausted => .security,
         CycloBuildError.OutOfMemory => .resource,
+        CycloBuildError.WriteFailed => .resource,
+        CycloBuildError.EntropyUnavailable => .resource,
     };
 }
 
@@ -3927,11 +3890,7 @@ pub fn CycloProof(comptime N: usize, comptime Q: u64) type {
             self.transcript_digest = [_]u8{0} ** 32;
         }
 
-        pub fn serialize(self: *const Self, allocator: std.mem.Allocator) ![]u8 {
-            var out: std.Io.Writer.Allocating = .init(allocator);
-            defer out.deinit();
-
-            const writer = &out.writer;
+        pub fn serializeToWriter(self: *const Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try writer.writeInt(u32, wire_version, .little);
             try writer.writeInt(u64, @intCast(self.input_commitment.len), .little);
             for (self.input_commitment) |poly| {
@@ -3983,6 +3942,19 @@ pub fn CycloProof(comptime N: usize, comptime Q: u64) type {
             try writer.writeInt(u8, if (self.ivc_has_prior_accumulator) 1 else 0, .little);
             try writer.writeAll(self.ivc_prior_accumulator_digest[0..]);
             try writer.writeAll(self.transcript_digest[0..]);
+            try writer.flush();
+        }
+
+        pub fn serializeInto(self: *const Self, out: []u8) std.Io.Writer.Error!usize {
+            var writer: std.Io.Writer = .fixed(out);
+            try self.serializeToWriter(&writer);
+            return writer.end;
+        }
+
+        pub fn serialize(self: *const Self, allocator: std.mem.Allocator) ![]u8 {
+            var out: std.Io.Writer.Allocating = .init(allocator);
+            defer out.deinit();
+            try self.serializeToWriter(&out.writer);
             return out.toOwnedSlice();
         }
 
@@ -4407,6 +4379,10 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
         const LinearizationProver = SumCheckProverFq2(Q, 3, RangeExtBeta);
         const LinearizationVerifier = SumCheckVerifierFq2(Q, 3, RangeExtBeta);
         const NttPlan = @import("ring_ntt.zig").NttMul(N, Q);
+
+        const NttPlanCache = struct {
+            var plan: ?NttPlan = null;
+        };
         const RangeExtBeta: u64 = 3;
         const RangeExt = Fq2(Q, RangeExtBeta);
 
@@ -4743,6 +4719,23 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             var scoped_params = params;
             scoped_params.public_input_len = statement.public_assignment.len;
             return prove(allocator, statement.relation, assignment, scoped_params);
+        }
+
+        pub fn proveFromStatementWithIo(
+            allocator: std.mem.Allocator,
+            io: std.Io,
+            statement: Statement,
+            witness: Witness,
+            params: Params,
+        ) CycloBuildError!Proof {
+            if (params.public_input_len != 0 and params.public_input_len != statement.public_assignment.len) {
+                return CycloBuildError.InvalidWitnessLength;
+            }
+            const assignment = try joinPublicPrivateAssignment(allocator, statement, witness);
+            defer allocator.free(assignment);
+            var scoped_params = params;
+            scoped_params.public_input_len = statement.public_assignment.len;
+            return proveWithIo(allocator, io, statement.relation, assignment, scoped_params);
         }
 
         pub fn verifyFromStatement(
@@ -5515,9 +5508,9 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             for (out) |*slot| slot.* = RingT.zero();
             const base_i128: i128 = @intCast(2 * b);
             const b_i128: i128 = @intCast(b);
+            var digits = try allocator.alloc([N]i128, ell);
+            defer allocator.free(digits);
             for (witness, 0..) |wi, i| {
-                var digits = try allocator.alloc([N]i128, ell);
-                defer allocator.free(digits);
                 for (digits) |*arr| arr.* = [_]i128{0} ** N;
                 for (0..N) |k| {
                     var value = centeredCoeffModQ(wi.data[k], Q);
@@ -6261,8 +6254,31 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             return proveWithContext(allocator, relation, assignment, params, null, 0);
         }
 
+        pub fn proveWithIo(
+            allocator: std.mem.Allocator,
+            io: std.Io,
+            relation: CycloRelation,
+            assignment: []const u64,
+            params: Params,
+        ) CycloBuildError!Proof {
+            return proveWithContextIo(allocator, io, relation, assignment, params, null, 0);
+        }
+
         fn proveWithContext(
             allocator: std.mem.Allocator,
+            relation: CycloRelation,
+            assignment: []const u64,
+            params: Params,
+            prior_accumulator: ?Accumulator,
+            ivc_step_index: u64,
+        ) CycloBuildError!Proof {
+            var threaded: std.Io.Threaded = .init_single_threaded;
+            return proveWithContextIo(allocator, threaded.io(), relation, assignment, params, prior_accumulator, ivc_step_index);
+        }
+
+        fn proveWithContextIo(
+            allocator: std.mem.Allocator,
+            io: std.Io,
             relation: CycloRelation,
             assignment: []const u64,
             params: Params,
@@ -6275,21 +6291,21 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             const ivc_has_prior_accumulator = prior_accumulator != null;
             const ivc_prior_accumulator_digest = if (prior_accumulator) |acc| acc.transcript_digest else [_]u8{0} ** 32;
             var proof_nonce: [32]u8 = undefined;
-            secureRandom(proof_nonce[0..]);
+            try secureRandomForProof(io, proof_nonce[0..]);
             var zk_blinding_salt = [_]u8{0} ** 32;
             if (params.enable_zk_blinding) {
-                secureRandom(zk_blinding_salt[0..]);
+                try secureRandomForProof(io, zk_blinding_salt[0..]);
             }
             var pipeline: Pipeline = try buildCommittedHybridPipeline(allocator, relation, assignment, params.theta_base_k);
             defer pipeline.deinit(allocator);
-            var ntt_plan_state: ?NttPlan = null;
-            if (NttPlan.init()) |plan_val| {
-                ntt_plan_state = plan_val;
-            } else |_| {}
-            defer if (ntt_plan_state) |*plan| {
-                plan.deinit();
-            };
-            const ntt_plan: ?*const NttPlan = if (ntt_plan_state) |*plan| plan else null;
+            if (N >= 64) {
+                if (NttPlanCache.plan == null) {
+                    if (NttPlan.init()) |p| {
+                        NttPlanCache.plan = p;
+                    } else |_| {}
+                }
+            }
+            const ntt_plan: ?*const NttPlan = if (NttPlanCache.plan) |*p| p else null;
             if (!checkWitnessWithPlan(pipeline.plr, pipeline.witness, ntt_plan)) return CycloBuildError.UnsatisfiedRelation;
             const witness_bound = witnessInfinityNorm(pipeline.witness);
             if (witness_bound > params.B_sis) return CycloBuildError.BudgetExhausted;
@@ -6789,7 +6805,7 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
         }
 
         fn verifyWithContext(
-            allocator: std.mem.Allocator,
+            parent_allocator: std.mem.Allocator,
             relation: CycloRelation,
             public_assignment: []const u64,
             proof: *const Proof,
@@ -6798,6 +6814,9 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             ivc_step_index: u64,
             out_next_accumulator: ?*Accumulator,
         ) CycloBuildError!bool {
+            var arena = std.heap.ArenaAllocator.init(parent_allocator);
+            defer arena.deinit();
+            const allocator = arena.allocator();
             try params.validate();
             const public_input_len = try resolvePublicInputLen(relation, params.public_input_len);
             if (public_assignment.len != public_input_len) return false;
@@ -6808,14 +6827,14 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             const dims = expectedPlrDimensions(relation);
             const rows = dims.rows;
             const cols = dims.cols;
-            var ntt_plan_state: ?NttPlan = null;
-            if (NttPlan.init()) |plan_val| {
-                ntt_plan_state = plan_val;
-            } else |_| {}
-            defer if (ntt_plan_state) |*plan| {
-                plan.deinit();
-            };
-            const ntt_plan: ?*const NttPlan = if (ntt_plan_state) |*plan| plan else null;
+            if (N >= 64) {
+                if (NttPlanCache.plan == null) {
+                    if (NttPlan.init()) |p| {
+                        NttPlanCache.plan = p;
+                    } else |_| {}
+                }
+            }
+            const ntt_plan: ?*const NttPlan = if (NttPlanCache.plan) |*p| p else null;
             if (proof.input_commitment.len != params.rank_a_prime) return false;
             if (proof.folded_beta > params.B_sis) return false;
             if (proof.linearization_polys_c1.len != proof.linearization_polys.len) return false;
@@ -7243,7 +7262,7 @@ pub fn CycloProtocol(comptime N: usize, comptime Q: u64) type {
             const transcript_digest = transcript.digest();
             if (!constantTimeEq32(proof.transcript_digest, transcript_digest)) return false;
             if (out_next_accumulator) |slot| {
-                const copied = try allocator.dupe(RingT, folded_result.folded);
+                const copied = try parent_allocator.dupe(RingT, folded_result.folded);
                 slot.* = .{
                     .folded_witness = copied,
                     .beta = folded_result.beta,
