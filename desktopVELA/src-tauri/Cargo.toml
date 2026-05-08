@@ -23,7 +23,7 @@ parking_lot = "0.12"
 once_cell = "1.19"
 anyhow = "1.0"
 rand = "0.8"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "http3"], default-features = false }
 sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"

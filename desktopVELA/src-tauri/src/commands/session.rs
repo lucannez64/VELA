@@ -295,8 +295,7 @@ pub async fn unlock_session_with_password(
     let app_state2 = app_state.clone();
 
     let (device_name, device_id) = tokio::task::spawn_blocking(move || {
-        let rms = biometric::get_cached_rms()
-            .or_else(|| biometric::authenticate_with_password(&password))
+        let rms = biometric::authenticate_with_password(&password)
             .ok_or_else(|| "Invalid password".to_string())?;
 
         let crypto = Crypto::new(&rms);

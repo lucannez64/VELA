@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
+use tokio::sync::Mutex;
 use vela_crypto::aead::{decrypt, encrypt};
 use vela_crypto::oram::CHUNK_SIZE;
 
@@ -340,22 +341,48 @@ async fn download_vault_from_manifest(
         return Ok(None);
     }
 
+    let shared_token = Arc::new(Mutex::new(token.clone()));
+    let client = client.clone();
+
+    let mut handles = Vec::with_capacity(ids.len());
+    for (idx, chunk_id) in ids.iter().enumerate() {
+        let chunk_id = chunk_id.clone();
+        let client = client.clone();
+        let token = shared_token.clone();
+        let key = chunk_key_bytes(state, &chunk_id)?;
+
+        handles.push(tokio::spawn(async move {
+            let t = token.lock().await.clone();
+            let (ciphertext, _version, lamport, new_tok) = client
+                .get_chunk(&t, &chunk_id)
+                .await
+                .map_err(|e| format!("Failed to download chunk {chunk_id}: {e}"))?;
+            if let Some(new_t) = new_tok {
+                *token.lock().await = new_t;
+            }
+            let chunk = decrypt(&key, &ciphertext)
+                .map_err(|e| format!("Failed to decrypt chunk {chunk_id}: {e}"))?;
+            Ok::<_, String>((idx, chunk, lamport))
+        }));
+    }
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        results.push(
+            handle
+                .await
+                .map_err(|e| format!("Download task panicked: {e}"))??,
+        );
+    }
+    results.sort_by_key(|(idx, ..)| *idx);
+
+    *token = shared_token.lock().await.clone();
+
     let mut plaintext = Vec::new();
     let mut max_lamport = 0;
-
-    for chunk_id in ids {
-        let key = chunk_key_bytes(state, &chunk_id)?;
-        let (ciphertext, _version, lamport, new_tok) = client
-            .get_chunk(token, &chunk_id)
-            .await
-            .map_err(|e| format!("Failed to download chunk {chunk_id}: {e}"))?;
-        if let Some(t) = new_tok {
-            *token = t;
-        }
+    for (_, chunk, lamport) in results {
         max_lamport = max_lamport.max(lamport);
-        let mut chunk = decrypt(&key, &ciphertext)
-            .map_err(|e| format!("Failed to decrypt chunk {chunk_id}: {e}"))?;
-        plaintext.append(&mut chunk);
+        plaintext.extend_from_slice(&chunk);
     }
 
     let vault: crate::vault::VaultStore = serde_json::from_slice(&plaintext)
@@ -374,69 +401,104 @@ async fn upload_vault_chunks(
 ) -> Result<usize, String> {
     let chunks = split_plaintext_chunks(plaintext);
     let manifest_meta = manifest_versions(manifest);
-    let mut next_meta = HashMap::new();
-    let mut lamport = base_lamport;
+    let client = client.clone();
 
-    for (idx, chunk) in chunks.iter().enumerate() {
+    // Pre-compute lamport clocks sequentially (fast, no I/O)
+    let mut lamport_assignments = Vec::with_capacity(chunks.len());
+    let mut lamport = base_lamport;
+    for idx in 0..chunks.len() {
         let chunk_id = vault_chunk_id(idx);
-        let version = manifest_meta.get(&chunk_id).map(|m| m.version).unwrap_or(0);
         let previous_lamport = manifest_meta
             .get(&chunk_id)
             .map(|m| m.lamport_clock)
             .or_else(|| local_meta.chunks.get(&chunk_id).map(|m| m.lamport_clock))
             .unwrap_or(0);
         lamport = lamport.max(previous_lamport) + 1;
+        lamport_assignments.push(lamport);
+    }
 
+    // Encrypt and upload in parallel
+    let shared_token = Arc::new(Mutex::new(token.clone()));
+    let mut handles = Vec::with_capacity(chunks.len());
+
+    for (idx, (chunk, &chunk_lamport)) in chunks.iter().zip(lamport_assignments.iter()).enumerate()
+    {
+        let chunk_id = vault_chunk_id(idx);
+        let version = manifest_meta.get(&chunk_id).map(|m| m.version).unwrap_or(0);
         let key = chunk_key_bytes(state, &chunk_id)?;
         let ciphertext =
             encrypt(&key, chunk).map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
+        let client = client.clone();
+        let token = shared_token.clone();
+        let chunk_id_clone = chunk_id.clone();
 
-        let (new_version, new_tok) = client
-            .put_chunk(token, &chunk_id, version, ciphertext, lamport)
+        handles.push(tokio::spawn(async move {
+            let t = token.lock().await.clone();
+            let (new_version, new_tok) = client
+                .put_chunk(&t, &chunk_id_clone, version, ciphertext, chunk_lamport)
+                .await
+                .map_err(|e| format!("Failed to upload chunk {chunk_id_clone}: {e}"))?;
+            if let Some(new_t) = new_tok {
+                *token.lock().await = new_t;
+            }
+            Ok::<_, String>((chunk_id, new_version))
+        }));
+    }
+
+    let mut next_meta = HashMap::new();
+    for handle in handles {
+        let (chunk_id, new_version) = handle
             .await
-            .map_err(|e| format!("Failed to upload chunk {chunk_id}: {e}"))?;
-        if let Some(t) = new_tok {
-            *token = t;
-        }
-
+            .map_err(|e| format!("Upload task panicked: {e}"))??;
+        let chunk_lamport = lamport_assignments[next_meta.len()]; // results collected in order
         next_meta.insert(
             chunk_id,
             LocalChunkMeta {
                 version: new_version,
-                lamport_clock: lamport,
+                lamport_clock: chunk_lamport,
             },
         );
     }
 
-    for entry in manifest
+    *token = shared_token.lock().await.clone();
+
+    // Delete stale chunks in parallel
+    let stale_chunks: Vec<_> = manifest
         .chunks
         .iter()
         .filter(|entry| is_vault_data_chunk(&entry.chunk_id))
-    {
-        let Some(index_str) = entry.chunk_id.strip_prefix(VAULT_CHUNK_PREFIX) else {
-            continue;
-        };
-        let Ok(index) = index_str.parse::<usize>() else {
-            continue;
-        };
-        if index < chunks.len() {
-            continue;
-        }
-        match client
-            .delete_chunk(token, &entry.chunk_id, entry.version)
-            .await
-        {
-            Ok(new_tok) => {
-                if let Some(t) = new_tok {
-                    *token = t;
+        .filter_map(|entry| {
+            let index_str = entry.chunk_id.strip_prefix(VAULT_CHUNK_PREFIX)?;
+            let index = index_str.parse::<usize>().ok()?;
+            if index >= chunks.len() {
+                Some((entry.chunk_id.clone(), entry.version))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !stale_chunks.is_empty() {
+        let delete_token = shared_token.clone();
+        let delete_client = client.clone();
+        let _ = tokio::spawn(async move {
+            for (chunk_id, version) in stale_chunks {
+                let t = delete_token.lock().await.clone();
+                match delete_client.delete_chunk(&t, &chunk_id, version).await {
+                    Ok(new_tok) => {
+                        if let Some(new_t) = new_tok {
+                            *delete_token.lock().await = new_t;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to delete stale sync chunk {}: {}", chunk_id, e)
+                    }
                 }
             }
-            Err(e) => tracing::warn!(
-                "Failed to delete stale sync chunk {}: {}",
-                entry.chunk_id,
-                e
-            ),
-        }
+        })
+        .await;
+
+        *token = shared_token.lock().await.clone();
     }
 
     local_meta.chunks = next_meta;

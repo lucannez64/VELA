@@ -506,19 +506,21 @@ pub async fn import_vault_bitwarden_json(
             );
 
             let item = VaultItem::Login {
-                id: Uuid::new_v4().to_string(),
-                name,
+                meta: crate::vault::VaultMeta {
+                    id: Uuid::new_v4().to_string(),
+                    name,
+                    notes: entry.description,
+                    created_at: now,
+                    updated_at: now,
+                    last_modified_device: None,
+                    favorite: false,
+                    shared: false,
+                    share_recipient: None,
+                },
                 url,
                 username: entry.username,
                 pass: entry.password,
                 totp: entry.otp,
-                notes: entry.description,
-                created_at: now,
-                updated_at: now,
-                last_modified_device: None,
-                favorite: false,
-                shared: false,
-                share_recipient: None,
             };
 
             vault.add_item(item);
@@ -777,9 +779,9 @@ pub async fn check_all_vault_passwords(
             .items
             .iter()
             .filter_map(|item| {
-                if let VaultItem::Login { name, pass, .. } = item {
+                if let VaultItem::Login { meta, pass, .. } = item {
                     if !pass.is_empty() && seen.insert(pass.clone()) {
-                        return Some((name.clone(), pass.clone()));
+                        return Some((meta.name.clone(), pass.clone()));
                     }
                 }
                 None

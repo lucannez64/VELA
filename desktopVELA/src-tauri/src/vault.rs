@@ -1,8 +1,17 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+fn default_created_at() -> DateTime<Utc> {
+    Utc::now()
+}
+
+fn default_updated_at() -> DateTime<Utc> {
+    Utc::now()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ItemType {
     Login,
@@ -13,94 +22,86 @@ pub enum ItemType {
     BreachMonitor,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultMeta {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default = "default_created_at", alias = "created_at")]
+    pub created_at: DateTime<Utc>,
+    #[serde(default = "default_updated_at", alias = "updated_at")]
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, alias = "last_modified_device")]
+    pub last_modified_device: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub shared: bool,
+    #[serde(default, alias = "share_recipient")]
+    pub share_recipient: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "item_type", rename_all = "camelCase")]
 pub enum VaultItem {
     Login {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         url: String,
         username: String,
         #[serde(rename = "password")]
         pass: String,
+        #[serde(default)]
         totp: Option<String>,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     CreditCard {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         number: String,
         exp: String,
         cvv: String,
+        #[serde(default)]
         pin: Option<String>,
+        #[serde(default, alias = "cardholder_name")]
         cardholder_name: Option<String>,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     SecureNote {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         title: String,
         content: String,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     Identity {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
+        #[serde(alias = "first_name")]
         first_name: String,
+        #[serde(alias = "last_name")]
         last_name: String,
         ssn: String,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     FileBlob {
-        id: String,
-        name: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
+        #[serde(alias = "file_name")]
         filename: String,
+        #[serde(alias = "mime_type")]
         mime: String,
+        #[serde(default)]
         chunks: Vec<Uuid>,
-        notes: Option<String>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
     BreachMonitor {
-        id: String,
+        #[serde(flatten)]
+        meta: VaultMeta,
         email: String,
+        #[serde(default, alias = "checked_at")]
         checked_at: Option<DateTime<Utc>>,
+        #[serde(default, alias = "breach_count")]
         breach_count: u32,
+        #[serde(default)]
         breaches: Vec<BreachEntry>,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-        last_modified_device: Option<String>,
-        favorite: bool,
-        shared: bool,
-        share_recipient: Option<String>,
     },
 }
 
@@ -109,46 +110,67 @@ pub enum VaultItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tombstone {
     pub id: String,
+    #[serde(default = "default_created_at")]
     pub deleted_at: DateTime<Utc>,
+    #[serde(default)]
     pub deleted_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BreachEntry {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub domain: String,
+    #[serde(default)]
     pub breach_date: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub data_classes: Vec<String>,
+    #[serde(default)]
     pub is_verified: bool,
+    #[serde(default)]
     pub is_fabricated: bool,
+    #[serde(default)]
     pub is_sensitive: bool,
+    #[serde(default)]
     pub is_retired: bool,
+    #[serde(default)]
     pub is_spam_list: bool,
 }
 
 impl VaultItem {
-    pub fn id(&self) -> &str {
+    fn meta(&self) -> &VaultMeta {
         match self {
-            VaultItem::Login { id, .. } => id,
-            VaultItem::CreditCard { id, .. } => id,
-            VaultItem::SecureNote { id, .. } => id,
-            VaultItem::Identity { id, .. } => id,
-            VaultItem::FileBlob { id, .. } => id,
-            VaultItem::BreachMonitor { id, .. } => id,
+            VaultItem::Login { meta, .. }
+            | VaultItem::CreditCard { meta, .. }
+            | VaultItem::SecureNote { meta, .. }
+            | VaultItem::Identity { meta, .. }
+            | VaultItem::FileBlob { meta, .. }
+            | VaultItem::BreachMonitor { meta, .. } => meta,
         }
     }
 
-    pub fn name(&self) -> &str {
+    fn meta_mut(&mut self) -> &mut VaultMeta {
         match self {
-            VaultItem::Login { name, .. } => name,
-            VaultItem::CreditCard { name, .. } => name,
-            VaultItem::SecureNote { name, .. } => name,
-            VaultItem::Identity { name, .. } => name,
-            VaultItem::FileBlob { name, .. } => name,
-            VaultItem::BreachMonitor { email, .. } => email,
+            VaultItem::Login { meta, .. }
+            | VaultItem::CreditCard { meta, .. }
+            | VaultItem::SecureNote { meta, .. }
+            | VaultItem::Identity { meta, .. }
+            | VaultItem::FileBlob { meta, .. }
+            | VaultItem::BreachMonitor { meta, .. } => meta,
         }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.meta().id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.meta().name
     }
 
     pub fn item_type(&self) -> ItemType {
@@ -163,114 +185,33 @@ impl VaultItem {
     }
 
     pub fn notes(&self) -> Option<&str> {
-        match self {
-            VaultItem::Login { notes, .. } => notes.as_deref(),
-            VaultItem::CreditCard { notes, .. } => notes.as_deref(),
-            VaultItem::SecureNote { notes, .. } => notes.as_deref(),
-            VaultItem::Identity { notes, .. } => notes.as_deref(),
-            VaultItem::FileBlob { notes, .. } => notes.as_deref(),
-            VaultItem::BreachMonitor { .. } => None,
-        }
+        self.meta().notes.as_deref()
     }
 
     pub fn created_at(&self) -> DateTime<Utc> {
-        match self {
-            VaultItem::Login { created_at, .. } => *created_at,
-            VaultItem::CreditCard { created_at, .. } => *created_at,
-            VaultItem::SecureNote { created_at, .. } => *created_at,
-            VaultItem::Identity { created_at, .. } => *created_at,
-            VaultItem::FileBlob { created_at, .. } => *created_at,
-            VaultItem::BreachMonitor { created_at, .. } => *created_at,
-        }
+        self.meta().created_at
     }
 
     pub fn updated_at(&self) -> DateTime<Utc> {
-        match self {
-            VaultItem::Login { updated_at, .. } => *updated_at,
-            VaultItem::CreditCard { updated_at, .. } => *updated_at,
-            VaultItem::SecureNote { updated_at, .. } => *updated_at,
-            VaultItem::Identity { updated_at, .. } => *updated_at,
-            VaultItem::FileBlob { updated_at, .. } => *updated_at,
-            VaultItem::BreachMonitor { updated_at, .. } => *updated_at,
-        }
+        self.meta().updated_at
     }
 
     pub fn last_modified_device(&self) -> Option<&str> {
-        match self {
-            VaultItem::Login {
-                last_modified_device,
-                ..
-            } => last_modified_device.as_deref(),
-            VaultItem::CreditCard {
-                last_modified_device,
-                ..
-            } => last_modified_device.as_deref(),
-            VaultItem::SecureNote {
-                last_modified_device,
-                ..
-            } => last_modified_device.as_deref(),
-            VaultItem::Identity {
-                last_modified_device,
-                ..
-            } => last_modified_device.as_deref(),
-            VaultItem::FileBlob {
-                last_modified_device,
-                ..
-            } => last_modified_device.as_deref(),
-            VaultItem::BreachMonitor {
-                last_modified_device,
-                ..
-            } => last_modified_device.as_deref(),
-        }
+        self.meta().last_modified_device.as_deref()
     }
 
     pub fn favorite(&self) -> bool {
-        match self {
-            VaultItem::Login { favorite, .. } => *favorite,
-            VaultItem::CreditCard { favorite, .. } => *favorite,
-            VaultItem::SecureNote { favorite, .. } => *favorite,
-            VaultItem::Identity { favorite, .. } => *favorite,
-            VaultItem::FileBlob { favorite, .. } => *favorite,
-            VaultItem::BreachMonitor { favorite, .. } => *favorite,
-        }
+        self.meta().favorite
     }
 
     pub fn shared(&self) -> bool {
-        match self {
-            VaultItem::Login { shared, .. } => *shared,
-            VaultItem::CreditCard { shared, .. } => *shared,
-            VaultItem::SecureNote { shared, .. } => *shared,
-            VaultItem::Identity { shared, .. } => *shared,
-            VaultItem::FileBlob { shared, .. } => *shared,
-            VaultItem::BreachMonitor { shared, .. } => *shared,
-        }
+        self.meta().shared
     }
 
     pub fn share_recipient(&self) -> Option<&str> {
-        match self {
-            VaultItem::Login {
-                share_recipient, ..
-            } => share_recipient.as_deref(),
-            VaultItem::CreditCard {
-                share_recipient, ..
-            } => share_recipient.as_deref(),
-            VaultItem::SecureNote {
-                share_recipient, ..
-            } => share_recipient.as_deref(),
-            VaultItem::Identity {
-                share_recipient, ..
-            } => share_recipient.as_deref(),
-            VaultItem::FileBlob {
-                share_recipient, ..
-            } => share_recipient.as_deref(),
-            VaultItem::BreachMonitor {
-                share_recipient, ..
-            } => share_recipient.as_deref(),
-        }
+        self.meta().share_recipient.as_deref()
     }
 
-    /// Returns `true` if this item was received via a share (read-only).
-    /// Received shares have `shared = true` but no `share_recipient` set.
     pub fn is_received_share(&self) -> bool {
         self.shared() && self.share_recipient().is_none()
     }
@@ -326,510 +267,23 @@ impl VaultItem {
     }
 
     pub fn with_id(&self, new_id: String) -> Self {
-        match self {
-            VaultItem::Login {
-                id: _,
-                name,
-                url,
-                username,
-                pass,
-                totp,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::Login {
-                id: new_id,
-                name: name.clone(),
-                url: url.clone(),
-                username: username.clone(),
-                pass: pass.clone(),
-                totp: totp.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::CreditCard {
-                id: _,
-                name,
-                number,
-                exp,
-                cvv,
-                pin,
-                cardholder_name,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::CreditCard {
-                id: new_id,
-                name: name.clone(),
-                number: number.clone(),
-                exp: exp.clone(),
-                cvv: cvv.clone(),
-                pin: pin.clone(),
-                cardholder_name: cardholder_name.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::SecureNote {
-                id: _,
-                name,
-                title,
-                content,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::SecureNote {
-                id: new_id,
-                name: name.clone(),
-                title: title.clone(),
-                content: content.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::Identity {
-                id: _,
-                name,
-                first_name,
-                last_name,
-                ssn,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::Identity {
-                id: new_id,
-                name: name.clone(),
-                first_name: first_name.clone(),
-                last_name: last_name.clone(),
-                ssn: ssn.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::FileBlob {
-                id: _,
-                name,
-                filename,
-                mime,
-                chunks,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::FileBlob {
-                id: new_id,
-                name: name.clone(),
-                filename: filename.clone(),
-                mime: mime.clone(),
-                chunks: chunks.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::BreachMonitor {
-                id: _,
-                email,
-                checked_at,
-                breach_count,
-                breaches,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::BreachMonitor {
-                id: new_id,
-                email: email.clone(),
-                checked_at: checked_at.clone(),
-                breach_count: *breach_count,
-                breaches: breaches.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-        }
+        let mut new = self.clone();
+        new.meta_mut().id = new_id;
+        new
     }
 
     pub fn with_updated_at(&self, new_updated_at: DateTime<Utc>) -> Self {
-        match self {
-            VaultItem::Login {
-                id,
-                name,
-                url,
-                username,
-                pass,
-                totp,
-                notes,
-                created_at,
-                updated_at: _,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::Login {
-                id: id.clone(),
-                name: name.clone(),
-                url: url.clone(),
-                username: username.clone(),
-                pass: pass.clone(),
-                totp: totp.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: new_updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::CreditCard {
-                id,
-                name,
-                number,
-                exp,
-                cvv,
-                pin,
-                cardholder_name,
-                notes,
-                created_at,
-                updated_at: _,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::CreditCard {
-                id: id.clone(),
-                name: name.clone(),
-                number: number.clone(),
-                exp: exp.clone(),
-                cvv: cvv.clone(),
-                pin: pin.clone(),
-                cardholder_name: cardholder_name.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: new_updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::SecureNote {
-                id,
-                name,
-                title,
-                content,
-                notes,
-                created_at,
-                updated_at: _,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::SecureNote {
-                id: id.clone(),
-                name: name.clone(),
-                title: title.clone(),
-                content: content.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: new_updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::Identity {
-                id,
-                name,
-                first_name,
-                last_name,
-                ssn,
-                notes,
-                created_at,
-                updated_at: _,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::Identity {
-                id: id.clone(),
-                name: name.clone(),
-                first_name: first_name.clone(),
-                last_name: last_name.clone(),
-                ssn: ssn.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: new_updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::FileBlob {
-                id,
-                name,
-                filename,
-                mime,
-                chunks,
-                notes,
-                created_at,
-                updated_at: _,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::FileBlob {
-                id: id.clone(),
-                name: name.clone(),
-                filename: filename.clone(),
-                mime: mime.clone(),
-                chunks: chunks.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: new_updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-            VaultItem::BreachMonitor {
-                id,
-                email,
-                checked_at,
-                breach_count,
-                breaches,
-                created_at,
-                updated_at: _,
-                last_modified_device,
-                favorite,
-                shared,
-                share_recipient,
-            } => VaultItem::BreachMonitor {
-                id: id.clone(),
-                email: email.clone(),
-                checked_at: checked_at.clone(),
-                breach_count: *breach_count,
-                breaches: breaches.clone(),
-                created_at: *created_at,
-                updated_at: new_updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared: *shared,
-                share_recipient: share_recipient.clone(),
-            },
-        }
+        let mut new = self.clone();
+        new.meta_mut().updated_at = new_updated_at;
+        new
     }
 
     pub fn with_shared_status(&self, shared: bool, share_recipient: Option<String>) -> Self {
-        match self {
-            VaultItem::Login {
-                id,
-                name,
-                url,
-                username,
-                pass,
-                totp,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared: _,
-                share_recipient: _,
-            } => VaultItem::Login {
-                id: id.clone(),
-                name: name.clone(),
-                url: url.clone(),
-                username: username.clone(),
-                pass: pass.clone(),
-                totp: totp.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared,
-                share_recipient,
-            },
-            VaultItem::CreditCard {
-                id,
-                name,
-                number,
-                exp,
-                cvv,
-                pin,
-                cardholder_name,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared: _,
-                share_recipient: _,
-            } => VaultItem::CreditCard {
-                id: id.clone(),
-                name: name.clone(),
-                number: number.clone(),
-                exp: exp.clone(),
-                cvv: cvv.clone(),
-                pin: pin.clone(),
-                cardholder_name: cardholder_name.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared,
-                share_recipient,
-            },
-            VaultItem::SecureNote {
-                id,
-                name,
-                title,
-                content,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared: _,
-                share_recipient: _,
-            } => VaultItem::SecureNote {
-                id: id.clone(),
-                name: name.clone(),
-                title: title.clone(),
-                content: content.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared,
-                share_recipient,
-            },
-            VaultItem::Identity {
-                id,
-                name,
-                first_name,
-                last_name,
-                ssn,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared: _,
-                share_recipient: _,
-            } => VaultItem::Identity {
-                id: id.clone(),
-                name: name.clone(),
-                first_name: first_name.clone(),
-                last_name: last_name.clone(),
-                ssn: ssn.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared,
-                share_recipient,
-            },
-            VaultItem::FileBlob {
-                id,
-                name,
-                filename,
-                mime,
-                chunks,
-                notes,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared: _,
-                share_recipient: _,
-            } => VaultItem::FileBlob {
-                id: id.clone(),
-                name: name.clone(),
-                filename: filename.clone(),
-                mime: mime.clone(),
-                chunks: chunks.clone(),
-                notes: notes.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared,
-                share_recipient,
-            },
-            VaultItem::BreachMonitor {
-                id,
-                email,
-                checked_at,
-                breach_count,
-                breaches,
-                created_at,
-                updated_at,
-                last_modified_device,
-                favorite,
-                shared: _,
-                share_recipient: _,
-            } => VaultItem::BreachMonitor {
-                id: id.clone(),
-                email: email.clone(),
-                checked_at: checked_at.clone(),
-                breach_count: *breach_count,
-                breaches: breaches.clone(),
-                created_at: *created_at,
-                updated_at: *updated_at,
-                last_modified_device: last_modified_device.clone(),
-                favorite: *favorite,
-                shared,
-                share_recipient,
-            },
-        }
+        let mut new = self.clone();
+        let meta = new.meta_mut();
+        meta.shared = shared;
+        meta.share_recipient = share_recipient;
+        new
     }
 }
 
@@ -863,6 +317,8 @@ pub struct VaultStore {
     pub items: Vec<VaultItem>,
     #[serde(default)]
     pub tombstones: Vec<Tombstone>,
+    #[serde(skip, default = "HashMap::new")]
+    item_index: HashMap<String, usize>,
 }
 
 impl Default for VaultStore {
@@ -876,22 +332,55 @@ impl VaultStore {
         Self {
             items: Vec::new(),
             tombstones: Vec::new(),
+            item_index: HashMap::new(),
+        }
+    }
+
+    fn reindex(&mut self) {
+        self.item_index.clear();
+        for (i, item) in self.items.iter().enumerate() {
+            self.item_index.insert(item.id().to_string(), i);
+        }
+    }
+
+    fn ensure_index(&mut self) {
+        if self.item_index.is_empty() && !self.items.is_empty() {
+            self.reindex();
         }
     }
 
     pub fn add_item(&mut self, item: VaultItem) {
+        self.ensure_index();
+        let id = item.id().to_string();
+        let idx = self.items.len();
         self.items.push(item);
+        self.item_index.insert(id, idx);
     }
 
     pub fn update_item(&mut self, item: VaultItem) {
-        if let Some(existing) = self.items.iter_mut().find(|i| i.id() == item.id()) {
+        self.ensure_index();
+        let id = item.id().to_string();
+        if let Some(&idx) = self.item_index.get(&id) {
+            self.items[idx] = item;
+        } else if let Some(existing) = self.items.iter_mut().find(|i| i.id() == id) {
             *existing = item;
+            self.reindex();
+            return;
+        } else {
+            self.add_item(item);
+            return;
         }
     }
 
     pub fn delete_item(&mut self, id: &str, device_id: Option<&str>) {
-        self.items.retain(|item| item.id() != id);
-        // Record a tombstone so the deletion propagates via sync.
+        self.ensure_index();
+        if let Some(&idx) = self.item_index.get(id) {
+            self.items.remove(idx);
+            self.item_index.remove(id);
+            self.reindex();
+        } else {
+            self.items.retain(|item| item.id() != id);
+        }
         self.tombstones.push(Tombstone {
             id: id.to_string(),
             deleted_at: Utc::now(),
@@ -899,13 +388,15 @@ impl VaultStore {
         });
     }
 
-    /// Remove tombstones older than the given retention period.
     pub fn prune_tombstones(&mut self, max_age: chrono::Duration) {
         let cutoff = Utc::now() - max_age;
         self.tombstones.retain(|t| t.deleted_at >= cutoff);
     }
 
     pub fn get_item(&self, id: &str) -> Option<&VaultItem> {
+        if let Some(&idx) = self.item_index.get(id) {
+            return self.items.get(idx);
+        }
         self.items.iter().find(|item| item.id() == id)
     }
 
@@ -1002,14 +493,12 @@ fn urls_match(current_url: &str, stored_url: &str) -> bool {
     let (current_host, current_port) = extract_host_and_port(&current_lower);
     let (stored_host, stored_port) = extract_host_and_port(&stored_lower);
 
-    // Handle port mismatch
     if let (Some(cp), Some(sp)) = (current_port, stored_port) {
         if cp != sp {
             return false;
         }
     }
 
-    // Exact match - return early
     if current_host == stored_host {
         return true;
     }
@@ -1033,8 +522,6 @@ fn urls_match(current_url: &str, stored_url: &str) -> bool {
         return stored_host == current_host;
     }
 
-    // Check if current domain ends with stored domain (stored can be parent of current)
-    // e.g., stored="eduid.ch" should match current="epfl.login.eduid.ch"
     let current_ends_with_stored = current_parts.len() >= stored_parts.len()
         && current_parts[current_parts.len() - stored_parts.len()..] == stored_parts[..];
 
@@ -1042,7 +529,6 @@ fn urls_match(current_url: &str, stored_url: &str) -> bool {
         return false;
     }
 
-    // Ensure stored domain has at least 2 parts (e.g., "eduid.ch", not just "ch")
     stored_parts.len() >= 2
 }
 

@@ -62,6 +62,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                     let mut vault = state.vault.write();
                     *vault = vela_desktop::vault::VaultStore::new();
                 }
+                vela_desktop::biometric::clear_cached_rms();
                 info!("Session locked via tray");
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.emit("session-locked", ());

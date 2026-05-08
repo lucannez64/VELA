@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use vela_crypto::{
     aead::{decrypt, encrypt},
     kdf,
 };
 
-static CACHED_RMS: OnceLock<[u8; 32]> = OnceLock::new();
+static CACHED_RMS: Mutex<Option<[u8; 32]>> = Mutex::new(None);
 
 const PASSWORD_CREDENTIAL_NAME: &str = "VELA_RMS_PASSWORD";
 const PASSWORD_KEY_CONTEXT: &str = "vela master password rms v1";
@@ -126,15 +126,8 @@ pub mod windows_biometric {
         if crate::device::tpm::is_tpm_key_available() {
             match crate::device::tpm::retrieve_from_tpm() {
                 Ok(rms) => {
-                    if CACHED_RMS.set(rms).is_err() || CACHED_RMS.get().is_some() {
-                        if CACHED_RMS.get().is_some() {
-                            return BiometricAuthResult {
-                                success: true,
-                                error_message: None,
-                                retry_count: None,
-                                uses_password: false,
-                            };
-                        }
+                    if let Ok(mut guard) = CACHED_RMS.lock() {
+                        *guard = Some(rms);
                     }
                     return BiometricAuthResult {
                         success: true,
@@ -173,7 +166,9 @@ pub mod windows_biometric {
                         let mut rms = [0u8; 32];
                         rms.copy_from_slice(&blob[..32]);
 
-                        if CACHED_RMS.set(rms).is_err() {}
+                        if let Ok(mut guard) = CACHED_RMS.lock() {
+                            *guard = Some(rms);
+                        }
 
                         CredFree(credential as *mut _);
                         return BiometricAuthResult {
@@ -380,7 +375,9 @@ pub mod linux_biometric {
             match tpm::fprint::verify() {
                 Ok(()) => {
                     if let Some(rms) = retrieve_rms_from_any_source() {
-                        let _ = CACHED_RMS.set(rms);
+                        if let Ok(mut guard) = CACHED_RMS.lock() {
+                            *guard = Some(rms);
+                        }
                         return BiometricAuthResult {
                             success: true,
                             error_message: None,
@@ -655,15 +652,17 @@ pub fn delete_stored_rms() -> anyhow::Result<()> {
 }
 
 pub fn get_cached_rms() -> Option<[u8; 32]> {
-    CACHED_RMS.get().copied()
+    CACHED_RMS.lock().ok().and_then(|guard| *guard)
 }
 
 pub fn clear_cached_rms() {
-    if let Some(rms) = CACHED_RMS.get() {
-        let mut mutable_rms = *rms;
-        for byte in &mut mutable_rms {
-            *byte = 0;
+    if let Ok(mut guard) = CACHED_RMS.lock() {
+        if let Some(ref mut rms) = *guard {
+            for byte in rms.iter_mut() {
+                *byte = 0;
+            }
         }
+        *guard = None;
     }
 }
 
@@ -764,7 +763,9 @@ pub mod windows_password {
                             rms.copy_from_slice(&decrypted[..32]);
                             CredFree(credential as *mut _);
 
-                            let _ = CACHED_RMS.set(rms);
+                            if let Ok(mut guard) = CACHED_RMS.lock() {
+                                *guard = Some(rms);
+                            }
                             return Some(rms);
                         }
                     }
@@ -840,7 +841,9 @@ pub mod default_password {
             let mut rms = [0u8; 32];
             rms.copy_from_slice(&decrypted[..32]);
 
-            let _ = CACHED_RMS.set(rms);
+            if let Ok(mut guard) = CACHED_RMS.lock() {
+                *guard = Some(rms);
+            }
             tracing::info!("Password authentication successful");
             return Some(rms);
         }

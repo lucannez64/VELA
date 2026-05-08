@@ -1,4 +1,7 @@
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL},
+    Engine as _,
+};
 use chrono::{DateTime, Utc};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -9,7 +12,7 @@ use crate::api::{ApiClient, EnrollDeviceRequest, NewDevicePayload, VerifyRequest
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::crypto;
 use crate::AppState;
-use vela_crypto::aead::decrypt;
+use vela_crypto::aead::{decrypt, encrypt};
 
 const VAULT_MAIN_CHUNK_ID: &str = "vault-main";
 const VAULT_DATA_PREFIX: &str = "vault-data-";
@@ -194,6 +197,16 @@ struct EnrollmentCodePayload {
     server_url: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct EnrollmentPackageLocator {
+    v: u8,
+    u: String,
+    t: String,
+    k: String,
+}
+
+const ENROLLMENT_CODE_V2_PREFIX: &str = "VELA-ENROLL:v2:";
+
 /// Generate an enrollment invitation code that a second device can import.
 ///
 /// The existing (enrolled) device:
@@ -331,11 +344,36 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
         cyclo_sk: B64.encode(&new_identity.cyclo_sk),
         hybrid_sk: B64.encode(&new_identity.hybrid_sk),
         transfer_key: B64.encode(&transfer_key),
-        server_url,
+        server_url: server_url.clone(),
     };
 
     let json = serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {e}"))?;
-    Ok(B64.encode(json.as_bytes()))
+
+    let mut package_key = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut package_key);
+    let mut package_token = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut package_token);
+
+    let token = B64URL.encode(package_token);
+    let ciphertext = encrypt(&package_key, json.as_bytes())
+        .map_err(|e| format!("Failed to encrypt enrollment package: {e}"))?;
+    client
+        .store_enrollment_package(&token, &B64URL.encode(ciphertext))
+        .await
+        .map_err(|e| format!("Failed to store enrollment package: {e}"))?;
+
+    let locator = EnrollmentPackageLocator {
+        v: 2,
+        u: server_url,
+        t: token,
+        k: B64URL.encode(package_key),
+    };
+    let locator_json =
+        serde_json::to_string(&locator).map_err(|e| format!("Serialization error: {e}"))?;
+    Ok(format!(
+        "{ENROLLMENT_CODE_V2_PREFIX}{}",
+        B64URL.encode(locator_json.as_bytes())
+    ))
 }
 
 /// Try to download and decrypt a single vault chunk by chunk_id.
@@ -401,6 +439,54 @@ async fn try_download_fallback_chunk(
     }
 }
 
+async fn resolve_enrollment_code_json(
+    state: &State<'_, Arc<AppState>>,
+    code: &str,
+) -> Result<Vec<u8>, String> {
+    let trimmed = code.trim();
+    if let Some(encoded_locator) = trimmed.strip_prefix(ENROLLMENT_CODE_V2_PREFIX) {
+        let locator_json = B64URL
+            .decode(encoded_locator)
+            .map_err(|e| format!("Invalid enrollment locator (base64url error): {e}"))?;
+        let locator: EnrollmentPackageLocator = serde_json::from_slice(&locator_json)
+            .map_err(|e| format!("Invalid enrollment locator (JSON error): {e}"))?;
+        if locator.v != 2 {
+            return Err("Unsupported enrollment code version".to_string());
+        }
+
+        let package_key = B64URL
+            .decode(&locator.k)
+            .map_err(|_| "Invalid enrollment package key".to_string())?;
+        if package_key.len() != 32 {
+            return Err("Enrollment package key must be 32 bytes".to_string());
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&package_key);
+
+        let client = ApiClient::with_url(locator.u.clone());
+        let ciphertext_b64 = client
+            .fetch_enrollment_package(&locator.t)
+            .await
+            .map_err(|e| format!("Failed to fetch enrollment package: {e}"))?;
+        let ciphertext = B64URL
+            .decode(&ciphertext_b64)
+            .map_err(|_| "Invalid enrollment package ciphertext".to_string())?;
+        let plaintext = decrypt(&key, &ciphertext)
+            .map_err(|e| format!("Failed to decrypt enrollment package: {e}"))?;
+
+        *state.server_url.write() = locator.u;
+        return Ok(plaintext.to_vec());
+    }
+
+    B64.decode(
+        trimmed
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>(),
+    )
+    .map_err(|e| format!("Invalid enrollment code (base64 error): {e}"))
+}
+
 /// Import an enrollment code on a new device.
 ///
 /// The new device:
@@ -417,9 +503,7 @@ pub async fn import_enrollment_code(
     password: String,
 ) -> Result<(), String> {
     // ── decode invitation code ────────────────────────────────────────────────
-    let json_bytes = B64
-        .decode(&code)
-        .map_err(|e| format!("Invalid enrollment code (base64 error): {e}"))?;
+    let json_bytes = resolve_enrollment_code_json(&state, &code).await?;
     let payload: EnrollmentCodePayload = serde_json::from_slice(&json_bytes)
         .map_err(|e| format!("Invalid enrollment code (JSON error): {e}"))?;
 

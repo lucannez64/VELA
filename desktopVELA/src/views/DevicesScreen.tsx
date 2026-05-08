@@ -221,7 +221,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
               <h2 className="font-headline text-2xl font-bold text-on-surface">Enrollment Code</h2>
             </div>
             <p className="text-on-surface-variant text-sm mb-4">
-              Scan the QR parts from the Android app or copy this code and paste it on the new device under <strong>Join existing account</strong>.
+              Scan the QR code from the Android app or copy this code and paste it on the new device under <strong>Join existing account</strong>.
               The code is valid for one use and contains sensitive key material — do not share it over unencrypted channels.
               Closing this dialog keeps the device pending until it is used or cancelled from the Devices list.
             </p>
@@ -229,9 +229,9 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
               <div className="mb-4 p-4 bg-white rounded-xl flex flex-col items-center">
                 <img src={qrImages[qrIndex]} alt={`Enrollment QR ${qrIndex + 1} of ${qrImages.length}`} className="w-[280px] h-[280px]" />
                 <div className="mt-3 text-slate-900 font-label text-sm">
-                  QR part {qrIndex + 1} of {qrImages.length}
+                  {qrImages.length === 1 ? 'Enrollment QR' : `QR part ${qrIndex + 1} of ${qrImages.length}`}
                 </div>
-                <div className="mt-3 flex gap-2">
+                {qrImages.length > 1 && <div className="mt-3 flex gap-2">
                   <button
                     onClick={() => setQrIndex(i => Math.max(0, i - 1))}
                     disabled={qrIndex === 0}
@@ -246,7 +246,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                   >
                     Next
                   </button>
-                </div>
+                </div>}
               </div>
             )}
             <div className="bg-surface-bright rounded-xl p-3 mb-4 font-mono text-xs text-on-surface break-all select-all max-h-36 overflow-y-auto">
@@ -313,6 +313,10 @@ const QR_CHUNK_SIZE = 900;
 const QR_PREFIX = 'VELA-ENROLL';
 
 function createEnrollmentQrChunks(code: string): string[] {
+  if (code.length <= QR_CHUNK_SIZE) {
+    return [code];
+  }
+
   const chunks: string[] = [];
   for (let offset = 0; offset < code.length; offset += QR_CHUNK_SIZE) {
     chunks.push(code.slice(offset, offset + QR_CHUNK_SIZE));

@@ -1,13 +1,24 @@
 //! HTTP client for serverVELA API.
 
 use anyhow::{anyhow, Result};
+use parking_lot::RwLock;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error as _;
+use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct ApiClient {
-    client: Client,
+    h3_client: Option<Client>,
+    fallback_client: Client,
     base_url: String,
+    preferred_protocol: Arc<RwLock<Option<PreferredProtocol>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreferredProtocol {
+    Http3,
+    Fallback,
 }
 
 /// Extract the rotated token from `X-New-Token` response header, if present.
@@ -91,14 +102,31 @@ pub struct SyncManifest {
 
 impl ApiClient {
     pub fn new(base_url: &str) -> Self {
-        let client = Client::builder()
+        let fallback_client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");
+        let h3_client = if base_url.starts_with("https://") {
+            match Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .http3_prior_knowledge()
+                .build()
+            {
+                Ok(client) => Some(client),
+                Err(error) => {
+                    tracing::warn!(error = %error, "HTTP/3 client unavailable; using TCP fallback");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         Self {
-            client,
+            h3_client,
+            fallback_client,
             base_url: base_url.to_string(),
+            preferred_protocol: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -106,23 +134,71 @@ impl ApiClient {
         Self::new(&base_url)
     }
 
-    pub async fn health_check(&self) -> Result<bool> {
-        let resp = self
-            .client
+    async fn select_protocol(&self) -> PreferredProtocol {
+        if !self.base_url.starts_with("https://") {
+            return PreferredProtocol::Fallback;
+        }
+        let Some(h3_client) = self.h3_client.as_ref() else {
+            return PreferredProtocol::Fallback;
+        };
+        if let Some(protocol) = *self.preferred_protocol.read() {
+            return protocol;
+        }
+
+        let protocol = match h3_client
             .get(format!("{}/health", self.base_url))
             .send()
             .await
-            .map_err(|e| anyhow!(describe_request_error(&e)))?;
+        {
+            Ok(resp) if resp.status().is_success() => PreferredProtocol::Http3,
+            _ => PreferredProtocol::Fallback,
+        };
+        *self.preferred_protocol.write() = Some(protocol);
+        protocol
+    }
+
+    async fn send_request<F>(&self, safe: bool, build: F) -> Result<reqwest::Response>
+    where
+        F: Fn(&Client) -> reqwest::RequestBuilder,
+    {
+        let protocol = self.select_protocol().await;
+        let client = match protocol {
+            PreferredProtocol::Http3 => self.h3_client.as_ref().unwrap_or(&self.fallback_client),
+            PreferredProtocol::Fallback => &self.fallback_client,
+        };
+
+        match build(client).send().await {
+            Ok(resp) => Ok(resp),
+            Err(_err) if protocol == PreferredProtocol::Http3 && safe => {
+                *self.preferred_protocol.write() = Some(PreferredProtocol::Fallback);
+                build(&self.fallback_client)
+                    .send()
+                    .await
+                    .map_err(Into::into)
+            }
+            Err(err) if protocol == PreferredProtocol::Http3 => {
+                *self.preferred_protocol.write() = Some(PreferredProtocol::Fallback);
+                Err(anyhow!(describe_request_error(&err)))
+            }
+            Err(err) => Err(anyhow!(describe_request_error(&err))),
+        }
+    }
+
+    pub async fn health_check(&self) -> Result<bool> {
+        let resp = self
+            .send_request(true, |client| {
+                client.get(format!("{}/health", self.base_url))
+            })
+            .await?;
         Ok(resp.status().is_success())
     }
 
     pub async fn get_challenge(&self) -> Result<ChallengeResponse> {
         let resp = self
-            .client
-            .get(format!("{}/auth/challenge", self.base_url))
-            .send()
-            .await
-            .map_err(|e| anyhow!(describe_request_error(&e)))?;
+            .send_request(true, |client| {
+                client.get(format!("{}/auth/challenge", self.base_url))
+            })
+            .await?;
 
         if !resp.status().is_success() {
             anyhow::bail!("Challenge request failed: {}", resp.status());
@@ -134,10 +210,11 @@ impl ApiClient {
 
     pub async fn verify_proof(&self, request: &VerifyRequest) -> Result<VerifyResponse> {
         let resp = self
-            .client
-            .post(format!("{}/auth/verify", self.base_url))
-            .json(request)
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/auth/verify", self.base_url))
+                    .json(request)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -150,10 +227,11 @@ impl ApiClient {
 
     pub async fn get_sync_manifest(&self, token: &str) -> Result<(SyncManifest, Option<String>)> {
         let resp = self
-            .client
-            .get(format!("{}/vault/sync", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/vault/sync", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -171,10 +249,11 @@ impl ApiClient {
         chunk_id: &str,
     ) -> Result<(Vec<u8>, i64, i64, Option<String>)> {
         let resp = self
-            .client
-            .get(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -209,13 +288,14 @@ impl ApiClient {
         lamport_clock: i64,
     ) -> Result<(i64, Option<String>)> {
         let resp = self
-            .client
-            .put(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
-            .header("Authorization", format!("Bearer {}", token))
-            .header("If-Match", format!("{}", version))
-            .header("X-Lamport-Clock", format!("{}", lamport_clock))
-            .body(ciphertext)
-            .send()
+            .send_request(false, |client| {
+                client
+                    .put(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("If-Match", format!("{}", version))
+                    .header("X-Lamport-Clock", format!("{}", lamport_clock))
+                    .body(ciphertext.clone())
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -238,11 +318,12 @@ impl ApiClient {
         version: i64,
     ) -> Result<Option<String>> {
         let resp = self
-            .client
-            .delete(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
-            .header("Authorization", format!("Bearer {}", token))
-            .header("If-Match", format!("{}", version))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .delete(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("If-Match", format!("{}", version))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -264,10 +345,11 @@ impl ApiClient {
 
     pub async fn get_devices_raw(&self, token: &str) -> Result<(String, Option<String>)> {
         let resp = self
-            .client
-            .get(format!("{}/devices", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/devices", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -281,11 +363,12 @@ impl ApiClient {
 
     pub async fn revoke_device(&self, token: &str, device_id: &str) -> Result<Option<String>> {
         let resp = self
-            .client
-            .post(format!("{}/device/revoke", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({ "target_device_id": device_id }))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/device/revoke", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({ "target_device_id": device_id }))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -297,10 +380,11 @@ impl ApiClient {
 
     pub async fn register_account(&self, request: &RegisterRequest) -> Result<RegisterResponse> {
         let resp = self
-            .client
-            .post(format!("{}/account/register", self.base_url))
-            .json(request)
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/account/register", self.base_url))
+                    .json(request)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -313,10 +397,11 @@ impl ApiClient {
 
     pub async fn delete_account(&self, token: &str) -> Result<Option<String>> {
         let resp = self
-            .client
-            .delete(format!("{}/account", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .delete(format!("{}/account", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -328,10 +413,11 @@ impl ApiClient {
 
     pub async fn logout(&self, token: &str) -> Result<Option<String>> {
         let resp = self
-            .client
-            .post(format!("{}/auth/logout", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/auth/logout", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -343,10 +429,11 @@ impl ApiClient {
 
     pub async fn enroll_device(&self, request: &EnrollDeviceRequest) -> Result<EnrollResponse> {
         let resp = self
-            .client
-            .post(format!("{}/device/enroll", self.base_url))
-            .json(request)
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/device/enroll", self.base_url))
+                    .json(request)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -359,12 +446,59 @@ impl ApiClient {
         Ok(result)
     }
 
+    pub async fn store_enrollment_package(&self, token: &str, ciphertext: &str) -> Result<()> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/device/enrollment-package", self.base_url))
+                    .json(&serde_json::json!({
+                        "token": token,
+                        "ciphertext": ciphertext,
+                    }))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Store enrollment package failed: {} — {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    pub async fn fetch_enrollment_package(&self, token: &str) -> Result<String> {
+        let resp = self
+            .send_request(true, |client| {
+                client.get(format!(
+                    "{}/device/enrollment-package/{}",
+                    self.base_url, token
+                ))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Fetch enrollment package failed: {} — {}", status, body);
+        }
+
+        #[derive(Deserialize)]
+        struct FetchEnrollmentPackageResponse {
+            ciphertext: String,
+        }
+
+        let result: FetchEnrollmentPackageResponse = resp.json().await?;
+        Ok(result.ciphertext)
+    }
+
     pub async fn get_capsule(&self, token: &str) -> Result<(CapsuleResponse, Option<String>)> {
         let resp = self
-            .client
-            .get(format!("{}/device/capsule", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/device/capsule", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -378,10 +512,11 @@ impl ApiClient {
 
     pub async fn get_inbox(&self, token: &str) -> Result<(Vec<InboxItem>, Option<String>)> {
         let resp = self
-            .client
-            .get(format!("{}/share/inbox", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/share/inbox", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -405,14 +540,15 @@ impl ApiClient {
         capsule: &str,
     ) -> Result<(ShareResponse, Option<String>)> {
         let resp = self
-            .client
-            .post(format!("{}/share/send", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({
-                "recipient_user_id": recipient_user_id,
-                "capsule": capsule,
-            }))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/share/send", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({
+                        "recipient_user_id": recipient_user_id,
+                        "capsule": capsule,
+                    }))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -426,10 +562,11 @@ impl ApiClient {
 
     pub async fn delete_inbox_item(&self, token: &str, item_id: &str) -> Result<Option<String>> {
         let resp = self
-            .client
-            .delete(format!("{}/share/inbox/{}", self.base_url, item_id))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .delete(format!("{}/share/inbox/{}", self.base_url, item_id))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -444,10 +581,11 @@ impl ApiClient {
         token: &str,
     ) -> Result<(Vec<LinkedShareItem>, Option<String>)> {
         let resp = self
-            .client
-            .get(format!("{}/share/linked", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/share/linked", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -470,11 +608,12 @@ impl ApiClient {
         capsule: &str,
     ) -> Result<Option<String>> {
         let resp = self
-            .client
-            .put(format!("{}/share/linked/{}", self.base_url, share_id))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({ "capsule": capsule }))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .put(format!("{}/share/linked/{}", self.base_url, share_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({ "capsule": capsule }))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -486,10 +625,11 @@ impl ApiClient {
 
     pub async fn delete_linked_share(&self, token: &str, share_id: &str) -> Result<Option<String>> {
         let resp = self
-            .client
-            .delete(format!("{}/share/linked/{}", self.base_url, share_id))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .delete(format!("{}/share/linked/{}", self.base_url, share_id))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -506,17 +646,18 @@ impl ApiClient {
         user_display_name: Option<&str>,
     ) -> Result<(WebAuthnRegisterStartResponse, Option<String>)> {
         let resp = self
-            .client
-            .post(format!(
-                "{}/recovery/webauthn/register/start",
-                self.base_url
-            ))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({
-                "user_name": user_name,
-                "user_display_name": user_display_name,
-            }))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!(
+                        "{}/recovery/webauthn/register/start",
+                        self.base_url
+                    ))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({
+                        "user_name": user_name,
+                        "user_display_name": user_display_name,
+                    }))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -537,14 +678,15 @@ impl ApiClient {
         credential: serde_json::Value,
     ) -> Result<(WebAuthnRegisterFinishResponse, Option<String>)> {
         let resp = self
-            .client
-            .post(format!(
-                "{}/recovery/webauthn/register/finish",
-                self.base_url
-            ))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&credential)
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!(
+                        "{}/recovery/webauthn/register/finish",
+                        self.base_url
+                    ))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&credential)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -561,10 +703,11 @@ impl ApiClient {
 
     pub async fn initiate_recovery(&self, user_id: &str) -> Result<RecoveryInitiateResponse> {
         let resp = self
-            .client
-            .post(format!("{}/recovery/initiate", self.base_url))
-            .json(&serde_json::json!({ "user_id": user_id }))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/recovery/initiate", self.base_url))
+                    .json(&serde_json::json!({ "user_id": user_id }))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -580,10 +723,11 @@ impl ApiClient {
         request: &RecoveryRecoverRequest,
     ) -> Result<RecoveryRecoverResponse> {
         let resp = self
-            .client
-            .post(format!("{}/recovery/recover", self.base_url))
-            .json(request)
-            .send()
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/recovery/recover", self.base_url))
+                    .json(request)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -602,13 +746,14 @@ impl ApiClient {
         height: u32,
     ) -> Result<(OramPathResponse, Option<String>)> {
         let resp = self
-            .client
-            .get(format!(
-                "{}/vault/oram/{}/path/{}?height={}",
-                self.base_url, tree_id, leaf, height
-            ))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!(
+                        "{}/vault/oram/{}/path/{}?height={}",
+                        self.base_url, tree_id, leaf, height
+                    ))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -628,14 +773,15 @@ impl ApiClient {
         request: &PutOramPathRequest,
     ) -> Result<(PutOramPathResponse, Option<String>)> {
         let resp = self
-            .client
-            .put(format!(
-                "{}/vault/oram/{}/path/{}",
-                self.base_url, tree_id, leaf
-            ))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(request)
-            .send()
+            .send_request(false, |client| {
+                client
+                    .put(format!(
+                        "{}/vault/oram/{}/path/{}",
+                        self.base_url, tree_id, leaf
+                    ))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(request)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -652,10 +798,11 @@ impl ApiClient {
         token: &str,
     ) -> Result<(RecoveryShareResponse, Option<String>)> {
         let resp = self
-            .client
-            .get(format!("{}/recovery/share", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/recovery/share", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -673,11 +820,12 @@ impl ApiClient {
         share: RecoveryShareData,
     ) -> Result<Option<String>> {
         let resp = self
-            .client
-            .put(format!("{}/recovery/share", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({ "share": share.share }))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .put(format!("{}/recovery/share", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({ "share": share.share }))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -689,10 +837,11 @@ impl ApiClient {
 
     pub async fn delete_recovery_share(&self, token: &str) -> Result<Option<String>> {
         let resp = self
-            .client
-            .delete(format!("{}/recovery/share", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
+            .send_request(false, |client| {
+                client
+                    .delete(format!("{}/recovery/share", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
             .await?;
 
         if !resp.status().is_success() {
