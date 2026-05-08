@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.core.VaultItem
+import com.vela.android.core.VaultMeta
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
 import com.vela.android.ui.components.VelaCard
@@ -68,7 +69,7 @@ fun AddItemScreen(
         mutableStateOf(
             when (editItem) {
                 is VaultItem.Login -> editItem.notes.orEmpty()
-                is VaultItem.SecureNote -> editItem.notes
+                is VaultItem.SecureNote -> editItem.content
                 is VaultItem.CreditCard -> editItem.notes.orEmpty()
                 else -> ""
             }
@@ -207,55 +208,63 @@ fun AddItemScreen(
                 onClick = {
                     val item = when (selectedType) {
                         "login" -> VaultItem.Login(
-                            id = editItem?.id ?: UUID.randomUUID().toString(),
-                            name = name.ifBlank { "Untitled" },
+                            meta = VaultMeta(
+                                id = editItem?.id ?: UUID.randomUUID().toString(),
+                                name = name.ifBlank { "Untitled" },
+                                notes = notes.ifBlank { null },
+                                createdAt = editItem?.createdAt ?: Instant.now(),
+                                updatedAt = Instant.now(),
+                                lastModifiedDevice = editItem?.lastModifiedDevice,
+                                favorite = editItem?.favorite ?: false,
+                                shared = editItem?.shared ?: false,
+                                shareRecipient = editItem?.shareRecipient
+                            ),
                             url = url,
                             username = username,
                             password = password,
-                            totp = totp.ifBlank { null },
-                            notes = notes.ifBlank { null },
-                            createdAt = editItem?.createdAt ?: Instant.now(),
-                            updatedAt = Instant.now(),
-                            lastModifiedDevice = editItem?.lastModifiedDevice,
-                            favorite = editItem?.favorite ?: false,
-                            shared = editItem?.shared ?: false,
-                            shareRecipient = editItem?.shareRecipient
+                            totp = totp.ifBlank { null }
                         )
                         "card" -> VaultItem.CreditCard(
-                            id = editItem?.id ?: UUID.randomUUID().toString(),
-                            name = cardholder.ifBlank { "Card" },
+                            meta = VaultMeta(
+                                id = editItem?.id ?: UUID.randomUUID().toString(),
+                                name = cardholder.ifBlank { "Card" },
+                                notes = notes.ifBlank { null },
+                                createdAt = editItem?.createdAt ?: Instant.now(),
+                                updatedAt = Instant.now(),
+                                lastModifiedDevice = editItem?.lastModifiedDevice,
+                                favorite = editItem?.favorite ?: false,
+                                shared = editItem?.shared ?: false,
+                                shareRecipient = editItem?.shareRecipient
+                            ),
                             cardholderName = cardholder,
                             cardNumber = cardNumber,
                             expiration = expiration,
                             cvv = cvv,
-                            pin = pin.ifBlank { null },
-                            notes = notes.ifBlank { null },
-                            createdAt = editItem?.createdAt ?: Instant.now(),
-                            updatedAt = Instant.now(),
-                            lastModifiedDevice = editItem?.lastModifiedDevice,
-                            favorite = editItem?.favorite ?: false,
-                            shared = editItem?.shared ?: false,
-                            shareRecipient = editItem?.shareRecipient
+                            pin = pin.ifBlank { null }
                         )
                         "note" -> VaultItem.SecureNote(
-                            id = editItem?.id ?: UUID.randomUUID().toString(),
-                            name = name.ifBlank { "Note" },
-                            notes = notes,
-                            createdAt = editItem?.createdAt ?: Instant.now(),
-                            updatedAt = Instant.now(),
-                            lastModifiedDevice = editItem?.lastModifiedDevice,
-                            favorite = editItem?.favorite ?: false,
-                            shared = editItem?.shared ?: false,
-                            shareRecipient = editItem?.shareRecipient
+                            meta = VaultMeta(
+                                id = editItem?.id ?: UUID.randomUUID().toString(),
+                                name = name.ifBlank { "Note" },
+                                notes = null,
+                                createdAt = editItem?.createdAt ?: Instant.now(),
+                                updatedAt = Instant.now(),
+                                lastModifiedDevice = editItem?.lastModifiedDevice,
+                                favorite = editItem?.favorite ?: false,
+                                shared = editItem?.shared ?: false,
+                                shareRecipient = editItem?.shareRecipient
+                            ),
+                            content = notes
                         )
                         else -> VaultItem.Login(
-                            id = editItem?.id ?: UUID.randomUUID().toString(),
-                            name = name.ifBlank { "Untitled" },
+                            meta = VaultMeta(
+                                id = UUID.randomUUID().toString(),
+                                name = name.ifBlank { "Untitled" },
+                                favorite = false
+                            ),
                             url = url,
                             username = username,
-                            password = password,
-                            totp = null,
-                            favorite = false
+                            password = password
                         )
                     }
                     onSave(item)

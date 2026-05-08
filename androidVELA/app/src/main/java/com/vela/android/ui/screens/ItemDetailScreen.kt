@@ -159,7 +159,7 @@ private fun CardFields(item: VaultItem.CreditCard, clipboard: ClipboardManager) 
 private fun NoteFields(item: VaultItem.SecureNote) {
     VelaCard {
         Text(
-            item.notes,
+            item.content,
             color = VelaColors.TextPrimary,
             fontSize = 15.sp,
             lineHeight = 22.sp

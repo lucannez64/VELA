@@ -1,5 +1,6 @@
 package com.vela.android.sync
 
+import android.content.Context
 import com.vela.android.core.LocalVaultRepository
 import com.vela.android.core.NativeVelaCore
 import com.vela.android.core.Tombstone
@@ -7,8 +8,15 @@ import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultJson
 import com.vela.android.core.VaultStore
 import com.vela.android.security.SecureVaultManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.time.Instant
 import java.util.Base64
@@ -22,6 +30,7 @@ data class SyncState(
 )
 
 class VaultSyncManager(
+    private val context: Context,
     private val settingsStore: SyncSettingsStore,
     private val identityStore: ServerIdentityStore,
     private val security: SecureVaultManager,
@@ -37,7 +46,7 @@ class VaultSyncManager(
     fun <T> withAuthenticatedClient(block: (AndroidVelaApiClient, String) -> T): T {
         val settings = settingsStore.settings.value
         require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
-        val client = AndroidVelaApiClient(settings.serverUrl)
+        val client = AndroidVelaApiClient(settings.serverUrl, context)
         val token = authenticatedToken(client, settings.bearerToken)
         if (token != settings.bearerToken) {
             settingsStore.updateBearerToken(token)
@@ -54,14 +63,14 @@ class VaultSyncManager(
     }
 
     fun enrollWithCode(serverUrl: String, enrollmentCode: String): ByteArray {
-        val payload = EnrollmentCodePayload.fromCode(enrollmentCode)
+        val payload = EnrollmentCodePayload.fromCode(serverUrl, enrollmentCode)
         val effectiveServerUrl = serverUrl.ifBlank { payload.serverUrl }
         if (effectiveServerUrl.isBlank()) {
             error("Enrollment requires a server URL")
         }
 
         updateServer(effectiveServerUrl, "")
-        val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl)
+        val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
         identityStore.save(
             ServerIdentity(
                 userId = null,
@@ -94,7 +103,7 @@ class VaultSyncManager(
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null, conflict = null)
         return try {
-            syncUnlocked(settings, rms)
+            runBlocking(Dispatchers.IO) { syncUnlocked(settings, rms) }
         } catch (e: Exception) {
             publish(error = e.message ?: "Sync failed")
         } finally {
@@ -113,20 +122,22 @@ class VaultSyncManager(
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null)
         return try {
-            val client = AndroidVelaApiClient(settings.serverUrl)
-            var token = authenticatedToken(client, settings.bearerToken)
-            val manifestResult = getManifestWithTokenRetry(client, token, settings)
-            val manifest = manifestResult.manifest
-            token = manifestResult.token
-            val manifestToken = manifestResult.newToken
-            manifestToken?.let { token = it }
-            val downloadChunkIds = recognizedVaultChunkIds(manifest)
-            if (downloadChunkIds.isEmpty()) {
-                publish(error = "Server has no recognized vault data chunk")
-            } else {
-                val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
-                vault.replaceAll(remoteResult.vault)
-                markSynced(remoteResult.token, remoteResult.version, remoteResult.lamportClock, null)
+            runBlocking(Dispatchers.IO) {
+                val client = AndroidVelaApiClient(settings.serverUrl, context)
+                var token = authenticatedToken(client, settings.bearerToken)
+                val manifestResult = getManifestWithTokenRetry(client, token, settings)
+                val manifest = manifestResult.manifest
+                token = manifestResult.token
+                val manifestToken = manifestResult.newToken
+                manifestToken?.let { token = it }
+                val downloadChunkIds = recognizedVaultChunkIds(manifest)
+                if (downloadChunkIds.isEmpty()) {
+                    publish(error = "Server has no recognized vault data chunk")
+                } else {
+                    val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
+                    vault.replaceAll(remoteResult.vault)
+                    markSynced(remoteResult.token, remoteResult.version, remoteResult.lamportClock, null)
+                }
             }
         } catch (e: Exception) {
             publish(error = e.message ?: "Conflict resolution failed")
@@ -146,23 +157,25 @@ class VaultSyncManager(
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null)
         return try {
-            val client = AndroidVelaApiClient(settings.serverUrl)
-            var token = authenticatedToken(client, settings.bearerToken)
-            val manifestResult = getManifestWithTokenRetry(client, token, settings)
-            val manifest = manifestResult.manifest
-            token = manifestResult.token
-            val manifestToken = manifestResult.newToken
-            manifestToken?.let { token = it }
-            val remote = manifest.chunks.firstOrNull { it.chunkId == VAULT_DATA_CHUNK_ID }
-            val nextLamport = maxOf(settings.lamportClock, remote?.lamportClock ?: 0) + 1
-            val uploaded = uploadVaultChunks(
-                client = client,
-                startToken = token,
-                rms = rms,
-                manifest = manifest,
-                baseLamport = nextLamport
-            )
-            markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
+            runBlocking(Dispatchers.IO) {
+                val client = AndroidVelaApiClient(settings.serverUrl, context)
+                var token = authenticatedToken(client, settings.bearerToken)
+                val manifestResult = getManifestWithTokenRetry(client, token, settings)
+                val manifest = manifestResult.manifest
+                token = manifestResult.token
+                val manifestToken = manifestResult.newToken
+                manifestToken?.let { token = it }
+                val remote = manifest.chunks.firstOrNull { it.chunkId == VAULT_DATA_CHUNK_ID }
+                val nextLamport = maxOf(settings.lamportClock, remote?.lamportClock ?: 0) + 1
+                val uploaded = uploadVaultChunks(
+                    client = client,
+                    startToken = token,
+                    rms = rms,
+                    manifest = manifest,
+                    baseLamport = nextLamport
+                )
+                markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
+            }
         } catch (e: Exception) {
             publish(error = e.message ?: "Conflict resolution failed")
         } finally {
@@ -170,8 +183,8 @@ class VaultSyncManager(
         }
     }
 
-    private fun syncUnlocked(settings: SyncSettings, rms: ByteArray): SyncState {
-        val client = AndroidVelaApiClient(settings.serverUrl)
+    private suspend fun syncUnlocked(settings: SyncSettings, rms: ByteArray): SyncState {
+        val client = AndroidVelaApiClient(settings.serverUrl, context)
         var token = authenticatedToken(client, settings.bearerToken)
         if (token != settings.bearerToken) {
             settingsStore.updateBearerToken(token)
@@ -309,83 +322,131 @@ class VaultSyncManager(
     private fun authenticatedToken(client: AndroidVelaApiClient, cachedToken: String): String =
         cachedToken.ifBlank { authenticateOrRegister(client) }
 
-    private fun downloadRemoteVault(
+    private suspend fun downloadRemoteVault(
         client: AndroidVelaApiClient,
         startToken: String,
         rms: ByteArray,
         chunkIds: List<String>,
         manifest: SyncManifest
-    ): RemoteVaultDownload {
-        var token = startToken
-        val decodedJson = buildString {
-            for (chunkId in chunkIds) {
+    ): RemoteVaultDownload = coroutineScope {
+        var tokenRef = startToken
+        val tokenMutex = Mutex()
+
+        val results = chunkIds.mapIndexed { index, chunkId ->
+            async {
+                val token = tokenMutex.withLock { tokenRef }
                 val downloaded = client.getChunk(token, chunkId)
-                downloaded.newToken?.let { token = it }
-                append(
-                    NativeVelaCore.decryptVaultChunkJson(rms, chunkId, downloaded.ciphertext)
-                        ?: error("Native VELA bridge could not decrypt server vault chunk $chunkId")
-                )
+                downloaded.newToken?.let { newToken ->
+                    tokenMutex.withLock { tokenRef = newToken }
+                }
+                val json = NativeVelaCore.decryptVaultChunkJson(rms, chunkId, downloaded.ciphertext)
+                    ?: error("Native VELA bridge could not decrypt server vault chunk $chunkId")
+                Triple(index, json, Pair(
+                    chunkId,
+                    manifest.chunks.firstOrNull { it.chunkId == chunkId }
+                ))
+            }
+        }.awaitAll()
+
+        val orderedResults = results.sortedBy { it.first }
+        val decodedJson = StringBuilder()
+        var maxVersion = 0L
+        var maxLamport = 0L
+        for ((_, json, chunkMeta) in orderedResults) {
+            decodedJson.append(json)
+            val (_, entry) = chunkMeta
+            if (entry != null) {
+                maxVersion = maxOf(maxVersion, entry.version)
+                maxLamport = maxOf(maxLamport, entry.lamportClock)
             }
         }
-        val remoteVault = com.vela.android.core.VaultJson.decode(decodedJson.toByteArray(Charsets.UTF_8))
-        val latestRemote = chunkIds
-            .mapNotNull { chunkId -> manifest.chunks.firstOrNull { it.chunkId == chunkId } }
-            .maxByOrNull { it.version }
-        return RemoteVaultDownload(
+
+        val token = tokenMutex.withLock { tokenRef }
+        val remoteVault = VaultJson.decode(decodedJson.toString().toByteArray(Charsets.UTF_8))
+        RemoteVaultDownload(
             vault = remoteVault,
             token = token,
-            version = latestRemote?.version ?: 0,
-            lamportClock = latestRemote?.lamportClock ?: 0
+            version = maxVersion,
+            lamportClock = maxLamport
         )
     }
 
-    private fun uploadVaultChunks(
+    private suspend fun uploadVaultChunks(
         client: AndroidVelaApiClient,
         startToken: String,
         rms: ByteArray,
         manifest: SyncManifest,
         baseLamport: Long
-    ): RemoteVaultUpload {
-        var token = startToken
-        var lamport = baseLamport
-        var firstChunkVersion = 0L
+    ): RemoteVaultUpload = coroutineScope {
         val chunks = splitUtf8Chunks(VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8))
         val manifestById = manifest.chunks.associateBy { it.chunkId }
 
-        chunks.forEachIndexed { index, chunk ->
+        var lamport = baseLamport
+        val lamportAssignments = chunks.mapIndexed { index, _ ->
             val chunkId = vaultChunkId(index)
+            val previousLamport = manifestById[chunkId]?.lamportClock ?: 0
+            lamport = maxOf(lamport, previousLamport) + 1
+            lamport
+        }
+
+        var tokenRef = startToken
+        val tokenMutex = Mutex()
+
+        val results = chunks.mapIndexed { index, chunk ->
+            val chunkId = vaultChunkId(index)
+            val chunkLamport = lamportAssignments[index]
             val remote = manifestById[chunkId]
             val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(rms, chunkId, chunk)
                 ?: error("Native VELA bridge is required for server sync")
-            val uploaded = client.putChunk(
-                token = token,
-                chunkId = chunkId,
-                ifMatch = remote?.version ?: 0,
-                lamportClock = lamport,
-                ciphertext = Base64.getDecoder().decode(ciphertextB64)
-            )
-            uploaded.newToken?.let { token = it }
-            if (index == 0) {
-                firstChunkVersion = uploaded.version
+            async {
+                val token = tokenMutex.withLock { tokenRef }
+                val uploaded = client.putChunk(
+                    token = token,
+                    chunkId = chunkId,
+                    ifMatch = remote?.version ?: 0,
+                    lamportClock = chunkLamport,
+                    ciphertext = Base64.getDecoder().decode(ciphertextB64)
+                )
+                uploaded.newToken?.let { newToken ->
+                    tokenMutex.withLock { tokenRef = newToken }
+                }
+                if (index == 0) uploaded.version else null
             }
-            lamport += 1
+        }.awaitAll()
+
+        val firstChunkVersion = results.firstOrNull() ?: 0L
+
+        val token = tokenMutex.withLock { tokenRef }
+
+        val staleChunks = manifest.chunks
+            .filter { it.chunkId.startsWith(VAULT_DATA_PREFIX) }
+            .mapNotNull { entry ->
+                val idx = entry.chunkId.removePrefix(VAULT_DATA_PREFIX).toIntOrNull()
+                if (idx != null && idx >= chunks.size) entry.chunkId to entry.version else null
+            }
+
+        if (staleChunks.isNotEmpty()) {
+            var deleteTokenRef = token
+            val deleteTokenMutex = Mutex()
+            staleChunks.map { (chunkId, version) ->
+                async {
+                    val t = deleteTokenMutex.withLock { deleteTokenRef }
+                    runCatching { client.deleteChunk(t, chunkId, version) }
+                        .getOrNull()?.let { newToken ->
+                            deleteTokenMutex.withLock { deleteTokenRef = newToken }
+                        }
+                }
+            }.awaitAll()
+            tokenMutex.withLock { tokenRef = deleteTokenMutex.withLock { deleteTokenRef } }
         }
 
-        manifest.chunks
-            .filter { it.chunkId.startsWith(VAULT_DATA_PREFIX) }
-            .forEach { entry ->
-                val index = entry.chunkId.removePrefix(VAULT_DATA_PREFIX).toIntOrNull() ?: return@forEach
-                if (index >= chunks.size) {
-                    runCatching { client.deleteChunk(token, entry.chunkId, entry.version) }
-                        .getOrNull()
-                        ?.let { token = it }
-                }
-            }
+        val finalToken = tokenMutex.withLock { tokenRef }
+        val finalLamport = lamportAssignments.lastOrNull() ?: baseLamport
 
-        return RemoteVaultUpload(
-            token = token,
+        RemoteVaultUpload(
+            token = finalToken,
             version = firstChunkVersion,
-            lamportClock = (lamport - 1).coerceAtLeast(baseLamport)
+            lamportClock = (finalLamport).coerceAtLeast(baseLamport)
         )
     }
 
@@ -519,9 +580,15 @@ private data class EnrollmentCodePayload(
     val serverUrl: String
 ) {
     companion object {
-        fun fromCode(code: String): EnrollmentCodePayload {
+        private const val V2_PREFIX = "VELA-ENROLL:v2:"
+
+        fun fromCode(serverUrlOverride: String, code: String): EnrollmentCodePayload {
             val normalized = code.filterNot { it.isWhitespace() }
-            val jsonText = String(Base64.getDecoder().decode(normalized), Charsets.UTF_8)
+            val jsonText = if (normalized.startsWith(V2_PREFIX)) {
+                resolveV2Package(serverUrlOverride, normalized)
+            } else {
+                String(Base64.getDecoder().decode(normalized), Charsets.UTF_8)
+            }
             val json = JSONObject(jsonText)
             return EnrollmentCodePayload(
                 deviceId = json.getString("device_id"),
@@ -533,6 +600,28 @@ private data class EnrollmentCodePayload(
                 transferKeyB64 = json.getString("transfer_key"),
                 serverUrl = json.optString("server_url")
             )
+        }
+
+        private fun resolveV2Package(serverUrlOverride: String, code: String): String {
+            val locatorText = String(
+                Base64.getUrlDecoder().decode(code.removePrefix(V2_PREFIX)),
+                Charsets.UTF_8
+            )
+            val locator = JSONObject(locatorText)
+            if (locator.optInt("v") != 2) {
+                error("Unsupported enrollment code version")
+            }
+            val packageServerUrl = serverUrlOverride.ifBlank { locator.getString("u") }
+            if (packageServerUrl.isBlank()) {
+                error("Enrollment requires a server URL")
+            }
+
+            val client = AndroidVelaApiClient(packageServerUrl, null)
+            val packageResponse = client.getEnrollmentPackage(locator.getString("t"))
+            val packageKey = Base64.getUrlDecoder().decode(locator.getString("k"))
+            val ciphertext = Base64.getUrlDecoder().decode(packageResponse.ciphertext)
+            return NativeVelaCore.decryptEnrollmentPackage(packageKey, ciphertext)
+                ?: error("Native VELA bridge could not decrypt enrollment package")
         }
     }
 }

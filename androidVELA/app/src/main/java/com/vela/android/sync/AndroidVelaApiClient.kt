@@ -1,10 +1,24 @@
 package com.vela.android.sync
 
+import android.content.Context
+import org.chromium.net.CronetEngine
+import org.chromium.net.CronetException
+import org.chromium.net.UploadDataProviders
+import org.chromium.net.UrlRequest
+import org.chromium.net.UrlResponseInfo
 import org.json.JSONObject
 import org.json.JSONArray
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.URI
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.ByteBuffer
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class ServerUnauthorizedException(message: String) : IOException(message)
 
@@ -40,6 +54,7 @@ data class ChallengeResponse(val challengeB64: String)
 data class VerifyResponse(val token: String, val userId: String)
 
 data class CapsuleResponse(val capsuleB64: String, val newToken: String?)
+data class EnrollmentPackageResponse(val ciphertext: String)
 
 data class DeviceInfo(
     val id: String,
@@ -73,7 +88,49 @@ data class LinkedShareItem(
 
 data class SendShareResponse(val inboxId: String, val shareId: String, val newToken: String?)
 
-class AndroidVelaApiClient(private val baseUrl: String) {
+data class HttpResponse(
+    val code: Int,
+    val headers: Map<String, List<String>>,
+    val body: ByteArray,
+    val negotiatedProtocol: String? = null
+) {
+    val newToken: String?
+        get() = headers["X-New-Token"]?.firstOrNull() ?: headers["x-new-token"]?.firstOrNull()
+
+    fun requireSuccess(message: String) {
+        if (code !in 200..299) {
+            val detail = body.toString(Charsets.UTF_8).ifBlank { "HTTP $code" }
+            if (code == 401) {
+                throw ServerUnauthorizedException("$message: $detail")
+            }
+            throw IOException("$message: $detail")
+        }
+    }
+}
+
+interface VelaHttpTransport {
+    fun request(
+        method: String,
+        url: String,
+        token: String,
+        body: ByteArray?,
+        extraHeaders: Map<String, String>,
+        contentType: String
+    ): HttpResponse
+}
+
+class AndroidVelaApiClient(
+    private val baseUrl: String,
+    context: Context? = null
+) {
+    private val fallbackTransport = UrlConnectionTransport()
+    private val h3Transport = if (baseUrl.startsWith("https://") && context != null) {
+        runCatching { CronetHttp3Transport(context.applicationContext, baseUrl) }.getOrNull()
+    } else {
+        null
+    }
+    @Volatile private var selectedTransport: VelaHttpTransport? = null
+
     fun registerAccount(identity: ServerIdentity): RegisterAccountResponse {
         val body = JSONObject()
             .put("hybrid_ek", identity.hybridEkB64)
@@ -144,6 +201,13 @@ class AndroidVelaApiClient(private val baseUrl: String) {
             capsuleB64 = json.getString("capsule"),
             newToken = response.newToken
         )
+    }
+
+    fun getEnrollmentPackage(token: String): EnrollmentPackageResponse {
+        val response = request("GET", "/device/enrollment-package/$token", token = "")
+        response.requireSuccess("Enrollment package download failed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        return EnrollmentPackageResponse(ciphertext = json.getString("ciphertext"))
     }
 
     fun getChunk(token: String, chunkId: String): DownloadedChunk {
@@ -302,7 +366,60 @@ class AndroidVelaApiClient(private val baseUrl: String) {
         extraHeaders: Map<String, String> = emptyMap(),
         contentType: String = "application/octet-stream"
     ): HttpResponse {
-        val connection = (URL("$baseUrl$path").openConnection() as HttpURLConnection).apply {
+        val url = "$baseUrl$path"
+        val transport = selectTransport()
+        return try {
+            transport.request(method, url, token, body, extraHeaders, contentType)
+        } catch (e: IOException) {
+            if (transport === h3Transport) {
+                selectedTransport = fallbackTransport
+                if (method == "GET" || method == "HEAD") {
+                    fallbackTransport.request(method, url, token, body, extraHeaders, contentType)
+                } else {
+                    throw e
+                }
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun selectTransport(): VelaHttpTransport {
+        selectedTransport?.let { return it }
+        val candidate = h3Transport
+        if (candidate != null) {
+            val healthy = runCatching {
+                val response = candidate.request(
+                    method = "GET",
+                    url = "$baseUrl/health",
+                    token = "",
+                    body = null,
+                    extraHeaders = emptyMap(),
+                    contentType = "application/octet-stream"
+                )
+                response.code in 200..299 && response.negotiatedProtocol.orEmpty()
+                    .contains("h3", ignoreCase = true)
+            }.getOrDefault(false)
+            if (healthy) {
+                selectedTransport = candidate
+                return candidate
+            }
+        }
+        selectedTransport = fallbackTransport
+        return fallbackTransport
+    }
+}
+
+class UrlConnectionTransport : VelaHttpTransport {
+    override fun request(
+        method: String,
+        url: String,
+        token: String,
+        body: ByteArray?,
+        extraHeaders: Map<String, String>,
+        contentType: String
+    ): HttpResponse {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10_000
             readTimeout = 20_000
@@ -328,24 +445,102 @@ class AndroidVelaApiClient(private val baseUrl: String) {
             body = bytes
         )
     }
+}
 
-    private data class HttpResponse(
-        val code: Int,
-        val headers: Map<String, List<String>>,
-        val body: ByteArray
-    ) {
-        val newToken: String?
-            get() = headers["X-New-Token"]?.firstOrNull()
+class CronetHttp3Transport(context: Context, baseUrl: String) : VelaHttpTransport {
+    private val executor: ExecutorService = Executors.newCachedThreadPool()
+    private val engine: CronetEngine
 
-        fun requireSuccess(message: String) {
-            if (code !in 200..299) {
-                val detail = body.toString(Charsets.UTF_8).ifBlank { "HTTP $code" }
-                if (code == 401) {
-                    throw ServerUnauthorizedException("$message: $detail")
-                }
-                throw IOException("$message: $detail")
+    init {
+        val uri = URI(baseUrl)
+        val port = when {
+            uri.port > 0 -> uri.port
+            uri.scheme.equals("https", ignoreCase = true) -> 443
+            else -> 80
+        }
+        engine = CronetEngine.Builder(context)
+            .enableQuic(true)
+            .enableHttp2(true)
+            .addQuicHint(uri.host, port, port)
+            .build()
+    }
+
+    override fun request(
+        method: String,
+        url: String,
+        token: String,
+        body: ByteArray?,
+        extraHeaders: Map<String, String>,
+        contentType: String
+    ): HttpResponse {
+        val latch = CountDownLatch(1)
+        val result = AtomicReference<HttpResponse?>()
+        val failure = AtomicReference<IOException?>()
+
+        val callback = object : UrlRequest.Callback() {
+            private val output = ByteArrayOutputStream()
+
+            override fun onRedirectReceived(
+                request: UrlRequest,
+                info: UrlResponseInfo,
+                newLocationUrl: String
+            ) {
+                request.followRedirect()
+            }
+
+            override fun onResponseStarted(request: UrlRequest, info: UrlResponseInfo) {
+                request.read(ByteBuffer.allocateDirect(32 * 1024))
+            }
+
+            override fun onReadCompleted(
+                request: UrlRequest,
+                info: UrlResponseInfo,
+                byteBuffer: ByteBuffer
+            ) {
+                byteBuffer.flip()
+                val bytes = ByteArray(byteBuffer.remaining())
+                byteBuffer.get(bytes)
+                output.write(bytes)
+                byteBuffer.clear()
+                request.read(byteBuffer)
+            }
+
+            override fun onSucceeded(request: UrlRequest, info: UrlResponseInfo) {
+                result.set(
+                    HttpResponse(
+                        code = info.httpStatusCode,
+                        headers = info.allHeaders,
+                        body = output.toByteArray(),
+                        negotiatedProtocol = info.negotiatedProtocol
+                    )
+                )
+                latch.countDown()
+            }
+
+            override fun onFailed(request: UrlRequest, info: UrlResponseInfo?, error: CronetException) {
+                failure.set(IOException(error.message ?: "Cronet request failed", error))
+                latch.countDown()
             }
         }
+
+        val builder = engine.newUrlRequestBuilder(url, callback, executor)
+            .setHttpMethod(method)
+            .allowDirectExecutor()
+        if (token.isNotBlank()) {
+            builder.addHeader("Authorization", "Bearer $token")
+        }
+        extraHeaders.forEach { (key, value) -> builder.addHeader(key, value) }
+        if (body != null) {
+            builder.addHeader("Content-Type", contentType)
+            builder.setUploadDataProvider(UploadDataProviders.create(body), executor)
+        }
+
+        builder.build().start()
+        if (!latch.await(30, TimeUnit.SECONDS)) {
+            throw IOException("Cronet request timed out")
+        }
+        failure.get()?.let { throw it }
+        return result.get() ?: throw IOException("Cronet request completed without a response")
     }
 }
 

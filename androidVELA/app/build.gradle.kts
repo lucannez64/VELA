@@ -61,6 +61,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.navigation:navigation-compose:2.8.8")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("org.chromium.net:cronet-embedded:119.6045.31")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
@@ -123,6 +124,15 @@ tasks.register("buildRustBridge") {
     inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-android-bridge/Cargo.toml"))
     inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-android-bridge/Cargo.lock"))
     inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-android-bridge/src"))
+    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/Cargo.toml"))
+    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/build.rs"))
+    inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/src"))
+    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/build.zig"))
+    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/build.zig.zon"))
+    inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/src"))
+    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/ntt_shim/Cargo.toml"))
+    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/ntt_shim/Cargo.lock"))
+    inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/ntt_shim/src"))
     outputs.dir(outputRoot)
 
     doLast {

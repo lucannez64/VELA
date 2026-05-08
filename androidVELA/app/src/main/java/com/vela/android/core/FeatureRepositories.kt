@@ -257,18 +257,8 @@ object BreachCheckService {
 
 private data class HttpTextResponse(val code: Int, val body: String)
 
-private fun VaultItem.withSharedStatus(recipient: String): VaultItem = when (this) {
-    is VaultItem.Login -> copy(shared = true, shareRecipient = recipient)
-    is VaultItem.CreditCard -> copy(shared = true, shareRecipient = recipient)
-    is VaultItem.SecureNote -> copy(shared = true, shareRecipient = recipient)
-    is VaultItem.FileBlob -> copy(shared = true, shareRecipient = recipient)
-    is VaultItem.BreachMonitor -> copy(shared = true, shareRecipient = recipient)
-}
+private fun VaultItem.withSharedStatus(recipient: String): VaultItem =
+    withMeta { it.copy(shared = true, shareRecipient = recipient) }
 
-private fun VaultItem.withReceivedShare(): VaultItem = when (this) {
-    is VaultItem.Login -> copy(id = UUID.randomUUID().toString(), shared = true, shareRecipient = null)
-    is VaultItem.CreditCard -> copy(id = UUID.randomUUID().toString(), shared = true, shareRecipient = null)
-    is VaultItem.SecureNote -> copy(id = UUID.randomUUID().toString(), shared = true, shareRecipient = null)
-    is VaultItem.FileBlob -> copy(id = UUID.randomUUID().toString(), shared = true, shareRecipient = null)
-    is VaultItem.BreachMonitor -> copy(id = UUID.randomUUID().toString(), shared = true, shareRecipient = null)
-}
+private fun VaultItem.withReceivedShare(): VaultItem =
+    withMeta { it.copy(id = UUID.randomUUID().toString(), shared = true, shareRecipient = null) }

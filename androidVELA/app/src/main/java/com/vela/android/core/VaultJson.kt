@@ -39,15 +39,7 @@ object VaultJson {
     }
 
     private fun VaultItem.toJson(): JSONObject {
-        val json = JSONObject()
-            .put("id", id)
-            .put("name", name)
-            .put("created_at", createdAt.toString())
-            .put("updated_at", updatedAt.toString())
-            .put("last_modified_device", lastModifiedDevice)
-            .put("favorite", favorite)
-            .put("shared", shared)
-            .put("share_recipient", shareRecipient)
+        val json = metaToJson(meta, JSONObject())
 
         when (this) {
             is VaultItem.Login -> json
@@ -56,7 +48,6 @@ object VaultJson {
                 .put("username", username)
                 .put("password", password)
                 .put("totp", totp)
-                .put("notes", notes)
 
             is VaultItem.CreditCard -> json
                 .put("item_type", "creditCard")
@@ -64,30 +55,25 @@ object VaultJson {
                 .put("exp", expiration)
                 .put("cvv", cvv)
                 .put("pin", pin)
-                .put("cardholder_name", cardholderName)
-                .put("notes", notes)
+                .put("cardholderName", cardholderName)
 
             is VaultItem.SecureNote -> json
                 .put("item_type", "secureNote")
-                .put("title", name)
-                .put("content", notes)
-                .put("notes", notes)
+                .put("title", meta.name)
+                .put("content", content)
 
             is VaultItem.FileBlob -> json
                 .put("item_type", "fileBlob")
-                .put("file_name", fileName)
                 .put("filename", fileName)
-                .put("mime_type", mimeType)
                 .put("mime", mimeType)
                 .put("chunks", JSONArray())
-                .put("notes", JSONObject.NULL)
-                .put("size_bytes", sizeBytes)
+                .put("sizeBytes", sizeBytes)
 
             is VaultItem.BreachMonitor -> json
                 .put("item_type", "breachMonitor")
                 .put("email", email)
-                .put("checked_at", checkedAt?.toString())
-                .put("breach_count", breachCount)
+                .put("checkedAt", checkedAt?.toString())
+                .put("breachCount", breachCount)
                 .put("breaches", JSONArray().also { array ->
                     breaches.forEach { array.put(it.toJson()) }
                 })
@@ -96,34 +82,31 @@ object VaultJson {
         return json
     }
 
+    private fun metaToJson(meta: VaultMeta, json: JSONObject): JSONObject = json
+        .put("id", meta.id)
+        .put("name", meta.name)
+        .put("notes", meta.notes)
+        .put("createdAt", meta.createdAt.toString())
+        .put("updatedAt", meta.updatedAt.toString())
+        .put("lastModifiedDevice", meta.lastModifiedDevice)
+        .put("favorite", meta.favorite)
+        .put("shared", meta.shared)
+        .put("shareRecipient", meta.shareRecipient)
+
     private fun itemFromJson(json: JSONObject): VaultItem? {
-        val createdAt = Instant.parse(json.optString("created_at", Instant.now().toString()))
-        val updatedAt = Instant.parse(json.optString("updated_at", createdAt.toString()))
-        val lastModifiedDevice = json.optNullableString("last_modified_device")
-        val favorite = json.optBoolean("favorite", false)
-        val shared = json.optBoolean("shared", false)
-        val shareRecipient = json.optNullableString("share_recipient")
+        val meta = metaFromJson(json)
 
         return when (json.optString("item_type")) {
             "login" -> VaultItem.Login(
-                id = json.getString("id"),
-                name = json.getString("name"),
+                meta = meta,
                 url = json.optString("url"),
                 username = json.optString("username"),
                 password = json.optString("password"),
                 totp = json.optNullableString("totp"),
-                notes = json.optNullableString("notes"),
-                createdAt = createdAt,
-                updatedAt = updatedAt,
-                lastModifiedDevice = lastModifiedDevice,
-                favorite = favorite,
-                shared = shared,
-                shareRecipient = shareRecipient
             )
 
             "creditCard", "creditcard", "card" -> VaultItem.CreditCard(
-                id = json.getString("id"),
-                name = json.getString("name"),
+                meta = meta,
                 cardNumber = json.firstString("number", "card_number", "cardNumber")
                     .ifBlank { json.firstStringByKey { key -> key.contains("number", ignoreCase = true) } }
                     .ifBlank {
@@ -151,18 +134,10 @@ object VaultJson {
                 cvv = json.firstString("cvv", "cvc", "security_code"),
                 pin = json.optNullableString("pin"),
                 cardholderName = json.firstString("cardholder_name", "cardholderName", "holder", "name_on_card"),
-                notes = json.optNullableString("notes"),
-                createdAt = createdAt,
-                updatedAt = updatedAt,
-                lastModifiedDevice = lastModifiedDevice,
-                favorite = favorite,
-                shared = shared,
-                shareRecipient = shareRecipient
             )
 
             "paymentCard", "payment_card" -> VaultItem.CreditCard(
-                id = json.getString("id"),
-                name = json.getString("name"),
+                meta = meta,
                 cardNumber = json.firstStringDeep { key ->
                     key.equals("number", ignoreCase = true) ||
                         key.equals("card_number", ignoreCase = true) ||
@@ -184,30 +159,15 @@ object VaultJson {
                         key.equals("cardholderName", ignoreCase = true) ||
                         key.equals("name_on_card", ignoreCase = true)
                 },
-                notes = json.optNullableString("notes"),
-                createdAt = createdAt,
-                updatedAt = updatedAt,
-                lastModifiedDevice = lastModifiedDevice,
-                favorite = favorite,
-                shared = shared,
-                shareRecipient = shareRecipient
             )
 
             "secureNote" -> VaultItem.SecureNote(
-                id = json.getString("id"),
-                name = json.optString("name", json.optString("title", "Secure Note")),
-                notes = json.firstString("content", "secure_note_content", "notes"),
-                createdAt = createdAt,
-                updatedAt = updatedAt,
-                lastModifiedDevice = lastModifiedDevice,
-                favorite = favorite,
-                shared = shared,
-                shareRecipient = shareRecipient
+                meta = meta,
+                content = json.firstString("content", "secure_note_content", "notes"),
             )
 
             "breachMonitor", "breachmonitor" -> VaultItem.BreachMonitor(
-                id = json.getString("id"),
-                name = json.optString("name", json.optString("email", "Breach Monitor")),
+                meta = meta,
                 email = json.optString("email"),
                 checkedAt = json.optNullableString("checked_at")?.let { runCatching { Instant.parse(it) }.getOrNull() },
                 breachCount = json.optInt("breach_count", 0),
@@ -218,16 +178,28 @@ object VaultJson {
                         }
                     }
                 }.orEmpty(),
-                createdAt = createdAt,
-                updatedAt = updatedAt,
-                lastModifiedDevice = lastModifiedDevice,
-                favorite = favorite,
-                shared = shared,
-                shareRecipient = shareRecipient
             )
 
             else -> null
         }
+    }
+
+    private fun metaFromJson(json: JSONObject): VaultMeta {
+        val createdAt = Instant.parse(json.optString("created_at", json.optString("createdAt", Instant.now().toString())))
+        val updatedAt = Instant.parse(json.optString("updated_at", json.optString("updatedAt", createdAt.toString())))
+        return VaultMeta(
+            id = json.getString("id"),
+            name = json.optString("name", json.optString("title", "Untitled")),
+            notes = json.optNullableString("notes"),
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            lastModifiedDevice = json.optNullableString("last_modified_device")
+                ?: json.optNullableString("lastModifiedDevice"),
+            favorite = json.optBoolean("favorite", false),
+            shared = json.optBoolean("shared", false),
+            shareRecipient = json.optNullableString("share_recipient")
+                ?: json.optNullableString("shareRecipient"),
+        )
     }
 
     private fun BreachEntry.toJson(): JSONObject = JSONObject()

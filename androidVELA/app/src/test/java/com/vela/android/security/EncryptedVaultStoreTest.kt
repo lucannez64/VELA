@@ -1,6 +1,7 @@
 package com.vela.android.security
 
 import com.vela.android.core.VaultItem
+import com.vela.android.core.VaultMeta
 import com.vela.android.core.VaultStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,7 +20,9 @@ class EncryptedVaultStoreTest {
         val vault = VaultStore(
             items = listOf(
                 VaultItem.Login(
-                    name = "Example",
+                    meta = VaultMeta(
+                        name = "Example"
+                    ),
                     url = "https://example.com",
                     username = "alice@example.com",
                     password = "secret"
@@ -44,7 +47,12 @@ class EncryptedVaultStoreTest {
         val rms = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val wrongRms = ByteArray(32).also { SecureRandom().nextBytes(it) }
 
-        store.save(rms, VaultStore(items = listOf(VaultItem.Login(name = "Example", url = "example.com", username = "a", password = "b"))))
+        store.save(rms, VaultStore(items = listOf(VaultItem.Login(
+            meta = VaultMeta(name = "Example"),
+            url = "example.com",
+            username = "a",
+            password = "b"
+        ))))
         store.load(wrongRms)
     }
 }

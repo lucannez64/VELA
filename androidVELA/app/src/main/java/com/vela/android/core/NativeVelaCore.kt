@@ -104,6 +104,18 @@ object NativeVelaCore {
         }
     }
 
+    fun decryptEnrollmentPackage(packageKey: ByteArray, ciphertext: ByteArray): String? {
+        return callNative {
+            val request = JSONObject()
+                .put("key_b64", Base64.getEncoder().encodeToString(packageKey))
+                .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
+                .toString()
+            val response = JSONObject(nativeDecryptEnrollmentPackageJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            response.getString("plaintext")
+        }
+    }
+
     private inline fun <T> callNative(block: () -> T): T? {
         if (!loaded) return null
         return runCatching(block).getOrElse { error("Native VELA bridge call failed: ${it.message}") }
@@ -117,4 +129,5 @@ object NativeVelaCore {
     private external fun nativeGenerateServerIdentityJson(): String
     private external fun nativeCreateAuthProofJson(requestJson: String): String
     private external fun nativeDecryptRmsCapsuleJson(requestJson: String): String
+    private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
 }

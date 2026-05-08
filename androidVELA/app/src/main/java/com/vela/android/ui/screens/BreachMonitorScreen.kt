@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import com.vela.android.core.BreachCheckService
 import com.vela.android.core.PasswordBreachResult
 import com.vela.android.core.VaultItem
+import com.vela.android.core.VaultMeta
 import com.vela.android.core.VelaRepositories
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
@@ -67,13 +68,15 @@ fun BreachMonitorScreen(items: List<VaultItem>, onBack: () -> Unit) {
                                 val now = Instant.now()
                                 VelaRepositories.vault.addItem(
                                     VaultItem.BreachMonitor(
-                                        name = email.trim(),
+                                        meta = VaultMeta(
+                                            name = email.trim(),
+                                            createdAt = now,
+                                            updatedAt = now
+                                        ),
                                         email = email.trim(),
                                         checkedAt = now,
                                         breachCount = breaches.size,
-                                        breaches = breaches,
-                                        createdAt = now,
-                                        updatedAt = now
+                                        breaches = breaches
                                     )
                                 )
                                 VelaRepositories.audit.record("breach_email_checked", "${email.trim()}: ${breaches.size} breach(es)")

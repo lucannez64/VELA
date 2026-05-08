@@ -22,6 +22,7 @@ import android.widget.RemoteViews
 import com.vela.android.MainActivity
 import com.vela.android.R
 import com.vela.android.core.VaultItem
+import com.vela.android.core.VaultMeta
 import com.vela.android.core.VelaRepositories
 import java.time.Instant
 import java.util.Locale
@@ -121,13 +122,15 @@ class VelaAutofillService : AutofillService() {
             if (existing == null) {
                 VelaRepositories.vault.addItem(
                     VaultItem.Login(
-                        name = displayNameForTarget(target),
+                        meta = VaultMeta(
+                            name = displayNameForTarget(target),
+                            createdAt = now,
+                            updatedAt = now,
+                            lastModifiedDevice = "android-local"
+                        ),
                         url = target,
                         username = username.orEmpty(),
-                        password = password,
-                        createdAt = now,
-                        updatedAt = now,
-                        lastModifiedDevice = "android-local"
+                        password = password
                     )
                 )
                 Log.d(TAG, "Saved new Autofill login for $target")
@@ -135,8 +138,10 @@ class VelaAutofillService : AutofillService() {
                 VelaRepositories.vault.updateItem(
                     existing.copy(
                         password = password,
-                        updatedAt = now,
-                        lastModifiedDevice = "android-local"
+                        meta = existing.meta.copy(
+                            updatedAt = now,
+                            lastModifiedDevice = "android-local"
+                        )
                     )
                 )
                 Log.d(TAG, "Updated Autofill login for $target")
