@@ -265,9 +265,7 @@ async function handleGetLogins(data, sendResponse) {
       sendResponse({ success: false, ignored: true, logins: [] });
       return;
     }
-    console.log("[VELA] handleGetLogins for domain:", domain);
     const response = await requestLogins(domain, true);
-    console.log("[VELA] handleGetLogins response:", JSON.stringify(response));
 
     if (response && response.success && Array.isArray(response.logins)) {
       const logins = await Promise.all(
@@ -276,6 +274,7 @@ async function handleGetLogins(data, sendResponse) {
           totp: await computeLoginTOTP(item)
         }))
       );
+      console.log("[VELA] handleGetLogins found logins:", logins.length);
       sendResponse({ success: true, logins });
     } else if (response && response.requires_biometric) {
       sendResponse({ success: false, requires_biometric: true, logins: [] });
@@ -297,9 +296,7 @@ async function handleGetAvailableLogins(data, sendResponse) {
       sendResponse({ success: false, ignored: true, logins: [] });
       return;
     }
-    console.log("[VELA] handleGetAvailableLogins for domain:", domain, "userInitiated:", userInitiated);
     const response = await requestLogins(domain, userInitiated);
-    console.log("[VELA] handleGetAvailableLogins response:", JSON.stringify(response));
 
     if (response && response.success && Array.isArray(response.logins)) {
       const logins = await Promise.all(
@@ -473,7 +470,7 @@ function sendNativeMessage(message) {
     runtime.sendNativeMessage(NATIVEMessaging_PORT, message)
       .then((response) => {
         clearTimeout(timeoutId);
-        console.log("[VELA] Native messaging response:", JSON.stringify(response));
+        console.log("[VELA] Native messaging response received");
         resolve(response || { success: false });
       })
       .catch((error) => {
