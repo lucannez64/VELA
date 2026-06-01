@@ -26,6 +26,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".VelaCaptureActivity"
+            android:exported="false"
+            android:screenOrientation="fullSensor"
+            android:stateNotNeeded="true"
+            android:theme="@style/Theme.VELA" />
+
         <service
             android:name=".autofill.VelaAutofillService"
             android:exported="true"

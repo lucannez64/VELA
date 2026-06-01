@@ -572,7 +572,7 @@ pub async fn import_enrollment_code(
         .await
         .map_err(|e| format!("Server authentication failed: {e}"))?;
 
-    let mut token = verify_resp.token;
+    let token = verify_resp.token;
     let user_id = verify_resp.user_id;
 
     // ── download RMS capsule from server ──────────────────────────────────────

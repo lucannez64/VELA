@@ -13,7 +13,9 @@ pub struct AutofillResponse {
 }
 
 #[tauri::command]
-pub async fn handle_autofill_request(request: AutofillRequest) -> Result<AutofillResponse, String> {
+pub async fn handle_autofill_request(
+    _request: AutofillRequest,
+) -> Result<AutofillResponse, String> {
     Ok(AutofillResponse {
         items: vec![],
         requires_biometric: true,

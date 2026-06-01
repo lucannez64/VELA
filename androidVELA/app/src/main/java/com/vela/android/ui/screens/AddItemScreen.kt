@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -28,10 +29,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vela.android.MainActivity
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultMeta
 import com.vela.android.ui.components.VelaButton
@@ -50,6 +53,7 @@ fun AddItemScreen(
     onSave: (VaultItem) -> Unit,
     onBack: () -> Unit
 ) {
+    val activity = LocalContext.current as? MainActivity
     val initialType = when (editItem) {
         is VaultItem.CreditCard -> "card"
         is VaultItem.SecureNote -> "note"
@@ -80,6 +84,7 @@ fun AddItemScreen(
     var expiration by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.CreditCard)?.expiration.orEmpty()) }
     var cvv by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.CreditCard)?.cvv.orEmpty()) }
     var pin by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.CreditCard)?.pin.orEmpty()) }
+    var totpScanMessage by remember(editItem?.id) { mutableStateOf<String?>(null) }
 
     val types = listOf(
         "login" to Icons.Filled.Key,
@@ -180,6 +185,32 @@ fun AddItemScreen(
                     )
                     Spacer(Modifier.height(14.dp))
                     VelaTextField(value = totp, onValueChange = { totp = it }, label = "TOTP Secret", placeholder = "Base32 secret or otpauth:// URL")
+                    Spacer(Modifier.height(10.dp))
+                    VelaButton(
+                        text = "Scan TOTP QR",
+                        onClick = {
+                            if (activity == null) {
+                                totpScanMessage = "Unable to open QR scanner"
+                            } else {
+                                activity.launchQrScanner("Scan TOTP QR code") { contents ->
+                                    when {
+                                        contents.isNullOrEmpty() -> totpScanMessage = "Scan cancelled"
+                                        isSupportedTotpQr(contents) -> {
+                                            totp = contents
+                                            totpScanMessage = "TOTP QR scanned"
+                                        }
+                                        else -> totpScanMessage = "Unsupported QR code"
+                                    }
+                                }
+                            }
+                        },
+                        style = VelaButtonStyle.Surface,
+                        icon = Icons.Filled.QrCodeScanner
+                    )
+                    totpScanMessage?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = VelaColors.TextMuted, fontSize = 12.sp)
+                    }
                     Spacer(Modifier.height(14.dp))
                     VelaTextField(value = notes, onValueChange = { notes = it }, label = "Notes", singleLine = false)
                 }
@@ -281,6 +312,11 @@ fun AddItemScreen(
             Spacer(Modifier.height(32.dp))
         }
     }
+}
+
+private fun isSupportedTotpQr(contents: String): Boolean {
+    if (contents.startsWith("otpauth://", ignoreCase = true)) return true
+    return contents.matches(Regex("^[A-Z2-7=\\s-]{16,}$", RegexOption.IGNORE_CASE))
 }
 
 @Composable

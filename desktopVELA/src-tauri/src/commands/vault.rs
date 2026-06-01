@@ -1,10 +1,12 @@
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::vault::{ItemType, PasswordGeneratorOptions, VaultItem};
 use crate::AppState;
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::Utc;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{command, AppHandle, Emitter, State};
 use uuid::Uuid;
 
@@ -12,6 +14,74 @@ pub const VAULT_ITEMS_CHANGED_EVENT: &str = "vault-items-changed";
 
 pub fn emit_vault_items_changed(app: &AppHandle) {
     let _ = app.emit(VAULT_ITEMS_CHANGED_EVENT, ());
+}
+
+fn normalize_login_domain(url: &str) -> Option<String> {
+    let normalized = if url.contains("://") {
+        url.to_string()
+    } else {
+        format!("https://{url}")
+    };
+    let parsed = url::Url::parse(&normalized).ok()?;
+    let host = parsed.host_str()?.trim().to_lowercase();
+    if host.is_empty() || host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    Some(host)
+}
+
+async fn fetch_favicon_data_url_from(client: &reqwest::Client, candidate: &str) -> Option<String> {
+    let response = client.get(candidate).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .filter(|value| value.starts_with("image/"))
+        .unwrap_or("image/x-icon")
+        .to_string();
+
+    let bytes = response.bytes().await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "data:{content_type};base64,{}",
+        B64.encode(bytes.as_ref())
+    ))
+}
+
+#[command]
+pub async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
+    let Some(domain) = normalize_login_domain(&url) else {
+        return Ok(None);
+    };
+
+    let client = reqwest::Client::builder()
+        .user_agent("VELA Desktop/1.0")
+        .timeout(Duration::from_secs(6))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("Failed to create favicon client: {e}"))?;
+
+    let candidates = [
+        format!("https://www.google.com/s2/favicons?domain={domain}&sz=64"),
+        format!("https://{domain}/favicon.ico"),
+        format!("https://{domain}/apple-touch-icon.png"),
+    ];
+
+    for candidate in candidates {
+        if let Some(data_url) = fetch_favicon_data_url_from(&client, &candidate).await {
+            return Ok(Some(data_url));
+        }
+    }
+
+    Ok(None)
 }
 
 fn save_vault(state: &State<'_, Arc<AppState>>) -> Result<(), String> {
@@ -482,7 +552,7 @@ pub async fn import_vault_bitwarden_json(
     let now = Utc::now();
     let total_count = import.passwords.len() as u32;
     let mut added_count = 0u32;
-    let mut skipped_count = 0u32;
+    let skipped_count = 0u32;
 
     {
         let mut vault = state.vault.write();

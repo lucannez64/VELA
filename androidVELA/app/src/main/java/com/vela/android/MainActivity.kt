@@ -16,6 +16,7 @@ import com.vela.android.core.VelaRepositories
 import com.vela.android.core.SharedCore
 import com.vela.android.ui.navigation.VelaNavHost
 import com.vela.android.ui.theme.VelaTheme
+import com.google.zxing.integration.android.IntentIntegrator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,6 +29,7 @@ import javax.crypto.Cipher
 class MainActivity : FragmentActivity() {
     private var pendingCreateRms: ByteArray? = null
     private var backgroundSyncJob: Job? = null
+    private var onQrScanResult: ((String?) -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -201,8 +203,30 @@ class MainActivity : FragmentActivity() {
         super.onDestroy()
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        if (result != null) {
+            onQrScanResult?.invoke(result.contents?.trim())
+            onQrScanResult = null
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     companion object {
         const val EXTRA_AUTOFILL_UNLOCK = "com.vela.android.extra.AUTOFILL_UNLOCK"
+    }
+
+    fun launchQrScanner(prompt: String, onResult: (String?) -> Unit) {
+        onQrScanResult = onResult
+        IntentIntegrator(this).apply {
+            setCaptureActivity(VelaCaptureActivity::class.java)
+            setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+            setPrompt(prompt)
+            setBeepEnabled(false)
+            setOrientationLocked(false)
+            initiateScan()
+        }
     }
 
     private fun createBiometricVault() {

@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DevicesOther
 import androidx.compose.material.icons.filled.Fingerprint
@@ -32,18 +31,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vela.android.MainActivity
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
 import com.vela.android.ui.components.VelaTextField
 import com.vela.android.ui.theme.VelaColors
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanIntentResult
-import com.journeyapps.barcodescanner.ScanOptions
 
 @Composable
 fun EnrollDeviceScreen(
@@ -55,6 +53,7 @@ fun EnrollDeviceScreen(
     onProtectPassword: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    val activity = LocalContext.current as? MainActivity
     var serverUrl by remember { mutableStateOf("") }
     var enrollmentCode by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -62,29 +61,6 @@ fun EnrollDeviceScreen(
     var scannedParts by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
     var scannedTotal by remember { mutableStateOf<Int?>(null) }
     var scanMessage by remember { mutableStateOf<String?>(null) }
-    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result: ScanIntentResult ->
-        val contents = result.contents
-        if (contents.isNullOrBlank()) {
-            scanMessage = "Scan cancelled"
-        } else {
-            val parsed = parseEnrollmentQr(contents)
-            if (parsed == null) {
-                enrollmentCode = contents.trim()
-                scanMessage = "Enrollment code scanned"
-            } else {
-                scannedTotal = parsed.total
-                scannedParts = scannedParts + (parsed.index to parsed.payload)
-                val count = (scannedParts + (parsed.index to parsed.payload)).size
-                scanMessage = "Scanned QR part $count of ${parsed.total}"
-                if (count == parsed.total) {
-                    enrollmentCode = (1..parsed.total).joinToString("") { part ->
-                        (scannedParts + (parsed.index to parsed.payload))[part].orEmpty()
-                    }
-                    scanMessage = "Enrollment QR complete"
-                }
-            }
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -244,13 +220,32 @@ fun EnrollDeviceScreen(
                         "Scan QR (${scannedParts.size}/$total)"
                     } ?: "Scan QR Code",
                     onClick = {
-                        scanLauncher.launch(
-                            ScanOptions()
-                                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                .setPrompt("Scan VELA enrollment QR")
-                                .setBeepEnabled(false)
-                                .setOrientationLocked(false)
-                        )
+                        if (activity == null) {
+                            scanMessage = "Unable to open QR scanner"
+                        } else {
+                            activity.launchQrScanner("Scan VELA enrollment QR") { contents ->
+                                if (contents.isNullOrBlank()) {
+                                    scanMessage = "Scan cancelled"
+                                } else {
+                                    val parsed = parseEnrollmentQr(contents)
+                                    if (parsed == null) {
+                                        enrollmentCode = contents.trim()
+                                        scanMessage = "Enrollment code scanned"
+                                    } else {
+                                        scannedTotal = parsed.total
+                                        scannedParts = scannedParts + (parsed.index to parsed.payload)
+                                        val count = (scannedParts + (parsed.index to parsed.payload)).size
+                                        scanMessage = "Scanned QR part $count of ${parsed.total}"
+                                        if (count == parsed.total) {
+                                            enrollmentCode = (1..parsed.total).joinToString("") { part ->
+                                                (scannedParts + (parsed.index to parsed.payload))[part].orEmpty()
+                                            }
+                                            scanMessage = "Enrollment QR complete"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     },
                     style = VelaButtonStyle.Surface,
                     enabled = !isEnrolling,

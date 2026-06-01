@@ -378,14 +378,29 @@ pub mod server {
         endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::net::windows::named_pipe::ServerOptions;
+        use tokio::time::{sleep, Duration};
 
         info!("IPC server listening on Windows named pipe");
 
         loop {
-            let server = ServerOptions::new()
+            let server = match ServerOptions::new()
                 .reject_remote_clients(true)
-                .create(&endpoint)?;
-            server.connect().await?;
+                .create(&endpoint)
+            {
+                Ok(server) => server,
+                Err(e) => {
+                    error!("Failed to create IPC named pipe server: {}", e);
+                    sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+            };
+
+            if let Err(e) = server.connect().await {
+                error!("IPC named pipe connect failed: {}", e);
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+
             let app_handle = app_handle.clone();
             let capability = capability.clone();
             tokio::spawn(async move {
@@ -411,6 +426,7 @@ pub mod server {
         endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::net::UnixListener;
+        use tokio::time::{sleep, Duration};
 
         let _ = std::fs::remove_file(&endpoint);
         let listener = UnixListener::bind(&endpoint)?;
@@ -422,7 +438,14 @@ pub mod server {
         info!("IPC server listening on Unix domain socket");
 
         loop {
-            let (stream, _) = listener.accept().await?;
+            let (stream, _) = match listener.accept().await {
+                Ok(connection) => connection,
+                Err(e) => {
+                    error!("IPC unix socket accept failed: {}", e);
+                    sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
             let app_handle = app_handle.clone();
             let capability = capability.clone();
             tokio::spawn(async move {

@@ -297,9 +297,8 @@ pub(crate) async fn refresh_linked_shares_inner(state: &AppState) -> Result<(), 
 
 #[tauri::command]
 pub async fn get_shares(state: State<'_, Arc<AppState>>) -> Result<Vec<Share>, String> {
-    let mut store = load_share_store(&state).unwrap_or_default();
     let _ = refresh_linked_shares_inner(&state).await;
-    store = load_share_store(&state).unwrap_or_default();
+    let mut store = load_share_store(&state).unwrap_or_default();
 
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);

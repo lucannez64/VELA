@@ -205,6 +205,7 @@ fn main() {
             commands::vault::log_password_generated,
             commands::vault::get_items_by_type,
             commands::vault::get_vault_health,
+            commands::vault::fetch_favicon,
             commands::vault::export_vault_bitwarden_json,
             commands::vault::save_vault_export_file,
             commands::vault::import_vault_bitwarden_json,

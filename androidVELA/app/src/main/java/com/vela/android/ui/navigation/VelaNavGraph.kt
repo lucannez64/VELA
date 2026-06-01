@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -119,13 +120,42 @@ fun VelaNavHost(
     val hasVault = hasBiometricVault || hasPasswordVault
     var preselectedShareItemId by remember { mutableStateOf<String?>(null) }
 
-    val startRoute = when {
+    val authRoute = when {
         !hasVault -> VelaRoutes.WELCOME
         !isUnlocked -> VelaRoutes.UNLOCK
         else -> VelaRoutes.VAULT
     }
 
-    val showBottomBar = currentRoute in listOf(VelaRoutes.VAULT, VelaRoutes.SHARING, VelaRoutes.SETTINGS)
+    LaunchedEffect(authRoute, currentRoute) {
+        val routeRequiresUnlockedVault = currentRoute in listOf(
+            VelaRoutes.VAULT,
+            VelaRoutes.SHARING,
+            VelaRoutes.SETTINGS,
+            VelaRoutes.ADD_ITEM,
+            VelaRoutes.ITEM_DETAIL,
+            VelaRoutes.EDIT_ITEM,
+            VelaRoutes.DEVICES,
+            VelaRoutes.AUDIT_LOG,
+            VelaRoutes.BREACH_MONITOR
+        )
+        val isEnrollRoute = currentRoute == VelaRoutes.ENROLL
+
+        val shouldRedirect = when (authRoute) {
+            VelaRoutes.WELCOME -> currentRoute != VelaRoutes.WELCOME && !isEnrollRoute
+            VelaRoutes.UNLOCK -> currentRoute != VelaRoutes.UNLOCK && routeRequiresUnlockedVault
+            VelaRoutes.VAULT -> currentRoute == null || currentRoute == VelaRoutes.WELCOME || currentRoute == VelaRoutes.UNLOCK || isEnrollRoute
+            else -> false
+        }
+
+        if (shouldRedirect) {
+            navController.navigate(authRoute) {
+                popUpTo(navController.graph.findStartDestination().id) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    val showBottomBar = isUnlocked && currentRoute in listOf(VelaRoutes.VAULT, VelaRoutes.SHARING, VelaRoutes.SETTINGS)
 
     Scaffold(
         bottomBar = {
@@ -179,22 +209,16 @@ fun VelaNavHost(
     ) { padding ->
         NavHost(
             navController = navController,
-            startDestination = startRoute,
+            startDestination = authRoute,
             modifier = Modifier.padding(padding)
         ) {
             composable(VelaRoutes.WELCOME) {
                 WelcomeScreen(
                     onCreateBiometricVault = {
                         onCreateBiometricVault()
-                        navController.navigate(VelaRoutes.VAULT) {
-                            popUpTo(VelaRoutes.WELCOME) { inclusive = true }
-                        }
                     },
                     onCreatePasswordVault = { password ->
                         onCreatePasswordVault(password)
-                        navController.navigate(VelaRoutes.VAULT) {
-                            popUpTo(VelaRoutes.WELCOME) { inclusive = true }
-                        }
                     },
                     onNavigateToEnroll = {
                         onNavigateToEnroll()
@@ -235,15 +259,9 @@ fun VelaNavHost(
                     },
                     onProtectBiometric = {
                         onProtectEnrolledBiometric()
-                        navController.navigate(VelaRoutes.VAULT) {
-                            popUpTo(VelaRoutes.ENROLL) { inclusive = true }
-                        }
                     },
                     onProtectPassword = { password ->
                         onProtectEnrolledPassword(password)
-                        navController.navigate(VelaRoutes.VAULT) {
-                            popUpTo(VelaRoutes.ENROLL) { inclusive = true }
-                        }
                     },
                     onBack = { navController.popBackStack() }
                 )
@@ -253,18 +271,8 @@ fun VelaNavHost(
                 UnlockScreen(
                     hasBiometricVault = hasBiometricVault,
                     hasPasswordVault = hasPasswordVault,
-                    onUnlockBiometric = {
-                        onUnlockBiometric()
-                        navController.navigate(VelaRoutes.VAULT) {
-                            popUpTo(VelaRoutes.UNLOCK) { inclusive = true }
-                        }
-                    },
-                    onUnlockPassword = { password ->
-                        onUnlockPassword(password)
-                        navController.navigate(VelaRoutes.VAULT) {
-                            popUpTo(VelaRoutes.UNLOCK) { inclusive = true }
-                        }
-                    }
+                    onUnlockBiometric = onUnlockBiometric,
+                    onUnlockPassword = onUnlockPassword
                 )
             }
 

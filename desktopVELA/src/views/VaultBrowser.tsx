@@ -17,6 +17,7 @@ interface VaultHealth {
 }
 
 type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote';
+const faviconCache = new Map<string, string | null>();
 
 export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, onAddItem }: Props) {
   const { setSelectedItem, showToast } = useApp();
@@ -277,7 +278,45 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
 
 function ItemIcon({ item, icon }: { item: VaultItem; icon: string }) {
   const [failed, setFailed] = useState(false);
-  const favicon = item.item_type === 'login' && item.url ? faviconUrl(item.url) : undefined;
+  const [favicon, setFavicon] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (item.item_type !== 'login' || !item.url) {
+      setFavicon(undefined);
+      setFailed(false);
+      return;
+    }
+
+    const cacheKey = item.url;
+    const cached = faviconCache.get(cacheKey);
+    if (cached !== undefined) {
+      setFavicon(cached ?? undefined);
+      setFailed(cached === null);
+      return;
+    }
+
+    setFavicon(undefined);
+    setFailed(false);
+
+    invoke<string | null>('fetch_favicon', { url: item.url })
+      .then((result) => {
+        if (cancelled) return;
+        faviconCache.set(cacheKey, result);
+        setFavicon(result ?? undefined);
+        setFailed(!result);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        faviconCache.set(cacheKey, null);
+        setFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item.item_type, item.url]);
 
   if (favicon && !failed) {
     return (
@@ -295,15 +334,4 @@ function ItemIcon({ item, icon }: { item: VaultItem; icon: string }) {
       <span className="material-symbols-outlined text-primary">{icon}</span>
     </div>
   );
-}
-
-function faviconUrl(url: string): string | undefined {
-  try {
-    const normalized = url.includes('://') ? url : `https://${url}`;
-    const domain = new URL(normalized).hostname;
-    if (!domain || /^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) return undefined;
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-  } catch {
-    return undefined;
-  }
 }
