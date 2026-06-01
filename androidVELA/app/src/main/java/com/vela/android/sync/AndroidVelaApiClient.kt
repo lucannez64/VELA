@@ -135,7 +135,6 @@ class AndroidVelaApiClient(
         val body = JSONObject()
             .put("hybrid_ek", identity.hybridEkB64)
             .put("hybrid_vk", identity.hybridVkB64)
-            .put("cyclo_pk", identity.cycloPkB64)
             .put("device_name", android.os.Build.MODEL ?: "Android")
             .put("device_type", "android")
             .toString()
@@ -156,18 +155,17 @@ class AndroidVelaApiClient(
         return ChallengeResponse(JSONObject(response.body.toString(Charsets.UTF_8)).getString("challenge"))
     }
 
-    fun verifyProof(deviceId: String, challengeB64: String, committedHash: String, proof: String): VerifyResponse {
+    fun verifySignature(deviceId: String, challengeB64: String, signature: String): VerifyResponse {
         val body = JSONObject()
             .put("device_id", deviceId)
             .put("challenge", challengeB64)
-            .put("committed_hash", committedHash)
-            .put("proof", proof)
+            .put("signature", signature)
             .put("device_name", android.os.Build.MODEL ?: "Android")
             .put("device_type", "android")
             .toString()
             .toByteArray(Charsets.UTF_8)
         val response = request("POST", "/auth/verify", token = "", body = body, contentType = "application/json")
-        response.requireSuccess("Proof verification failed")
+        response.requireSuccess("Signature verification failed")
         val json = JSONObject(response.body.toString(Charsets.UTF_8))
         return VerifyResponse(token = json.getString("token"), userId = json.getString("user_id"))
     }

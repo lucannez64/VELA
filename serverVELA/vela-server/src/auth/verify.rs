@@ -1,6 +1,6 @@
 use crate::{
     auth::token::TokenService,
-    device::enroll::verify_cyclo_proof,
+    device::enroll::verify_auth_signature,
     error::{AppError, Result},
     rate_limit,
     state::AppState,
@@ -11,15 +11,13 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 
 #[derive(Deserialize)]
 pub struct VerifyRequest {
     pub device_id: uuid::Uuid,
     pub challenge: String,
-    pub committed_hash: String,
-    pub proof: String,
+    pub signature: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
 }
@@ -55,7 +53,7 @@ pub async fn post_verify(
         .db
         .query(
             "SELECT id, user_id, device_name, device_type, last_active,
-                hybrid_ek, hybrid_vk, cyclo_pk,
+                hybrid_ek, hybrid_vk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
          FROM devices
@@ -75,23 +73,12 @@ pub async fn post_verify(
         .decode(&body.challenge)
         .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
 
-    // Validate committed_hash = SHA256(challenge_bytes || device_id).
-    // This binds the proof to the specific challenge issued by the server and
-    // prevents cross-device replay of captured proofs.
-    let mut hasher = Sha256::new();
-    hasher.update(&challenge_bytes);
-    hasher.update(device_id_str.as_bytes());
-    let expected_hash_hex = hex::encode(hasher.finalize());
-
-    if body.committed_hash != expected_hash_hex {
-        return Err(AppError::BadRequest(
-            "committed_hash does not match challenge".into(),
-        ));
-    }
-
-    // Verify the Cyclo ZK proof.
-    // Public inputs: cyclo_pk (128 u64s LE) || committed_hash (4 u64s LE) = 132 u64s.
-    if let Err(e) = verify_cyclo_proof(&device.cyclo_pk, &body.committed_hash, &body.proof) {
+    if let Err(e) = verify_auth_signature(
+        &device.hybrid_vk,
+        &challenge_bytes,
+        &device_id_str,
+        &body.signature,
+    ) {
         let _ = rate_limit::record_verify_failure(&state.store, &device_id_str);
         rate_limit::verify_fail_by_device(&state.store, &device_id_str)?;
         return Err(e);

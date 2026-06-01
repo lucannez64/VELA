@@ -61,6 +61,11 @@ All Gecko-based browsers (Firefox and forks) share the same native messaging pro
 | Floorp | `~/.floorp/native-messaging-hosts/` | `~/Library/Application Support/Floorp/` | `%APPDATA%\Floorp\NativeMessagingHosts\` |
 | LibreWolf | `~/.librewolf/native-messaging-hosts/` | `~/Library/Application Support/librewolf/` | `%APPDATA%\librewolf\NativeMessagingHosts\` |
 
+On Windows, Zen may discover Gecko native messaging hosts through
+`HKCU\SOFTWARE\Mozilla\NativeMessagingHosts\<host name>`. The Windows Gecko
+registration script writes this registry key in addition to the browser-specific
+manifest files.
+
 ## Testing
 
 ```bash

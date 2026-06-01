@@ -9,11 +9,8 @@
 //! - [`kem`]    — Hybrid ML-KEM-1024 + X25519 key encapsulation
 //! - [`shamir`] — Shamir's Secret Sharing over GF(2^8)
 //! - [`oram`]   — Path ORAM client state machine
-//! - [`cyclo`]  — Cyclo ZKP verifier for authentication (Rust port of Zig implementation)
 
 pub mod aead;
-#[cfg(feature = "cyclo-ffi")]
-pub mod cyclo;
 pub mod error;
 pub mod kdf;
 pub mod kem;

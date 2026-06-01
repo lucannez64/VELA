@@ -1,7 +1,7 @@
 //! GET /auth/challenge
 //!
 //! Returns a single-use 32-byte random nonce (base64-encoded) for use in a
-//! Cyclo ZKP proof.  The nonce is stored in sled with a 60-second TTL and is
+//! authentication signature. The nonce is stored in sled with a 60-second TTL and is
 //! consumed on first use.
 //!
 //! Rate limit: 20 requests / minute per IP.
@@ -38,7 +38,7 @@ pub async fn get_challenge(
 
     // ── Generate nonce ────────────────────────────────────────────────────────
     let mut nonce = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    rand::rngs::OsRng.fill_bytes(&mut nonce);
     let nonce_b64 = B64.encode(nonce);
 
     // ── Store in sled (single-use, 60 s TTL) ──────────────────────────────────

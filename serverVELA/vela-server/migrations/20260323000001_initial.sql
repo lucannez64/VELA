@@ -14,9 +14,7 @@ CREATE TABLE users (
 --   hybrid_ek   — ML-KEM-1024 (1568 B) ‖ X25519 (32 B) = 1600 B total
 --                 Used to encapsulate the RMS capsule for this device.
 --   hybrid_vk   — ML-DSA-87 (2592 B) ‖ Ed25519 (32 B) = 2624 B total
---                 Used to verify signatures made by this device.
---   cyclo_pk    — Cyclo ZKP public key: N=128 u64 ring elements, little-endian
---                 = 1024 B.  Used to verify Cyclo proofs in /auth/verify.
+--                 Used to verify authentication and enrollment signatures.
 CREATE TABLE devices (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -25,8 +23,6 @@ CREATE TABLE devices (
     hybrid_ek   BYTEA       NOT NULL,
     -- Hybrid signing verifying key (2624 bytes)
     hybrid_vk   BYTEA       NOT NULL,
-    -- Cyclo ZKP public key (1024 bytes = 128 × u64 LE)
-    cyclo_pk    BYTEA       NOT NULL,
 
     -- Enrollment provenance
     enrolled_by UUID        REFERENCES devices(id),   -- NULL for the first device

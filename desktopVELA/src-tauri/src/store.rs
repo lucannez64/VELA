@@ -28,8 +28,6 @@ struct DeviceIdStore {
 pub struct IdentityKeysStore {
     pub hybrid_ek: Vec<u8>,
     pub hybrid_vk: Vec<u8>,
-    pub cyclo_pk: Vec<u8>,
-    pub cyclo_sk: Vec<u8>,
     /// ML-DSA-87 sk (4896 B) ‖ Ed25519 sk (32 B). Empty for legacy vaults created
     /// before enrollment support; those devices cannot enroll other devices.
     #[serde(default)]
@@ -230,8 +228,6 @@ impl Store {
         &self,
         hybrid_ek: &[u8],
         hybrid_vk: &[u8],
-        cyclo_pk: &[u8],
-        cyclo_sk: &[u8],
         hybrid_sk: &[u8],
         crypto: &Crypto,
     ) -> anyhow::Result<()> {
@@ -246,8 +242,6 @@ impl Store {
         let store = IdentityKeysStore {
             hybrid_ek: hybrid_ek.to_vec(),
             hybrid_vk: hybrid_vk.to_vec(),
-            cyclo_pk: cyclo_pk.to_vec(),
-            cyclo_sk: cyclo_sk.to_vec(),
             hybrid_sk: hybrid_sk.to_vec(),
         };
         let plaintext = serde_json::to_vec(&store)?;
@@ -266,21 +260,13 @@ impl Store {
 
         let bytes = fs::read(&identity_path)?;
         let store: IdentityKeysStore = if bytes.first() == Some(&b'{') {
-            let legacy: IdentityKeysStore = serde_json::from_slice(&bytes)?;
-            self.save_identity_keys(
-                &legacy.hybrid_ek,
-                &legacy.hybrid_vk,
-                &legacy.cyclo_pk,
-                &legacy.cyclo_sk,
-                &legacy.hybrid_sk,
-                crypto,
-            )?;
-            legacy
+            serde_json::from_slice(&bytes)?
         } else {
             let key = Self::derive_identity_file_key(crypto);
             let plaintext = decrypt(&key, &bytes)?;
             serde_json::from_slice(&plaintext)?
         };
+        self.save_identity_keys(&store.hybrid_ek, &store.hybrid_vk, &store.hybrid_sk, crypto)?;
         Ok(Some(store))
     }
 }

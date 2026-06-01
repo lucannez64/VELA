@@ -4,15 +4,13 @@ version = "0.1.0"
 edition = "2021"
 description = "VELA core cryptographic library: Hybrid KEM, AEAD, KDF, Shamir SSS, Path ORAM"
 license = "MIT OR Apache-2.0"
-build = "build.rs"
 
 [lib]
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = ["cyclo-ffi"]
+default = []
 wasm = ["getrandom/js"]
-cyclo-ffi = []
 
 [dependencies]
 # Hybrid KEM

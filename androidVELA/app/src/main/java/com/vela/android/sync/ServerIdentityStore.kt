@@ -9,8 +9,6 @@ data class ServerIdentity(
     val deviceId: String?,
     val hybridEkB64: String,
     val hybridVkB64: String,
-    val cycloPkB64: String,
-    val cycloSkB64: String,
     val hybridSkB64: String
 )
 
@@ -41,8 +39,6 @@ class ServerIdentityStore(context: Context) {
             deviceId = json.optString("device_id").takeIf { it.isNotBlank() },
             hybridEkB64 = json.getString("hybrid_ek_b64"),
             hybridVkB64 = json.getString("hybrid_vk_b64"),
-            cycloPkB64 = json.getString("cyclo_pk_b64"),
-            cycloSkB64 = json.getString("cyclo_sk_b64"),
             hybridSkB64 = json.getString("hybrid_sk_b64")
         )
     }
@@ -53,8 +49,6 @@ class ServerIdentityStore(context: Context) {
             .put("device_id", deviceId)
             .put("hybrid_ek_b64", hybridEkB64)
             .put("hybrid_vk_b64", hybridVkB64)
-            .put("cyclo_pk_b64", cycloPkB64)
-            .put("cyclo_sk_b64", cycloSkB64)
             .put("hybrid_sk_b64", hybridSkB64)
     }
 

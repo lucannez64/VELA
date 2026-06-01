@@ -89,7 +89,7 @@ pub fn check_verify_backoff(store: &Store, device_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Record a failed proof attempt and set/extend the backoff window.
+/// Record a failed authentication attempt and set/extend the backoff window.
 pub fn record_verify_failure(store: &Store, device_id: &str) -> Result<()> {
     let fail_key = format!("rl:verify:fail:dev:{device_id}");
     let backoff_key = format!("rl:verify:backoff:{device_id}");
@@ -108,7 +108,7 @@ pub fn record_verify_failure(store: &Store, device_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Reset consecutive-failure streak after a successful proof.
+/// Reset consecutive-failure streak after successful authentication.
 pub fn reset_verify_streak(store: &Store, device_id: &str) -> Result<()> {
     let streak_key = format!("rl:verify:streak:{device_id}");
     let backoff_key = format!("rl:verify:backoff:{device_id}");

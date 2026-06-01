@@ -29,7 +29,7 @@ pub async fn post_revoke(
         .db
         .query(
             "SELECT id, user_id, device_name, device_type, last_active,
-                hybrid_ek, hybrid_vk, cyclo_pk,
+                hybrid_ek, hybrid_vk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
          FROM devices

@@ -5,7 +5,7 @@
   "name": "__MSG_extensionName__",
   "short_name": "VELA",
   "description": "__MSG_extensionDescription__",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "author": "VELA Team",
   "icons": {
     "16": "icons/icon16.png",
@@ -16,10 +16,20 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*/*", "http://*/*"],
-      "exclude_matches": ["*://*/*.xml*"],
-      "js": ["src/shared/autofill-utils.js", "src/content/content-script.js"],
-      "css": ["src/content/content-styles.css"],
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "exclude_matches": [
+        "*://*/*.xml*"
+      ],
+      "js": [
+        "src/shared/autofill-utils.js",
+        "src/content/content-script.js"
+      ],
+      "css": [
+        "src/content/content-styles.css"
+      ],
       "run_at": "document_start",
       "all_frames": true
     }
@@ -52,7 +62,10 @@
       "resources": [
         "src/content/content-script.js"
       ],
-      "matches": ["https://*/*", "http://*/*"]
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ]
     }
   ],
   "commands": {

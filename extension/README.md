@@ -73,12 +73,14 @@ bun run build
 This produces two builds:
 - `dist/chrome/` — for Chrome, Edge, Brave, Thorium, Helium, Vivaldi, Opera, Arc, and any Chromium fork
 - `dist/firefox/` — for Firefox, Zen Browser, Waterfox, Floorp, LibreWolf, and any Gecko fork
+- `dist/vela-firefox.xpi` — packaged Gecko extension archive
 
 ### Build for a Single Browser
 
 ```bash
 bun run build:chrome
 bun run build:firefox
+bun run build:xpi
 ```
 
 ## Installation
@@ -99,12 +101,30 @@ bun run build:firefox
 ### Gecko-based Browsers (Firefox, Zen, Waterfox, Floorp, etc.)
 
 1. Run `bun run build:firefox`
-2. Open your browser's debugging page:
+2. Open `extension/dist/vela-firefox.xpi` in your browser to install the packaged extension.
+
+For temporary development loading, use the debugging page:
    - Firefox: `about:debugging#/runtime/this-firefox`
    - Zen: `about:debugging#/runtime/this-firefox`
    - Waterfox: `about:debugging#/runtime/this-waterfox`
 3. Click "Load Temporary Add-on"
 4. Navigate to `extension/dist/firefox` and select `manifest.json`
+
+Regular Firefox-family release builds require add-ons to be signed before they
+can be installed permanently. Create API credentials in the AMO Developer Hub,
+then sign an unlisted build:
+
+```powershell
+$env:WEB_EXT_API_KEY = "<amo-jwt-issuer>"
+$env:WEB_EXT_API_SECRET = "<amo-jwt-secret>"
+bun run sign:firefox
+```
+
+`sign:firefox` increments the patch version automatically before submitting,
+because AMO rejects duplicate extension versions. The signed permanent-install
+XPI is written to `extension/dist/signed/`. Keep using
+`extension/dist/vela-firefox.xpi` only for browsers or profiles that allow
+unsigned add-ons.
 
 ### Native Messaging Setup
 

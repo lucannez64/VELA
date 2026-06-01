@@ -119,25 +119,20 @@ async fn authenticate_for_sync(
         .decode(&challenge_resp.challenge)
         .map_err(|e| format!("Invalid challenge format: {e}"))?;
 
-    let (proof, committed_hash) = crypto::create_auth_proof(
-        &identity_keys.cyclo_pk,
-        &identity_keys.cyclo_sk,
-        &challenge_bytes,
-        device_id,
-    )
-    .map_err(|e| format!("Failed to create auth proof: {e}"))?;
+    let signature =
+        crypto::create_auth_signature(&identity_keys.hybrid_sk, &challenge_bytes, device_id)
+            .map_err(|e| format!("Failed to create auth signature: {e}"))?;
 
     let verify_resp = client
-        .verify_proof(&VerifyRequest {
+        .verify_signature(&VerifyRequest {
             device_id: device_id.to_string(),
             challenge: challenge_resp.challenge,
-            committed_hash,
-            proof,
+            signature,
             device_name: Some(get_device_name()),
             device_type: Some("desktop".to_string()),
         })
         .await
-        .map_err(|e| format!("Failed to verify proof: {e}"))?;
+        .map_err(|e| format!("Failed to verify signature: {e}"))?;
 
     state
         .store

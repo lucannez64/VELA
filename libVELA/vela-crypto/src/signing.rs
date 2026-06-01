@@ -60,6 +60,39 @@ pub const HYBRID_SIG_LEN: usize = ML_DSA_SIG_LEN + ED25519_SIG_LEN; // 4659
 
 /// Domain-separation context passed to ML-DSA-87's context string parameter.
 const ML_DSA_CTX: &[u8] = b"vela device identity v1";
+const AUTH_MESSAGE_CONTEXT: &[u8] = b"vela auth challenge v1";
+const ENROLLMENT_MESSAGE_CONTEXT: &[u8] = b"vela device enrollment v1";
+
+fn append_len_prefixed(message: &mut Vec<u8>, value: &[u8]) {
+    message.extend_from_slice(&(value.len() as u64).to_be_bytes());
+    message.extend_from_slice(value);
+}
+
+/// Build the domain-separated message signed for server authentication.
+pub fn auth_message(device_id: &str, challenge: &[u8]) -> Vec<u8> {
+    let mut message =
+        Vec::with_capacity(AUTH_MESSAGE_CONTEXT.len() + device_id.len() + challenge.len() + 16);
+    message.extend_from_slice(AUTH_MESSAGE_CONTEXT);
+    append_len_prefixed(&mut message, device_id.as_bytes());
+    append_len_prefixed(&mut message, challenge);
+    message
+}
+
+/// Build the domain-separated message authorizing a new device enrollment.
+pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]) -> Vec<u8> {
+    let mut message = Vec::with_capacity(
+        ENROLLMENT_MESSAGE_CONTEXT.len()
+            + hybrid_ek.len()
+            + hybrid_vk.len()
+            + rms_capsule.len()
+            + 24,
+    );
+    message.extend_from_slice(ENROLLMENT_MESSAGE_CONTEXT);
+    append_len_prefixed(&mut message, hybrid_ek);
+    append_len_prefixed(&mut message, hybrid_vk);
+    append_len_prefixed(&mut message, rms_capsule);
+    message
+}
 
 // ── Key types ─────────────────────────────────────────────────────────────────
 
@@ -175,7 +208,7 @@ impl HybridVerifyingKey {
 }
 
 impl HybridSignature {
-    /// Serialise to `[ml_dsa_sig (4595 B) ‖ ed25519_sig (64 B)]`.
+    /// Serialise to `[ml_dsa_sig (4627 B) ‖ ed25519_sig (64 B)]`.
     pub fn to_bytes(&self) -> [u8; HYBRID_SIG_LEN] {
         let mut out = [0u8; HYBRID_SIG_LEN];
         out[..ML_DSA_SIG_LEN].copy_from_slice(&self.ml_dsa);

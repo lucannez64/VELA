@@ -35,6 +35,8 @@ set NM_DIR=%APPDATA%\Mozilla\NativeMessagingHosts
 if not exist "%NM_DIR%" mkdir "%NM_DIR%"
 del "%NM_DIR%\vela-desktop.json" >nul 2>&1
 echo %MANIFEST_CONTENT%> "%NM_DIR%\%HOST_NAME%.json"
+reg delete "HKCU\SOFTWARE\Mozilla\NativeMessagingHosts\vela-desktop" /f >nul 2>&1
+reg add "HKCU\SOFTWARE\Mozilla\NativeMessagingHosts\%HOST_NAME%" /ve /d "%NM_DIR%\%HOST_NAME%.json" /f >nul 2>&1
 
 REM === Zen Browser ===
 echo Registering for Zen Browser...

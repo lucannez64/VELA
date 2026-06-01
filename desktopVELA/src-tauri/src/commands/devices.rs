@@ -190,8 +190,6 @@ struct EnrollmentCodePayload {
     device_id: String,
     hybrid_ek: String,    // base64
     hybrid_vk: String,    // base64
-    cyclo_pk: String,     // base64
-    cyclo_sk: String,     // base64
     hybrid_sk: String,    // base64 (signing key — keep this secret!)
     transfer_key: String, // base64, 32 B — decrypts rms_capsule on server
     server_url: String,
@@ -213,7 +211,7 @@ const ENROLLMENT_CODE_V2_PREFIX: &str = "VELA-ENROLL:v2:";
 ///   1. Generates a fresh keypair for the new device.
 ///   2. Creates an rms_capsule by AEAD-encrypting the RMS with a random transfer key.
 ///   3. Signs the new device's `hybrid_vk` with its own signing key.
-///   4. Proves its identity to the server (ZKP challenge/response).
+///   4. Signs a server challenge to authenticate to the server.
 ///   5. Calls `POST /device/enroll` → gets a server-assigned `device_id`.
 ///   6. Returns a base64-encoded JSON blob containing everything the new device needs.
 ///
@@ -269,16 +267,20 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
     let rms_capsule = crypto::create_rms_capsule(&transfer_key, &rms)
         .map_err(|e| format!("Failed to create RMS capsule: {e}"))?;
 
-    // ── sign the new device's hybrid_vk ──────────────────────────────────────
+    // ── sign the new device enrollment payload ───────────────────────────────
     // Spawn on blocking thread — ML-DSA signing is compute-heavy.
-    let (sk_bytes, vk_bytes) = (own_keys.hybrid_sk.clone(), new_identity.hybrid_vk.clone());
-    let signature =
-        tokio::task::spawn_blocking(move || crypto::sign_new_device_vk(&sk_bytes, &vk_bytes))
-            .await
-            .map_err(|e| format!("Thread join error: {e}"))?
-            .map_err(|e| format!("Signing failed: {e}"))?;
+    let sk_bytes = own_keys.hybrid_sk.clone();
+    let new_hybrid_ek = new_identity.hybrid_ek.clone();
+    let new_hybrid_vk = new_identity.hybrid_vk.clone();
+    let new_rms_capsule = rms_capsule.clone();
+    let signature = tokio::task::spawn_blocking(move || {
+        crypto::sign_enrollment(&sk_bytes, &new_hybrid_ek, &new_hybrid_vk, &new_rms_capsule)
+    })
+    .await
+    .map_err(|e| format!("Thread join error: {e}"))?
+    .map_err(|e| format!("Signing failed: {e}"))?;
 
-    // ── get challenge and create ZKP proof ────────────────────────────────────
+    // ── get challenge and sign it ─────────────────────────────────────────────
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url.clone());
 
@@ -290,25 +292,23 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
         .decode(&challenge_resp.challenge)
         .map_err(|_| "Invalid challenge encoding from server")?;
 
-    let (pk_bytes, sk_bytes2) = (own_keys.cyclo_pk.clone(), own_keys.cyclo_sk.clone());
+    let auth_sk = own_keys.hybrid_sk.clone();
     let dev_id_clone = own_device_id.clone();
-    let (proof, committed_hash_hex) = tokio::task::spawn_blocking(move || {
-        crypto::create_auth_proof(&pk_bytes, &sk_bytes2, &challenge_bytes, &dev_id_clone)
+    let auth_signature = tokio::task::spawn_blocking(move || {
+        crypto::create_auth_signature(&auth_sk, &challenge_bytes, &dev_id_clone)
     })
     .await
     .map_err(|e| format!("Thread join error: {e}"))?
-    .map_err(|e| format!("ZKP proof failed: {e}"))?;
+    .map_err(|e| format!("Challenge signature failed: {e}"))?;
 
     // ── POST /device/enroll ───────────────────────────────────────────────────
     let enroll_req = EnrollDeviceRequest {
         enrolling_device_id: own_device_id.clone(),
         challenge: challenge_resp.challenge,
-        committed_hash: committed_hash_hex,
-        proof,
+        auth_signature,
         new_device: NewDevicePayload {
             hybrid_ek: B64.encode(&new_identity.hybrid_ek),
             hybrid_vk: B64.encode(&new_identity.hybrid_vk),
-            cyclo_pk: B64.encode(&new_identity.cyclo_pk),
             rms_capsule: B64.encode(&rms_capsule),
             signature: B64.encode(&signature),
             device_name: Some("Pending Desktop Enrollment".to_string()),
@@ -340,8 +340,6 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
         device_id: enroll_resp.device_id,
         hybrid_ek: B64.encode(&new_identity.hybrid_ek),
         hybrid_vk: B64.encode(&new_identity.hybrid_vk),
-        cyclo_pk: B64.encode(&new_identity.cyclo_pk),
-        cyclo_sk: B64.encode(&new_identity.cyclo_sk),
         hybrid_sk: B64.encode(&new_identity.hybrid_sk),
         transfer_key: B64.encode(&transfer_key),
         server_url: server_url.clone(),
@@ -492,7 +490,7 @@ async fn resolve_enrollment_code_json(
 /// The new device:
 ///   1. Decodes the invitation code.
 ///   2. Persists the device ID and identity keys.
-///   3. Authenticates with the server (ZKP) → gets a session token.
+///   3. Authenticates with the server challenge → gets a session token.
 ///   4. Downloads and decrypts the RMS capsule from the server.
 ///   5. Stores the RMS encrypted with the provided password.
 ///   6. Downloads the vault and unlocks the session.
@@ -514,8 +512,6 @@ pub async fn import_enrollment_code(
     let hybrid_vk = B64
         .decode(&payload.hybrid_vk)
         .map_err(|_| "bad hybrid_vk")?;
-    let cyclo_pk = B64.decode(&payload.cyclo_pk).map_err(|_| "bad cyclo_pk")?;
-    let cyclo_sk = B64.decode(&payload.cyclo_sk).map_err(|_| "bad cyclo_sk")?;
     let hybrid_sk = B64
         .decode(&payload.hybrid_sk)
         .map_err(|_| "bad hybrid_sk")?;
@@ -552,20 +548,19 @@ pub async fn import_enrollment_code(
         .map_err(|_| "Invalid challenge encoding")?;
 
     let device_id_clone = payload.device_id.clone();
-    let (pk2, sk2, cb2) = (cyclo_pk.clone(), cyclo_sk.clone(), challenge_bytes.clone());
-    let (proof, committed_hash_hex) = tokio::task::spawn_blocking(move || {
-        crypto::create_auth_proof(&pk2, &sk2, &cb2, &device_id_clone)
+    let (auth_sk, cb2) = (hybrid_sk.clone(), challenge_bytes.clone());
+    let signature = tokio::task::spawn_blocking(move || {
+        crypto::create_auth_signature(&auth_sk, &cb2, &device_id_clone)
     })
     .await
     .map_err(|e| format!("Thread join error: {e}"))?
-    .map_err(|e| format!("ZKP proof failed: {e}"))?;
+    .map_err(|e| format!("Challenge signature failed: {e}"))?;
 
     let verify_resp = client
-        .verify_proof(&VerifyRequest {
+        .verify_signature(&VerifyRequest {
             device_id: payload.device_id.clone(),
             challenge: challenge_resp.challenge,
-            committed_hash: committed_hash_hex,
-            proof,
+            signature,
             device_name: Some(get_device_name()),
             device_type: Some("desktop".to_string()),
         })
@@ -596,14 +591,7 @@ pub async fn import_enrollment_code(
     let crypto_obj = crate::crypto::Crypto::new(&rms);
     state
         .store
-        .save_identity_keys(
-            &hybrid_ek,
-            &hybrid_vk,
-            &cyclo_pk,
-            &cyclo_sk,
-            &hybrid_sk,
-            &crypto_obj,
-        )
+        .save_identity_keys(&hybrid_ek, &hybrid_vk, &hybrid_sk, &crypto_obj)
         .map_err(|e| format!("Failed to save identity keys: {e}"))?;
 
     // Download the vault chunk from the server.  Try the canonical name first,

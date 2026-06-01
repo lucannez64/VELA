@@ -47,7 +47,6 @@ async fn register_creates_account_and_device() {
     let body = serde_json::to_string(&json!({
         "hybrid_ek": B64.encode(vec![0u8; 1600]),
         "hybrid_vk": B64.encode(vec![0u8; 2624]),
-        "cyclo_pk": B64.encode(vec![0u8; 1024]),
     }))
     .unwrap();
 
@@ -74,7 +73,6 @@ async fn register_rejects_bad_key_size() {
     let body = serde_json::to_string(&json!({
         "hybrid_ek": B64.encode(vec![0u8; 10]),
         "hybrid_vk": B64.encode(vec![0u8; 2624]),
-        "cyclo_pk": B64.encode(vec![0u8; 1024]),
     }))
     .unwrap();
 
@@ -104,6 +102,102 @@ async fn challenge_returns_nonce() {
     let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(v["challenge"].is_string());
+}
+
+#[tokio::test]
+async fn auth_signature_succeeds_once_and_replay_fails() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let device_id = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    let (hybrid_vk, hybrid_sk) = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let (vk, sk) = vela_crypto::signing::generate_keypair().unwrap();
+            (vk.to_bytes().to_vec(), sk.into_bytes())
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+
+    state
+        .db
+        .execute(
+            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
+            stoolap::params![user_id.to_string(), now.clone()],
+        )
+        .unwrap();
+    state
+        .db
+        .execute(
+            "INSERT INTO devices
+             (id, user_id, hybrid_ek, hybrid_vk, created_at)
+             VALUES ($1, $2, $3, $4, $5)",
+            stoolap::params![
+                device_id.to_string(),
+                user_id.to_string(),
+                B64.encode(vec![0u8; 1600]),
+                B64.encode(hybrid_vk),
+                now,
+            ],
+        )
+        .unwrap();
+
+    let challenge_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/challenge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let challenge_body = axum::body::to_bytes(challenge_resp.into_body(), 1024)
+        .await
+        .unwrap();
+    let challenge_json: serde_json::Value = serde_json::from_slice(&challenge_body).unwrap();
+    let challenge_b64 = challenge_json["challenge"].as_str().unwrap().to_string();
+    let challenge = B64.decode(&challenge_b64).unwrap();
+    let device_id_string = device_id.to_string();
+    let signature = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let sk = vela_crypto::signing::HybridSigningKey::from_bytes(&hybrid_sk).unwrap();
+            let message = vela_crypto::signing::auth_message(&device_id_string, &challenge);
+            B64.encode(
+                vela_crypto::signing::sign(&sk, &message)
+                    .unwrap()
+                    .to_bytes(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    let verify_body = serde_json::to_string(&json!({
+        "device_id": device_id,
+        "challenge": challenge_b64,
+        "signature": signature,
+    }))
+    .unwrap();
+
+    let verify = || {
+        Request::builder()
+            .method("POST")
+            .uri("/auth/verify")
+            .header("content-type", "application/json")
+            .body(Body::from(verify_body.clone()))
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone().oneshot(verify()).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.oneshot(verify()).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
@@ -194,14 +288,13 @@ async fn two_users_can_store_same_chunk_id() {
     for (device_id, user_id) in [(device_a, user_a), (device_b, user_b)] {
         state.db.execute(
             "INSERT INTO devices
-             (id, user_id, hybrid_ek, hybrid_vk, cyclo_pk, enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8, $9, $10)",
+             (id, user_id, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8, $9)",
             stoolap::params![
                 device_id.to_string(),
                 user_id.to_string(),
                 B64.encode(vec![0u8; 1600]),
                 B64.encode(vec![0u8; 2624]),
-                B64.encode(vec![0u8; 1024]),
                 Option::<String>::None,
                 Option::<String>::None,
                 Option::<String>::None,

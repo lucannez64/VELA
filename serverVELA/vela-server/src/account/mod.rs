@@ -19,13 +19,11 @@ use crate::{
 
 const HYBRID_EK_LEN: usize = 1568 + 32;
 const HYBRID_VK_LEN: usize = 2592 + 32;
-const CYCLO_PK_LEN: usize = 128 * 8;
 
 #[derive(Deserialize)]
 pub struct RegisterRequest {
     pub hybrid_ek: String,
     pub hybrid_vk: String,
-    pub cyclo_pk: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
 }
@@ -51,7 +49,6 @@ pub async fn post_register(
 
     let hybrid_ek = decode_b64_exact(&body.hybrid_ek, HYBRID_EK_LEN, "hybrid_ek")?;
     let hybrid_vk = decode_b64_exact(&body.hybrid_vk, HYBRID_VK_LEN, "hybrid_vk")?;
-    let cyclo_pk = decode_b64_exact(&body.cyclo_pk, CYCLO_PK_LEN, "cyclo_pk")?;
 
     let user_id = Uuid::new_v4();
     let device_id = Uuid::new_v4();
@@ -75,8 +72,8 @@ pub async fn post_register(
 
     state.db.execute(
         "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, cyclo_pk, enrolled_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9)",
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8)",
         stoolap::params![
             device_id.to_string(),
             user_id.to_string(),
@@ -85,7 +82,6 @@ pub async fn post_register(
             now.clone(),
             crate::db::encode_b64(&hybrid_ek),
             crate::db::encode_b64(&hybrid_vk),
-            crate::db::encode_b64(&cyclo_pk),
             now,
         ],
     ).map_err(|e| AppError::Internal(e.to_string()))?;

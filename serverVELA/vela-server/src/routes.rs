@@ -140,6 +140,7 @@ async fn enforce_https_for_auth(
 fn is_auth_endpoint(path: &str) -> bool {
     path.starts_with("/auth/")
         || path == "/account/register"
+        || path == "/device/enroll"
         || path.starts_with("/device/enrollment-package")
         || path.starts_with("/recovery/webauthn/")
         || path == "/recovery/initiate"

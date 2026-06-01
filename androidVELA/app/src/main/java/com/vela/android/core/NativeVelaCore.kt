@@ -73,20 +73,18 @@ object NativeVelaCore {
         }
     }
 
-    fun createAuthProofJson(
-        cycloPkB64: String,
-        cycloSkB64: String,
+    fun createAuthSignatureJson(
+        hybridSkB64: String,
         challengeB64: String,
         deviceId: String
     ): String? {
         return callNative {
             val request = JSONObject()
-                .put("cyclo_pk_b64", cycloPkB64)
-                .put("cyclo_sk_b64", cycloSkB64)
+                .put("hybrid_sk_b64", hybridSkB64)
                 .put("challenge_b64", challengeB64)
                 .put("device_id", deviceId)
                 .toString()
-            val response = JSONObject(nativeCreateAuthProofJson(request))
+            val response = JSONObject(nativeCreateAuthSignatureJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.toString()
         }
@@ -127,7 +125,7 @@ object NativeVelaCore {
     private external fun nativeEncryptVaultChunkJson(requestJson: String): String
     private external fun nativeDecryptVaultChunkJson(requestJson: String): String
     private external fun nativeGenerateServerIdentityJson(): String
-    private external fun nativeCreateAuthProofJson(requestJson: String): String
+    private external fun nativeCreateAuthSignatureJson(requestJson: String): String
     private external fun nativeDecryptRmsCapsuleJson(requestJson: String): String
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
 }

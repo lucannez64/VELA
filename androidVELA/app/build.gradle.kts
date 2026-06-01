@@ -125,14 +125,7 @@ tasks.register("buildRustBridge") {
     inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-android-bridge/Cargo.lock"))
     inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-android-bridge/src"))
     inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/Cargo.toml"))
-    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/build.rs"))
     inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/src"))
-    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/build.zig"))
-    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/build.zig.zon"))
-    inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/src"))
-    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/ntt_shim/Cargo.toml"))
-    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/ntt_shim/Cargo.lock"))
-    inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/cyclo/ntt_shim/src"))
     outputs.dir(outputRoot)
 
     doLast {
@@ -150,7 +143,7 @@ tasks.register("buildRustBridge") {
             val linker = binDir.resolve("${abi.clangPrefix}-clang.cmd")
             require(linker.isFile) { "Missing Android linker: ${linker.absolutePath}" }
 
-            val cargo = ProcessBuilder("cargo", "build", "--release", "--features", "cyclo-auth", "--target", abi.rustTarget)
+            val cargo = ProcessBuilder("cargo", "build", "--release", "--target", abi.rustTarget)
                 .directory(bridgeDir)
                 .inheritIO()
             cargo.environment()["ANDROID_NDK_HOME"] = ndkDir.absolutePath

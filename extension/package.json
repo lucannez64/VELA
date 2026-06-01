@@ -1,15 +1,19 @@
 {
   "name": "vela-extension",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "private": true,
   "description": "VELA Password Manager Browser Extension",
   "scripts": {
     "build": "bun run build.js",
     "build:chrome": "bun run build.js --chrome",
     "build:firefox": "bun run build.js --firefox",
+    "build:xpi": "bun run build.js --firefox",
+    "version:bump": "bun run bump-version.js",
+    "sign:firefox": "bun run version:bump && bun run build:firefox && web-ext sign --source-dir dist/firefox --artifacts-dir dist/signed --channel unlisted",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
+    "web-ext": "^10.3.0",
     "webextension-polyfill": "^0.12.0"
   }
 }

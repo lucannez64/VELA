@@ -38,7 +38,6 @@ pub struct ChallengeResponse {
 pub struct RegisterRequest {
     pub hybrid_ek: String,
     pub hybrid_vk: String,
-    pub cyclo_pk: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
 }
@@ -47,8 +46,7 @@ pub struct RegisterRequest {
 pub struct VerifyRequest {
     pub device_id: String,
     pub challenge: String,
-    pub committed_hash: String,
-    pub proof: String,
+    pub signature: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
 }
@@ -208,7 +206,7 @@ impl ApiClient {
         Ok(challenge)
     }
 
-    pub async fn verify_proof(&self, request: &VerifyRequest) -> Result<VerifyResponse> {
+    pub async fn verify_signature(&self, request: &VerifyRequest) -> Result<VerifyResponse> {
         let resp = self
             .send_request(false, |client| {
                 client
@@ -872,8 +870,7 @@ pub struct EnrollResponse {
 pub struct EnrollDeviceRequest {
     pub enrolling_device_id: String,
     pub challenge: String,
-    pub committed_hash: String,
-    pub proof: String,
+    pub auth_signature: String,
     pub new_device: NewDevicePayload,
 }
 
@@ -881,7 +878,6 @@ pub struct EnrollDeviceRequest {
 pub struct NewDevicePayload {
     pub hybrid_ek: String,
     pub hybrid_vk: String,
-    pub cyclo_pk: String,
     pub rms_capsule: String,
     pub signature: String,
     pub device_name: Option<String>,

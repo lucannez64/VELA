@@ -77,8 +77,6 @@ class VaultSyncManager(
                 deviceId = payload.deviceId,
                 hybridEkB64 = payload.hybridEkB64,
                 hybridVkB64 = payload.hybridVkB64,
-                cycloPkB64 = payload.cycloPkB64,
-                cycloSkB64 = payload.cycloSkB64,
                 hybridSkB64 = payload.hybridSkB64
             )
         )
@@ -302,18 +300,16 @@ class VaultSyncManager(
 
         val deviceId = identity.deviceId ?: error("Server identity has no device id")
         val challenge = client.getChallenge()
-        val proofJson = com.vela.android.core.NativeVelaCore.createAuthProofJson(
-            cycloPkB64 = identity.cycloPkB64,
-            cycloSkB64 = identity.cycloSkB64,
+        val signatureJson = com.vela.android.core.NativeVelaCore.createAuthSignatureJson(
+            hybridSkB64 = identity.hybridSkB64,
             challengeB64 = challenge.challengeB64,
             deviceId = deviceId
-        ) ?: error("Native VELA bridge cannot create server auth proof")
-        val proof = org.json.JSONObject(proofJson)
-        val verified = client.verifyProof(
+        ) ?: error("Native VELA bridge cannot create server auth signature")
+        val signature = org.json.JSONObject(signatureJson)
+        val verified = client.verifySignature(
             deviceId = deviceId,
             challengeB64 = challenge.challengeB64,
-            committedHash = proof.getString("committed_hash"),
-            proof = proof.getString("proof")
+            signature = signature.getString("signature")
         )
         identityStore.save(identity.copy(userId = verified.userId))
         return verified.token
@@ -573,8 +569,6 @@ private data class EnrollmentCodePayload(
     val deviceId: String,
     val hybridEkB64: String,
     val hybridVkB64: String,
-    val cycloPkB64: String,
-    val cycloSkB64: String,
     val hybridSkB64: String,
     val transferKeyB64: String,
     val serverUrl: String
@@ -594,8 +588,6 @@ private data class EnrollmentCodePayload(
                 deviceId = json.getString("device_id"),
                 hybridEkB64 = json.getString("hybrid_ek"),
                 hybridVkB64 = json.getString("hybrid_vk"),
-                cycloPkB64 = json.getString("cyclo_pk"),
-                cycloSkB64 = json.getString("cyclo_sk"),
                 hybridSkB64 = json.getString("hybrid_sk"),
                 transferKeyB64 = json.getString("transfer_key"),
                 serverUrl = json.optString("server_url")

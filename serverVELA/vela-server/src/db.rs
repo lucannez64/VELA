@@ -42,7 +42,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             last_active TIMESTAMP,
             hybrid_ek   TEXT NOT NULL,
             hybrid_vk   TEXT NOT NULL,
-            cyclo_pk    TEXT NOT NULL,
             enrolled_by TEXT,
             rms_capsule TEXT,
             revoked     BOOLEAN NOT NULL DEFAULT FALSE,
@@ -111,10 +110,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         )",
         (),
     )?;
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)",
-        (),
-    )?;
     let _ = db.execute(
         "ALTER TABLE devices ADD COLUMN device_name TEXT NOT NULL DEFAULT 'Desktop Device'",
         (),
@@ -124,6 +119,11 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         (),
     );
     let _ = db.execute("ALTER TABLE devices ADD COLUMN last_active TIMESTAMP", ());
+    migrate_devices_schema(db)?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)",
+        (),
+    )?;
     let _ = db.execute("ALTER TABLE users ADD COLUMN recovery_auth_hash TEXT", ());
     let _ = db.execute(
         "ALTER TABLE users ADD COLUMN recovery_webauthn_credential TEXT",
@@ -199,6 +199,47 @@ fn migrate_vault_chunks_schema(db: &Database) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn migrate_devices_schema(db: &Database) -> anyhow::Result<()> {
+    if db
+        .query("SELECT cyclo_pk FROM devices LIMIT 0", ())
+        .is_err()
+    {
+        return Ok(());
+    }
+
+    let _ = db.execute("DROP TABLE IF EXISTS devices_v2", ());
+    db.execute(
+        "CREATE TABLE devices_v2 (
+            id          TEXT UNIQUE NOT NULL,
+            user_id     TEXT NOT NULL,
+            device_name TEXT NOT NULL DEFAULT 'Desktop Device',
+            device_type TEXT NOT NULL DEFAULT 'desktop',
+            last_active TIMESTAMP,
+            hybrid_ek   TEXT NOT NULL,
+            hybrid_vk   TEXT NOT NULL,
+            enrolled_by TEXT,
+            rms_capsule TEXT,
+            revoked     BOOLEAN NOT NULL DEFAULT FALSE,
+            revoked_at  TIMESTAMP,
+            revoked_by  TEXT,
+            created_at  TIMESTAMP NOT NULL
+        )",
+        (),
+    )?;
+    db.execute(
+        "INSERT INTO devices_v2
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk,
+          enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at)
+         SELECT id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk,
+                enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at
+         FROM devices",
+        (),
+    )?;
+    db.execute("DROP TABLE devices", ())?;
+    db.execute("ALTER TABLE devices_v2 RENAME TO devices", ())?;
+    Ok(())
+}
+
 pub fn encode_b64(data: &[u8]) -> String {
     B64.encode(data)
 }
@@ -225,7 +266,6 @@ pub struct DeviceRow {
     pub last_active: Option<DateTime<Utc>>,
     pub hybrid_ek: Vec<u8>,
     pub hybrid_vk: Vec<u8>,
-    pub cyclo_pk: Vec<u8>,
     pub enrolled_by: Option<Uuid>,
     pub rms_capsule: Option<Vec<u8>>,
     pub revoked: bool,
@@ -353,13 +393,12 @@ pub fn parse_device_row(row: &ResultRow) -> Result<DeviceRow, AppError> {
         last_active: opt_ts_from(row, 4)?,
         hybrid_ek: decode_b64(&text_from(row, 5)?)?,
         hybrid_vk: decode_b64(&text_from(row, 6)?)?,
-        cyclo_pk: decode_b64(&text_from(row, 7)?)?,
-        enrolled_by: opt_uuid_from(row, 8)?,
-        rms_capsule: opt_text_from(row, 9)?.map(|s| decode_b64(&s)).transpose()?,
-        revoked: bool_from(row, 10)?,
-        revoked_at: opt_ts_from(row, 11)?,
-        revoked_by: opt_uuid_from(row, 12)?,
-        created_at: ts_from(row, 13)?,
+        enrolled_by: opt_uuid_from(row, 7)?,
+        rms_capsule: opt_text_from(row, 8)?.map(|s| decode_b64(&s)).transpose()?,
+        revoked: bool_from(row, 9)?,
+        revoked_at: opt_ts_from(row, 10)?,
+        revoked_by: opt_uuid_from(row, 11)?,
+        created_at: ts_from(row, 12)?,
     })
 }
 

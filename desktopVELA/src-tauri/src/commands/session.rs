@@ -39,8 +39,7 @@ async fn authenticate_with_server(
     state: &Arc<AppState>,
     device_id: &str,
     device_name: &str,
-    cyclo_pk: &[u8],
-    cyclo_sk: &[u8],
+    hybrid_sk: &[u8],
 ) -> Result<(String, String), String> {
     let server_url = state.server_url.read().clone();
     if server_url.trim().is_empty() {
@@ -58,21 +57,19 @@ async fn authenticate_with_server(
         .decode(&challenge_resp.challenge)
         .map_err(|e| format!("Invalid challenge format: {}", e))?;
 
-    let (proof, committed_hash_hex) =
-        crypto::create_auth_proof(cyclo_pk, cyclo_sk, &challenge_bytes, device_id)
-            .map_err(|e| format!("Failed to create auth proof: {}", e))?;
+    let signature = crypto::create_auth_signature(hybrid_sk, &challenge_bytes, device_id)
+        .map_err(|e| format!("Failed to create auth signature: {}", e))?;
 
     let verify_resp = client
-        .verify_proof(&VerifyRequest {
+        .verify_signature(&VerifyRequest {
             device_id: device_id.to_string(),
             challenge: challenge_resp.challenge,
-            committed_hash: committed_hash_hex,
-            proof,
+            signature,
             device_name: Some(device_name.to_string()),
             device_type: Some("desktop".to_string()),
         })
         .await
-        .map_err(|e| format!("Failed to verify proof: {}", e))?;
+        .map_err(|e| format!("Failed to verify signature: {}", e))?;
 
     Ok((verify_resp.token, verify_resp.user_id))
 }
@@ -95,7 +92,6 @@ async fn register_with_server(
     let register_req = RegisterRequest {
         hybrid_ek: B64.encode(&identity.hybrid_ek),
         hybrid_vk: B64.encode(&identity.hybrid_vk),
-        cyclo_pk: B64.encode(&identity.cyclo_pk),
         device_name: Some(device_name.to_string()),
         device_type: Some("desktop".to_string()),
     };
@@ -110,8 +106,6 @@ async fn register_with_server(
         .save_identity_keys(
             &identity.hybrid_ek,
             &identity.hybrid_vk,
-            &identity.cyclo_pk,
-            &identity.cyclo_sk,
             &identity.hybrid_sk,
             crypto,
         )
@@ -140,14 +134,8 @@ fn authenticate_with_server_in_background(
     };
 
     async_runtime::spawn(async move {
-        match authenticate_with_server(
-            &state,
-            &device_id,
-            &device_name,
-            &identity_keys.cyclo_pk,
-            &identity_keys.cyclo_sk,
-        )
-        .await
+        match authenticate_with_server(&state, &device_id, &device_name, &identity_keys.hybrid_sk)
+            .await
         {
             Ok((token, server_user_id)) => {
                 state
@@ -405,8 +393,7 @@ pub async fn create_vault(state: State<'_, Arc<AppState>>) -> Result<(), String>
                 &state,
                 &device_id,
                 &device_name,
-                &identity_keys.cyclo_pk,
-                &identity_keys.cyclo_sk,
+                &identity_keys.hybrid_sk,
             )
             .await
             {
@@ -510,8 +497,7 @@ pub async fn create_vault_with_password(
                 &state,
                 &device_id,
                 &device_name,
-                &identity_keys.cyclo_pk,
-                &identity_keys.cyclo_sk,
+                &identity_keys.hybrid_sk,
             )
             .await
             {

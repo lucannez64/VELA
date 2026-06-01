@@ -9,7 +9,7 @@
 
 ## 1. Product Identity & Positioning
 
-VELA is a **passwordless, zero-knowledge vault**. It never asks for a master password. Authentication is proven through biometrics and hardware-bound keys (TPM / Secure Enclave) using a lattice-based zero-knowledge proof scheme. The server never sees your plaintext data.
+VELA is a **passwordless, zero-knowledge vault**. It never asks for a master password. Authentication uses biometrics and hardware-bound keys (TPM / Secure Enclave) with hybrid post-quantum challenge signatures. The server never sees your plaintext data.
 
 ### Design Tone
 - **Calm confidence.** Security without fear. Never technical jargon in user-facing copy.

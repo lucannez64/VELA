@@ -23,9 +23,6 @@ pub enum VelaError {
     #[error("Insufficient shares: need {need}, got {got}")]
     InsufficientShares { need: u8, got: usize },
 
-    #[error("Cyclo ZKP error: {0}")]
-    CycloError(String),
-
     #[error("Signing error: {0}")]
     SigningError(String),
 }

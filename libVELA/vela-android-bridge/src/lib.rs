@@ -9,7 +9,6 @@ use jni::sys::jstring;
 use jni::JNIEnv;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::ffi::{c_char, c_uchar, CStr, CString};
 use std::ptr;
 use std::slice;
@@ -20,8 +19,6 @@ use vela_crypto::signing;
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
 const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
-const CYCLO_PK_LEN: usize = 1024;
-const CYCLO_Q: u64 = 1125899906839937;
 
 #[repr(C)]
 pub struct VelaByteBuffer {
@@ -84,23 +81,19 @@ struct DecryptChunkRequest {
 struct GenerateIdentityResponse {
     hybrid_ek_b64: String,
     hybrid_vk_b64: String,
-    cyclo_pk_b64: String,
-    cyclo_sk_b64: String,
     hybrid_sk_b64: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct AuthProofRequest {
-    cyclo_pk_b64: String,
-    cyclo_sk_b64: String,
+struct AuthSignatureRequest {
+    hybrid_sk_b64: String,
     challenge_b64: String,
     device_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct AuthProofResponse {
-    proof: String,
-    committed_hash: String,
+struct AuthSignatureResponse {
+    signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -201,13 +194,13 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeGenerateS
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCreateAuthProofJson(
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCreateAuthSignatureJson(
     mut env: JNIEnv,
     _object: JObject,
     request_json: JString,
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| {
-        create_auth_proof_json(request)
+        create_auth_signature_json(request)
     });
     jni_string(&mut env, &response)
 }
@@ -353,37 +346,18 @@ fn generate_server_identity() -> anyhow_like::Result<GenerateIdentityResponse> {
     let hybrid_vk = signing_vk.to_bytes().to_vec();
     let hybrid_sk = signing_sk.into_bytes();
 
-    let mut cyclo_pk = Vec::with_capacity(CYCLO_PK_LEN);
-    for _ in 0..128 {
-        let mut buf = [0u8; 8];
-        rand::rngs::OsRng.fill_bytes(&mut buf);
-        let v = u64::from_le_bytes(buf) % CYCLO_Q;
-        cyclo_pk.extend_from_slice(&v.to_le_bytes());
-    }
-
-    let mut cyclo_sk = Vec::with_capacity(CYCLO_PK_LEN);
-    for _ in 0..128 {
-        let mut buf = [0u8; 4];
-        rand::rngs::OsRng.fill_bytes(&mut buf);
-        let coeff = (u32::from_le_bytes(buf) & 0xFFFFF) as u64;
-        cyclo_sk.extend_from_slice(&coeff.to_le_bytes());
-    }
-
     Ok(GenerateIdentityResponse {
         hybrid_ek_b64: B64.encode(hybrid_ek),
         hybrid_vk_b64: B64.encode(hybrid_vk),
-        cyclo_pk_b64: B64.encode(cyclo_pk),
-        cyclo_sk_b64: B64.encode(cyclo_sk),
         hybrid_sk_b64: B64.encode(hybrid_sk),
     })
 }
 
-fn create_auth_proof_json(request_json: &str) -> anyhow_like::Result<AuthProofResponse> {
-    let request: AuthProofRequest = serde_json::from_str(request_json)?;
-    let cyclo_pk = B64.decode(request.cyclo_pk_b64.as_bytes())?;
-    let cyclo_sk = B64.decode(request.cyclo_sk_b64.as_bytes())?;
+fn create_auth_signature_json(request_json: &str) -> anyhow_like::Result<AuthSignatureResponse> {
+    let request: AuthSignatureRequest = serde_json::from_str(request_json)?;
+    let hybrid_sk = B64.decode(request.hybrid_sk_b64.as_bytes())?;
     let challenge = B64.decode(request.challenge_b64.as_bytes())?;
-    create_auth_proof(&cyclo_pk, &cyclo_sk, &challenge, &request.device_id)
+    create_auth_signature(&hybrid_sk, &challenge, &request.device_id)
 }
 
 fn decrypt_rms_capsule_json(request_json: &str) -> anyhow_like::Result<DecryptRmsCapsuleResponse> {
@@ -423,50 +397,17 @@ fn decrypt_enrollment_package_json(
     })
 }
 
-fn create_auth_proof(
-    cyclo_pk: &[u8],
-    cyclo_sk: &[u8],
+fn create_auth_signature(
+    hybrid_sk: &[u8],
     challenge: &[u8],
     device_id: &str,
-) -> anyhow_like::Result<AuthProofResponse> {
-    if cyclo_pk.len() != CYCLO_PK_LEN {
-        return Err(format!("cyclo_pk must be {CYCLO_PK_LEN} bytes").into());
-    }
-    if cyclo_sk.len() != CYCLO_PK_LEN {
-        return Err(format!("cyclo_sk must be {CYCLO_PK_LEN} bytes").into());
-    }
-
-    let mut hasher = Sha256::new();
-    hasher.update(challenge);
-    hasher.update(device_id.as_bytes());
-    let committed_hash_bytes: [u8; 32] = hasher.finalize().into();
-    let committed_hash = hex::encode(committed_hash_bytes);
-
-    #[cfg(feature = "cyclo-auth")]
-    {
-        let mut public_inputs: Vec<u64> = Vec::with_capacity(132);
-        for chunk in cyclo_pk.chunks_exact(8) {
-            public_inputs.push(u64::from_le_bytes(chunk.try_into().unwrap()));
-        }
-        for chunk in committed_hash_bytes.chunks_exact(8) {
-            public_inputs.push(u64::from_le_bytes(chunk.try_into().unwrap()));
-        }
-        let private_inputs: Vec<u64> = cyclo_sk
-            .chunks_exact(8)
-            .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
-            .collect();
-        let proof = vela_crypto::cyclo::prove(&public_inputs, &private_inputs)?;
-        Ok(AuthProofResponse {
-            proof: B64.encode(proof.as_bytes()),
-            committed_hash,
-        })
-    }
-
-    #[cfg(not(feature = "cyclo-auth"))]
-    {
-        let _ = committed_hash;
-        Err("Cyclo auth proof generation is not enabled in this Android bridge build".into())
-    }
+) -> anyhow_like::Result<AuthSignatureResponse> {
+    let sk = signing::HybridSigningKey::from_bytes(hybrid_sk)?;
+    let message = signing::auth_message(device_id, challenge);
+    let signature = signing::sign(&sk, &message)?;
+    Ok(AuthSignatureResponse {
+        signature: B64.encode(signature.to_bytes()),
+    })
 }
 
 fn jni_json_result<T, F>(env: &mut JNIEnv, request_json: JString, f: F) -> String
@@ -608,7 +549,5 @@ mod tests {
         let identity = generate_server_identity().unwrap();
         assert_eq!(B64.decode(identity.hybrid_ek_b64).unwrap().len(), 1600);
         assert_eq!(B64.decode(identity.hybrid_vk_b64).unwrap().len(), 2624);
-        assert_eq!(B64.decode(identity.cyclo_pk_b64).unwrap().len(), 1024);
-        assert_eq!(B64.decode(identity.cyclo_sk_b64).unwrap().len(), 1024);
     }
 }
