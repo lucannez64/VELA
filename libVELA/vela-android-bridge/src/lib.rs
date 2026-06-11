@@ -7,7 +7,6 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use jni::objects::{JObject, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_char, c_uchar, CStr, CString};
 use std::ptr;
@@ -340,7 +339,8 @@ fn decrypt_vault_chunk_json(request_json: &str) -> anyhow_like::Result<DecryptVa
 
 fn generate_server_identity() -> anyhow_like::Result<GenerateIdentityResponse> {
     let mut hybrid_ek = vec![0u8; 1600];
-    rand::rngs::OsRng.fill_bytes(&mut hybrid_ek);
+    getrandom::getrandom(&mut hybrid_ek)
+        .map_err(|e| std::io::Error::other(format!("OS random source unavailable: {e}")))?;
 
     let (signing_vk, signing_sk) = signing::generate_keypair()?;
     let hybrid_vk = signing_vk.to_bytes().to_vec();

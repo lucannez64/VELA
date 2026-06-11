@@ -3,7 +3,6 @@ use crate::vault::{ItemType, PasswordGeneratorOptions, VaultItem};
 use crate::AppState;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::Utc;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -313,12 +312,11 @@ pub async fn generate_password(
     }
 
     let charset: Vec<char> = charset.chars().collect();
-    let mut rng = rand::rngs::OsRng;
 
     let password: String = (0..options.length)
         .map(|_| {
             let mut buf = [0u8; 4];
-            rng.fill_bytes(&mut buf);
+            getrandom::getrandom(&mut buf).expect("OS random source unavailable");
             let idx = (buf[0] as usize
                 | (buf[1] as usize) << 8
                 | (buf[2] as usize) << 16

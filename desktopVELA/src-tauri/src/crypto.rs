@@ -1,7 +1,6 @@
 //! VELA core cryptographic operations using vela-crypto.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use vela_crypto::{
@@ -86,7 +85,7 @@ pub fn decrypt_rms_capsule(transfer_key: &[u8; 32], capsule: &[u8]) -> Result<[u
 
 fn serialize_hybrid_ek(_kem_pk: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0u8; HYBRID_EK_LEN];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
     bytes
 }
 
@@ -116,7 +115,7 @@ impl Crypto {
 
     pub fn generate_rms() -> [u8; 32] {
         let mut rms = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut rms);
+        getrandom::getrandom(&mut rms).expect("OS random source unavailable");
         rms
     }
 

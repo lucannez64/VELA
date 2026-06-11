@@ -1,4 +1,3 @@
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,12 +99,11 @@ pub fn generate_password(options: &PasswordGeneratorOptions) -> (String, Passwor
     }
 
     let charset: Vec<char> = charset.chars().collect();
-    let mut rng = rand::rngs::OsRng;
 
     let password: String = (0..options.length)
         .map(|_| {
             let mut buf = [0u8; 4];
-            rng.fill_bytes(&mut buf);
+            getrandom::getrandom(&mut buf).expect("OS random source unavailable");
             let idx = u32::from_le_bytes(buf) as usize % charset.len();
             charset[idx]
         })

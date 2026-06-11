@@ -11,7 +11,6 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use rand::RngCore;
 use serde::Serialize;
 use std::net::SocketAddr;
 
@@ -38,7 +37,9 @@ pub async fn get_challenge(
 
     // ── Generate nonce ────────────────────────────────────────────────────────
     let mut nonce = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    getrandom::getrandom(&mut nonce).map_err(|e| {
+        crate::error::AppError::Internal(format!("OS random source unavailable: {e}"))
+    })?;
     let nonce_b64 = B64.encode(nonce);
 
     // ── Store in sled (single-use, 60 s TTL) ──────────────────────────────────

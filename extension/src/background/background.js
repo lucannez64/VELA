@@ -184,10 +184,10 @@ function handleExtensionMessage(message, sender, sendResponse) {
       handleFillForm(data, sender, sendResponse);
       break;
     case "getLogins":
-      handleGetLogins(data, sendResponse);
+      handleGetLogins(data, sender, sendResponse);
       break;
     case "getAvailableLogins":
-      handleGetAvailableLogins(data, sendResponse);
+      handleGetAvailableLogins(data, sender, sendResponse);
       break;
     case "nativeMessage":
       handleNativeMessage(data, sendResponse);
@@ -257,8 +257,13 @@ async function handleFillForm(data, sender, sendResponse) {
   }
 }
 
-async function handleGetLogins(data, sendResponse) {
+async function handleGetLogins(data, sender, sendResponse) {
   try {
+    const auth = await authorizeCredentialRequest(data, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, error: auth.error, logins: [] });
+      return;
+    }
     const { url } = data;
     const domain = getHttpDomain(url);
     if (!domain) {
@@ -287,8 +292,13 @@ async function handleGetLogins(data, sendResponse) {
   }
 }
 
-async function handleGetAvailableLogins(data, sendResponse) {
+async function handleGetAvailableLogins(data, sender, sendResponse) {
   try {
+    const auth = await authorizeCredentialRequest(data, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, error: auth.error, logins: [] });
+      return;
+    }
     const { url } = data;
     const userInitiated = data.userInitiated === true;
     const domain = getHttpDomain(url);
@@ -326,6 +336,57 @@ function getHttpDomain(url) {
     }
     return parsed.hostname.replace(/^www\./, "");
   } catch (_) {
+    return null;
+  }
+}
+
+async function authorizeCredentialRequest(data, sender) {
+  const requestedUrl = data?.url || "";
+  const requestedDomain = getHttpDomain(requestedUrl);
+  if (!requestedDomain) {
+    return { ok: false, error: "Unsupported URL" };
+  }
+
+  const active = await getActiveTab();
+  if (!active || !active.id || !active.url) {
+    return { ok: false, error: "No active tab" };
+  }
+
+  if (!sameHttpDomain(active.url, requestedUrl)) {
+    return { ok: false, error: "Requested URL does not match active tab" };
+  }
+
+  if (sender?.tab) {
+    if (sender.tab.id !== active.id) {
+      return { ok: false, error: "Sender tab is not active" };
+    }
+    if (sender.frameId !== undefined && sender.frameId !== 0) {
+      return { ok: false, error: "Credential requests must come from the top frame" };
+    }
+    if (sender.url && !sameHttpDomain(sender.url, requestedUrl)) {
+      return { ok: false, error: "Sender URL does not match requested URL" };
+    }
+    return { ok: true, tabId: active.id };
+  }
+
+  const extensionOrigin = runtime.getURL("");
+  if (!sender?.url?.startsWith(extensionOrigin)) {
+    return { ok: false, error: "Credential requests require extension UI or top-frame content" };
+  }
+  return { ok: true, tabId: active.id };
+}
+
+function sameHttpDomain(left, right) {
+  const leftDomain = getHttpDomain(left);
+  const rightDomain = getHttpDomain(right);
+  return !!leftDomain && leftDomain === rightDomain;
+}
+
+async function getActiveTab() {
+  try {
+    const queryTabs = await tabs.query({ active: true, currentWindow: true });
+    return queryTabs && queryTabs.length ? queryTabs[0] : null;
+  } catch {
     return null;
   }
 }
@@ -380,24 +441,24 @@ async function handleTriggerAutofillWithLogin(data, sender, sendResponse) {
   const { login } = data;
   if (!login) { sendResponse({ success: false }); return; }
 
-  const tabId = sender?.tab?.id || await getActiveTabId();
+  const active = await getActiveTab();
+  const tabId = sender?.tab?.id || active?.id;
 
   if (!tabId) { sendResponse({ success: false, error: "No tab found" }); return; }
+  if (active?.url && login.url && !sameHttpDomain(active.url, login.url)) {
+    sendResponse({ success: false, error: "Login does not match active tab" });
+    return;
+  }
+  if (sender?.tab && sender.frameId !== undefined && sender.frameId !== 0) {
+    sendResponse({ success: false, error: "Autofill must be triggered from the top frame" });
+    return;
+  }
 
   try {
     const response = await tabs.sendMessage(tabId, { command: "fillWithLogin", login });
     sendResponse(response || { success: true });
   } catch {
     sendResponse({ success: false });
-  }
-}
-
-async function getActiveTabId() {
-  try {
-    const queryTabs = await tabs.query({ active: true, currentWindow: true });
-    return queryTabs && queryTabs.length ? queryTabs[0].id : null;
-  } catch {
-    return null;
   }
 }
 

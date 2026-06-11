@@ -1,12 +1,8 @@
-use std::{
-    fs::File,
-    io::BufReader,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer},
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
     ServerConfig,
 };
 
@@ -39,10 +35,8 @@ pub fn load_rustls_server_config(paths: &TlsConfigPaths, alpn: &[&[u8]]) -> Resu
 }
 
 fn load_cert_chain(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path)
-        .with_context(|| format!("failed to open TLS certificate PEM: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader)
+    let certs = CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("failed to open TLS certificate PEM: {}", path.display()))?
         .collect::<std::result::Result<Vec<_>, _>>()
         .with_context(|| format!("failed to read TLS certificate PEM: {}", path.display()))?;
 
@@ -55,15 +49,6 @@ fn load_cert_chain(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
 }
 
 fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
-    let file = File::open(path)
-        .with_context(|| format!("failed to open TLS private key PEM: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    rustls_pemfile::private_key(&mut reader)
-        .with_context(|| format!("failed to read TLS private key PEM: {}", path.display()))?
-        .with_context(|| {
-            format!(
-                "TLS private key PEM contains no supported private key: {}",
-                path.display()
-            )
-        })
+    PrivateKeyDer::from_pem_file(path)
+        .with_context(|| format!("failed to read TLS private key PEM: {}", path.display()))
 }

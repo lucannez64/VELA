@@ -3,7 +3,6 @@ use base64::{
     Engine as _,
 };
 use chrono::{DateTime, Utc};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -262,7 +261,8 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
 
     // ── generate transfer key and create RMS capsule ──────────────────────────
     let mut transfer_key = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut transfer_key);
+    getrandom::getrandom(&mut transfer_key)
+        .map_err(|e| format!("OS random source unavailable: {e}"))?;
 
     let rms_capsule = crypto::create_rms_capsule(&transfer_key, &rms)
         .map_err(|e| format!("Failed to create RMS capsule: {e}"))?;
@@ -348,9 +348,11 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
     let json = serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {e}"))?;
 
     let mut package_key = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut package_key);
+    getrandom::getrandom(&mut package_key)
+        .map_err(|e| format!("OS random source unavailable: {e}"))?;
     let mut package_token = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut package_token);
+    getrandom::getrandom(&mut package_token)
+        .map_err(|e| format!("OS random source unavailable: {e}"))?;
 
     let token = B64URL.encode(package_token);
     let ciphertext = encrypt(&package_key, json.as_bytes())

@@ -139,9 +139,8 @@ impl DeviceKeys {
 
     #[deprecated(since = "0.1.0", note = "Use from_rms() instead for RMS-derived keys")]
     pub fn generate() -> Self {
-        use rand::RngCore;
         let mut signing_secret = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut signing_secret);
+        getrandom::getrandom(&mut signing_secret).expect("OS random source unavailable");
 
         let mut hasher = Sha256::new();
         hasher.update(&signing_secret);
@@ -681,11 +680,10 @@ pub mod tpm {
         }
 
         pub fn store_with_password(key: &[u8; 32], password: &str) -> anyhow::Result<()> {
-            use rand::RngCore;
             use vela_crypto::{aead::encrypt, kdf};
 
             let mut salt = [0u8; 16];
-            rand::rngs::OsRng.fill_bytes(&mut salt);
+            getrandom::getrandom(&mut salt)?;
 
             let key_material = kdf::derive("vela fallback key v1", password.as_bytes());
             let derived_key = kdf::derive("vela fallback encryption v1", key_material.as_bytes());

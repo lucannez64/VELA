@@ -1,5 +1,4 @@
 use data_encoding::BASE64URL_NOPAD;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -77,7 +76,7 @@ impl IpcMessage {
 
 pub fn generate_capability() -> String {
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
     BASE64URL_NOPAD.encode(&bytes)
 }
 
@@ -367,7 +366,7 @@ pub mod server {
 
     fn random_endpoint_suffix() -> String {
         let mut bytes = [0u8; 16];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
         BASE64URL_NOPAD.encode(&bytes)
     }
 

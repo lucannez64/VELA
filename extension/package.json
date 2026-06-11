@@ -15,5 +15,8 @@
   "devDependencies": {
     "web-ext": "^10.3.0",
     "webextension-polyfill": "^0.12.0"
+  },
+  "overrides": {
+    "shell-quote": "1.8.4"
   }
 }

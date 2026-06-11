@@ -697,7 +697,7 @@ pub mod windows_password {
 
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
         let mut salt = [0u8; 16];
-        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut salt);
+        getrandom::getrandom(&mut salt).expect("OS random source unavailable");
 
         let key = derive_key_from_password(password, &salt);
         let ciphertext = encrypt(&key, rms)?;
@@ -793,7 +793,7 @@ pub mod default_password {
 
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
         let mut salt = [0u8; 16];
-        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut salt);
+        getrandom::getrandom(&mut salt).expect("OS random source unavailable");
 
         let key = derive_key_from_password(password, &salt);
         let ciphertext = encrypt(&key, rms)?;

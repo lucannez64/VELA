@@ -50,9 +50,8 @@ impl PasetoToken {
 }
 
 fn generate_jti() -> String {
-    use rand::RngCore;
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
     data_encoding::BASE64URL.encode(&bytes)
 }
 
@@ -63,9 +62,8 @@ pub struct SecretKey {
 
 impl SecretKey {
     pub fn generate() -> Self {
-        use rand::RngCore;
         let mut key = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key);
+        getrandom::getrandom(&mut key).expect("OS random source unavailable");
         Self { key }
     }
 

@@ -336,6 +336,8 @@ fn urls_match(current_url: &str, stored_url: &str) -> bool {
 
     let (current_host, current_port) = extract_host_and_port(&current_lower);
     let (stored_host, stored_port) = extract_host_and_port(&stored_lower);
+    let current_host = normalize_host(&current_host);
+    let stored_host = normalize_host(&stored_host);
 
     if let (Some(cp), Some(sp)) = (current_port, stored_port) {
         if cp != sp {
@@ -347,25 +349,22 @@ fn urls_match(current_url: &str, stored_url: &str) -> bool {
         return true;
     }
 
-    if is_ip_address(&current_host) {
+    if is_ip_address(&current_host) || is_ip_address(&stored_host) {
         return false;
     }
 
-    let current_parts: Vec<&str> = current_host.split('.').collect();
-    let stored_parts: Vec<&str> = stored_host.split('.').collect();
+    let Some(current_registrable_domain) = psl::domain_str(&current_host) else {
+        return false;
+    };
+    let Some(stored_registrable_domain) = psl::domain_str(&stored_host) else {
+        return false;
+    };
 
-    if stored_parts.len() < 2 || current_parts.len() < 2 {
-        return stored_host == current_host;
-    }
-    if stored_parts.len() > current_parts.len() {
+    if current_registrable_domain != stored_registrable_domain {
         return false;
     }
-    if stored_parts.len() == current_parts.len() {
-        return stored_host == current_host;
-    }
 
-    current_parts[current_parts.len() - stored_parts.len()..] == stored_parts[..]
-        && stored_parts.len() >= 2
+    current_host.ends_with(&format!(".{stored_host}"))
 }
 
 fn extract_host_and_port(url: &str) -> (String, Option<u16>) {
@@ -392,6 +391,10 @@ fn extract_host_and_port(url: &str) -> (String, Option<u16>) {
 
 fn is_ip_address(host: &str) -> bool {
     host.split('.').all(|part| part.parse::<u8>().is_ok())
+}
+
+fn normalize_host(host: &str) -> String {
+    host.trim_matches('.').to_lowercase()
 }
 
 #[cfg(test)]
@@ -438,6 +441,18 @@ mod tests {
 
         assert_eq!(store.search_by_domain("epfl.login.eduid.ch").len(), 1);
         assert_eq!(store.search_by_domain("127.0.0.1:4000").len(), 0);
+    }
+
+    #[test]
+    fn domain_search_respects_public_suffix_boundaries() {
+        let mut store = VaultStore::new();
+        store.add_item(login("1", "https://victim.github.io", "alice"));
+        store.add_item(login("2", "https://example.co.uk", "bob"));
+
+        assert_eq!(store.search_by_domain("login.victim.github.io").len(), 1);
+        assert_eq!(store.search_by_domain("evil.github.io").len(), 0);
+        assert_eq!(store.search_by_domain("login.example.co.uk").len(), 1);
+        assert_eq!(store.search_by_domain("attacker.co.uk").len(), 0);
     }
 
     #[test]
