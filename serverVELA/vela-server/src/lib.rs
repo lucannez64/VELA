@@ -6,10 +6,12 @@
 pub mod account;
 pub mod auth;
 pub mod config;
+pub mod data_lock;
 pub mod db;
 pub mod device;
 pub mod error;
 pub mod middleware;
+pub mod migration;
 pub mod rate_limit;
 pub mod recovery;
 pub mod routes;

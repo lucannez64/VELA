@@ -11,10 +11,12 @@
 
 use axum::{
     body::Body,
+    extract::ConnectInfo,
     http::{Request, StatusCode},
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::json;
+use std::net::SocketAddr;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -102,6 +104,72 @@ async fn challenge_returns_nonce() {
     let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(v["challenge"].is_string());
+}
+
+#[tokio::test]
+async fn production_auth_requires_https_when_proxy_headers_are_not_trusted() {
+    let state = helpers::test_state_with_config(|cfg| {
+        cfg.production = true;
+        cfg.allow_insecure_lan = false;
+        cfg.trust_proxy_headers = false;
+    })
+    .await;
+    let app = vela_server::routes::build(state);
+
+    let req = Request::builder()
+        .uri("/auth/challenge")
+        .header("x-forwarded-proto", "https")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+}
+
+#[tokio::test]
+async fn production_auth_accepts_https_from_trusted_loopback_proxy() {
+    let state = helpers::test_state_with_config(|cfg| {
+        cfg.production = true;
+        cfg.allow_insecure_lan = false;
+        cfg.trust_proxy_headers = true;
+        cfg.trusted_proxy_cidrs = vec!["127.0.0.1/32".to_string(), "::1/128".to_string()];
+    })
+    .await;
+    let app = vela_server::routes::build(state);
+
+    let mut req = Request::builder()
+        .uri("/auth/challenge")
+        .header("x-forwarded-proto", "https")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 55123))));
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn production_auth_rejects_forwarded_https_from_untrusted_proxy() {
+    let state = helpers::test_state_with_config(|cfg| {
+        cfg.production = true;
+        cfg.allow_insecure_lan = false;
+        cfg.trust_proxy_headers = true;
+        cfg.trusted_proxy_cidrs = vec!["127.0.0.1/32".to_string(), "::1/128".to_string()];
+    })
+    .await;
+    let app = vela_server::routes::build(state);
+
+    let mut req = Request::builder()
+        .uri("/auth/challenge")
+        .header("x-forwarded-proto", "https")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([203, 0, 113, 10], 55123))));
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
 }
 
 #[tokio::test]

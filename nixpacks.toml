@@ -1,0 +1,10 @@
+providers = ["rust"]
+
+[phases.setup]
+nixPkgs = ["...", "openssl", "pkg-config", "gcc"]
+
+[phases.build]
+cmds = ["cd serverVELA && cargo build --release -p vela-server"]
+
+[start]
+cmd = "LISTEN_ADDR=0.0.0.0:${PORT:-8443} serverVELA/target/release/vela-server serve"

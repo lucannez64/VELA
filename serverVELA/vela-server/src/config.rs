@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use std::net::IpAddr;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -22,14 +24,19 @@ pub struct Config {
     pub cors_origins: Vec<String>,
     pub allow_wildcard_cors: bool,
     pub allow_insecure_lan: bool,
+    pub trust_proxy_headers: bool,
+    pub trusted_proxy_cidrs: Vec<String>,
     pub production: bool,
 }
 
 impl Config {
     pub fn from_env() -> Result<Self> {
         let production = env_flag("VELA_PRODUCTION") || env_is_production();
-        let db_path = std::env::var("DB_PATH").unwrap_or_else(|_| "./data/vela.db".into());
-        let sled_path = std::env::var("SLED_PATH").unwrap_or_else(|_| "./data/sled".into());
+        let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".into());
+        let db_path =
+            std::env::var("DB_PATH").unwrap_or_else(|_| path_join_string(&data_dir, "vela.db"));
+        let sled_path =
+            std::env::var("SLED_PATH").unwrap_or_else(|_| path_join_string(&data_dir, "sled"));
         let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "127.0.0.1:8443".into());
         let tls_listen_addr = env_optional("TLS_LISTEN_ADDR");
         let tls_cert_path = env_optional("TLS_CERT_PATH");
@@ -106,6 +113,17 @@ impl Config {
             );
         }
 
+        let trust_proxy_headers = env_flag("TRUST_PROXY_HEADERS");
+        let trusted_proxy_cidrs: Vec<String> = std::env::var("TRUSTED_PROXY_CIDRS")
+            .unwrap_or_else(|_| "127.0.0.1/32,::1/128".into())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for cidr in &trusted_proxy_cidrs {
+            validate_proxy_cidr(cidr)?;
+        }
+
         Ok(Self {
             listen_addr,
             tls_listen_addr,
@@ -126,9 +144,15 @@ impl Config {
             cors_origins,
             allow_wildcard_cors,
             allow_insecure_lan,
+            trust_proxy_headers,
+            trusted_proxy_cidrs,
             production,
         })
     }
+}
+
+fn path_join_string(base: &str, leaf: &str) -> String {
+    Path::new(base).join(leaf).to_string_lossy().into_owned()
 }
 
 fn env_optional(name: &str) -> Option<String> {
@@ -184,4 +208,25 @@ fn env_is_production() -> bool {
     std::env::var("VELA_ENV")
         .map(|value| value.eq_ignore_ascii_case("production") || value.eq_ignore_ascii_case("prod"))
         .unwrap_or(false)
+}
+
+fn validate_proxy_cidr(cidr: &str) -> Result<()> {
+    let (addr, prefix) = cidr
+        .split_once('/')
+        .ok_or_else(|| anyhow::anyhow!("TRUSTED_PROXY_CIDRS entry must be CIDR: {cidr}"))?;
+    let ip: IpAddr = addr
+        .parse()
+        .with_context(|| format!("TRUSTED_PROXY_CIDRS has invalid IP: {cidr}"))?;
+    let prefix: u8 = prefix
+        .parse()
+        .with_context(|| format!("TRUSTED_PROXY_CIDRS has invalid prefix: {cidr}"))?;
+    let max_prefix = match ip {
+        IpAddr::V4(_) => 32,
+        IpAddr::V6(_) => 128,
+    };
+    anyhow::ensure!(
+        prefix <= max_prefix,
+        "TRUSTED_PROXY_CIDRS prefix too large for {cidr}"
+    );
+    Ok(())
 }

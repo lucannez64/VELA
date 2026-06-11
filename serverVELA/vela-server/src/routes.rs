@@ -1,11 +1,12 @@
 use axum::{
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::header::{HeaderName, AUTHORIZATION, CONTENT_TYPE},
     middleware::{self, Next},
     response::Response,
     routing::{delete, get, post, put},
     Router,
 };
+use std::net::{IpAddr, SocketAddr};
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
     trace::TraceLayer,
@@ -15,6 +16,9 @@ use crate::state::AppState;
 
 static IF_MATCH: HeaderName = HeaderName::from_static("if-match");
 static X_LAMPORT_CLOCK: HeaderName = HeaderName::from_static("x-lamport-clock");
+
+#[derive(Clone, Copy, Debug)]
+pub struct NativeHttps;
 
 pub fn build(state: AppState) -> Router {
     let allowed_headers = [
@@ -129,7 +133,7 @@ async fn enforce_https_for_auth(
     if state.config.production
         && !state.config.allow_insecure_lan
         && is_auth_endpoint(req.uri().path())
-        && !request_was_https(&req)
+        && !request_was_https(&req, &state)
     {
         return Err(axum::http::StatusCode::UPGRADE_REQUIRED);
     }
@@ -147,7 +151,15 @@ fn is_auth_endpoint(path: &str) -> bool {
         || path == "/recovery/recover"
 }
 
-fn request_was_https(req: &Request) -> bool {
+fn request_was_https(req: &Request, state: &AppState) -> bool {
+    if req.extensions().get::<NativeHttps>().is_some() {
+        return true;
+    }
+
+    if !state.config.trust_proxy_headers || !request_from_trusted_proxy(req, state) {
+        return false;
+    }
+
     let headers = req.headers();
 
     headers
@@ -173,6 +185,47 @@ fn request_was_https(req: &Request) -> bool {
             .get("x-forwarded-ssl")
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("on"))
+}
+
+fn request_from_trusted_proxy(req: &Request, state: &AppState) -> bool {
+    let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() else {
+        return false;
+    };
+
+    state
+        .config
+        .trusted_proxy_cidrs
+        .iter()
+        .any(|cidr| ip_in_cidr(addr.ip(), cidr))
+}
+
+fn ip_in_cidr(ip: IpAddr, cidr: &str) -> bool {
+    let Some((network, prefix)) = cidr.split_once('/') else {
+        return false;
+    };
+    let Ok(prefix) = prefix.parse::<u8>() else {
+        return false;
+    };
+
+    match (ip, network.parse::<IpAddr>()) {
+        (IpAddr::V4(ip), Ok(IpAddr::V4(network))) if prefix <= 32 => {
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - prefix)
+            };
+            (u32::from(ip) & mask) == (u32::from(network) & mask)
+        }
+        (IpAddr::V6(ip), Ok(IpAddr::V6(network))) if prefix <= 128 => {
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u128::MAX << (128 - prefix)
+            };
+            (u128::from(ip) & mask) == (u128::from(network) & mask)
+        }
+        _ => false,
+    }
 }
 
 async fn health(

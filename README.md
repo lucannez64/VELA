@@ -93,6 +93,75 @@ $env:CORS_ORIGINS="https://your-domain.example"
 ```
 
 Terminate TLS in front of the server and forward the standard proxy headers, especially `X-Forwarded-Proto: https`.
+For a reverse proxy or Cloudflare Tunnel running on the same host, also set:
+
+```powershell
+$env:TRUST_PROXY_HEADERS="true"
+$env:TRUSTED_PROXY_CIDRS="127.0.0.1/32,::1/128"
+```
+
+See `serverVELA/DEPLOY_SYSTEMD.md` for a systemd + Cloudflare Tunnel deployment guide.
+
+### Coolify / Nixpacks
+
+The repo includes a root `nixpacks.toml` for Coolify. It builds only the Rust
+server workspace:
+
+```text
+cd serverVELA && cargo build --release -p vela-server
+```
+
+At runtime Nixpacks starts:
+
+```text
+LISTEN_ADDR=0.0.0.0:${PORT:-8443} serverVELA/target/release/vela-server serve
+```
+
+Set these Coolify environment variables:
+
+```env
+VELA_PRODUCTION=true
+DATA_DIR=/app/data
+PASETO_SECRET_KEY=<base64-64-byte-key>
+WEBAUTHN_RP_ID=vault.example.com
+WEBAUTHN_RP_ORIGIN=https://vault.example.com
+WEBAUTHN_RP_NAME=VELA
+CORS_ORIGINS=https://vault.example.com
+TRUST_PROXY_HEADERS=true
+```
+
+Add persistent storage for `/app/data`. If Coolify is terminating HTTPS in front
+of the app, set `TRUSTED_PROXY_CIDRS` to the proxy/container network range that
+is allowed to send `X-Forwarded-Proto: https`.
+
+### Server Migration Bundles
+
+Create encrypted migration bundles when moving a VELA server to another machine:
+
+```powershell
+cargo run -- migrate export `
+  --out vela-home.vela-migrate `
+  --env-file .env `
+  --data-dir ./data `
+  --include-secrets `
+  --passphrase
+```
+
+Restore on the target server:
+
+```powershell
+cargo run -- migrate import `
+  --bundle vela-home.vela-migrate `
+  --target-data-dir /var/lib/vela `
+  --target-env-file /etc/vela/vela-server.env `
+  --passphrase
+```
+
+Cloudflare tunnel files are not included by default. Add them only when wanted:
+
+```powershell
+--include-deployment-config /etc/cloudflared/config.yml
+```
 
 ### LAN Production Exception
 
