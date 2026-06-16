@@ -98,7 +98,9 @@ pub fn export_bundle(options: ExportOptions) -> Result<()> {
 
     let db_path = options.data_dir.join("vela.db");
     let sled_path = options.data_dir.join("sled");
-    ensure_file(&db_path, "database")?;
+    // stoolap stores `vela.db` as a directory; older/embedded modes may use a
+    // single file. Accept either.
+    ensure_exists(&db_path, "database")?;
     ensure_dir(&sled_path, "sled store")?;
 
     let root = TempDir::new().context("failed to create migration staging dir")?;
@@ -107,7 +109,7 @@ pub fn export_bundle(options: ExportOptions) -> Result<()> {
     let data_root = payload_root.join("data");
     fs::create_dir(&data_root)?;
 
-    fs::copy(&db_path, data_root.join("vela.db"))
+    copy_path(&db_path, &data_root.join("vela.db"))
         .with_context(|| format!("failed to copy {}", db_path.display()))?;
     copy_dir_all(&sled_path, &data_root.join("sled"))?;
 
@@ -207,9 +209,9 @@ pub fn import_bundle(options: ImportOptions) -> Result<()> {
     verify_payload(payload_root.path())?;
 
     fs::create_dir_all(&options.target_data_dir)?;
-    fs::copy(
-        payload_root.path().join("data/vela.db"),
-        options.target_data_dir.join("vela.db"),
+    copy_path(
+        &payload_root.path().join("data/vela.db"),
+        &options.target_data_dir.join("vela.db"),
     )?;
     copy_dir_all(
         &payload_root.path().join("data/sled"),
@@ -296,7 +298,7 @@ fn verify_payload(root: &Path) -> Result<()> {
     ensure_file(&root.join("manifest.json"), "manifest")?;
     ensure_file(&root.join("checksums.json"), "checksums")?;
     ensure_file(&root.join("identity.env"), "identity env")?;
-    ensure_file(&root.join("data/vela.db"), "database")?;
+    ensure_exists(&root.join("data/vela.db"), "database")?;
     ensure_dir(&root.join("data/sled"), "sled store")?;
     let checksums: Checksums = serde_json::from_slice(&fs::read(root.join("checksums.json"))?)?;
     let actual = checksums_for_tree(root)?;
@@ -450,6 +452,28 @@ fn ensure_dir(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Like [`ensure_file`]/[`ensure_dir`] but accepts either — `vela.db` is a
+/// directory under stoolap but may be a single file in other modes.
+fn ensure_exists(path: &Path, label: &str) -> Result<()> {
+    if !path.exists() {
+        bail!("{label} not found at {}", path.display());
+    }
+    Ok(())
+}
+
+/// Copy a path that may be a file or a directory.
+fn copy_path(src: &Path, dst: &Path) -> Result<()> {
+    if src.is_dir() {
+        copy_dir_all(src, dst)
+    } else {
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(src, dst).with_context(|| format!("failed to copy {}", src.display()))?;
+        Ok(())
+    }
+}
+
 fn dir_has_payload(path: &Path) -> Result<bool> {
     Ok(path.join("vela.db").exists() || path.join("sled").exists())
 }
@@ -533,6 +557,50 @@ mod tests {
         let restored_env = fs::read_to_string(target_env).unwrap();
         assert!(restored_env.contains("PASETO_SECRET_KEY="));
         assert!(restored_env.contains("WEBAUTHN_RP_ORIGIN=https://vault.example.com"));
+    }
+
+    #[test]
+    fn export_import_roundtrip_with_directory_db() {
+        // stoolap stores vela.db as a directory; the bundle must carry it whole.
+        let temp = TempDir::new().unwrap();
+        let source_data = temp.path().join("source-data");
+        fs::create_dir_all(source_data.join("vela.db/wal")).unwrap();
+        fs::write(source_data.join("vela.db/db.lock"), b"").unwrap();
+        fs::write(source_data.join("vela.db/wal/seg-1.log"), b"wal bytes").unwrap();
+        fs::create_dir_all(source_data.join("sled")).unwrap();
+        fs::write(source_data.join("sled/conf"), b"sled conf").unwrap();
+        let env_file = temp.path().join("vela.env");
+        fs::write(&env_file, "WEBAUTHN_RP_ID=vault.example.com\n").unwrap();
+        let bundle = temp.path().join("bundle.vela-migrate");
+        let target_data = temp.path().join("target-data");
+        let target_env = temp.path().join("restored.env");
+
+        export_bundle(ExportOptions {
+            out: bundle.clone(),
+            env_file,
+            data_dir: source_data,
+            include_secrets: false,
+            include_deployment_config: Vec::new(),
+            passphrase: PassphraseSource::Value(PASSPHRASE.to_string()),
+        })
+        .unwrap();
+        import_bundle(ImportOptions {
+            bundle,
+            target_data_dir: target_data.clone(),
+            target_env_file: target_env,
+            replace: false,
+            passphrase: PassphraseSource::Value(PASSPHRASE.to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read(target_data.join("vela.db/wal/seg-1.log")).unwrap(),
+            b"wal bytes"
+        );
+        assert_eq!(
+            fs::read(target_data.join("sled/conf")).unwrap(),
+            b"sled conf"
+        );
     }
 
     #[test]
