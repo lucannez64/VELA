@@ -12,8 +12,14 @@ WORKDIR /src
 COPY serverVELA/ serverVELA/
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
 WORKDIR /src/serverVELA
-# Release profile uses lto + codegen-units=1 (RAM-hungry). If a small builder OOMs,
-# set CARGO_PROFILE_RELEASE_LTO=thin (or false) as a build arg/env to lighten it.
+# The workspace release profile uses fat LTO + codegen-units=1, whose final link
+# can need >2 GB — too much for small home servers. Relax it for the container
+# build (negligible runtime impact for this workload). Override via build args on
+# a bigger builder to restore fat LTO.
+ARG CARGO_PROFILE_RELEASE_LTO=false
+ARG CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO} \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${CARGO_PROFILE_RELEASE_CODEGEN_UNITS}
 RUN cargo build --release -p vela-server
 
 # ---- runtime stage ----
