@@ -1,0 +1,23 @@
+# Keep the Docker build context small. The Dockerfile only needs serverVELA/ and
+# libVELA/vela-crypto/, so exclude build artifacts and unrelated components.
+
+# Build artifacts (serverVELA/target can be gigabytes)
+**/target/
+**/node_modules/
+**/dist/
+
+# Components not needed to build the server
+desktopVELA/
+androidVELA/
+extension/
+libVELA/cyclo/
+libVELA/vela-android-bridge/
+libVELA/vela-core/
+
+# Secrets, local data, VCS
+**/.env
+*.vela-migrate
+**/.prodtest-data*/
+/data/
+.git/
+.jj/

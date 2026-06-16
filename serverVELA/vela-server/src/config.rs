@@ -59,17 +59,28 @@ impl Config {
         let webauthn_rp_name = std::env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "VELA".into());
 
         let allow_insecure_lan = env_flag("ALLOW_INSECURE_LAN");
+        let trust_proxy_headers = env_flag("TRUST_PROXY_HEADERS");
 
-        // The cleartext listener on LISTEN_ADDR is intended to live on loopback
-        // behind a TLS-terminating proxy / Cloudflare Tunnel. Binding it to a
-        // non-loopback interface in production would expose bearer tokens on the
-        // LAN, so require an explicit opt-out.
-        if production && !allow_insecure_lan && !listen_addr_is_loopback(&listen_addr) {
+        // VELA serves cleartext on LISTEN_ADDR, which must face only a trusted
+        // TLS-terminating proxy. That's satisfied when it's bound to loopback
+        // (a same-host proxy) OR when TRUST_PROXY_HEADERS is set — the latter
+        // covers reverse-proxy / container deployments (Cloudflare Tunnel,
+        // Coolify/Docker) where the process must bind the container interface
+        // (0.0.0.0) because loopback isn't reachable across network namespaces.
+        // Either way, `enforce_https` still rejects any direct cleartext client
+        // that isn't a trusted proxy (per TRUSTED_PROXY_CIDRS), so a non-loopback
+        // bind never accepts a bearer token in the clear.
+        if production
+            && !allow_insecure_lan
+            && !trust_proxy_headers
+            && !listen_addr_is_loopback(&listen_addr)
+        {
             anyhow::bail!(
-                "LISTEN_ADDR={listen_addr} binds a non-loopback interface in production. \
-                 VELA serves cleartext on LISTEN_ADDR; keep it on loopback (e.g. 127.0.0.1:8443) \
-                 behind a TLS-terminating proxy or Cloudflare Tunnel, or set ALLOW_INSECURE_LAN=true \
-                 to override."
+                "LISTEN_ADDR={listen_addr} binds a non-loopback interface in production without \
+                 TRUST_PROXY_HEADERS. Either bind loopback (e.g. 127.0.0.1:8443) behind a same-host \
+                 proxy, or set TRUST_PROXY_HEADERS=true with TRUSTED_PROXY_CIDRS scoped to your \
+                 proxy/container network (Cloudflare Tunnel, Coolify/Docker), or set \
+                 ALLOW_INSECURE_LAN=true to override."
             );
         }
 
@@ -126,7 +137,6 @@ impl Config {
             );
         }
 
-        let trust_proxy_headers = env_flag("TRUST_PROXY_HEADERS");
         let trusted_proxy_cidrs: Vec<String> = std::env::var("TRUSTED_PROXY_CIDRS")
             .unwrap_or_else(|_| "127.0.0.1/32,::1/128".into())
             .split(',')
