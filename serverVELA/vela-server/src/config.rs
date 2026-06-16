@@ -60,6 +60,19 @@ impl Config {
 
         let allow_insecure_lan = env_flag("ALLOW_INSECURE_LAN");
 
+        // The cleartext listener on LISTEN_ADDR is intended to live on loopback
+        // behind a TLS-terminating proxy / Cloudflare Tunnel. Binding it to a
+        // non-loopback interface in production would expose bearer tokens on the
+        // LAN, so require an explicit opt-out.
+        if production && !allow_insecure_lan && !listen_addr_is_loopback(&listen_addr) {
+            anyhow::bail!(
+                "LISTEN_ADDR={listen_addr} binds a non-loopback interface in production. \
+                 VELA serves cleartext on LISTEN_ADDR; keep it on loopback (e.g. 127.0.0.1:8443) \
+                 behind a TLS-terminating proxy or Cloudflare Tunnel, or set ALLOW_INSECURE_LAN=true \
+                 to override."
+            );
+        }
+
         if tls_listen_addr.is_some() || http3_enabled {
             anyhow::ensure!(
                 tls_cert_path.is_some() && tls_key_path.is_some(),
@@ -153,6 +166,15 @@ impl Config {
 
 fn path_join_string(base: &str, leaf: &str) -> String {
     Path::new(base).join(leaf).to_string_lossy().into_owned()
+}
+
+/// Whether `addr` (a `host:port` socket address) binds a loopback interface.
+/// Non-parseable or hostname-based addresses are treated as non-loopback so the
+/// production guard fails closed.
+fn listen_addr_is_loopback(addr: &str) -> bool {
+    addr.parse::<std::net::SocketAddr>()
+        .map(|s| s.ip().is_loopback())
+        .unwrap_or(false)
 }
 
 fn env_optional(name: &str) -> Option<String> {

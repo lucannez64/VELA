@@ -39,6 +39,8 @@ pub async fn post_send(
     session: AuthSession,
     Json(body): Json<SendRequest>,
 ) -> Result<(HeaderMap, Json<SendResponse>)> {
+    crate::rate_limit::share_send_by_sender(&state.store, &session.user_id.to_string())?;
+
     let exists_rows = state
         .db
         .query(

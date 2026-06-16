@@ -2,11 +2,12 @@ use crate::{
     auth::token::TokenService,
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
-    rate_limit,
+    net, rate_limit,
     state::AppState,
 };
 use axum::{
     extract::{ConnectInfo, State},
+    http::HeaderMap,
     Json,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -31,11 +32,10 @@ pub struct VerifyResponse {
 pub async fn post_verify(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<VerifyRequest>,
 ) -> Result<Json<VerifyResponse>> {
-    let ip = addr
-        .map(|ConnectInfo(addr)| addr.ip().to_string())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     let device_id_str = body.device_id.to_string();
 
     rate_limit::verify_by_ip(&state.store, &ip)?;

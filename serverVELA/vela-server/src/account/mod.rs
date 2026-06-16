@@ -2,6 +2,7 @@ pub mod delete;
 
 use axum::{
     extract::{ConnectInfo, State},
+    http::HeaderMap,
     Json,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -13,7 +14,7 @@ use uuid::Uuid;
 use crate::{
     auth::token::TokenService,
     error::{AppError, Result},
-    rate_limit,
+    net, rate_limit,
     state::AppState,
 };
 
@@ -39,11 +40,10 @@ pub struct RegisterResponse {
 pub async fn post_register(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>> {
-    let ip = addr
-        .map(|ConnectInfo(addr)| addr.ip().to_string())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
 
     rate_limit::check(&state.store, &format!("rl:register:ip:{ip}"), 5, 3600)?;
 

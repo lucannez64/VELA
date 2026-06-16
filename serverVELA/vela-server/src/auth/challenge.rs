@@ -8,13 +8,14 @@
 
 use axum::{
     extract::{ConnectInfo, State},
+    http::HeaderMap,
     Json,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::Serialize;
 use std::net::SocketAddr;
 
-use crate::{error::Result, rate_limit, state::AppState};
+use crate::{error::Result, net, rate_limit, state::AppState};
 
 const CHALLENGE_TTL_SECS: u64 = 60;
 
@@ -27,10 +28,9 @@ pub struct ChallengeResponse {
 pub async fn get_challenge(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
 ) -> Result<Json<ChallengeResponse>> {
-    let ip = addr
-        .map(|ConnectInfo(addr)| addr.ip().to_string())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
 
     // ── Rate limit ────────────────────────────────────────────────────────────
     rate_limit::challenge_by_ip(&state.store, &ip)?;

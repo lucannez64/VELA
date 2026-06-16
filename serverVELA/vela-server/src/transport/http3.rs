@@ -90,6 +90,13 @@ async fn handle_request(
     }
 
     let mut axum_request = Request::from_parts(parts, Body::from(body.freeze()));
+    // Mark this as genuine native HTTPS via a trusted, in-process extension —
+    // not a forwarded header, which `request_was_https` deliberately distrusts
+    // from a direct (non-proxy) client. Without this the HTTPS-enforcement
+    // middleware would reject all HTTP/3 traffic in production.
+    axum_request
+        .extensions_mut()
+        .insert(crate::routes::NativeHttps);
     axum_request.headers_mut().insert(
         axum::http::header::HeaderName::from_static("x-forwarded-proto"),
         axum::http::HeaderValue::from_static("https"),

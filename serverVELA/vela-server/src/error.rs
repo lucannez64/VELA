@@ -45,11 +45,16 @@ impl IntoResponse for AppError {
                 (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable", m.clone())
             }
             AppError::RateLimited(m) => (StatusCode::TOO_MANY_REQUESTS, "rate_limited", m.clone()),
-            AppError::Internal(m) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                m.clone(),
-            ),
+            AppError::Internal(m) => {
+                // Never leak backend (stoolap/sled/serde) detail to clients — it
+                // can disclose schema, paths, or internal state. Log it instead.
+                tracing::error!(detail = %m, "internal error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "internal server error".to_string(),
+                )
+            }
         };
 
         let body = Json(json!({ "error": code, "message": message }));

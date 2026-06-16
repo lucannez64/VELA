@@ -114,7 +114,7 @@ pub(crate) fn recovery_passkey_for_user(
     let row = rows
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::NotFound("user not found".into()))?
+        .ok_or_else(|| AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let v = crate::db::row_val(&row, 0)?;
     if v.is_null() {

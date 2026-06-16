@@ -17,6 +17,10 @@ desktopVELA/dist/
 # Environment files (keep .env.example)
 **/.env
 
+# Server runtime data (stoolap DB + sled store); default DATA_DIR is ./data
+/data/
+**/.prodtest-data*/
+
 # IDE and editor files
 **/.idea/
 **/*.swp
