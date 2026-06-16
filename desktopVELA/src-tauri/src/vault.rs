@@ -287,30 +287,6 @@ impl VaultItem {
     }
 }
 
-fn extract_base_domain(url: &str) -> String {
-    let url = url.trim();
-
-    if url.starts_with("http://") || url.starts_with("https://") {
-        if let Ok(parsed) = url::Url::parse(url) {
-            if let Some(host) = parsed.host_str() {
-                let host = host.to_lowercase();
-
-                if host.starts_with("www.") {
-                    return host.strip_prefix("www.").unwrap_or(&host).to_string();
-                }
-
-                let parts: Vec<&str> = host.split('.').collect();
-                if parts.len() >= 2 {
-                    return parts[parts.len() - 2..].join(".");
-                }
-
-                return host;
-            }
-        }
-    }
-
-    url.to_lowercase()
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultStore {

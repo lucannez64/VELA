@@ -72,6 +72,30 @@ pub fn authenticated_by_jti(store: &Store, jti: &str) -> Result<()> {
     check(store, &format!("rl:auth:jti:{jti}"), 300, WINDOW_SECS)
 }
 
+/// Window for the hourly limiters below.
+const HOUR_SECS: i64 = 3600;
+
+/// 20 enrollment-package writes/hour per IP. The endpoint is unauthenticated,
+/// so without this an attacker could fill the embedded store with 64 KiB blobs.
+pub fn enrollment_package_store_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:enroll_pkg:store:ip:{ip}"), 20, HOUR_SECS)
+}
+
+/// 60 enrollment-package fetches/hour per IP (token-guessing throttle).
+pub fn enrollment_package_fetch_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:enroll_pkg:fetch:ip:{ip}"), 60, HOUR_SECS)
+}
+
+/// 10 recovery initiations/hour per IP (anti-enumeration / WebAuthn state churn).
+pub fn recovery_initiate_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:recover:init:ip:{ip}"), 10, HOUR_SECS)
+}
+
+/// 120 share sends/hour per sender (anti inbox-flooding of a targeted recipient).
+pub fn share_send_by_sender(store: &Store, sender: &str) -> Result<()> {
+    check(store, &format!("rl:share:send:user:{sender}"), 120, HOUR_SECS)
+}
+
 // ─── Exponential backoff enforcement ─────────────────────────────────────────
 
 /// On consecutive failures (≥3) the spec mandates exponential backoff

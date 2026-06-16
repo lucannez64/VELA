@@ -241,7 +241,11 @@ pub mod server {
     ) -> IpcMessage {
         info!("Processing IPC message: {:?}", message.msg_type);
 
-        if message.capability.as_deref() != Some(capability) {
+        // Constant-time comparison so the capability token can't be recovered
+        // byte-by-byte via response timing over the local socket/pipe.
+        use subtle::ConstantTimeEq;
+        let provided = message.capability.as_deref().unwrap_or("");
+        if !bool::from(provided.as_bytes().ct_eq(capability.as_bytes())) {
             warn!("Rejected IPC message with missing or invalid capability");
             return IpcMessage::error("Unauthorized IPC request".to_string());
         }
@@ -473,24 +477,20 @@ pub mod server {
     }
 }
 
+/// Extract the host the autofill request is for.
+///
+/// We return the full host (not a naively truncated "last two labels") and let
+/// `vault::urls_match` apply the Public Suffix List. The old last-two-labels
+/// reduction both broke multi-label suffixes (e.g. `victim.co.uk` collapsed to
+/// the public suffix `co.uk`, which never matches) and discarded the subdomain
+/// that `urls_match` needs for correct, PSL-aware scoping.
 fn extract_base_domain(url: &str) -> String {
     let url = url.trim();
 
     if url.starts_with("http://") || url.starts_with("https://") {
         if let Ok(parsed) = url::Url::parse(url) {
             if let Some(host) = parsed.host_str() {
-                let host = host.to_lowercase();
-
-                if host.starts_with("www.") {
-                    return host.strip_prefix("www.").unwrap_or(&host).to_string();
-                }
-
-                let parts: Vec<&str> = host.split('.').collect();
-                if parts.len() >= 2 {
-                    return parts[parts.len() - 2..].join(".");
-                }
-
-                return host;
+                return host.to_lowercase();
             }
         }
     }

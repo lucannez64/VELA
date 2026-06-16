@@ -6,7 +6,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
     trace::TraceLayer,
@@ -117,38 +117,33 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http())
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            enforce_https_for_auth,
-        ))
+        .layer(middleware::from_fn_with_state(state.clone(), enforce_https))
         .layer(cors)
         .with_state(state)
 }
 
-async fn enforce_https_for_auth(
+/// Reject cleartext requests in production.
+///
+/// VELA serves cleartext on `LISTEN_ADDR` (the loopback target behind a
+/// TLS-terminating proxy / Cloudflare Tunnel). In production every request must
+/// be proven HTTPS — either it arrived on the native TLS/HTTP-3 listener
+/// (`NativeHttps`) or it came from a trusted proxy that set
+/// `X-Forwarded-Proto: https`. Otherwise a bearer token could transit a LAN in
+/// the clear. `/health` is exempt so a local liveness probe works over loopback.
+async fn enforce_https(
     axum::extract::State(state): axum::extract::State<AppState>,
     req: Request,
     next: Next,
 ) -> Result<Response, axum::http::StatusCode> {
     if state.config.production
         && !state.config.allow_insecure_lan
-        && is_auth_endpoint(req.uri().path())
+        && req.uri().path() != "/health"
         && !request_was_https(&req, &state)
     {
         return Err(axum::http::StatusCode::UPGRADE_REQUIRED);
     }
 
     Ok(next.run(req).await)
-}
-
-fn is_auth_endpoint(path: &str) -> bool {
-    path.starts_with("/auth/")
-        || path == "/account/register"
-        || path == "/device/enroll"
-        || path.starts_with("/device/enrollment-package")
-        || path.starts_with("/recovery/webauthn/")
-        || path == "/recovery/initiate"
-        || path == "/recovery/recover"
 }
 
 fn request_was_https(req: &Request, state: &AppState) -> bool {
@@ -192,40 +187,7 @@ fn request_from_trusted_proxy(req: &Request, state: &AppState) -> bool {
         return false;
     };
 
-    state
-        .config
-        .trusted_proxy_cidrs
-        .iter()
-        .any(|cidr| ip_in_cidr(addr.ip(), cidr))
-}
-
-fn ip_in_cidr(ip: IpAddr, cidr: &str) -> bool {
-    let Some((network, prefix)) = cidr.split_once('/') else {
-        return false;
-    };
-    let Ok(prefix) = prefix.parse::<u8>() else {
-        return false;
-    };
-
-    match (ip, network.parse::<IpAddr>()) {
-        (IpAddr::V4(ip), Ok(IpAddr::V4(network))) if prefix <= 32 => {
-            let mask = if prefix == 0 {
-                0
-            } else {
-                u32::MAX << (32 - prefix)
-            };
-            (u32::from(ip) & mask) == (u32::from(network) & mask)
-        }
-        (IpAddr::V6(ip), Ok(IpAddr::V6(network))) if prefix <= 128 => {
-            let mask = if prefix == 0 {
-                0
-            } else {
-                u128::MAX << (128 - prefix)
-            };
-            (u128::from(ip) & mask) == (u128::from(network) & mask)
-        }
-        _ => false,
-    }
+    crate::net::from_trusted_proxy(addr.ip(), &state.config)
 }
 
 async fn health(

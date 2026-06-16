@@ -231,37 +231,52 @@ impl Store {
         }
     }
 
-    /// Increment a counter key by `delta` and set/refresh its TTL.
+    /// Atomically increment a counter key by `delta` and set/refresh its TTL.
     /// Returns the new count.
+    ///
+    /// Uses sled's compare-and-swap `update_and_fetch` so concurrent requests
+    /// cannot lose updates — this counter backs rate limiting, so a non-atomic
+    /// read-modify-write would let an attacker undercount past the limit by
+    /// issuing requests in parallel.
     pub fn incr_expire(&self, key: &str, delta: u64, ttl_secs: i64) -> Result<u64> {
-        let current = match self.ttl.get(key.as_bytes()) {
-            Ok(Some(data)) => {
-                let (value, expired) = extract_value(&data);
-                if expired {
-                    0u64
-                } else {
-                    let bytes: [u8; 8] = value.try_into().unwrap_or_else(|v: Vec<u8>| {
-                        let mut arr = [0u8; 8];
-                        let len = v.len().min(8);
-                        arr[..len].copy_from_slice(&v[..len]);
-                        arr
-                    });
-                    u64::from_le_bytes(bytes)
-                }
-            }
-            _ => 0,
-        };
+        let now = epoch_secs();
+        let expiry = now + ttl_secs as u64;
 
-        let new_count = current + delta;
-        let expiry = epoch_secs() + ttl_secs as u64;
-        let mut entry = expiry.to_le_bytes().to_vec();
-        entry.extend_from_slice(&new_count.to_le_bytes());
+        let updated = self
+            .ttl
+            .update_and_fetch(key.as_bytes(), |old| {
+                // Decode the live count, treating missing/expired entries as 0.
+                let current = match old {
+                    Some(data) if data.len() >= 16 => {
+                        let mut exp = [0u8; 8];
+                        exp.copy_from_slice(&data[..8]);
+                        let stored_expiry = u64::from_le_bytes(exp);
+                        if stored_expiry != u64::MAX && now >= stored_expiry {
+                            0
+                        } else {
+                            let mut cnt = [0u8; 8];
+                            cnt.copy_from_slice(&data[8..16]);
+                            u64::from_le_bytes(cnt)
+                        }
+                    }
+                    _ => 0,
+                };
 
-        self.ttl
-            .insert(key.as_bytes(), entry)
+                let new_count = current.saturating_add(delta);
+                let mut entry = expiry.to_le_bytes().to_vec();
+                entry.extend_from_slice(&new_count.to_le_bytes());
+                Some(entry)
+            })
             .map_err(|e| AppError::Internal(format!("sled incr_expire error: {e}")))?;
 
-        Ok(new_count)
+        let data = updated
+            .ok_or_else(|| AppError::Internal("sled incr_expire returned no value".into()))?;
+        if data.len() < 16 {
+            return Err(AppError::Internal("sled incr_expire wrote short value".into()));
+        }
+        let mut cnt = [0u8; 8];
+        cnt.copy_from_slice(&data[8..16]);
+        Ok(u64::from_le_bytes(cnt))
     }
 
     /// Get remaining TTL for a key in seconds. Returns -1 if no TTL, -2 if

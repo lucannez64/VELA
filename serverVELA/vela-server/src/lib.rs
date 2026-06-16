@@ -12,6 +12,7 @@ pub mod device;
 pub mod error;
 pub mod middleware;
 pub mod migration;
+pub mod net;
 pub mod rate_limit;
 pub mod recovery;
 pub mod routes;

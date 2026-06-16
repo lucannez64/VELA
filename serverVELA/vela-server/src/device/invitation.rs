@@ -1,11 +1,14 @@
 use axum::{
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
+    http::HeaderMap,
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 
 use crate::{
     error::{AppError, Result},
+    net, rate_limit,
     state::AppState,
 };
 
@@ -25,8 +28,12 @@ pub struct FetchEnrollmentPackageResponse {
 
 pub async fn post_enrollment_package(
     State(state): State<AppState>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<StoreEnrollmentPackageRequest>,
 ) -> Result<Json<serde_json::Value>> {
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    rate_limit::enrollment_package_store_by_ip(&state.store, &ip)?;
     validate_token(&body.token)?;
     if body.ciphertext.is_empty() || body.ciphertext.len() > MAX_ENROLLMENT_PACKAGE_BYTES {
         return Err(AppError::BadRequest(
@@ -48,8 +55,12 @@ pub async fn post_enrollment_package(
 
 pub async fn get_enrollment_package(
     State(state): State<AppState>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<FetchEnrollmentPackageResponse>> {
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    rate_limit::enrollment_package_fetch_by_ip(&state.store, &ip)?;
     validate_token(&token)?;
     let ciphertext = state
         .store
