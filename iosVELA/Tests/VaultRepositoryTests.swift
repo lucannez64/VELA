@@ -48,4 +48,41 @@ final class VaultRepositoryTests: XCTestCase {
     func testCoreVersionAvailable() {
         XCTAssertTrue(VelaCoreFFI.version().hasPrefix("vela-apple-bridge/"))
     }
+
+    // MARK: - Phase 2: RMS store
+
+    func testRmsRoundTripAndReset() throws {
+        let repo = tempRepo()
+        XCTAssertFalse(repo.hasVault())
+
+        let rms = try repo.generateAndStoreRMS()
+        try repo.save(VaultStore(items: []), rms: rms)
+        XCTAssertTrue(repo.hasVault())
+
+        // loadRMS returns the same seed (FileRMSStore ignores the LAContext).
+        let reloaded = try repo.loadRMS()
+        XCTAssertEqual(reloaded, rms)
+
+        repo.reset()
+        XCTAssertFalse(repo.hasVault())
+        XCTAssertThrowsError(try repo.loadRMS())
+    }
+
+    func testFileRmsStoreGeneratesDistinctSeeds() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("velarms-\(UUID().uuidString)", isDirectory: true)
+        let store = FileRMSStore(directory: dir)
+        XCTAssertFalse(store.exists())
+
+        let a = try store.generate()
+        XCTAssertEqual(a.count, 32)
+        XCTAssertTrue(store.exists())
+
+        let b = try store.generate()
+        XCTAssertNotEqual(a, b, "each generate() must mint a fresh RMS")
+        XCTAssertEqual(try store.load(context: nil), b)
+
+        store.delete()
+        XCTAssertFalse(store.exists())
+    }
 }

@@ -20,6 +20,7 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: VELA
+        NSFaceIDUsageDescription: VELA uses Face ID to unlock your vault.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
