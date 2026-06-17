@@ -52,32 +52,32 @@ jobs:
         working-directory: iosVELA
         run: xcodegen generate
 
-      - name: Build app for the iOS Simulator
+      - name: Boot simulator, build + run unit tests
         working-directory: iosVELA
         run: |
           set -x
           xcodebuild -version
-          xcodebuild \
+          UDID=$(xcrun simctl list devices available | grep -m1 'iPhone' | grep -oiE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
+          test -n "$UDID"
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild test \
             -project VELA.xcodeproj -scheme VELA \
-            -configuration Debug -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$UDID" \
             -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO build
+            CODE_SIGNING_ALLOWED=NO
 
-      - name: Launch in Simulator and screenshot
+      - name: Launch (seeded) and screenshot
         working-directory: iosVELA
         run: |
           set -x
-          UDID=$(xcrun simctl list devices available | grep -m1 'iPhone' | grep -oiE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
-          echo "simulator: $UDID"
-          test -n "$UDID"
-          xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID" -b
-          APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' | head -1)
-          echo "app bundle: $APP"
+          APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name 'VELA.app' | head -1)
           test -n "$APP"
           xcrun simctl install "$UDID" "$APP"
-          xcrun simctl launch "$UDID" com.vela.vault
+          # VELA_DEMO seeds a sample vault so the screenshot shows the populated list.
+          SIMCTL_CHILD_VELA_DEMO=1 xcrun simctl launch "$UDID" com.vela.vault
           sleep 8
           xcrun simctl io "$UDID" screenshot ios-app.png
           echo "screenshot captured"
