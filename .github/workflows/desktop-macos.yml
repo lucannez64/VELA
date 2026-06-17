@@ -1,0 +1,66 @@
+name: desktop-macos
+
+# Build + systematically verify the desktop app on real macOS (Apple Silicon),
+# since it can't be built or tested off a Mac. Manual-trigger only: the repo is
+# private, so macOS runner minutes bill at 10x. Run it before desktop releases
+# or when touching macOS code paths.
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-verify:
+    runs-on: macos-14   # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktopVELA/src-tauri
+
+      - name: Install frontend deps
+        working-directory: desktopVELA
+        run: bun install
+
+      # Verify the macOS-specific Rust paths actually compile and pass on macOS
+      # (keychain/Touch ID/default_password code that's never built off a Mac).
+      - name: Rust tests (macOS code paths)
+        working-directory: desktopVELA/src-tauri
+        run: cargo test --release
+
+      # Build the .app/.dmg (runs beforeBuildCommand `bun run build` -> tsc+vite).
+      - name: Build macOS app bundle
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: desktopVELA
+
+      # Launch the built app on the runner, screenshot it, and confirm it didn't
+      # crash on startup. The screenshot is uploaded so the UI can be eyeballed.
+      - name: Smoke test (launch + screenshot)
+        run: |
+          set -x
+          APP=$(find desktopVELA/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R desktopVELA/src-tauri/target/release/bundle || true; exit 1; fi
+          open "$APP"
+          sleep 12
+          screencapture -x smoke.png || true
+          if pgrep -f 'VELA.app/Contents/MacOS' >/dev/null; then
+            echo "app is running after launch"
+          else
+            echo "app crashed on launch"; exit 1
+          fi
+          osascript -e 'quit app "VELA"' 2>/dev/null || pkill -f 'VELA.app' || true
+
+      - name: Upload artifacts (app, dmg, screenshot)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-macos-arm64
+          path: |
+            desktopVELA/src-tauri/target/release/bundle/dmg/*.dmg
+            desktopVELA/src-tauri/target/release/bundle/macos/*.app
+            smoke.png
+          if-no-files-found: warn
