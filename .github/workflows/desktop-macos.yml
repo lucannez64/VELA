@@ -45,7 +45,7 @@ jobs:
 
       # Launch the built app on the runner, screenshot it, and confirm it didn't
       # crash on startup. The screenshot is uploaded so the UI can be eyeballed.
-      - name: Smoke test (launch + screenshot)
+      - name: Smoke test (launch, screenshot, extension IPC bridge)
         run: |
           set -x
           APP=$(find desktopVELA/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
@@ -58,6 +58,15 @@ jobs:
           else
             echo "app crashed on launch"; exit 1
           fi
+
+          # Extension <-> desktop bridge: the app's IPC server must have written
+          # ipc_auth.json, and the real native-messaging host must ping->pong it.
+          AUTH="$HOME/Library/Application Support/com.vela.VELA/vela/ipc_auth.json"
+          for i in $(seq 1 10); do [ -f "$AUTH" ] && break; sleep 1; done
+          if [ ! -f "$AUTH" ]; then echo "ipc_auth.json not written at: $AUTH"; exit 1; fi
+          python3 -c "import json; d=json.load(open('$AUTH')); assert d.get('capability') and d.get('endpoint') and d.get('protocol'); print('ipc_auth.json OK, protocol=', d['protocol'])"
+          python3 .github/scripts/ipc_ping.py extension/native-messaging/vela-native-messaging-host.py
+
           osascript -e 'quit app "VELA"' 2>/dev/null || pkill -f 'VELA.app' || true
 
       - name: Upload artifacts (app, dmg, screenshot)
