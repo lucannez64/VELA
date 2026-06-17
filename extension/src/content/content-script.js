@@ -1367,14 +1367,21 @@
       saveBtn.disabled = true;
       saveBtn.textContent = "Saving…";
       try {
-        await sendExtensionMessage("saveCredentials", {
+        const response = await sendExtensionMessage("saveCredentials", {
           name: name || velaExtractDomain(location.href),
           username: user,
           password: pw,
           url: location.href
         });
-        close();
-        velaShowToast("Saved to VELA vault ✓");
+        if (response && response.success) {
+          close();
+          velaShowToast("Saved to VELA vault ✓");
+        } else {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Save to Vault";
+          const reason = response && response.error ? response.error : "is VELA Desktop running?";
+          velaShowToast(`Failed to save – ${reason}`, true);
+        }
       } catch (_) {
         saveBtn.disabled = false;
         saveBtn.textContent = "Save to Vault";
