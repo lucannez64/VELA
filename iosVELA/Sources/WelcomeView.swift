@@ -38,6 +38,7 @@ struct WelcomeView: View {
                 .background(.green)
                 .foregroundStyle(.black)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
+                .accessibilityIdentifier("createVaultButton")
                 .padding(.horizontal, 32)
                 .padding(.bottom, 40)
             }

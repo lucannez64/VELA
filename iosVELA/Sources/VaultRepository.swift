@@ -62,4 +62,10 @@ struct VaultRepository {
         }
         return try JSONDecoder().decode(VaultStore.self, from: Data(vaultJSON.utf8))
     }
+
+    /// Wipe the on-device vault (used by UI tests via the VELA_RESET launch env).
+    func reset() {
+        try? FileManager.default.removeItem(at: rmsURL)
+        try? FileManager.default.removeItem(at: vaultURL)
+    }
 }

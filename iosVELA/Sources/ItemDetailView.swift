@@ -23,6 +23,7 @@ struct ItemDetailView: View {
                         Image(systemName: revealPassword ? "eye.slash" : "eye")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityIdentifier("revealButton")
                 }
                 if let totp = item.totp, !totp.isEmpty {
                     field("TOTP", totp)
@@ -35,6 +36,7 @@ struct ItemDetailView: View {
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
+                .accessibilityIdentifier("deleteButton")
             }
         }
         .navigationTitle(item.name)

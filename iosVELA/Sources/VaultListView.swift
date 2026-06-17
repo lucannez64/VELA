@@ -15,6 +15,7 @@ struct VaultListView: View {
                             NavigationLink(value: item.id) {
                                 row(item)
                             }
+                            .accessibilityIdentifier("row-\(item.name)")
                         }
                     }
                 }
@@ -32,6 +33,7 @@ struct VaultListView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityIdentifier("addItemButton")
                 }
             }
             .sheet(isPresented: $showingAdd) {

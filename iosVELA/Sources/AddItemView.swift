@@ -19,16 +19,21 @@ struct AddItemView: View {
             Form {
                 Section("Login") {
                     TextField("Name", text: $name)
+                        .accessibilityIdentifier("nameField")
                     TextField("Website", text: $url)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
+                        .accessibilityIdentifier("urlField")
                     TextField("Username or email", text: $username)
                         .textInputAutocapitalization(.never)
+                        .accessibilityIdentifier("usernameField")
                     SecureField("Password", text: $password)
+                        .accessibilityIdentifier("passwordField")
                 }
                 Section("Two-factor (optional)") {
                     TextField("TOTP secret", text: $totp)
                         .textInputAutocapitalization(.never)
+                        .accessibilityIdentifier("totpField")
                 }
             }
             .navigationTitle("Add login")
@@ -36,6 +41,7 @@ struct AddItemView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .accessibilityIdentifier("cancelButton")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -48,6 +54,7 @@ struct AddItemView: View {
                         )
                         dismiss()
                     }
+                    .accessibilityIdentifier("saveButton")
                     .disabled(!canSave)
                 }
             }

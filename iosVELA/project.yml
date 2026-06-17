@@ -46,15 +46,29 @@ targets:
     dependencies:
       - target: VELA
 
+  VELAUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vela.vault.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+    dependencies:
+      - target: VELA
+
 schemes:
   VELA:
     build:
       targets:
         VELA: all
         VELATests: [test]
+        VELAUITests: [test]
     test:
       config: Debug
       targets:
         - VELATests
+        - VELAUITests
     run:
       config: Debug
