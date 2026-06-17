@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::ffi::{c_char, CStr, CString};
 
 use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
-use vela_crypto::{aead, kdf, signing};
+use vela_crypto::{aead, kdf, shamir, signing};
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
+const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
 
 type FfiResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
 
@@ -66,6 +67,62 @@ struct AuthSignatureRequest {
 #[derive(Serialize, Deserialize)]
 struct AuthSignatureResponse {
     signature_b64: String,
+}
+
+// Phase 4 ── sync / enrollment / recovery payloads ──────────────────────────────
+
+#[derive(Deserialize)]
+struct EncryptChunkRequest {
+    rms_b64: String,
+    chunk_id: String,
+    vault_json: String,
+}
+#[derive(Deserialize)]
+struct DecryptChunkRequest {
+    rms_b64: String,
+    chunk_id: String,
+    ciphertext_b64: String,
+}
+
+#[derive(Deserialize)]
+struct DecryptRmsCapsuleRequest {
+    transfer_key_b64: String,
+    capsule_b64: String,
+}
+#[derive(Serialize, Deserialize)]
+struct DecryptRmsCapsuleResponse {
+    rms_b64: String,
+}
+
+#[derive(Deserialize)]
+struct DecryptEnrollmentPackageRequest {
+    key_b64: String,
+    ciphertext_b64: String,
+}
+#[derive(Serialize, Deserialize)]
+struct DecryptEnrollmentPackageResponse {
+    plaintext: String,
+}
+
+#[derive(Deserialize)]
+struct SplitRecoveryRequest {
+    rms_b64: String,
+    threshold: u8,
+    n: u8,
+}
+#[derive(Serialize, Deserialize)]
+struct SplitRecoveryResponse {
+    /// One base64 Shamir share per `[x, y_0..y_31]` blob.
+    shares_b64: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CombineRecoveryRequest {
+    shares_b64: Vec<String>,
+}
+#[derive(Serialize, Deserialize)]
+struct CombineRecoveryResponse {
+    rms_b64: String,
 }
 
 // ── Exported C ABI ─────────────────────────────────────────────────────────────
@@ -128,6 +185,48 @@ pub unsafe extern "C" fn vela_ffi_create_auth_signature_json(
     json_result(|| create_auth_signature_json(c_str(request_json)?))
 }
 
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_encrypt_vault_chunk_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| encrypt_vault_chunk_json(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_decrypt_vault_chunk_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| decrypt_vault_chunk_json(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_decrypt_rms_capsule_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| decrypt_rms_capsule_json(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_decrypt_enrollment_package_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| decrypt_enrollment_package_json(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_split_recovery_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| split_recovery_json(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_combine_recovery_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| combine_recovery_json(c_str(request_json)?))
+}
+
 // ── Core logic (also exercised by the unit tests) ──────────────────────────────
 
 fn encrypt_vault_json(request_json: &str) -> FfiResult<EncryptVaultResponse> {
@@ -174,6 +273,94 @@ fn create_auth_signature_json(request_json: &str) -> FfiResult<AuthSignatureResp
     let signature = signing::sign(&sk, &message)?;
     Ok(AuthSignatureResponse {
         signature_b64: B64.encode(signature.to_bytes()),
+    })
+}
+
+/// Per-chunk vault key, matching the Android bridge / desktop derivation so the
+/// same encrypted chunk is interoperable across clients:
+/// `derive("vela chunk key v1" || {:?}(chunk_id_bytes), rms)`.
+fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
+    let context = format!("{} || {:?}", CHUNK_KEY_CONTEXT, chunk_id.as_bytes());
+    *kdf::derive(&context, rms).as_bytes()
+}
+
+fn encrypt_vault_chunk_json(request_json: &str) -> FfiResult<EncryptVaultResponse> {
+    let req: EncryptChunkRequest = serde_json::from_str(request_json)?;
+    let rms = decode_rms(&req.rms_b64)?;
+    let _: VaultStore = serde_json::from_str(&req.vault_json)?;
+    let key = chunk_key(&rms, &req.chunk_id);
+    let ciphertext = aead::encrypt(&key, req.vault_json.as_bytes())?;
+    Ok(EncryptVaultResponse {
+        ciphertext_b64: B64.encode(ciphertext),
+    })
+}
+
+fn decrypt_vault_chunk_json(request_json: &str) -> FfiResult<DecryptVaultResponse> {
+    let req: DecryptChunkRequest = serde_json::from_str(request_json)?;
+    let rms = decode_rms(&req.rms_b64)?;
+    let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
+    let key = chunk_key(&rms, &req.chunk_id);
+    let plaintext = aead::decrypt(&key, &ciphertext)?;
+    Ok(DecryptVaultResponse {
+        vault_json: String::from_utf8(plaintext.to_vec())?,
+    })
+}
+
+fn decode_key32(b64: &str, what: &str) -> FfiResult<[u8; 32]> {
+    let bytes = B64.decode(b64.as_bytes())?;
+    if bytes.len() != 32 {
+        return Err(format!("{what} must be 32 bytes").into());
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(key)
+}
+
+fn decrypt_rms_capsule_json(request_json: &str) -> FfiResult<DecryptRmsCapsuleResponse> {
+    let req: DecryptRmsCapsuleRequest = serde_json::from_str(request_json)?;
+    let transfer_key = decode_key32(&req.transfer_key_b64, "transfer_key")?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let plaintext = aead::decrypt(&transfer_key, &capsule)?;
+    if plaintext.len() < 32 {
+        return Err("decrypted RMS capsule too short".into());
+    }
+    Ok(DecryptRmsCapsuleResponse {
+        rms_b64: B64.encode(&plaintext[..32]),
+    })
+}
+
+fn decrypt_enrollment_package_json(request_json: &str) -> FfiResult<DecryptEnrollmentPackageResponse> {
+    let req: DecryptEnrollmentPackageRequest = serde_json::from_str(request_json)?;
+    let key = decode_key32(&req.key_b64, "enrollment package key")?;
+    let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
+    let plaintext = aead::decrypt(&key, &ciphertext)?;
+    Ok(DecryptEnrollmentPackageResponse {
+        plaintext: String::from_utf8(plaintext.to_vec())?,
+    })
+}
+
+fn split_recovery_json(request_json: &str) -> FfiResult<SplitRecoveryResponse> {
+    let req: SplitRecoveryRequest = serde_json::from_str(request_json)?;
+    let rms = decode_rms(&req.rms_b64)?;
+    let shares = shamir::split(&rms, req.threshold, req.n)?;
+    Ok(SplitRecoveryResponse {
+        shares_b64: shares.iter().map(|s| B64.encode(s.to_bytes())).collect(),
+    })
+}
+
+fn combine_recovery_json(request_json: &str) -> FfiResult<CombineRecoveryResponse> {
+    let req: CombineRecoveryRequest = serde_json::from_str(request_json)?;
+    let shares: Vec<shamir::Share> = req
+        .shares_b64
+        .iter()
+        .map(|s| -> FfiResult<shamir::Share> {
+            let bytes = B64.decode(s.as_bytes())?;
+            Ok(shamir::Share::from_bytes(&bytes)?)
+        })
+        .collect::<FfiResult<_>>()?;
+    let secret = shamir::reconstruct(&shares, 32)?;
+    Ok(CombineRecoveryResponse {
+        rms_b64: B64.encode(secret),
     })
 }
 
@@ -298,5 +485,84 @@ mod tests {
         );
         let sig: AuthSignatureResponse = serde_json::from_str(&sig).unwrap();
         assert!(!sig.signature_b64.is_empty());
+    }
+
+    #[test]
+    fn vault_chunk_round_trips_and_binds_chunk_id() {
+        let rms = B64.encode([5u8; 32]);
+        let vault_json = r#"{"items":[],"tombstones":[]}"#;
+        let enc = call(
+            vela_ffi_encrypt_vault_chunk_json,
+            &serde_json::json!({"rms_b64": rms, "chunk_id": "vault", "vault_json": vault_json}).to_string(),
+        );
+        let enc: EncryptVaultResponse = serde_json::from_str(&enc).unwrap();
+
+        let dec = call(
+            vela_ffi_decrypt_vault_chunk_json,
+            &serde_json::json!({"rms_b64": rms, "chunk_id": "vault", "ciphertext_b64": enc.ciphertext_b64}).to_string(),
+        );
+        let dec: DecryptVaultResponse = serde_json::from_str(&dec).unwrap();
+        assert_eq!(dec.vault_json, vault_json);
+
+        // A different chunk_id derives a different key → must not decrypt.
+        let wrong = call(
+            vela_ffi_decrypt_vault_chunk_json,
+            &serde_json::json!({"rms_b64": rms, "chunk_id": "other", "ciphertext_b64": enc.ciphertext_b64}).to_string(),
+        );
+        assert!(wrong.contains("error"), "chunk_id must bind the key: {wrong}");
+    }
+
+    #[test]
+    fn rms_capsule_round_trips() {
+        let transfer_key = [3u8; 32];
+        let rms = [9u8; 32];
+        let capsule = aead::encrypt(&transfer_key, &rms).unwrap();
+        let out = call(
+            vela_ffi_decrypt_rms_capsule_json,
+            &serde_json::json!({
+                "transfer_key_b64": B64.encode(transfer_key),
+                "capsule_b64": B64.encode(&capsule),
+            })
+            .to_string(),
+        );
+        let out: DecryptRmsCapsuleResponse = serde_json::from_str(&out).unwrap();
+        assert_eq!(B64.decode(out.rms_b64).unwrap(), rms);
+    }
+
+    #[test]
+    fn enrollment_package_round_trips() {
+        let key = [4u8; 32];
+        let payload = r#"{"hello":"world"}"#;
+        let ciphertext = aead::encrypt(&key, payload.as_bytes()).unwrap();
+        let out = call(
+            vela_ffi_decrypt_enrollment_package_json,
+            &serde_json::json!({
+                "key_b64": B64.encode(key),
+                "ciphertext_b64": B64.encode(&ciphertext),
+            })
+            .to_string(),
+        );
+        let out: DecryptEnrollmentPackageResponse = serde_json::from_str(&out).unwrap();
+        assert_eq!(out.plaintext, payload);
+    }
+
+    #[test]
+    fn recovery_split_then_combine_recovers_rms() {
+        let rms = B64.encode([7u8; 32]);
+        let split = call(
+            vela_ffi_split_recovery_json,
+            &serde_json::json!({"rms_b64": rms, "threshold": 2, "n": 3}).to_string(),
+        );
+        let split: SplitRecoveryResponse = serde_json::from_str(&split).unwrap();
+        assert_eq!(split.shares_b64.len(), 3);
+
+        // Any 2-of-3 shares reconstruct the RMS.
+        let subset = vec![split.shares_b64[0].clone(), split.shares_b64[2].clone()];
+        let combined = call(
+            vela_ffi_combine_recovery_json,
+            &serde_json::json!({"shares_b64": subset}).to_string(),
+        );
+        let combined: CombineRecoveryResponse = serde_json::from_str(&combined).unwrap();
+        assert_eq!(combined.rms_b64, rms);
     }
 }
