@@ -1,0 +1,4 @@
+module VelaCore {
+    header "vela_apple.h"
+    export *
+}

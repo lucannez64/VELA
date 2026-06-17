@@ -1,10 +1,10 @@
 
 # Rust build outputs
-desktopVELA/src-tauri/target/
-serverVELA/target/
-libVELA/vela-crypto/target/
-libVELA/vela-android-bridge/target/
-libVELA/cyclo/ntt_shim/target/
+**/target/
+
+# iOS bridge build outputs
+libVELA/vela-apple-bridge/*.xcframework/
+libVELA/vela-apple-bridge/smoke_bin
 
 # Vite build output
 desktopVELA/dist/

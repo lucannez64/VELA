@@ -1,0 +1,19 @@
+[package]
+name = "vela-apple-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Apple (iOS/macOS) C-ABI bridge for the shared VELA Rust core"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "vela_apple_bridge"
+# staticlib -> the .a linked into the Swift app / XCFramework; rlib -> cargo test.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+getrandom = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+vela-core = { path = "../vela-core" }
+vela-crypto = { path = "../vela-crypto", default-features = false }

@@ -1,0 +1,64 @@
+name: ios-core
+
+# Phase 0 of the iOS app: cross-compile the shared Rust core for iOS, package it
+# as an XCFramework for the future SwiftUI app, and prove Swift<->Rust interop.
+# Runs on the (free, public-repo) macOS runners — no Mac needed locally.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "libVELA/vela-apple-bridge/**"
+      - "libVELA/vela-core/**"
+      - "libVELA/vela-crypto/**"
+      - ".github/workflows/ios-core.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "libVELA/vela-apple-bridge/**"
+      - "libVELA/vela-core/**"
+      - "libVELA/vela-crypto/**"
+      - ".github/workflows/ios-core.yml"
+
+concurrency:
+  group: ios-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-verify:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: libVELA/vela-apple-bridge
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: libVELA/vela-apple-bridge
+
+      - name: Core tests (host)
+        run: cargo test --release
+
+      - name: Build iOS XCFramework (device + simulator)
+        run: bash build-xcframework.sh
+
+      - name: Swift <-> Rust interop smoke (host)
+        run: |
+          cargo build --release
+          swiftc smoke/smoke.swift \
+            -I include -L target/release -lvela_apple_bridge \
+            -framework Security -framework CoreFoundation \
+            -o smoke_bin
+          ./smoke_bin
+
+      - name: Upload XCFramework
+        uses: actions/upload-artifact@v4
+        with:
+          name: VelaCore-xcframework
+          path: libVELA/vela-apple-bridge/VelaCore.xcframework
+          if-no-files-found: error
