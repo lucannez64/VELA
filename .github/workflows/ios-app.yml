@@ -28,13 +28,15 @@ concurrency:
 
 jobs:
   build-and-screenshot:
-    runs-on: macos-14
+    # macos-15 defaults to Xcode 16, which can read XcodeGen's project format
+    # (objectVersion 77). macos-14's default Xcode 15.4 cannot.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -54,6 +56,7 @@ jobs:
         working-directory: iosVELA
         run: |
           set -x
+          xcodebuild -version
           xcodebuild \
             -project VELA.xcodeproj -scheme VELA \
             -configuration Debug -sdk iphonesimulator \
