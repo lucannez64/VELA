@@ -1,11 +1,31 @@
 name: desktop-macos
 
 # Build + systematically verify the desktop app on real macOS (Apple Silicon),
-# since it can't be built or tested off a Mac. Manual-trigger only: the repo is
-# private, so macOS runner minutes bill at 10x. Run it before desktop releases
-# or when touching macOS code paths.
+# since it can't be built or tested off a Mac. Runs automatically on
+# desktop-related changes (repo is public -> macOS minutes are free) and on demand.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "desktopVELA/**"
+      - "libVELA/vela-crypto/**"
+      - "extension/native-messaging/**"
+      - ".github/workflows/desktop-macos.yml"
+      - ".github/scripts/ipc_ping.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - "desktopVELA/**"
+      - "libVELA/vela-crypto/**"
+      - "extension/native-messaging/**"
+      - ".github/workflows/desktop-macos.yml"
+      - ".github/scripts/ipc_ping.py"
+
+# One run per ref; cancel superseded in-progress runs to avoid pile-ups.
+concurrency:
+  group: desktop-macos-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-verify:
