@@ -70,6 +70,17 @@ jobs:
             -only-testing:VELATests \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Verify AutoFill extension embedded
+        working-directory: iosVELA
+        run: |
+          set -x
+          APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name 'VELA.app' | head -1)
+          test -n "$APP"
+          # Phase 3: the credential-provider extension must build and embed.
+          APPEX="$APP/PlugIns/VELAAutoFill.appex"
+          test -d "$APPEX" || { echo "AutoFill .appex missing"; ls -R "$APP/PlugIns" 2>/dev/null || true; exit 1; }
+          echo "AutoFill extension embedded at $APPEX"
+
       - name: Launch (seeded) and screenshot
         working-directory: iosVELA
         run: |
