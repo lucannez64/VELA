@@ -67,6 +67,7 @@ jobs:
             -configuration Debug \
             -destination "platform=iOS Simulator,id=$UDID" \
             -derivedDataPath build \
+            -only-testing:VELATests \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Launch (seeded) and screenshot
@@ -80,7 +81,32 @@ jobs:
           SIMCTL_CHILD_VELA_DEMO=1 xcrun simctl launch "$UDID" com.vela.vault
           sleep 8
           xcrun simctl io "$UDID" screenshot ios-app.png
+          xcrun simctl terminate "$UDID" com.vela.vault || true
           echo "screenshot captured"
+
+      - name: Record UI walkthrough video
+        working-directory: iosVELA
+        run: |
+          set -x
+          # Record the simulator screen while the XCUITest drives every feature.
+          xcrun simctl io "$UDID" recordVideo --codec h264 --force walkthrough.mp4 &
+          REC_PID=$!
+          sleep 2
+          set +e
+          xcodebuild test \
+            -project VELA.xcodeproj -scheme VELA \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath build \
+            -only-testing:VELAUITests \
+            CODE_SIGNING_ALLOWED=NO
+          TEST_RC=$?
+          set -e
+          # Stop recording (SIGINT lets simctl finalize the mp4) and let it flush.
+          kill -INT "$REC_PID" 2>/dev/null || true
+          wait "$REC_PID" 2>/dev/null || true
+          ls -la walkthrough.mp4 || true
+          exit $TEST_RC
 
       - name: Upload app + screenshot
         if: always()
@@ -90,4 +116,5 @@ jobs:
           path: |
             iosVELA/build/Build/Products/Debug-iphonesimulator/VELA.app
             iosVELA/ios-app.png
+            iosVELA/walkthrough.mp4
           if-no-files-found: warn

@@ -16,6 +16,9 @@ final class VaultViewModel: ObservableObject {
     }
 
     private func bootstrap() {
+        if ProcessInfo.processInfo.environment["VELA_RESET"] == "1" {
+            repo.reset()
+        }
         if repo.hasVault() {
             do {
                 let r = try repo.loadRMS()

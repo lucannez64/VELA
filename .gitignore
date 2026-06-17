@@ -11,6 +11,7 @@ iosVELA/*.xcodeproj/
 iosVELA/Generated/
 iosVELA/build/
 iosVELA/ios-app.png
+iosVELA/walkthrough.mp4
 
 # Vite build output
 desktopVELA/dist/
