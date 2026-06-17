@@ -34,10 +34,27 @@ targets:
       - framework: ../libVELA/vela-apple-bridge/VelaCore.xcframework
         embed: false
 
+  VELATests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vela.vault.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+    dependencies:
+      - target: VELA
+
 schemes:
   VELA:
     build:
       targets:
         VELA: all
+        VELATests: [test]
+    test:
+      config: Debug
+      targets:
+        - VELATests
     run:
       config: Debug
