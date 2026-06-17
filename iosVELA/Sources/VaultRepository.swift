@@ -1,50 +1,56 @@
 import Foundation
 import Security
+import LocalAuthentication
 
 enum VaultError: Error {
     case rng
     case crypto
+    case keychain
 }
 
 /// On-device persistence for the vault: an encrypted blob plus the root seed.
 ///
-/// NOTE (Phase 1b): the RMS is stored in a file-protected sandbox file as a
-/// placeholder. Phase 2 moves it into the Keychain / Secure Enclave. The vault
-/// itself is always encrypted by the Rust core under the RMS.
+/// Phase 2: the RMS now lives in a biometric-gated Keychain item (`KeychainRMSStore`)
+/// on real devices, replacing the Phase 1b file placeholder. The Simulator and unit
+/// tests fall back to `FileRMSStore`, since the biometric Keychain isn't usable
+/// headlessly. The vault itself is always encrypted by the Rust core under the RMS.
 struct VaultRepository {
     let directory: URL
+    private let rmsStore: RMSStore
 
     init(directory: URL? = nil) {
         if let directory = directory {
+            // Test injection: deterministic, headless file store.
             self.directory = directory
+            self.rmsStore = FileRMSStore(directory: directory)
         } else {
             let base = FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            self.directory = base.appendingPathComponent("vela", isDirectory: true)
+                .appendingPathComponent("vela", isDirectory: true)
+            self.directory = base
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            #if targetEnvironment(simulator)
+            self.rmsStore = FileRMSStore(directory: base)
+            #else
+            self.rmsStore = KeychainRMSStore()
+            #endif
         }
-        try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
     }
 
-    private var rmsURL: URL { directory.appendingPathComponent("rms.bin") }
     private var vaultURL: URL { directory.appendingPathComponent("vault.enc") }
 
     func hasVault() -> Bool {
-        let fm = FileManager.default
-        return fm.fileExists(atPath: rmsURL.path) && fm.fileExists(atPath: vaultURL.path)
+        rmsStore.exists() && FileManager.default.fileExists(atPath: vaultURL.path)
     }
 
     func generateAndStoreRMS() throws -> Data {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            throw VaultError.rng
-        }
-        let data = Data(bytes)
-        try data.write(to: rmsURL, options: [.completeFileProtection, .atomic])
-        return data
+        try rmsStore.generate()
     }
 
-    func loadRMS() throws -> Data {
-        try Data(contentsOf: rmsURL)
+    /// Load the RMS, prompting Face ID / Touch ID on device. Pass an
+    /// already-authenticated `LAContext` to reuse a single biometric prompt.
+    func loadRMS(context: LAContext? = nil) throws -> Data {
+        try rmsStore.load(context: context)
     }
 
     func save(_ store: VaultStore, rms: Data) throws {
@@ -65,7 +71,7 @@ struct VaultRepository {
 
     /// Wipe the on-device vault (used by UI tests via the VELA_RESET launch env).
     func reset() {
-        try? FileManager.default.removeItem(at: rmsURL)
+        rmsStore.delete()
         try? FileManager.default.removeItem(at: vaultURL)
     }
 }

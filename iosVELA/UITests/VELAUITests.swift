@@ -50,6 +50,17 @@ final class VELAUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Proton Mail"].waitForExistence(timeout: 15), "back on list")
         XCTAssertFalse(app.staticTexts["GitHub"].exists, "GitHub deleted")
         sleep(2)
+
+        // 6) Relaunch without a reset → vault is locked → unlock (Phase 2: Face ID).
+        app.terminate()
+        app.launchEnvironment["VELA_RESET"] = "0" // keep the existing vault on disk
+        app.launch()
+        let unlockButton = app.buttons["unlockButton"]
+        XCTAssertTrue(unlockButton.waitForExistence(timeout: 15), "lock screen")
+        sleep(2)
+        unlockButton.tap()
+        XCTAssertTrue(app.staticTexts["Proton Mail"].waitForExistence(timeout: 15), "unlocked vault")
+        sleep(2)
     }
 
     private func addLogin(_ app: XCUIApplication, name: String, url: String, username: String, password: String) {

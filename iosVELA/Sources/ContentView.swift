@@ -5,9 +5,12 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if vm.isUnlocked {
+            switch vm.lockState {
+            case .unlocked:
                 VaultListView(vm: vm)
-            } else {
+            case .locked:
+                UnlockView(vm: vm)
+            case .noVault:
                 WelcomeView(vm: vm)
             }
         }
