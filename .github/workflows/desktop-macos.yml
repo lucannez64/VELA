@@ -25,6 +25,12 @@ jobs:
         working-directory: desktopVELA
         run: bun install
 
+      # tauri::generate_context! (compiled by `cargo test`) reads frontendDist
+      # (../dist), so the frontend must be built before the Rust step.
+      - name: Build frontend
+        working-directory: desktopVELA
+        run: bun run build
+
       # Verify the macOS-specific Rust paths actually compile and pass on macOS
       # (keychain/Touch ID/default_password code that's never built off a Mac).
       - name: Rust tests (macOS code paths)
