@@ -24,14 +24,16 @@ struct VaultRepository {
             self.directory = directory
             self.rmsStore = FileRMSStore(directory: directory)
         } else {
-            let base = FileManager.default
-                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("vela", isDirectory: true)
+            // Shared App Group container so the AutoFill extension reads the same
+            // vault the app writes (falls back to app-local when not provisioned).
+            let base = AppGroup.vaultDirectory()
             self.directory = base
-            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
             #if targetEnvironment(simulator)
             self.rmsStore = FileRMSStore(directory: base)
             #else
+            // The RMS lives in the shared keychain access group (see entitlements),
+            // reachable from both the app and the extension; no group set in code so
+            // the entitlement's single group is used by default.
             self.rmsStore = KeychainRMSStore()
             #endif
         }

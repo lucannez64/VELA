@@ -16,6 +16,7 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+      - path: Shared
     info:
       path: Generated/Info.plist
       properties:
@@ -24,6 +25,13 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+    entitlements:
+      path: Generated/VELA.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.vela.vault
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.vela.vault.shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vela.vault
@@ -32,6 +40,38 @@ targets:
         OTHER_LDFLAGS: -framework Security
     dependencies:
       # Static-library XCFramework produced by libVELA/vela-apple-bridge — link, don't embed.
+      - framework: ../libVELA/vela-apple-bridge/VelaCore.xcframework
+        embed: false
+      # Embed the AutoFill credential provider extension into the app bundle.
+      - target: VELAAutoFill
+
+  VELAAutoFill:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: AutoFill
+      - path: Shared
+    info:
+      path: Generated/AutoFillInfo.plist
+      properties:
+        CFBundleDisplayName: VELA AutoFill
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
+    entitlements:
+      path: Generated/VELAAutoFill.entitlements
+      properties:
+        com.apple.developer.authentication-services.autofill-credential-provider: true
+        com.apple.security.application-groups:
+          - group.com.vela.vault
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.vela.vault.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vela.vault.autofill
+        TARGETED_DEVICE_FAMILY: "1"
+        OTHER_LDFLAGS: -framework Security
+    dependencies:
       - framework: ../libVELA/vela-apple-bridge/VelaCore.xcframework
         embed: false
 
@@ -64,6 +104,7 @@ schemes:
     build:
       targets:
         VELA: all
+        VELAAutoFill: all
         VELATests: [test]
         VELAUITests: [test]
     test:
