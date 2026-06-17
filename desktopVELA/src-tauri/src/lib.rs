@@ -9,6 +9,9 @@ pub mod store;
 pub mod token;
 pub mod vault;
 
+#[cfg(test)]
+mod vault_lifecycle_test;
+
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
