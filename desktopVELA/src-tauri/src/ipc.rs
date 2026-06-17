@@ -30,6 +30,12 @@ pub enum IpcMessageType {
     #[serde(alias = "AutofillResponse")]
     #[serde(alias = "autofillResponse")]
     AutofillResponse,
+    #[serde(alias = "SaveCredentials")]
+    #[serde(alias = "saveCredentials")]
+    SaveCredentials,
+    #[serde(alias = "SaveResponse")]
+    #[serde(alias = "saveResponse")]
+    SaveResponse,
     BiometricChallenge,
     BiometricResponse,
     SessionStatus,
@@ -257,6 +263,9 @@ pub mod server {
                 IpcMessage::pong()
             }
             IpcMessageType::AutofillRequest => handle_autofill_request(&message, app_handle).await,
+            IpcMessageType::SaveCredentials => {
+                handle_save_credentials(&message, app_handle).await
+            }
             _ => IpcMessage::error("Unknown message type".to_string()),
         }
     }
@@ -310,6 +319,116 @@ pub mod server {
             })
             .collect();
         autofill_value_response(serde_json::Value::Array(metadata), false)
+    }
+
+    async fn handle_save_credentials(
+        message: &IpcMessage,
+        app_handle: &tauri::AppHandle,
+    ) -> IpcMessage {
+        let payload = &message.payload;
+        let username = payload
+            .get("username")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let password = payload
+            .get("password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let url = payload
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let name = payload
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| extract_base_domain(&url));
+
+        if password.is_empty() {
+            return save_response(false, None, Some("Password is required".to_string()));
+        }
+
+        let state = app_handle.state::<Arc<AppState>>();
+
+        // Require an active, unlocked session. If the vault is locked, surface the
+        // window so the user can unlock, mirroring the autofill flow.
+        let device_id = {
+            let session = state.session.read();
+            if !session.active || session.is_expired() {
+                focus_main_window(app_handle);
+                return save_response(false, None, Some("Vault is locked".to_string()));
+            }
+            session.device_id.clone()
+        };
+
+        if state.crypto.read().is_none() {
+            focus_main_window(app_handle);
+            return save_response(false, None, Some("Vault is locked".to_string()));
+        }
+
+        let now = chrono::Utc::now();
+        let new_item = VaultItem::Login {
+            meta: crate::vault::VaultMeta {
+                id: uuid::Uuid::new_v4().to_string(),
+                name,
+                notes: None,
+                created_at: now,
+                updated_at: now,
+                last_modified_device: device_id,
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
+            url,
+            username,
+            pass: password,
+            totp: None,
+        };
+
+        {
+            let mut vault = state.vault.write();
+            vault.add_item(new_item.clone());
+        }
+
+        // Persist the encrypted vault to disk.
+        {
+            let vault = state.vault.read();
+            let crypto = state.crypto.read();
+            if let Some(crypto) = crypto.as_ref() {
+                if let Err(e) = state.store.save_vault(&vault, crypto) {
+                    error!("Failed to persist vault after save: {}", e);
+                    return save_response(false, None, Some("Failed to save vault".to_string()));
+                }
+            }
+        }
+
+        crate::commands::audit::record_audit_event(
+            &state,
+            crate::commands::audit::AuditAction::ItemAdded {
+                item_type: "login".to_string(),
+            },
+        );
+
+        crate::commands::vault::emit_vault_items_changed(app_handle);
+
+        save_response(true, Some(new_item.id().to_string()), None)
+    }
+
+    fn save_response(success: bool, id: Option<String>, error: Option<String>) -> IpcMessage {
+        IpcMessage {
+            msg_type: IpcMessageType::SaveResponse,
+            payload: serde_json::json!({
+                "success": success,
+                "id": id,
+                "error": error,
+            }),
+            capability: None,
+        }
     }
 
     fn focus_main_window(app_handle: &tauri::AppHandle) {

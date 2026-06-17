@@ -204,8 +204,26 @@ def handle_get_logins(message):
     return {"success": True, "logins": logins}
 
 
-def handle_save_credentials(_message):
-    return {"success": False, "error": "Not implemented"}
+def handle_save_credentials(message):
+    response = send_to_desktop(
+        {
+            "msg_type": "save_credentials",
+            "payload": {
+                "name": message.get("name", ""),
+                "username": message.get("username", ""),
+                "password": message.get("password", ""),
+                "url": message.get("url", ""),
+            },
+        }
+    )
+
+    if not response or response.get("msg_type") not in ("SaveResponse", "save_response"):
+        return {"success": False, "error": "Could not reach VELA Desktop"}
+
+    payload = response.get("payload", {})
+    if payload.get("success"):
+        return {"success": True, "id": payload.get("id")}
+    return {"success": False, "error": payload.get("error") or "Save failed"}
 
 
 def handle_not_implemented(_message):
