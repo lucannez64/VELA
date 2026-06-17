@@ -1,0 +1,43 @@
+name: VELA
+options:
+  bundleIdPrefix: com.vela
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGNING_ALLOWED: "NO"
+
+targets:
+  VELA:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: VELA
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vela.vault
+        TARGETED_DEVICE_FAMILY: "1"
+        # The Rust core may reference Security (RNG); link it defensively.
+        OTHER_LDFLAGS: -framework Security
+    dependencies:
+      # Static-library XCFramework produced by libVELA/vela-apple-bridge — link, don't embed.
+      - framework: ../libVELA/vela-apple-bridge/VelaCore.xcframework
+        embed: false
+
+schemes:
+  VELA:
+    build:
+      targets:
+        VELA: all
+    run:
+      config: Debug

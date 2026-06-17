@@ -6,6 +6,12 @@
 libVELA/vela-apple-bridge/*.xcframework/
 libVELA/vela-apple-bridge/smoke_bin
 
+# iOS app: XcodeGen-generated project + build output
+iosVELA/*.xcodeproj/
+iosVELA/Generated/
+iosVELA/build/
+iosVELA/ios-app.png
+
 # Vite build output
 desktopVELA/dist/
 
