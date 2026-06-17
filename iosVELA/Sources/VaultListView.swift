@@ -2,7 +2,9 @@ import SwiftUI
 
 struct VaultListView: View {
     @ObservedObject var vm: VaultViewModel
+    @ObservedObject var accountVM: AccountViewModel
     @State private var showingAdd = false
+    @State private var showingAccount = false
 
     var body: some View {
         NavigationStack {
@@ -27,6 +29,14 @@ struct VaultListView: View {
                 }
             }
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showingAccount = true
+                    } label: {
+                        Image(systemName: "person.crop.circle")
+                    }
+                    .accessibilityIdentifier("accountButton")
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showingAdd = true
@@ -38,6 +48,9 @@ struct VaultListView: View {
             }
             .sheet(isPresented: $showingAdd) {
                 AddItemView(vm: vm)
+            }
+            .sheet(isPresented: $showingAccount) {
+                AccountView(vm: accountVM)
             }
         }
     }

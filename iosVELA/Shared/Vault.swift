@@ -10,7 +10,7 @@ struct VaultStore: Codable {
 /// (tag `item_type`, camelCase meta keys, `password`). Phase 1b supports logins
 /// only; other item types come later. Property names intentionally match the
 /// JSON keys so the default Codable round-trips through the Rust core unchanged.
-struct VaultItem: Codable, Identifiable {
+struct VaultItem: Codable, Identifiable, Equatable {
     var item_type: String = "login"
     var id: String
     var name: String

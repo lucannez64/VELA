@@ -77,6 +77,17 @@ final class VaultViewModel: ObservableObject {
         persist()
     }
 
+    // MARK: - Phase 4 (server sync) accessors
+
+    /// The in-memory RMS, available while unlocked (needed to seal sync/share blobs).
+    var currentRMS: Data? { rms }
+
+    /// Replace the item set after a sync merge and persist locally.
+    func applyMergedItems(_ merged: [VaultItem]) {
+        items = merged
+        persist()
+    }
+
     private func persist() {
         guard let r = rms else { return }
         do {
