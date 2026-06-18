@@ -17,6 +17,7 @@ enum VaultError: Error {
 struct VaultRepository {
     let directory: URL
     private let rmsStore: RMSStore
+    private let passwordStore: PasswordRMSStore
 
     init(directory: URL? = nil) {
         if let directory = directory {
@@ -37,13 +38,16 @@ struct VaultRepository {
             self.rmsStore = KeychainRMSStore()
             #endif
         }
+        self.passwordStore = PasswordRMSStore(directory: self.directory)
     }
 
     private var vaultURL: URL { directory.appendingPathComponent("vault.enc") }
+    private var vaultExists: Bool { FileManager.default.fileExists(atPath: vaultURL.path) }
 
-    func hasVault() -> Bool {
-        rmsStore.exists() && FileManager.default.fileExists(atPath: vaultURL.path)
-    }
+    func hasVault() -> Bool { (rmsStore.exists() || passwordStore.exists()) && vaultExists }
+
+    /// How the existing vault is unlocked (password takes precedence if present).
+    var usesPasswordUnlock: Bool { passwordStore.exists() }
 
     func generateAndStoreRMS() throws -> Data {
         try rmsStore.generate()
@@ -53,6 +57,24 @@ struct VaultRepository {
     /// already-authenticated `LAContext` to reuse a single biometric prompt.
     func loadRMS(context: LAContext? = nil) throws -> Data {
         try rmsStore.load(context: context)
+    }
+
+    // MARK: - Password unlock (Phase 7)
+
+    /// Create a fresh RMS protected by a password (PBKDF2 + AES-GCM).
+    func generatePasswordRMS(password: String) throws -> Data {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw VaultError.rng
+        }
+        let rms = Data(bytes)
+        try passwordStore.wrap(rms: rms, password: password)
+        return rms
+    }
+
+    /// Unwrap the RMS with the password; throws on a wrong password.
+    func loadRMSWithPassword(_ password: String) throws -> Data {
+        try passwordStore.unwrap(password: password)
     }
 
     func save(_ store: VaultStore, rms: Data) throws {
@@ -74,6 +96,7 @@ struct VaultRepository {
     /// Wipe the on-device vault (used by UI tests via the VELA_RESET launch env).
     func reset() {
         rmsStore.delete()
+        passwordStore.delete()
         try? FileManager.default.removeItem(at: vaultURL)
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WelcomeView: View {
     @ObservedObject var vm: VaultViewModel
+    @State private var showingPassword = false
 
     var body: some View {
         ZStack {
@@ -40,8 +41,61 @@ struct WelcomeView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .accessibilityIdentifier("createVaultButton")
                 .padding(.horizontal, 32)
-                .padding(.bottom, 40)
+
+                Button("Use a password instead") { showingPassword = true }
+                    .font(.subheadline)
+                    .foregroundStyle(.green)
+                    .accessibilityIdentifier("createWithPasswordButton")
+                    .padding(.bottom, 40)
             }
         }
+        .sheet(isPresented: $showingPassword) {
+            CreatePasswordView(vm: vm)
+        }
+    }
+}
+
+/// Sheet to create a password-protected vault.
+private struct CreatePasswordView: View {
+    @ObservedObject var vm: VaultViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var password = ""
+    @State private var confirm = ""
+
+    private var canCreate: Bool { password.count >= 8 && password == confirm }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Password") {
+                    SecureField("Password (8+ chars)", text: $password)
+                        .textContentType(.newPassword)
+                        .accessibilityIdentifier("newPasswordField")
+                    SecureField("Confirm password", text: $confirm)
+                        .textContentType(.newPassword)
+                        .accessibilityIdentifier("confirmPasswordField")
+                }
+                Section {
+                    Text("Your vault is encrypted with this password. It can't be recovered if you forget it — set up recovery in Settings after creating.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Password vault")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        try? vm.createVault(password: password)
+                        dismiss()
+                    }
+                    .disabled(!canCreate)
+                    .accessibilityIdentifier("createPasswordVaultButton")
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var vm: VaultViewModel
     @StateObject private var accountVM: AccountViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let vault = VaultViewModel()
@@ -24,11 +25,19 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .onChange(of: vm.lockState) { newValue in
             // Sync-on-unlock (Settings toggle).
-            if newValue == .unlocked,
-               UserDefaults.standard.bool(forKey: "vela.syncOnStartup"),
-               accountVM.isRegistered {
+            if newValue == .unlocked, autoSyncEnabled, accountVM.isRegistered {
                 accountVM.syncNow()
             }
         }
+        .onChange(of: scenePhase) { phase in
+            // Sync-on-foreground: refresh when returning to an unlocked vault.
+            if phase == .active, vm.lockState == .unlocked, autoSyncEnabled, accountVM.isRegistered {
+                accountVM.syncNow()
+            }
+        }
+    }
+
+    private var autoSyncEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "vela.syncOnStartup")
     }
 }
