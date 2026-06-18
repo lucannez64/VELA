@@ -28,8 +28,9 @@ final class VaultRepositoryTests: XCTestCase {
         let reloaded = try repo.load(rms: rms)
         XCTAssertEqual(reloaded.items.count, 1)
         XCTAssertEqual(reloaded.items[0].name, "GitHub")
-        XCTAssertEqual(reloaded.items[0].username, "alice")
-        XCTAssertEqual(reloaded.items[0].password, "hunter2")
+        XCTAssertEqual(reloaded.items[0].username ?? "", "alice")
+        XCTAssertEqual(reloaded.items[0].password ?? "", "hunter2")
+        XCTAssertEqual(reloaded.items[0].kind, .login)
         XCTAssertEqual(reloaded.items[0].item_type, "login")
     }
 

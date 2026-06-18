@@ -12,7 +12,7 @@ enum AutofillMatch {
         let queries = identifiers.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !queries.isEmpty else { return logins }
         return logins.filter { login in
-            queries.contains { domainsMatch(query: $0, stored: login.url) }
+            queries.contains { domainsMatch(query: $0, stored: login.url ?? "") }
         }
     }
 
