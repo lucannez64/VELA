@@ -57,6 +57,7 @@ final class VaultViewModel: ObservableObject {
                 items = try repo.load(rms: r).items
                 rms = r
                 lockState = .unlocked
+                AuditLog.shared.record("vault_unlocked", "biometric")
             } catch {
                 errorMessage = "Couldn't open the vault."
             }
@@ -70,6 +71,7 @@ final class VaultViewModel: ObservableObject {
         try repo.save(VaultStore(items: items), rms: r)
         unlockMode = .biometric
         lockState = .unlocked
+        AuditLog.shared.record("vault_created", "biometric")
     }
 
     /// Create a vault protected by a password instead of biometrics.
@@ -80,6 +82,7 @@ final class VaultViewModel: ObservableObject {
         try repo.save(VaultStore(items: items), rms: r)
         unlockMode = .password
         lockState = .unlocked
+        AuditLog.shared.record("vault_created", "password")
     }
 
     /// Unlock a password-protected vault.
@@ -90,6 +93,7 @@ final class VaultViewModel: ObservableObject {
             items = try repo.load(rms: r).items
             rms = r
             lockState = .unlocked
+            AuditLog.shared.record("vault_unlocked", "password")
         } catch {
             errorMessage = "Wrong password."
         }
@@ -104,6 +108,7 @@ final class VaultViewModel: ObservableObject {
     func add(_ item: VaultItem) {
         items.append(item)
         persist()
+        AuditLog.shared.record("item_added", item.kind.displayName)
     }
 
     /// Replace an existing item by id, stamping `updatedAt`.
@@ -111,11 +116,13 @@ final class VaultViewModel: ObservableObject {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index] = item.touched()
         persist()
+        AuditLog.shared.record("item_updated", item.name)
     }
 
     func delete(_ item: VaultItem) {
         items.removeAll { $0.id == item.id }
         persist()
+        AuditLog.shared.record("item_deleted")
     }
 
     /// Lock the vault: drop the in-memory RMS and items, return to the unlock screen.
@@ -124,6 +131,7 @@ final class VaultViewModel: ObservableObject {
         rms = nil
         items = []
         lockState = .locked
+        AuditLog.shared.record("vault_locked")
     }
 
     /// Adopt an RMS recovered during enrollment, securing it with the chosen mode,

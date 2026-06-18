@@ -67,6 +67,7 @@ final class AccountViewModel: ObservableObject {
             )
             try store.save(state)
             account = state
+            AuditLog.shared.record("device_registered", String(resp.device_id.prefix(8)))
             return "Registered device \(resp.device_id.prefix(8))…"
         }
     }
@@ -99,6 +100,7 @@ final class AccountViewModel: ObservableObject {
             let merged = try await engine.sync(rms: rms, localItems: vault.items)
             await persistRenewedToken(from: client)
             vault.applyMergedItems(merged)
+            AuditLog.shared.record("vault_sync", "\(merged.count) item(s)")
             return "Synced \(merged.count) item(s)"
         }
     }
@@ -115,6 +117,7 @@ final class AccountViewModel: ObservableObject {
             let client = client()
             let resp = try await client.sendShare(recipientUserID: recipientUserID, capsuleBase64: capsule)
             await persistRenewedToken(from: client)
+            AuditLog.shared.record("share_sent", String(recipientUserID.prefix(8)))
             return "Shared (inbox \(resp.inbox_id.prefix(8))…)"
         }
     }
@@ -133,6 +136,7 @@ final class AccountViewModel: ObservableObject {
             await persistRenewedToken(from: client)
             // The remaining shares are shown to the user to distribute to guardians.
             recoveryShares = Array(shares.dropFirst())
+            AuditLog.shared.record("recovery_setup", "\(threshold)-of-\(total)")
             return "Recovery ready (\(threshold)-of-\(total)); \(recoveryShares.count) guardian share(s)"
         }
     }
@@ -176,6 +180,7 @@ final class AccountViewModel: ObservableObject {
             let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localItems: vault.items)
             await persistRenewedToken(from: client)
             vault.applyMergedItems(merged)
+            AuditLog.shared.record("device_enrolled", String(payload.device_id.prefix(8)))
             return "Enrolled device \(payload.device_id.prefix(8))…; \(merged.count) item(s)"
         }
     }
