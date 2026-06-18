@@ -35,7 +35,7 @@ struct DevicesView: View {
         let isCurrent = device.id == vm.currentDeviceID
         return HStack {
             Image(systemName: device.device_type == "ios" ? "iphone" : "desktopcomputer")
-                .foregroundStyle(device.revoked ? .secondary : .green)
+                .foregroundStyle(device.revoked ? Color.secondary : Color.green)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(device.name)
