@@ -22,5 +22,13 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onChange(of: vm.lockState) { newValue in
+            // Sync-on-unlock (Settings toggle).
+            if newValue == .unlocked,
+               UserDefaults.standard.bool(forKey: "vela.syncOnStartup"),
+               accountVM.isRegistered {
+                accountVM.syncNow()
+            }
+        }
     }
 }

@@ -156,6 +156,50 @@ actor VelaClient {
         _ = try await requestRaw("DELETE", "/share/inbox/\(id)", body: nil)
     }
 
+    struct LinkedShareItem: Decodable, Identifiable {
+        let id: String
+        let sender_user_id: String
+        let recipient_user_id: String
+        let capsule: String
+        let created_at: String
+        let updated_at: String
+        let revoked: Bool
+    }
+    struct LinkedSharesResponse: Decodable { let items: [LinkedShareItem] }
+
+    func linkedShares() async throws -> [LinkedShareItem] {
+        let resp: LinkedSharesResponse = try await request("GET", "/share/linked", auth: true)
+        return resp.items
+    }
+
+    func deleteLinkedShare(_ id: String) async throws {
+        _ = try await requestRaw("DELETE", "/share/linked/\(id)", body: nil)
+    }
+
+    // MARK: - Devices
+
+    struct DeviceInfo: Decodable, Identifiable {
+        let id: String
+        let name: String
+        let device_type: String
+        let enrolled_by: String?
+        let last_active: String?
+        let revoked: Bool
+        let pending: Bool
+        let created_at: String
+    }
+    struct ListDevicesResponse: Decodable { let devices: [DeviceInfo] }
+
+    func listDevices() async throws -> [DeviceInfo] {
+        let resp: ListDevicesResponse = try await request("GET", "/devices", auth: true)
+        return resp.devices
+    }
+
+    func revokeDevice(targetDeviceID: String) async throws {
+        let _: EmptyResponse = try await request("POST", "/device/revoke",
+                                                 json: ["target_device_id": targetDeviceID], auth: true)
+    }
+
     // MARK: - Recovery share
 
     func putRecoveryShare(_ shareBase64: String) async throws {

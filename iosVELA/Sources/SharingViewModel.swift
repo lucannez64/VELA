@@ -1,0 +1,115 @@
+import Foundation
+import SwiftUI
+
+/// Drives the sharing screen: received inbox (accept/decline) and sent linked
+/// shares (revoke). Mirrors the Android SharingRepository — capsules are
+/// decrypted with the recipient's own RMS (shows "Shared item" when it can't).
+@MainActor
+final class SharingViewModel: ObservableObject {
+    struct ReceivedShare: Identifiable {
+        let id: String
+        let from: String
+        let itemName: String
+        let itemType: String
+        let item: VaultItem?
+    }
+    struct SentShare: Identifiable {
+        let id: String
+        let to: String
+        let itemName: String
+    }
+
+    @Published var received: [ReceivedShare] = []
+    @Published var sent: [SentShare] = []
+    @Published var status = ""
+    @Published var busy = false
+
+    private unowned let vault: VaultViewModel
+    private let account: AccountViewModel
+
+    init(vault: VaultViewModel, account: AccountViewModel) {
+        self.vault = vault
+        self.account = account
+    }
+
+    func refresh() {
+        run("Loading shares") { [self] in
+            guard let client = account.makeClient() else { throw Fail("register first") }
+            guard let rms = vault.currentRMS?.base64EncodedString() else { throw Fail("unlock the vault first") }
+            let inbox = try await client.shareInbox()
+            let linked = try await client.linkedShares()
+            await account.adoptToken(from: client)
+
+            received = inbox.items.map { item in
+                let decoded = decode(capsule: item.capsule, rms: rms)
+                return ReceivedShare(id: item.id, from: item.sender_user_id,
+                                     itemName: decoded?.name ?? "Shared item",
+                                     itemType: decoded?.kind.displayName ?? "Item", item: decoded)
+            }
+            sent = linked
+                .filter { $0.sender_user_id != $0.recipient_user_id }
+                .map { share in
+                    let decoded = decode(capsule: share.capsule, rms: rms)
+                    return SentShare(id: share.id, to: share.recipient_user_id, itemName: decoded?.name ?? "Shared item")
+                }
+            return "\(received.count) received · \(sent.count) sent"
+        }
+    }
+
+    func accept(_ share: ReceivedShare) {
+        run("Accepting") { [self] in
+            guard let client = account.makeClient() else { throw Fail("register first") }
+            guard let item = share.item else { throw Fail("couldn't decrypt this share") }
+            vault.add(item)
+            try await client.deleteInboxItem(share.id)
+            await account.adoptToken(from: client)
+            received.removeAll { $0.id == share.id }
+            return "Added \(item.name)"
+        }
+    }
+
+    func decline(_ share: ReceivedShare) {
+        run("Declining") { [self] in
+            guard let client = account.makeClient() else { throw Fail("register first") }
+            try await client.deleteInboxItem(share.id)
+            await account.adoptToken(from: client)
+            received.removeAll { $0.id == share.id }
+            return "Declined"
+        }
+    }
+
+    func revoke(_ share: SentShare) {
+        run("Revoking") { [self] in
+            guard let client = account.makeClient() else { throw Fail("register first") }
+            try await client.deleteLinkedShare(share.id)
+            await account.adoptToken(from: client)
+            sent.removeAll { $0.id == share.id }
+            return "Revoked"
+        }
+    }
+
+    private func decode(capsule: String, rms: String) -> VaultItem? {
+        guard let json = VelaCoreFFI.decryptVault(rmsBase64: rms, ciphertextBase64: capsule) else { return nil }
+        let data = Data(json.utf8)
+        if let store = try? JSONDecoder().decode(VaultStore.self, from: data), let item = store.items.first {
+            return item
+        }
+        return try? JSONDecoder().decode(VaultItem.self, from: data)
+    }
+
+    private func run(_ label: String, _ work: @escaping () async throws -> String) {
+        busy = true
+        status = "\(label)…"
+        Task { @MainActor in
+            do { status = try await work() }
+            catch { status = "\(label) failed: \(error.localizedDescription)" }
+            busy = false
+        }
+    }
+
+    private struct Fail: LocalizedError {
+        let message: String
+        init(_ m: String) { message = m }
+        var errorDescription: String? { message }
+    }
+}
