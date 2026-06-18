@@ -13,7 +13,7 @@ final class BreachViewModel: ObservableObject {
     }
 
     @Published var passwordResults: [PasswordResult] = []
-    @Published var emailBreaches: [BreachEntry] = []
+    @Published var emailBreaches: [EmailBreach] = []
     @Published var status = ""
     @Published var busy = false
 

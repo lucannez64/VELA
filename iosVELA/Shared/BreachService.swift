@@ -6,7 +6,9 @@ struct PasswordBreachResult {
     let count: Int
 }
 
-struct BreachEntry: Identifiable {
+/// A breach record returned by Have I Been Pwned's email lookup (distinct from
+/// the vault's `BreachEntry` model in Vault.swift).
+struct EmailBreach: Identifiable {
     let id = UUID()
     let name: String
     let title: String
@@ -48,7 +50,7 @@ enum BreachService {
         return PasswordBreachResult(breached: false, count: 0)
     }
 
-    static func checkEmail(_ email: String, session: URLSession = .shared) async throws -> [BreachEntry] {
+    static func checkEmail(_ email: String, session: URLSession = .shared) async throws -> [EmailBreach] {
         let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
         var req = URLRequest(url: URL(string: "https://haveibeenpwned.com/api/v3/breachedaccount/\(encoded)?truncateResponse=false")!)
         req.setValue("VELA-iOS-App", forHTTPHeaderField: "User-Agent")
@@ -65,7 +67,7 @@ enum BreachService {
 
         let array = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
         return array.map { json in
-            BreachEntry(
+            EmailBreach(
                 name: json["Name"] as? String ?? "",
                 title: json["Title"] as? String ?? "",
                 domain: json["Domain"] as? String ?? "",
