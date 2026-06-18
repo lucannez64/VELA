@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("vela.syncOnStartup") private var syncOnStartup = false
+    @AppStorage("vela.backgroundSyncMinutes") private var backgroundSyncMinutes = 5
     @State private var confirmReset = false
 
     var body: some View {
@@ -28,7 +29,12 @@ struct SettingsView: View {
                     if accountVM.isRegistered {
                         Button("Sync now") { accountVM.syncNow() }
                             .accessibilityIdentifier("settingsSyncButton")
-                        Toggle("Sync on unlock", isOn: $syncOnStartup)
+                        Toggle("Sync on unlock & foreground", isOn: $syncOnStartup)
+                        Stepper("Auto-sync every \(backgroundSyncMinutes) min",
+                                value: $backgroundSyncMinutes, in: 1...60)
+                            .onChange(of: backgroundSyncMinutes) { _ in
+                                accountVM.startPeriodicSync() // apply the new interval
+                            }
                     }
                 }
 
