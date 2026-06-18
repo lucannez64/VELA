@@ -64,6 +64,7 @@ final class SharingViewModel: ObservableObject {
             try await client.deleteInboxItem(share.id)
             await account.adoptToken(from: client)
             received.removeAll { $0.id == share.id }
+            AuditLog.shared.record("share_received", item.name)
             return "Added \(item.name)"
         }
     }
@@ -74,6 +75,7 @@ final class SharingViewModel: ObservableObject {
             try await client.deleteInboxItem(share.id)
             await account.adoptToken(from: client)
             received.removeAll { $0.id == share.id }
+            AuditLog.shared.record("share_declined")
             return "Declined"
         }
     }
@@ -84,6 +86,7 @@ final class SharingViewModel: ObservableObject {
             try await client.deleteLinkedShare(share.id)
             await account.adoptToken(from: client)
             sent.removeAll { $0.id == share.id }
+            AuditLog.shared.record("share_revoked")
             return "Revoked"
         }
     }

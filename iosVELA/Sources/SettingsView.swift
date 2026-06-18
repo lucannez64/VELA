@@ -45,6 +45,13 @@ struct SettingsView: View {
                         .accessibilityIdentifier("devicesLink")
                 }
 
+                Section("Tools") {
+                    NavigationLink("Breach Monitor") { BreachMonitorView(vault: vm) }
+                        .accessibilityIdentifier("breachLink")
+                    NavigationLink("Activity Log") { AuditLogView() }
+                        .accessibilityIdentifier("auditLink")
+                }
+
                 Section("Security") {
                     Button("Lock vault") {
                         vm.lock()

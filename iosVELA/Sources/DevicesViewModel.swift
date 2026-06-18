@@ -31,6 +31,7 @@ final class DevicesViewModel: ObservableObject {
             let list = try await client.listDevices()
             await account.adoptToken(from: client)
             devices = list
+            AuditLog.shared.record("device_revoked", device.name)
             return "Revoked \(device.name)"
         }
     }
