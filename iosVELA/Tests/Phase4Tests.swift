@@ -52,7 +52,7 @@ final class Phase4Tests: XCTestCase {
 
         let merged = VaultMerge.merge(local: [older], remote: [newer])
         XCTAssertEqual(merged.count, 1)
-        XCTAssertEqual(merged.first?.username, "new")
+        XCTAssertEqual(merged.first?.username ?? "", "new")
     }
 
     func testMergeUnionsDistinctItems() {

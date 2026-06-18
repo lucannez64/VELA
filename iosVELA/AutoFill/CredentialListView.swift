@@ -95,7 +95,7 @@ struct CredentialListView: View {
                     Button { model.pick(login) } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(login.name).font(.body).foregroundStyle(.primary)
-                            Text(login.username).font(.caption).foregroundStyle(.secondary)
+                            Text(login.subtitle).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }

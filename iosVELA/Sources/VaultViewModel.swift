@@ -72,6 +72,19 @@ final class VaultViewModel: ObservableObject {
         persist()
     }
 
+    /// Add any item kind (login / card / note).
+    func add(_ item: VaultItem) {
+        items.append(item)
+        persist()
+    }
+
+    /// Replace an existing item by id, stamping `updatedAt`.
+    func update(_ item: VaultItem) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[index] = item.touched()
+        persist()
+    }
+
     func delete(_ item: VaultItem) {
         items.removeAll { $0.id == item.id }
         persist()

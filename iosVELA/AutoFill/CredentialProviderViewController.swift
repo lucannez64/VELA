@@ -34,7 +34,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             queries: queries,
             onPick: { [weak self] item in
                 self?.extensionContext.completeRequest(
-                    withSelectedCredential: ASPasswordCredential(user: item.username, password: item.password)
+                    withSelectedCredential: ASPasswordCredential(user: item.username ?? "", password: item.password ?? "")
                 )
             },
             onCancel: { [weak self] in

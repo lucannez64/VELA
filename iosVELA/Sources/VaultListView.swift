@@ -47,7 +47,7 @@ struct VaultListView: View {
                 }
             }
             .sheet(isPresented: $showingAdd) {
-                AddItemView(vm: vm)
+                AddEditItemView(vm: vm)
             }
             .sheet(isPresented: $showingAccount) {
                 AccountView(vm: accountVM)
@@ -75,13 +75,13 @@ struct VaultListView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.green.opacity(0.2))
                     .frame(width: 36, height: 36)
-                Text(String(item.name.prefix(1)).uppercased())
+                Image(systemName: item.kind.systemImage)
                     .font(.headline)
                     .foregroundStyle(.green)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.body)
-                Text(item.username).font(.caption).foregroundStyle(.secondary)
+                Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
             }
         }
     }
