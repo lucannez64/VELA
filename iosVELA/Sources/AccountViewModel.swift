@@ -22,9 +22,20 @@ final class AccountViewModel: ObservableObject {
     }
 
     var isRegistered: Bool { account != nil }
+    var deviceID: String? { account?.deviceID }
+    var userID: String? { account?.userID }
 
     /// Snapshot of the unlocked vault's items (for the share picker).
     var vaultItems: [VaultItem] { vault.items }
+
+    /// A client bound to the current account/token, or nil if not registered.
+    func makeClient() -> VelaClient? {
+        guard let account = account else { return nil }
+        return VelaClient(baseURL: URL(string: account.serverURL) ?? URL(string: defaultServer)!, token: account.token)
+    }
+
+    /// Persist a token rotated during another screen's request.
+    func adoptToken(from client: VelaClient) async { await persistRenewedToken(from: client) }
 
     private func client() -> VelaClient {
         let urlString = account?.serverURL ?? defaultServer

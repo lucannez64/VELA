@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class VaultViewModel: ObservableObject {
-    enum LockState {
+    enum LockState: Equatable {
         case noVault   // nothing on device yet → Welcome / create
         case locked    // vault exists, awaiting Face ID / Touch ID
         case unlocked  // RMS in memory, vault open
@@ -88,6 +88,22 @@ final class VaultViewModel: ObservableObject {
     func delete(_ item: VaultItem) {
         items.removeAll { $0.id == item.id }
         persist()
+    }
+
+    /// Lock the vault: drop the in-memory RMS and items, return to the unlock screen.
+    func lock() {
+        guard repo.hasVault() else { return }
+        rms = nil
+        items = []
+        lockState = .locked
+    }
+
+    /// Wipe the on-device vault entirely (reset local security).
+    func wipe() {
+        repo.reset()
+        rms = nil
+        items = []
+        lockState = .noVault
     }
 
     // MARK: - Phase 4 (server sync) accessors

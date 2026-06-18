@@ -4,7 +4,6 @@ import SwiftUI
 /// authenticate, sync the vault, share items, and set up recovery.
 struct AccountView: View {
     @ObservedObject var vm: AccountViewModel
-    @Environment(\.dismiss) private var dismiss
 
     @State private var serverURL = "https://vault.klyt.eu"
     @State private var deviceName = "iPhone"
@@ -12,32 +11,25 @@ struct AccountView: View {
     @State private var selectedItemID = ""
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if let account = vm.account {
-                    registeredSections(account)
-                } else {
-                    registerSection
-                }
+        Form {
+            if let account = vm.account {
+                registeredSections(account)
+            } else {
+                registerSection
+            }
 
-                if !vm.status.isEmpty {
-                    Section {
-                        Text(vm.status)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("accountStatus")
-                    }
+            if !vm.status.isEmpty {
+                Section {
+                    Text(vm.status)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("accountStatus")
                 }
             }
-            .navigationTitle("Account")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .disabled(vm.busy)
         }
+        .navigationTitle("Account")
+        .navigationBarTitleDisplayMode(.inline)
+        .disabled(vm.busy)
     }
 
     private var registerSection: some View {
