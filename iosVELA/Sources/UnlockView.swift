@@ -4,13 +4,14 @@ import SwiftUI
 /// "Unlock" runs Face ID / Touch ID (Phase 2) and decrypts the vault.
 struct UnlockView: View {
     @ObservedObject var vm: VaultViewModel
+    @State private var password = ""
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 20) {
                 Spacer()
-                Image(systemName: "faceid")
+                Image(systemName: vm.unlockMode == .password ? "lock.fill" : "faceid")
                     .font(.system(size: 72))
                     .foregroundStyle(.green)
                 Text("VELA")
@@ -23,21 +24,57 @@ struct UnlockView: View {
                 if let error = vm.errorMessage {
                     Text(error).font(.callout).foregroundStyle(.red)
                 }
-                Button {
-                    vm.unlock()
-                } label: {
-                    Label("Unlock with Face ID", systemImage: "lock.open.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                if vm.unlockMode == .password {
+                    passwordControls
+                } else {
+                    biometricButton
                 }
-                .background(.green)
-                .foregroundStyle(.black)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .accessibilityIdentifier("unlockButton")
-                .padding(.horizontal, 32)
-                .padding(.bottom, 40)
             }
         }
+    }
+
+    private var biometricButton: some View {
+        Button {
+            vm.unlock()
+        } label: {
+            Label("Unlock with Face ID", systemImage: "lock.open.fill")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+        }
+        .background(.green)
+        .foregroundStyle(.black)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityIdentifier("unlockButton")
+        .padding(.horizontal, 32)
+        .padding(.bottom, 40)
+    }
+
+    private var passwordControls: some View {
+        VStack(spacing: 14) {
+            SecureField("Password", text: $password)
+                .textContentType(.password)
+                .padding()
+                .background(.white.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("unlockPasswordField")
+                .onSubmit { vm.unlock(password: password) }
+            Button {
+                vm.unlock(password: password)
+            } label: {
+                Text("Unlock")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .background(.green)
+            .foregroundStyle(.black)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .disabled(password.isEmpty)
+            .accessibilityIdentifier("unlockButton")
+        }
+        .padding(.horizontal, 32)
+        .padding(.bottom, 40)
     }
 }

@@ -9,8 +9,11 @@ final class VaultViewModel: ObservableObject {
         case unlocked  // RMS in memory, vault open
     }
 
+    enum UnlockMode { case biometric, password }
+
     @Published var items: [VaultItem] = []
     @Published var lockState: LockState = .noVault
+    @Published var unlockMode: UnlockMode = .biometric
     @Published var errorMessage: String?
 
     private let repo: VaultRepository
@@ -28,6 +31,7 @@ final class VaultViewModel: ObservableObject {
         if repo.hasVault() {
             // Don't read the RMS yet — that would fire Face ID before any UI.
             // The UnlockView drives unlock() on demand.
+            unlockMode = repo.usesPasswordUnlock ? .password : .biometric
             lockState = .locked
         }
 
@@ -64,7 +68,31 @@ final class VaultViewModel: ObservableObject {
         rms = r
         items = []
         try repo.save(VaultStore(items: items), rms: r)
+        unlockMode = .biometric
         lockState = .unlocked
+    }
+
+    /// Create a vault protected by a password instead of biometrics.
+    func createVault(password: String) throws {
+        let r = try repo.generatePasswordRMS(password: password)
+        rms = r
+        items = []
+        try repo.save(VaultStore(items: items), rms: r)
+        unlockMode = .password
+        lockState = .unlocked
+    }
+
+    /// Unlock a password-protected vault.
+    func unlock(password: String) {
+        errorMessage = nil
+        do {
+            let r = try repo.loadRMSWithPassword(password)
+            items = try repo.load(rms: r).items
+            rms = r
+            lockState = .unlocked
+        } catch {
+            errorMessage = "Wrong password."
+        }
     }
 
     func addLogin(name: String, url: String, username: String, password: String, totp: String?) {
