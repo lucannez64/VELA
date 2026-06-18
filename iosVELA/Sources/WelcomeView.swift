@@ -2,7 +2,9 @@ import SwiftUI
 
 struct WelcomeView: View {
     @ObservedObject var vm: VaultViewModel
+    @ObservedObject var accountVM: AccountViewModel
     @State private var showingPassword = false
+    @State private var showingEnroll = false
 
     var body: some View {
         ZStack {
@@ -46,11 +48,19 @@ struct WelcomeView: View {
                     .font(.subheadline)
                     .foregroundStyle(.green)
                     .accessibilityIdentifier("createWithPasswordButton")
+
+                Button("Join with an enrollment code") { showingEnroll = true }
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .accessibilityIdentifier("joinWithCodeButton")
                     .padding(.bottom, 40)
             }
         }
         .sheet(isPresented: $showingPassword) {
             CreatePasswordView(vm: vm)
+        }
+        .sheet(isPresented: $showingEnroll) {
+            EnrollView(vault: vm, account: accountVM)
         }
     }
 }

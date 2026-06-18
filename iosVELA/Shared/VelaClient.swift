@@ -200,6 +200,24 @@ actor VelaClient {
                                                  json: ["target_device_id": targetDeviceID], auth: true)
     }
 
+    // MARK: - Enrollment (joining side)
+
+    struct CapsuleResponse: Decodable { let capsule: String }
+
+    /// Download this device's one-shot RMS capsule (cleared server-side after).
+    func getCapsule() async throws -> String {
+        let resp: CapsuleResponse = try await request("GET", "/device/capsule", auth: true)
+        return resp.capsule
+    }
+
+    struct EnrollmentPackageResponse: Decodable { let ciphertext: String }
+
+    /// Fetch an enrollment package by token (no auth — the token is the secret).
+    func getEnrollmentPackage(token: String) async throws -> String {
+        let resp: EnrollmentPackageResponse = try await request("GET", "/device/enrollment-package/\(token)", auth: false)
+        return resp.ciphertext
+    }
+
     // MARK: - Recovery share
 
     func putRecoveryShare(_ shareBase64: String) async throws {

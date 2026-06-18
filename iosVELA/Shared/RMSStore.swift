@@ -9,6 +9,8 @@ import LocalAuthentication
 protocol RMSStore {
     func exists() -> Bool
     func generate() throws -> Data
+    /// Persist a specific RMS (e.g. one recovered during device enrollment).
+    func store(_ rms: Data) throws
     /// Load the RMS. Biometric-backed stores authenticate the user first; an
     /// already-authenticated `LAContext` may be supplied to avoid a second prompt.
     func load(context: LAContext?) throws -> Data
@@ -49,6 +51,11 @@ struct KeychainRMSStore: RMSStore {
 
     func generate() throws -> Data {
         let data = try randomRMS()
+        try store(data)
+        return data
+    }
+
+    func store(_ rms: Data) throws {
         var error: Unmanaged<CFError>?
         // .userPresence → biometry if available, else device passcode.
         // WhenPasscodeSetThisDeviceOnly → requires a passcode, never synced/backed up.
@@ -64,12 +71,11 @@ struct KeychainRMSStore: RMSStore {
         SecItemDelete(baseQuery() as CFDictionary) // replace any prior seed
 
         var add = baseQuery()
-        add[kSecValueData as String] = data
+        add[kSecValueData as String] = rms
         add[kSecAttrAccessControl as String] = access
         guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else {
             throw VaultError.keychain
         }
-        return data
     }
 
     func load(context: LAContext?) throws -> Data {
@@ -117,8 +123,12 @@ struct FileRMSStore: RMSStore {
 
     func generate() throws -> Data {
         let data = try randomRMS()
-        try data.write(to: url, options: [.completeFileProtection, .atomic])
+        try store(data)
         return data
+    }
+
+    func store(_ rms: Data) throws {
+        try rms.write(to: url, options: [.completeFileProtection, .atomic])
     }
 
     func load(context: LAContext?) throws -> Data {

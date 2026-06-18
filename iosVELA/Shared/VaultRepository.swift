@@ -77,6 +77,18 @@ struct VaultRepository {
         try passwordStore.unwrap(password: password)
     }
 
+    // MARK: - Enrollment (adopt a recovered RMS)
+
+    /// Store an RMS recovered during enrollment under biometric protection.
+    func adoptRMSBiometric(_ rms: Data) throws {
+        try rmsStore.store(rms)
+    }
+
+    /// Store an RMS recovered during enrollment under a password.
+    func adoptRMSWithPassword(_ rms: Data, password: String) throws {
+        try passwordStore.wrap(rms: rms, password: password)
+    }
+
     func save(_ store: VaultStore, rms: Data) throws {
         let vaultJSON = String(decoding: try JSONEncoder().encode(store), as: UTF8.self)
         guard let ciphertext = VelaCoreFFI.encryptVault(rmsBase64: rms.base64EncodedString(), vaultJSON: vaultJSON) else {

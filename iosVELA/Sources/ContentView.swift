@@ -19,20 +19,34 @@ struct ContentView: View {
             case .locked:
                 UnlockView(vm: vm)
             case .noVault:
-                WelcomeView(vm: vm)
+                WelcomeView(vm: vm, accountVM: accountVM)
             }
         }
         .preferredColorScheme(.dark)
         .onChange(of: vm.lockState) { newValue in
-            // Sync-on-unlock (Settings toggle).
-            if newValue == .unlocked, autoSyncEnabled, accountVM.isRegistered {
-                accountVM.syncNow()
+            if newValue == .unlocked {
+                if autoSyncEnabled, accountVM.isRegistered { accountVM.syncNow() } // sync-on-unlock
+                accountVM.startPeriodicSync()
+            } else {
+                accountVM.stopPeriodicSync()
             }
         }
         .onChange(of: scenePhase) { phase in
-            // Sync-on-foreground: refresh when returning to an unlocked vault.
-            if phase == .active, vm.lockState == .unlocked, autoSyncEnabled, accountVM.isRegistered {
-                accountVM.syncNow()
+            switch phase {
+            case .active:
+                // Security model (Android parity): reload decrypted items kept in
+                // the session, then refresh and resume the periodic sync.
+                vm.reloadFromSession()
+                if vm.lockState == .unlocked, autoSyncEnabled, accountVM.isRegistered {
+                    accountVM.syncNow()
+                }
+                if vm.lockState == .unlocked { accountVM.startPeriodicSync() }
+            case .background:
+                // Drop decrypted plaintext from memory (keep the RMS session).
+                vm.clearMemory()
+                accountVM.stopPeriodicSync()
+            default:
+                break
             }
         }
     }

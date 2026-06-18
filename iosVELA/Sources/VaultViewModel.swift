@@ -126,6 +126,36 @@ final class VaultViewModel: ObservableObject {
         lockState = .locked
     }
 
+    /// Adopt an RMS recovered during enrollment, securing it with the chosen mode,
+    /// then open an (empty) vault ready for the first sync to populate.
+    func adoptVault(rms newRMS: Data, mode: UnlockMode, password: String?) throws {
+        switch mode {
+        case .biometric:
+            try repo.adoptRMSBiometric(newRMS)
+        case .password:
+            guard let password = password, !password.isEmpty else { throw VaultError.crypto }
+            try repo.adoptRMSWithPassword(newRMS, password: password)
+        }
+        rms = newRMS
+        items = []
+        try repo.save(VaultStore(items: items), rms: newRMS)
+        unlockMode = mode
+        lockState = .unlocked
+    }
+
+    /// Security model (matches Android on background): drop decrypted plaintext
+    /// from memory but keep the RMS session, so foregrounding reloads without re-auth.
+    func clearMemory() {
+        guard lockState == .unlocked else { return }
+        items = []
+    }
+
+    /// Reload decrypted items from the kept session (used on foreground).
+    func reloadFromSession() {
+        guard lockState == .unlocked, let rms = rms else { return }
+        if let store = try? repo.load(rms: rms) { items = store.items }
+    }
+
     /// Wipe the on-device vault entirely (reset local security).
     func wipe() {
         repo.reset()
