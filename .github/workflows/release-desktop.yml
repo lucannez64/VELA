@@ -1,0 +1,83 @@
+name: release-desktop
+
+# Build the Windows desktop app (Tauri) and publish a GitHub release carrying
+# the MSI (WiX) and the NSIS setup .exe. The version is derived from the commit:
+# patch = number of commits on the branch, so it is monotonic and unique, and
+# the short SHA is recorded in the release name/body for traceability.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "desktopVELA/**"
+      - "libVELA/vela-crypto/**"
+      - ".github/workflows/release-desktop.yml"
+
+concurrency:
+  group: release-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full history for `git rev-list --count`
+
+      - name: Derive version from commit
+        id: version
+        shell: bash
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          VERSION="0.1.$COUNT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Stamp the commit-derived version into the Tauri config so the bundle
+      # filenames (VELA_0.1.<n>_x64_en-US.msi / VELA_0.1.<n>_x64-setup.exe)
+      # reflect the build.
+      - name: Stamp version into tauri.conf.json
+        shell: bash
+        run: |
+          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
+            desktopVELA/src-tauri/tauri.conf.json > tmp.json
+          mv tmp.json desktopVELA/src-tauri/tauri.conf.json
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktopVELA/src-tauri
+
+      - name: Install frontend deps
+        working-directory: desktopVELA
+        run: bun install
+
+      # tauri-action runs beforeBuildCommand (bun run build), builds the app,
+      # then creates/updates the release and uploads the MSI + NSIS bundles.
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktopVELA
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: "VELA Desktop v${{ steps.version.outputs.version }}"
+          releaseBody: |
+            Automated Windows desktop build.
+
+            - Commit: ${{ github.sha }} (`${{ steps.version.outputs.sha }}`)
+            - Installers: `.msi` (WiX) and `-setup.exe` (NSIS)
+          releaseDraft: false
+          prerelease: false
+          # bundle.targets = "all" in tauri.conf.json yields both the MSI (WiX)
+          # and the NSIS setup .exe on Windows.
+          args: --bundles msi nsis
