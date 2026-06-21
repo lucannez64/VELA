@@ -35,23 +35,21 @@ final class SharingViewModel: ObservableObject {
     func refresh() {
         run("Loading shares") { [self] in
             guard let client = account.makeClient() else { throw Fail("register first") }
-            guard let rms = vault.currentRMS?.base64EncodedString() else { throw Fail("unlock the vault first") }
+            guard let shareDK = account.account?.shareDK, !shareDK.isEmpty else { throw Fail("no share key — re-register the device") }
             let inbox = try await client.shareInbox()
             let linked = try await client.linkedShares()
             await account.adoptToken(from: client)
 
             received = inbox.items.map { item in
-                let decoded = decode(capsule: item.capsule, rms: rms)
+                let decoded = openCapsule(item.capsule, shareDK: shareDK)
                 return ReceivedShare(id: item.id, from: item.sender_user_id,
                                      itemName: decoded?.name ?? "Shared item",
                                      itemType: decoded?.kind.displayName ?? "Item", item: decoded)
             }
+            let myUserID = account.account?.userID ?? ""
             sent = linked
-                .filter { $0.sender_user_id != $0.recipient_user_id }
-                .map { share in
-                    let decoded = decode(capsule: share.capsule, rms: rms)
-                    return SentShare(id: share.id, to: share.recipient_user_id, itemName: decoded?.name ?? "Shared item")
-                }
+                .filter { $0.sender_user_id == myUserID }
+                .map { share in SentShare(id: share.id, to: share.recipient_user_id, itemName: "Shared item") }
             return "\(received.count) received · \(sent.count) sent"
         }
     }
@@ -91,12 +89,9 @@ final class SharingViewModel: ObservableObject {
         }
     }
 
-    private func decode(capsule: String, rms: String) -> VaultItem? {
-        guard let json = VelaCoreFFI.decryptVault(rmsBase64: rms, ciphertextBase64: capsule) else { return nil }
-        let data = Data(json.utf8)
-        if let store = try? JSONDecoder().decode(VaultStore.self, from: data), let item = store.items.first {
-            return item
-        }
+    private func openCapsule(_ capsule: String, shareDK: String) -> VaultItem? {
+        guard let itemJSON = VelaCoreFFI.openShare(shareDKBase64: shareDK, capsuleBase64: capsule) else { return nil }
+        let data = Data(itemJSON.utf8)
         return try? JSONDecoder().decode(VaultItem.self, from: data)
     }
 

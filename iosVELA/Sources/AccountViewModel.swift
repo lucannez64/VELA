@@ -58,13 +58,16 @@ final class AccountViewModel: ObservableObject {
             guard let identity = VelaCoreFFI.generateIdentity() else { throw Failure("identity generation failed") }
             let base = URL(string: serverURL) ?? URL(string: defaultServer)!
             let client = VelaClient(baseURL: base)
-            let resp = try await client.register(hybridEK: identity.hybridEK, hybridVK: identity.hybridVK, deviceName: deviceName)
+            let resp = try await client.register(hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
+                                                  deviceName: deviceName, shareEK: identity.shareEK)
             let token = await client.currentToken ?? resp.token
-            let state = AccountState(
+            var state = AccountState(
                 serverURL: serverURL, userID: resp.user_id, deviceID: resp.device_id,
                 hybridEK: identity.hybridEK, hybridVK: identity.hybridVK, hybridSK: identity.hybridSK,
                 token: token
             )
+            state.shareEK = identity.shareEK
+            state.shareDK = identity.shareDK
             try store.save(state)
             account = state
             AuditLog.shared.record("device_registered", String(resp.device_id.prefix(8)))
@@ -96,6 +99,7 @@ final class AccountViewModel: ObservableObject {
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             guard account != nil else { throw Failure("register first") }
             let client = client()
+            await ensureShareKey(client: client)
             let engine = SyncEngine(client: client, repo: VaultRepository())
             let merged = try await engine.sync(rms: rms, localItems: vault.items)
             await persistRenewedToken(from: client)
@@ -105,22 +109,63 @@ final class AccountViewModel: ObservableObject {
         }
     }
 
-    /// Share a vault item with another user (capsule = item sealed under our vault key).
+    /// Backfill a share keypair for accounts created before sharing existed.
+    /// Generates the keypair locally, registers the public half, persists both.
+    /// Best-effort and a no-op once a share key is present.
+    private func ensureShareKey(client: VelaClient) async {
+        guard var state = account, state.shareEK.isEmpty else { return }
+        guard let pair = VelaCoreFFI.generateShareKeypair() else { return }
+        do {
+            try await client.putMyShareEK(pair.shareEK)
+            state.shareEK = pair.shareEK
+            state.shareDK = pair.shareDK
+            try store.save(state)
+            account = state
+        } catch {
+            // Leave shareEK empty so the next sync retries the backfill.
+        }
+    }
+
+    /// Share a vault item with another user using real KEM-sealed encryption.
     func share(item: VaultItem, recipientUserID: String) {
         run("Sharing") { [self] in
-            guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             guard account != nil else { throw Failure("register first") }
             let itemJSON = String(decoding: try JSONEncoder().encode(item), as: UTF8.self)
-            guard let capsule = VelaCoreFFI.encryptVault(rmsBase64: rms.base64EncodedString(), vaultJSON: "{\"items\":[\(itemJSON)]}") else {
-                throw Failure("sealing failed")
-            }
             let client = client()
-            let resp = try await client.sendShare(recipientUserID: recipientUserID, capsuleBase64: capsule)
+            // Fetch recipient's share public key.
+            let recipientShareEK = try await client.getRecipientShareEK(userID: recipientUserID)
+            // Seal the item with the recipient's KEM key — server never sees plaintext.
+            guard let capsuleB64 = VelaCoreFFI.sealShare(recipientShareEKBase64: recipientShareEK, itemJSON: itemJSON) else {
+                throw Failure("KEM sealing failed")
+            }
+            let resp = try await client.sendShare(recipientUserID: recipientUserID, capsuleBase64: capsuleB64)
             await persistRenewedToken(from: client)
+            // Persist share record so we can re-seal on update.
+            shareManifest.add(ShareRecord(
+                shareID: resp.share_id, vaultItemID: item.id,
+                recipientUserID: recipientUserID, recipientShareEK: recipientShareEK
+            ))
             AuditLog.shared.record("share_sent", String(recipientUserID.prefix(8)))
             return "Shared (inbox \(resp.inbox_id.prefix(8))…)"
         }
     }
+
+    /// Re-seal and push updated capsules to all recipients who have linked shares for `item`.
+    func pushShareUpdates(for item: VaultItem) async {
+        guard account != nil else { return }
+        let records = shareManifest.records(for: item.id)
+        guard !records.isEmpty else { return }
+        let itemJSON = (try? String(decoding: JSONEncoder().encode(item), as: UTF8.self)) ?? ""
+        let client = client()
+        for record in records {
+            guard let newCapsule = VelaCoreFFI.sealShare(
+                recipientShareEKBase64: record.recipientShareEK, itemJSON: itemJSON) else { continue }
+            try? await client.updateLinkedShare(id: record.shareID, capsuleBase64: newCapsule)
+        }
+        await persistRenewedToken(from: client)
+    }
+
+    var shareManifest = ShareManifest()
 
     /// Split the RMS into recovery shares and store one on the server.
     func setupRecovery(threshold: Int = 2, total: Int = 3) {

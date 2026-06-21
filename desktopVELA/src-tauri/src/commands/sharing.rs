@@ -25,6 +25,9 @@ pub struct Share {
     pub accepted: Option<bool>,
     pub allow_edit: bool,
     pub encrypted_payload: Option<Vec<u8>>,
+    /// Base64 share public key of the recipient (for re-sealing on update).
+    #[serde(default)]
+    pub recipient_share_ek: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -129,8 +132,14 @@ fn current_user_id(state: &AppState) -> String {
 }
 
 fn sync_received_linked_items(state: &AppState, store: &ShareStore) -> Result<(), String> {
-    let crypto = state.crypto.read();
-    let crypto = crypto.as_ref().ok_or("Crypto not initialized")?;
+    let share_dk = {
+        let crypto = state.crypto.read();
+        let crypto = crypto.as_ref().ok_or("Crypto not initialized")?;
+        match state.store.load_identity_keys(crypto) {
+            Ok(Some(keys)) => keys.share_dk,
+            _ => return Ok(()),
+        }
+    };
 
     let mut vault = state.vault.write();
     let mut changed = false;
@@ -143,7 +152,7 @@ fn sync_received_linked_items(state: &AppState, store: &ShareStore) -> Result<()
         let Some(payload) = &share.encrypted_payload else {
             continue;
         };
-        let Ok(decrypted) = crypto.decrypt_vault(payload) else {
+        let Ok(decrypted) = crate::crypto::open_share(&share_dk, payload) else {
             continue;
         };
         let Ok(item) = serde_json::from_slice::<crate::vault::VaultItem>(&decrypted) else {
@@ -162,7 +171,6 @@ fn sync_received_linked_items(state: &AppState, store: &ShareStore) -> Result<()
     }
 
     drop(vault);
-    drop(crypto);
 
     if changed {
         if let Some(crypto) = state.crypto.read().as_ref() {
@@ -182,22 +190,6 @@ pub(crate) async fn push_sent_share_update_inner(
     item: &crate::vault::VaultItem,
 ) -> Result<(), String> {
     let mut store = load_share_store(state).unwrap_or_default();
-    let Some(share) = store
-        .sent_shares
-        .iter_mut()
-        .find(|s| s.item_id == item.id())
-    else {
-        return Ok(());
-    };
-
-    let encrypted_payload = {
-        let crypto_guard = state.crypto.read();
-        let crypto = crypto_guard.as_ref().ok_or("Session not unlocked")?;
-        let item_json = serde_json::to_vec(item).map_err(|e| e.to_string())?;
-        crypto
-            .encrypt_vault(&item_json)
-            .map_err(|e| e.to_string())?
-    };
 
     let token = match state.get_session_token() {
         Some(token) => token,
@@ -205,17 +197,43 @@ pub(crate) async fn push_sent_share_update_inner(
     };
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
-    let capsule_b64 = B64.encode(&encrypted_payload);
-    let new_tok = client
-        .update_linked_share(&token, &share.id, &capsule_b64)
-        .await
-        .map_err(|e| format!("Failed to update linked share: {e}"))?;
-    if let Some(t) = new_tok {
-        state.session.write().set_server_token(t);
+
+    let item_json = serde_json::to_vec(item).map_err(|e| e.to_string())?;
+
+    let shares_for_item: Vec<usize> = store
+        .sent_shares
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.item_id == item.id())
+        .map(|(i, _)| i)
+        .collect();
+
+    for idx in shares_for_item {
+        let share = &store.sent_shares[idx];
+        let Some(recipient_share_ek_b64) = &share.recipient_share_ek else {
+            continue;
+        };
+        let recipient_share_ek = B64
+            .decode(recipient_share_ek_b64.as_bytes())
+            .map_err(|e| e.to_string())?;
+        let capsule = crate::crypto::seal_share(&recipient_share_ek, &item_json)
+            .map_err(|e| e.to_string())?;
+        let capsule_b64 = B64.encode(&capsule);
+
+        let share_id = share.id.clone();
+        let new_tok = client
+            .update_linked_share(&token, &share_id, &capsule_b64)
+            .await
+            .map_err(|e| format!("Failed to update linked share: {e}"))?;
+        if let Some(t) = new_tok {
+            state.session.write().set_server_token(t);
+        }
+
+        let share = &mut store.sent_shares[idx];
+        share.encrypted_payload = Some(capsule);
+        share.shared_at = Utc::now();
     }
 
-    share.encrypted_payload = Some(encrypted_payload);
-    share.shared_at = Utc::now();
     save_share_store(state, &store)?;
     Ok(())
 }
@@ -285,6 +303,7 @@ pub(crate) async fn refresh_linked_shares_inner(state: &AppState) -> Result<(), 
                     accepted: None,
                     allow_edit: false,
                     encrypted_payload: Some(payload.clone()),
+                    recipient_share_ek: None,
                 });
             }
         }
@@ -347,6 +366,7 @@ pub async fn get_shares(state: State<'_, Arc<AppState>>) -> Result<Vec<Share>, S
                         accepted: None,
                         allow_edit: false,
                         encrypted_payload: Some(capsule_bytes),
+                        recipient_share_ek: None,
                     };
                     store.received_shares.push(share);
                 }
@@ -370,32 +390,41 @@ pub async fn send_share(
     state: State<'_, Arc<AppState>>,
     request: SendShareRequest,
 ) -> Result<Share, String> {
-    let (item_json, encrypted_payload, device_id) = {
-        let crypto = state.crypto.read();
-        let crypto = crypto.as_ref().ok_or("Session not unlocked")?;
+    let token = state
+        .get_session_token()
+        .ok_or("Not authenticated — please unlock your vault and try again.")?;
 
+    let (item_json, device_id) = {
         let vault = state.vault.read();
         let item = vault
             .get_item(&request.item_id)
             .ok_or("Item not found")?
             .clone();
         drop(vault);
-
         let item_json = serde_json::to_vec(&item).map_err(|e| e.to_string())?;
-        let encrypted_payload = crypto
-            .encrypt_vault(&item_json)
-            .map_err(|e| e.to_string())?;
-
         let device_id = state
             .store
             .load_device_id()
             .unwrap_or_else(|_| "unknown".to_string());
-
-        (item_json, encrypted_payload, device_id)
+        (item_json, device_id)
     };
 
     let item: crate::vault::VaultItem =
         serde_json::from_slice(&item_json).map_err(|e| e.to_string())?;
+
+    // Fetch recipient's share public key so we can seal with real KEM.
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let recipient_share_ek_b64 = client
+        .get_recipient_share_ek(&token, &request.recipient)
+        .await
+        .map_err(|e| format!("Could not fetch recipient share key: {e}. Check the recipient's user ID."))?;
+
+    let recipient_share_ek = B64
+        .decode(recipient_share_ek_b64.as_bytes())
+        .map_err(|_| "Invalid recipient share key encoding")?;
+    let capsule = crate::crypto::seal_share(&recipient_share_ek, &item_json)
+        .map_err(|e| format!("Failed to seal share: {e}"))?;
 
     let share = Share {
         id: String::new(),
@@ -408,67 +437,61 @@ pub async fn send_share(
         shared_at: Utc::now(),
         accepted: None,
         allow_edit: request.allow_edit,
-        encrypted_payload: Some(encrypted_payload.clone()),
+        encrypted_payload: Some(capsule.clone()),
+        recipient_share_ek: Some(recipient_share_ek_b64),
     };
 
     let mut store = load_share_store(&state).unwrap_or_default();
 
-    let server_url = state.server_url.read().clone();
-    let client = ApiClient::with_url(server_url);
-    if let Some(token) = state.get_session_token() {
-        let capsule_b64 = B64.encode(&encrypted_payload);
-        match client
-            .send_share(&token, &request.recipient, &capsule_b64)
-            .await
-        {
-            Ok((resp, new_tok)) => {
-                if let Some(t) = new_tok {
-                    state.session.write().set_server_token(t);
-                }
-                let _ = resp.inbox_id;
-                let mut share = share.clone();
-                share.id = resp.share_id;
-                tracing::info!(
-                    "Share delivered to server: {} to {}",
-                    share.item_name,
-                    request.recipient
-                );
-                // Mark the original vault item as shared so the vault list shows the indicator.
-                {
-                    let mut vault = state.vault.write();
-                    if let Some(existing) = vault.get_item(&request.item_id).cloned() {
-                        let marked =
-                            existing.with_shared_status(true, Some(request.recipient.clone()));
-                        vault.update_item(marked);
-                    }
-                }
-                if let Some(crypto) = state.crypto.read().as_ref() {
-                    let vault_snapshot = state.vault.read().clone();
-                    let _ = state.store.save_vault(&vault_snapshot, crypto);
-                }
-
-                store.add_sent_share(share.clone());
-                save_share_store(&state, &store)?;
-
-                tracing::info!("Share sent: {} to {}", share.item_name, request.recipient);
-                record_audit_event(
-                    &state,
-                    AuditAction::ShareSent {
-                        recipient_user_id: request.recipient.clone(),
-                    },
-                );
-                crate::commands::vault::emit_vault_items_changed(&app);
-                return Ok(share);
+    let capsule_b64 = B64.encode(&capsule);
+    match client
+        .send_share(&token, &request.recipient, &capsule_b64)
+        .await
+    {
+        Ok((resp, new_tok)) => {
+            if let Some(t) = new_tok {
+                state.session.write().set_server_token(t);
             }
-            Err(e) => {
-                tracing::warn!("Share send to server failed: {}", e);
-                return Err(format!(
-                    "Could not deliver share: {e}. Check the recipient's user ID."
-                ));
+            let _ = resp.inbox_id;
+            let mut share = share.clone();
+            share.id = resp.share_id;
+            tracing::info!(
+                "Share delivered to server: {} to {}",
+                share.item_name,
+                request.recipient
+            );
+            {
+                let mut vault = state.vault.write();
+                if let Some(existing) = vault.get_item(&request.item_id).cloned() {
+                    let marked =
+                        existing.with_shared_status(true, Some(request.recipient.clone()));
+                    vault.update_item(marked);
+                }
             }
+            if let Some(crypto) = state.crypto.read().as_ref() {
+                let vault_snapshot = state.vault.read().clone();
+                let _ = state.store.save_vault(&vault_snapshot, crypto);
+            }
+
+            store.add_sent_share(share.clone());
+            save_share_store(&state, &store)?;
+
+            tracing::info!("Share sent: {} to {}", share.item_name, request.recipient);
+            record_audit_event(
+                &state,
+                AuditAction::ShareSent {
+                    recipient_user_id: request.recipient.clone(),
+                },
+            );
+            crate::commands::vault::emit_vault_items_changed(&app);
+            Ok(share)
         }
-    } else {
-        return Err("Not authenticated — please unlock your vault and try again.".to_string());
+        Err(e) => {
+            tracing::warn!("Share send to server failed: {}", e);
+            Err(format!(
+                "Could not deliver share: {e}. Check the recipient's user ID."
+            ))
+        }
     }
 }
 
@@ -488,18 +511,24 @@ pub async fn accept_share(
         .ok_or("Share not found")?
         .clone();
 
-    if let Some(encrypted_payload) = &share.encrypted_payload {
-        let crypto = state.crypto.read();
-        let crypto = crypto.as_ref().ok_or("Session not unlocked")?;
+    if let Some(capsule) = &share.encrypted_payload {
+        // Load our share secret key to open the KEM-sealed capsule.
+        let share_dk = {
+            let crypto = state.crypto.read();
+            let crypto = crypto.as_ref().ok_or("Session not unlocked")?;
+            state
+                .store
+                .load_identity_keys(crypto)
+                .map_err(|e| e.to_string())?
+                .ok_or("No identity keys found")?
+                .share_dk
+        };
 
-        let decrypted = crypto
-            .decrypt_vault(encrypted_payload)
-            .map_err(|e| e.to_string())?;
+        let decrypted = crate::crypto::open_share(&share_dk, capsule)
+            .map_err(|e| format!("Failed to open share: {e}"))?;
 
         let item: crate::vault::VaultItem =
             serde_json::from_slice(&decrypted).map_err(|e| e.to_string())?;
-
-        let _ = crypto;
 
         // Always give the received copy a fresh ID so it is a distinct vault item,
         // even when the sender and recipient are the same user.

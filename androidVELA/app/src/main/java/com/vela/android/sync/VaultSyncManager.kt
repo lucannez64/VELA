@@ -51,6 +51,7 @@ class VaultSyncManager(
         if (token != settings.bearerToken) {
             settingsStore.updateBearerToken(token)
         }
+        ensureShareKey(client, token)
         return try {
             block(client, token)
         } catch (e: ServerUnauthorizedException) {
@@ -286,6 +287,23 @@ class VaultSyncManager(
             vaultChunkIds.isNotEmpty() -> vaultChunkIds
             manifest.chunks.any { it.chunkId == LEGACY_VAULT_MAIN_CHUNK_ID } -> listOf(LEGACY_VAULT_MAIN_CHUNK_ID)
             else -> emptyList()
+        }
+    }
+
+    /// Backfill a share keypair for identities created before sharing existed.
+    /// Generates the keypair locally, persists it, and registers the public half
+    /// with the server. A no-op once the identity already has a share key.
+    private fun ensureShareKey(client: AndroidVelaApiClient, token: String) {
+        val identity = identityStore.load() ?: return
+        if (identity.shareEkB64.isNotBlank()) return
+        val json = com.vela.android.core.NativeVelaCore.generateShareKeypairJson() ?: return
+        val parsed = org.json.JSONObject(json)
+        val shareEk = parsed.optString("share_ek_b64")
+        val shareDk = parsed.optString("share_dk_b64")
+        if (shareEk.isBlank() || shareDk.isBlank()) return
+        runCatching {
+            client.putMyShareEk(token, shareEk)
+            identityStore.save(identity.copy(shareEkB64 = shareEk, shareDkB64 = shareDk))
         }
     }
 

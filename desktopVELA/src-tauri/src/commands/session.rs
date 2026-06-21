@@ -94,6 +94,7 @@ async fn register_with_server(
         hybrid_vk: B64.encode(&identity.hybrid_vk),
         device_name: Some(device_name.to_string()),
         device_type: Some("desktop".to_string()),
+        share_ek: Some(B64.encode(&identity.share_ek)),
     };
 
     let register_resp = client
@@ -103,10 +104,12 @@ async fn register_with_server(
 
     state
         .store
-        .save_identity_keys(
+        .save_identity_keys_full(
             &identity.hybrid_ek,
             &identity.hybrid_vk,
             &identity.hybrid_sk,
+            &identity.share_ek,
+            &identity.share_dk,
             crypto,
         )
         .map_err(|e| format!("Failed to save identity keys: {}", e))?;

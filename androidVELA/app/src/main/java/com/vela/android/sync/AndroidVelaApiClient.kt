@@ -132,13 +132,15 @@ class AndroidVelaApiClient(
     @Volatile private var selectedTransport: VelaHttpTransport? = null
 
     fun registerAccount(identity: ServerIdentity): RegisterAccountResponse {
-        val body = JSONObject()
+        val bodyObj = JSONObject()
             .put("hybrid_ek", identity.hybridEkB64)
             .put("hybrid_vk", identity.hybridVkB64)
             .put("device_name", android.os.Build.MODEL ?: "Android")
             .put("device_type", "android")
-            .toString()
-            .toByteArray(Charsets.UTF_8)
+        if (identity.shareEkB64.isNotBlank()) {
+            bodyObj.put("share_ek", identity.shareEkB64)
+        }
+        val body = bodyObj.toString().toByteArray(Charsets.UTF_8)
         val response = request("POST", "/account/register", token = "", body = body, contentType = "application/json")
         response.requireSuccess("Account registration failed")
         val json = JSONObject(response.body.toString(Charsets.UTF_8))
@@ -353,6 +355,34 @@ class AndroidVelaApiClient(
     fun deleteLinkedShare(token: String, id: String): String? {
         val response = request("DELETE", "/share/linked/$id", token)
         response.requireSuccess("Linked share delete request failed")
+        return response.newToken
+    }
+
+    fun getRecipientShareEk(token: String, userId: String): String {
+        val response = request("GET", "/share/recipient/$userId/ek", token)
+        response.requireSuccess("Get recipient share key failed")
+        return JSONObject(response.body.toString(Charsets.UTF_8)).getString("share_ek")
+    }
+
+    fun updateLinkedShare(token: String, shareId: String, capsuleB64: String): String? {
+        val body = JSONObject()
+            .put("capsule", capsuleB64)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val response = request("PUT", "/share/linked/$shareId", token, body, contentType = "application/json")
+        response.requireSuccess("Update linked share failed")
+        return response.newToken
+    }
+
+    /// Register (or update) the caller's own share encapsulation key. Backfill
+    /// path for accounts created before share keys existed.
+    fun putMyShareEk(token: String, shareEkB64: String): String? {
+        val body = JSONObject()
+            .put("share_ek", shareEkB64)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val response = request("PUT", "/share/my-ek", token, body, contentType = "application/json")
+        response.requireSuccess("Register share key failed")
         return response.newToken
     }
 

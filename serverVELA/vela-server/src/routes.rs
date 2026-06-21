@@ -96,6 +96,11 @@ pub fn build(state: AppState) -> Router {
             "/share/linked/:id",
             delete(crate::share::delete_linked_item),
         )
+        .route(
+            "/share/recipient/:user_id/ek",
+            get(crate::share::get_recipient_ek),
+        )
+        .route("/share/my-ek", put(crate::share::put_my_ek))
         .route("/recovery/share", put(crate::recovery::put_share))
         .route("/recovery/share", get(crate::recovery::get_share))
         .route("/recovery/share", delete(crate::recovery::delete_share))

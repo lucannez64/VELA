@@ -42,11 +42,13 @@ actor VelaClient {
         let token: String?
     }
 
-    func register(hybridEK: String, hybridVK: String, deviceName: String, deviceType: String = "ios") async throws -> RegisterResponse {
-        let body: [String: Any] = [
+    func register(hybridEK: String, hybridVK: String, deviceName: String, deviceType: String = "ios",
+                  shareEK: String? = nil) async throws -> RegisterResponse {
+        var body: [String: Any] = [
             "hybrid_ek": hybridEK, "hybrid_vk": hybridVK,
             "device_name": deviceName, "device_type": deviceType,
         ]
+        if let shareEK = shareEK { body["share_ek"] = shareEK }
         let resp: RegisterResponse = try await request("POST", "/account/register", json: body, auth: false)
         if let t = resp.token { token = t }
         return resp
@@ -174,6 +176,27 @@ actor VelaClient {
 
     func deleteLinkedShare(_ id: String) async throws {
         _ = try await requestRaw("DELETE", "/share/linked/\(id)", body: nil)
+    }
+
+    struct RecipientEKResponse: Decodable { let share_ek: String }
+
+    /// Fetch the share public key registered by a given user.
+    func getRecipientShareEK(userID: String) async throws -> String {
+        let resp: RecipientEKResponse = try await request("GET", "/share/recipient/\(userID)/ek", auth: true)
+        return resp.share_ek
+    }
+
+    /// Update the capsule of an existing linked share (used when the sender changes the vault item).
+    func updateLinkedShare(id: String, capsuleBase64: String) async throws {
+        let _: EmptyResponse = try await request("PUT", "/share/linked/\(id)",
+                                                  json: ["capsule": capsuleBase64], auth: true)
+    }
+
+    /// Register (or update) the caller's own share encapsulation key. Backfill
+    /// path for accounts created before share keys existed.
+    func putMyShareEK(_ shareEK: String) async throws {
+        let _: EmptyResponse = try await request("PUT", "/share/my-ek",
+                                                  json: ["share_ek": shareEK], auth: true)
     }
 
     // MARK: - Devices

@@ -14,6 +14,10 @@ struct AccountState: Codable, Equatable {
     var hybridVK: String
     var hybridSK: String
     var token: String?
+    /// ML-KEM-1024 + X25519 share public key (1600 B, base64). Published to server at registration.
+    var shareEK: String = ""
+    /// ML-KEM-1024 + X25519 share secret key (3200 B, base64). Used to open shares addressed to us.
+    var shareDK: String = ""
 }
 
 struct AccountStore {

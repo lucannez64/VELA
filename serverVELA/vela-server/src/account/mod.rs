@@ -20,6 +20,7 @@ use crate::{
 
 const HYBRID_EK_LEN: usize = 1568 + 32;
 const HYBRID_VK_LEN: usize = 2592 + 32;
+const SHARE_EK_LEN: usize = 1568 + 32; // ML-KEM-1024 EK (1568) + X25519 PK (32)
 
 #[derive(Deserialize)]
 pub struct RegisterRequest {
@@ -27,6 +28,7 @@ pub struct RegisterRequest {
     pub hybrid_vk: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
+    pub share_ek: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -49,6 +51,14 @@ pub async fn post_register(
 
     let hybrid_ek = decode_b64_exact(&body.hybrid_ek, HYBRID_EK_LEN, "hybrid_ek")?;
     let hybrid_vk = decode_b64_exact(&body.hybrid_vk, HYBRID_VK_LEN, "hybrid_vk")?;
+    let share_ek_b64 = body
+        .share_ek
+        .as_deref()
+        .map(|s| -> Result<String> {
+            decode_b64_exact(s, SHARE_EK_LEN, "share_ek")?;
+            Ok(s.to_string())
+        })
+        .transpose()?;
 
     let user_id = Uuid::new_v4();
     let device_id = Uuid::new_v4();
@@ -65,8 +75,12 @@ pub async fn post_register(
     state
         .db
         .execute(
-            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
-            stoolap::params![user_id.to_string(), now.clone()],
+            "INSERT INTO users (id, created_at, share_ek) VALUES ($1, $2, $3)",
+            stoolap::params![
+                user_id.to_string(),
+                now.clone(),
+                share_ek_b64.as_deref().unwrap_or(""),
+            ],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 

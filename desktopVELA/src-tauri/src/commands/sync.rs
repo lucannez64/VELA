@@ -147,6 +147,48 @@ async fn authenticate_for_sync(
     Ok(verify_resp.token)
 }
 
+/// Backfill a share keypair for identities created before sharing existed.
+///
+/// Generates the keypair locally, registers the public half with the server, and
+/// persists both into the identity key store. Best-effort: a no-op once a share
+/// key is present, and failures are logged without aborting the sync.
+async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
+    let keys = {
+        let crypto = state.crypto.read();
+        match crypto
+            .as_ref()
+            .and_then(|c| state.store.load_identity_keys(c).ok().flatten())
+        {
+            Some(keys) => keys,
+            None => return,
+        }
+    };
+    if !keys.share_ek.is_empty() {
+        return;
+    }
+
+    let (share_ek, share_dk) = crypto::generate_share_keypair();
+    if let Err(e) = client.put_my_share_ek(token, &B64.encode(&share_ek)).await {
+        tracing::warn!("Share key backfill: server registration failed: {}", e);
+        return;
+    }
+
+    let crypto = state.crypto.read();
+    let Some(crypto) = crypto.as_ref() else { return };
+    if let Err(e) = state.store.save_identity_keys_full(
+        &keys.hybrid_ek,
+        &keys.hybrid_vk,
+        &keys.hybrid_sk,
+        &share_ek,
+        &share_dk,
+        crypto,
+    ) {
+        tracing::warn!("Share key backfill: failed to persist keys: {}", e);
+    } else {
+        tracing::info!("Share key backfilled for existing identity");
+    }
+}
+
 /// How long tombstones are retained before pruning.
 const TOMBSTONE_RETENTION_DAYS: i64 = 30;
 
@@ -622,6 +664,9 @@ pub async fn trigger_sync(
             }
         },
     };
+
+    // Backfill a share keypair for identities created before sharing existed.
+    ensure_share_key(&state, &client, &token).await;
 
     let manifest = match client.get_sync_manifest(&token).await {
         Ok((m, new_tok)) => {

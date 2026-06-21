@@ -40,6 +40,8 @@ pub struct RegisterRequest {
     pub hybrid_vk: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_ek: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -616,6 +618,49 @@ impl ApiClient {
 
         if !resp.status().is_success() {
             anyhow::bail!("Update linked share failed: {}", resp.status());
+        }
+
+        Ok(extract_new_token(&resp))
+    }
+
+    pub async fn get_recipient_share_ek(&self, token: &str, user_id: &str) -> Result<String> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .get(format!(
+                        "{}/share/recipient/{}/ek",
+                        self.base_url, user_id
+                    ))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Get recipient share key failed: {}", resp.status());
+        }
+
+        #[derive(serde::Deserialize)]
+        struct EkResponse {
+            share_ek: String,
+        }
+        let result: EkResponse = resp.json().await?;
+        Ok(result.share_ek)
+    }
+
+    /// Register (or update) the caller's own share encapsulation key. Backfill
+    /// path for accounts created before share keys existed.
+    pub async fn put_my_share_ek(&self, token: &str, share_ek: &str) -> Result<Option<String>> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .put(format!("{}/share/my-ek", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({ "share_ek": share_ek }))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Register share key failed: {}", resp.status());
         }
 
         Ok(extract_new_token(&resp))
