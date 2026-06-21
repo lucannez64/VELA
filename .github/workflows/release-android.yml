@@ -26,6 +26,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Mapped here (job-level env can read secrets) so a step `if` can detect
+    # whether release signing is configured.
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,8 +68,21 @@ jobs:
         with:
           workspaces: libVELA/vela-android-bridge
 
+      # When the keystore secret is present, decode it and point Gradle at it so
+      # the APK is signed with the stable release key. Without the secret this
+      # step is skipped and Gradle falls back to the debug key.
+      - name: Decode release keystore
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/vela-release.jks"
+          echo "VELA_KEYSTORE_FILE=$RUNNER_TEMP/vela-release.jks" >> "$GITHUB_ENV"
+
       - name: Build release APK
         working-directory: androidVELA
+        env:
+          VELA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VELA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VELA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease \
@@ -90,7 +107,7 @@ jobs:
             - Commit: ${{ github.sha }} (`${{ steps.version.outputs.sha }}`)
             - versionCode: ${{ steps.version.outputs.count }}
             - ABIs: arm64-v8a, armeabi-v7a, x86, x86_64
-            - Signed with the debug key (sideload / testing build).
+            - Signing: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && 'stable release key' || 'debug key (sideload / testing build)' }}
           files: VELA-android-v${{ steps.version.outputs.version }}.apk
           draft: false
           prerelease: false
