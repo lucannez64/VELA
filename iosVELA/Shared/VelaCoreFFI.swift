@@ -45,6 +45,8 @@ enum VelaCoreFFI {
         let hybridEK: String
         let hybridVK: String
         let hybridSK: String
+        let shareEK: String
+        let shareDK: String
     }
 
     /// Generate a fresh device identity, or nil on error.
@@ -52,8 +54,35 @@ enum VelaCoreFFI {
         let response = generateIdentityJSON()
         guard let ek = field(response, "hybrid_ek_b64"),
               let vk = field(response, "hybrid_vk_b64"),
-              let sk = field(response, "hybrid_sk_b64") else { return nil }
-        return Identity(hybridEK: ek, hybridVK: vk, hybridSK: sk)
+              let sk = field(response, "hybrid_sk_b64"),
+              let shareEK = field(response, "share_ek_b64"),
+              let shareDK = field(response, "share_dk_b64") else { return nil }
+        return Identity(hybridEK: ek, hybridVK: vk, hybridSK: sk, shareEK: shareEK, shareDK: shareDK)
+    }
+
+    /// Generate only a fresh share keypair `(shareEK, shareDK)`, base64. Used to
+    /// backfill share keys for identities created before sharing existed.
+    static func generateShareKeypair() -> (shareEK: String, shareDK: String)? {
+        let response = consume(vela_ffi_generate_share_keypair_json())
+        guard let ek = field(response, "share_ek_b64"),
+              let dk = field(response, "share_dk_b64") else { return nil }
+        return (ek, dk)
+    }
+
+    // MARK: - KEM-sealed sharing
+
+    /// Encrypt `itemJSON` for a recipient using their share public key. Returns base64 capsule or nil on error.
+    static func sealShare(recipientShareEKBase64: String, itemJSON: String) -> String? {
+        let request = json(["recipient_share_ek_b64": recipientShareEKBase64, "item_json": itemJSON])
+        let response = request.withCString { consume(vela_ffi_seal_share_json($0)) }
+        return field(response, "capsule_b64")
+    }
+
+    /// Decrypt a share capsule using our share secret key. Returns the item JSON or nil on error.
+    static func openShare(shareDKBase64: String, capsuleBase64: String) -> String? {
+        let request = json(["share_dk_b64": shareDKBase64, "capsule_b64": capsuleBase64])
+        let response = request.withCString { consume(vela_ffi_open_share_json($0)) }
+        return field(response, "item_json")
     }
 
     /// Sign a server auth challenge with the device signing key. Returns base64 signature.

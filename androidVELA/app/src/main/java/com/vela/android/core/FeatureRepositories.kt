@@ -1,7 +1,6 @@
 package com.vela.android.core
 
 import android.content.Context
-import com.vela.android.sync.DeviceInfo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -9,7 +8,6 @@ import java.net.URLEncoder
 import java.net.URL
 import java.security.MessageDigest
 import java.time.Instant
-import java.util.Base64
 import java.util.UUID
 
 enum class ShareDirection { Received, Sent }
@@ -40,11 +38,63 @@ data class PasswordBreachResult(
     val description: String
 )
 
+data class SentShareRecord(
+    val shareId: String,
+    val itemId: String,
+    val itemName: String,
+    val itemType: String,
+    val recipientUserId: String,
+    val recipientShareEkB64: String
+)
+
+class SentShareManifest(context: Context) {
+    private val prefs = context.getSharedPreferences("vela_sent_shares", Context.MODE_PRIVATE)
+
+    fun get(shareId: String): SentShareRecord? {
+        val raw = prefs.getString(shareId, null) ?: return null
+        return runCatching { fromJson(JSONObject(raw)) }.getOrNull()
+    }
+
+    fun forItem(itemId: String): List<SentShareRecord> =
+        prefs.all.values.mapNotNull { raw ->
+            runCatching { fromJson(JSONObject(raw as String)) }.getOrNull()
+        }.filter { it.itemId == itemId }
+
+    fun add(record: SentShareRecord) {
+        prefs.edit().putString(record.shareId, record.toJson().toString()).apply()
+    }
+
+    fun remove(shareId: String) {
+        prefs.edit().remove(shareId).apply()
+    }
+
+    private fun fromJson(json: JSONObject) = SentShareRecord(
+        shareId = json.getString("share_id"),
+        itemId = json.getString("item_id"),
+        itemName = json.getString("item_name"),
+        itemType = json.getString("item_type"),
+        recipientUserId = json.getString("recipient_user_id"),
+        recipientShareEkB64 = json.getString("recipient_share_ek_b64")
+    )
+
+    private fun SentShareRecord.toJson() = JSONObject()
+        .put("share_id", shareId)
+        .put("item_id", itemId)
+        .put("item_name", itemName)
+        .put("item_type", itemType)
+        .put("recipient_user_id", recipientUserId)
+        .put("recipient_share_ek_b64", recipientShareEkB64)
+}
+
 class SharingRepository(
     private val vault: LocalVaultRepository,
     private val security: com.vela.android.security.SecureVaultManager,
-    private val sync: com.vela.android.sync.VaultSyncManager
+    private val sync: com.vela.android.sync.VaultSyncManager,
+    private val identityStore: com.vela.android.sync.ServerIdentityStore,
+    context: Context
 ) {
+    private val manifest = SentShareManifest(context.applicationContext)
+
     fun listShares(): List<VaultShare> = sync.withAuthenticatedClient { client, token ->
         var currentToken = token
         val (inbox, inboxToken) = client.getInbox(currentToken)
@@ -52,70 +102,70 @@ class SharingRepository(
         val (linked, linkedToken) = client.getLinkedShares(currentToken)
         linkedToken?.let { currentToken = it }
 
-        val rms = security.currentRmsCopy() ?: error("Vault is locked")
-        try {
-            val received = inbox.map { item ->
-                val decoded = decryptShareItem(rms, item.capsuleB64)
+        val shareDkB64 = identityStore.load()?.shareDkB64
+
+        val received = inbox.map { item ->
+            val decoded = if (shareDkB64 != null) openShareItem(shareDkB64, item.capsuleB64) else null
+            VaultShare(
+                id = item.id,
+                itemId = item.id,
+                itemName = decoded?.name ?: "Shared item",
+                itemType = decoded?.type?.name?.lowercase() ?: "item",
+                direction = ShareDirection.Received,
+                from = item.senderUserId,
+                to = null,
+                sharedAt = item.createdAt
+            )
+        }
+        val sent = linked
+            .filter { share -> share.senderUserId != share.recipientUserId }
+            .map { item ->
+                val meta = manifest.get(item.id)
                 VaultShare(
                     id = item.id,
-                    itemId = item.id,
-                    itemName = decoded?.name ?: "Shared item",
-                    itemType = decoded?.type?.name?.lowercase() ?: "item",
-                    direction = ShareDirection.Received,
+                    itemId = meta?.itemId ?: item.id,
+                    itemName = meta?.itemName ?: "Shared item",
+                    itemType = meta?.itemType ?: "item",
+                    direction = ShareDirection.Sent,
                     from = item.senderUserId,
-                    to = null,
-                    sharedAt = item.createdAt
+                    to = item.recipientUserId,
+                    sharedAt = item.updatedAt
                 )
             }
-            val sent = linked
-                .filter { share -> share.senderUserId != share.recipientUserId }
-                .map { item ->
-                    val decoded = decryptShareItem(rms, item.capsuleB64)
-                    VaultShare(
-                        id = item.id,
-                        itemId = decoded?.id ?: item.id,
-                        itemName = decoded?.name ?: "Shared item",
-                        itemType = decoded?.type?.name?.lowercase() ?: "item",
-                        direction = ShareDirection.Sent,
-                        from = item.senderUserId,
-                        to = item.recipientUserId,
-                        sharedAt = item.updatedAt
-                    )
-                }
-            received + sent
-        } finally {
-            rms.fill(0)
-        }
+        received + sent
     }
 
     fun sendShare(itemId: String, recipientUserId: String) {
         val item = vault.snapshot().items.find { it.id == itemId } ?: error("Item not found")
-        val rms = security.currentRmsCopy() ?: error("Vault is locked")
-        val capsule = try {
-            NativeVelaCore.encryptVaultJson(rms, VaultJson.encodeItem(item).toString(Charsets.UTF_8))
-                ?: error("Native VELA bridge is required for sharing")
-        } finally {
-            rms.fill(0)
-        }
+        val itemJson = VaultJson.encodeItem(item).toString(Charsets.UTF_8)
 
         sync.withAuthenticatedClient { client, token ->
-            client.sendShare(token, recipientUserId, capsule)
+            val recipientShareEkB64 = client.getRecipientShareEk(token, recipientUserId)
+            val capsuleB64 = NativeVelaCore.sealShare(recipientShareEkB64, itemJson)
+                ?: error("Native VELA bridge is required for sharing")
+            val response = client.sendShare(token, recipientUserId, capsuleB64)
+            manifest.add(
+                SentShareRecord(
+                    shareId = response.shareId,
+                    itemId = item.id,
+                    itemName = item.name,
+                    itemType = item.type.name.lowercase(),
+                    recipientUserId = recipientUserId,
+                    recipientShareEkB64 = recipientShareEkB64
+                )
+            )
         }
         vault.updateItem(item.withSharedStatus(recipientUserId))
         VelaRepositories.audit.record("share_sent", "To ${recipientUserId.take(8)}")
     }
 
     fun acceptShare(shareId: String) {
+        val shareDkB64 = identityStore.load()?.shareDkB64 ?: error("Share key not available")
         sync.withAuthenticatedClient { client, token ->
             val (inbox, newToken) = client.getInbox(token)
             val item = inbox.find { it.id == shareId } ?: error("Share not found")
-            val rms = security.currentRmsCopy() ?: error("Vault is locked")
-            val decoded = try {
-                decryptShareItem(rms, item.capsuleB64)?.withReceivedShare()
-                    ?: error("Could not decrypt shared item")
-            } finally {
-                rms.fill(0)
-            }
+            val decoded = openShareItem(shareDkB64, item.capsuleB64)?.withReceivedShare()
+                ?: error("Could not decrypt shared item")
             vault.addItem(decoded)
             client.deleteInboxItem(newToken ?: token, shareId)
             VelaRepositories.audit.record("share_received", "From ${item.senderUserId.take(8)}")
@@ -129,12 +179,24 @@ class SharingRepository(
 
     fun revokeShare(shareId: String) {
         sync.withAuthenticatedClient { client, token -> client.deleteLinkedShare(token, shareId) }
+        manifest.remove(shareId)
         VelaRepositories.audit.record("share_revoked", shareId.take(8))
     }
 
-    private fun decryptShareItem(rms: ByteArray, capsuleB64: String): VaultItem? {
-        val ciphertext = Base64.getDecoder().decode(capsuleB64)
-        val json = NativeVelaCore.decryptVaultJson(rms, ciphertext) ?: return null
+    fun pushShareUpdates(item: VaultItem) {
+        val records = manifest.forItem(item.id)
+        if (records.isEmpty()) return
+        val itemJson = VaultJson.encodeItem(item).toString(Charsets.UTF_8)
+        sync.withAuthenticatedClient { client, token ->
+            for (record in records) {
+                val newCapsule = NativeVelaCore.sealShare(record.recipientShareEkB64, itemJson) ?: continue
+                client.updateLinkedShare(token, record.shareId, newCapsule)
+            }
+        }
+    }
+
+    private fun openShareItem(shareDkB64: String, capsuleB64: String): VaultItem? {
+        val json = NativeVelaCore.openShare(shareDkB64, capsuleB64) ?: return null
         return VaultJson.decodeItem(json.toByteArray(Charsets.UTF_8))
     }
 }

@@ -17,6 +17,7 @@ class LocalVaultRepository(
     private val encryptedVaultStore: EncryptedVaultStore
 ) {
     var onLocalChange: (() -> Unit)? = null
+    var onItemUpdated: ((VaultItem) -> Unit)? = null
 
     private val _items = MutableStateFlow<List<VaultItem>>(emptyList())
     val items: StateFlow<List<VaultItem>> = _items
@@ -66,6 +67,7 @@ class LocalVaultRepository(
         store.updateItem(item)
         _items.value = store.items
         onLocalChange?.invoke()
+        onItemUpdated?.invoke(item)
         persistIfUnlocked()
     }
 
@@ -229,7 +231,8 @@ object VelaRepositories {
         vault.onLocalChange = { syncSettings.markLocalChanged() }
         serverIdentity = com.vela.android.sync.ServerIdentityStore(context.applicationContext)
         sync = VaultSyncManager(context.applicationContext, syncSettings, serverIdentity, security, vault)
-        sharing = SharingRepository(vault, security, sync)
+        sharing = SharingRepository(vault, security, sync, serverIdentity, context.applicationContext)
+        vault.onItemUpdated = { item -> Thread { sharing.pushShareUpdates(item) }.start() }
         audit = AuditLogRepository(context.applicationContext)
     }
 }

@@ -129,6 +129,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         "ALTER TABLE users ADD COLUMN recovery_webauthn_credential TEXT",
         (),
     );
+    let _ = db.execute("ALTER TABLE users ADD COLUMN share_ek TEXT", ());
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id)",
         (),

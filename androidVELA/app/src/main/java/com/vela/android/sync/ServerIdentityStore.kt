@@ -9,7 +9,9 @@ data class ServerIdentity(
     val deviceId: String?,
     val hybridEkB64: String,
     val hybridVkB64: String,
-    val hybridSkB64: String
+    val hybridSkB64: String,
+    val shareEkB64: String = "",
+    val shareDkB64: String = ""
 )
 
 class ServerIdentityStore(context: Context) {
@@ -39,7 +41,9 @@ class ServerIdentityStore(context: Context) {
             deviceId = json.optString("device_id").takeIf { it.isNotBlank() },
             hybridEkB64 = json.getString("hybrid_ek_b64"),
             hybridVkB64 = json.getString("hybrid_vk_b64"),
-            hybridSkB64 = json.getString("hybrid_sk_b64")
+            hybridSkB64 = json.getString("hybrid_sk_b64"),
+            shareEkB64 = json.optString("share_ek_b64"),
+            shareDkB64 = json.optString("share_dk_b64")
         )
     }
 
@@ -50,6 +54,8 @@ class ServerIdentityStore(context: Context) {
             .put("hybrid_ek_b64", hybridEkB64)
             .put("hybrid_vk_b64", hybridVkB64)
             .put("hybrid_sk_b64", hybridSkB64)
+            .put("share_ek_b64", shareEkB64)
+            .put("share_dk_b64", shareDkB64)
     }
 
     companion object {

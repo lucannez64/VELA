@@ -19,6 +19,11 @@ final class VaultViewModel: ObservableObject {
     private let repo: VaultRepository
     private var rms: Data?
 
+    /// Called after every successful `update(_:)` so the account layer can push
+    /// updated share capsules to recipients. Wired in ContentView to avoid a
+    /// circular dependency between VaultViewModel and AccountViewModel.
+    var onItemUpdated: ((VaultItem) async -> Void)?
+
     init(repo: VaultRepository = VaultRepository()) {
         self.repo = repo
         bootstrap()
@@ -114,9 +119,13 @@ final class VaultViewModel: ObservableObject {
     /// Replace an existing item by id, stamping `updatedAt`.
     func update(_ item: VaultItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[index] = item.touched()
+        let updated = item.touched()
+        items[index] = updated
         persist()
         AuditLog.shared.record("item_updated", item.name)
+        if let onItemUpdated = onItemUpdated {
+            Task { await onItemUpdated(updated) }
+        }
     }
 
     func delete(_ item: VaultItem) {

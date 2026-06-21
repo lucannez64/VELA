@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::ffi::{c_char, CStr, CString};
 
 use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
-use vela_crypto::{aead, kdf, shamir, signing};
+use vela_crypto::{aead, kdf, kem, shamir, signing};
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
 const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
@@ -56,6 +56,36 @@ struct GenerateIdentityResponse {
     hybrid_ek_b64: String,
     hybrid_vk_b64: String,
     hybrid_sk_b64: String,
+    share_ek_b64: String,
+    share_dk_b64: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ShareKeypairResponse {
+    share_ek_b64: String,
+    share_dk_b64: String,
+}
+
+#[derive(Deserialize)]
+struct SealShareRequest {
+    recipient_share_ek_b64: String,
+    item_json: String,
+}
+
+#[derive(Serialize)]
+struct SealShareResponse {
+    capsule_b64: String,
+}
+
+#[derive(Deserialize)]
+struct OpenShareRequest {
+    share_dk_b64: String,
+    capsule_b64: String,
+}
+
+#[derive(Serialize)]
+struct OpenShareResponse {
+    item_json: String,
 }
 
 #[derive(Deserialize)]
@@ -176,6 +206,14 @@ pub extern "C" fn vela_ffi_generate_identity_json() -> *mut c_char {
     json_result(generate_identity)
 }
 
+/// Generate only a fresh share keypair (`{ share_ek_b64, share_dk_b64 }`).
+/// Used to backfill share keys for identities created before sharing existed,
+/// without disturbing the device-auth hybrid keys. Free the result.
+#[no_mangle]
+pub extern "C" fn vela_ffi_generate_share_keypair_json() -> *mut c_char {
+    json_result(generate_share_keypair)
+}
+
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
@@ -227,6 +265,24 @@ pub unsafe extern "C" fn vela_ffi_combine_recovery_json(request_json: *const c_c
     json_result(|| combine_recovery_json(c_str(request_json)?))
 }
 
+/// Encrypt a vault item for a recipient using their share public key.
+/// Request: `{ recipient_share_ek_b64, item_json }` → `{ capsule_b64 }`.
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_seal_share_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| seal_share_json(c_str(request_json)?))
+}
+
+/// Decrypt a share capsule using our share secret key.
+/// Request: `{ share_dk_b64, capsule_b64 }` → `{ item_json }`.
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_open_share_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| open_share_json(c_str(request_json)?))
+}
+
 // ── Core logic (also exercised by the unit tests) ──────────────────────────────
 
 fn encrypt_vault_json(request_json: &str) -> FfiResult<EncryptVaultResponse> {
@@ -257,10 +313,42 @@ fn generate_identity() -> FfiResult<GenerateIdentityResponse> {
     getrandom::getrandom(&mut hybrid_ek)
         .map_err(|e| format!("OS random source unavailable: {e}"))?;
     let (vk, sk) = signing::generate_keypair()?;
+    let (share_pk, share_sk) = kem::generate_keypair();
     Ok(GenerateIdentityResponse {
         hybrid_ek_b64: B64.encode(hybrid_ek),
         hybrid_vk_b64: B64.encode(vk.to_bytes()),
         hybrid_sk_b64: B64.encode(sk.into_bytes()),
+        share_ek_b64: B64.encode(share_pk.to_bytes()),
+        share_dk_b64: B64.encode(share_sk.to_bytes()),
+    })
+}
+
+fn generate_share_keypair() -> FfiResult<ShareKeypairResponse> {
+    let (share_pk, share_sk) = kem::generate_keypair();
+    Ok(ShareKeypairResponse {
+        share_ek_b64: B64.encode(share_pk.to_bytes()),
+        share_dk_b64: B64.encode(share_sk.to_bytes()),
+    })
+}
+
+fn seal_share_json(request_json: &str) -> FfiResult<SealShareResponse> {
+    let req: SealShareRequest = serde_json::from_str(request_json)?;
+    let ek_bytes = B64.decode(req.recipient_share_ek_b64.as_bytes())?;
+    let pk = kem::HybridPublicKey::from_bytes(&ek_bytes)?;
+    let capsule = kem::seal_share(&pk, req.item_json.as_bytes())?;
+    Ok(SealShareResponse {
+        capsule_b64: B64.encode(capsule),
+    })
+}
+
+fn open_share_json(request_json: &str) -> FfiResult<OpenShareResponse> {
+    let req: OpenShareRequest = serde_json::from_str(request_json)?;
+    let dk_bytes = B64.decode(req.share_dk_b64.as_bytes())?;
+    let sk = kem::HybridSecretKey::from_bytes(&dk_bytes)?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let plaintext = kem::open_share(&sk, &capsule)?;
+    Ok(OpenShareResponse {
+        item_json: String::from_utf8(plaintext)?,
     })
 }
 

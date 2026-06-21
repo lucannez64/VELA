@@ -73,6 +73,16 @@ object NativeVelaCore {
         }
     }
 
+    /// Generate only a fresh share keypair (`{ share_ek_b64, share_dk_b64 }`).
+    /// Used to backfill share keys for identities created before sharing existed.
+    fun generateShareKeypairJson(): String? {
+        return callNative {
+            val response = JSONObject(nativeGenerateShareKeypairJson())
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            response.toString()
+        }
+    }
+
     fun createAuthSignatureJson(
         hybridSkB64: String,
         challengeB64: String,
@@ -114,6 +124,34 @@ object NativeVelaCore {
         }
     }
 
+    /// Seal `itemJson` for a recipient using their share public key (base64, 1600 B).
+    /// Returns base64 capsule on success, null on error.
+    fun sealShare(recipientShareEkB64: String, itemJson: String): String? {
+        return callNative {
+            val request = JSONObject()
+                .put("recipient_share_ek_b64", recipientShareEkB64)
+                .put("item_json", itemJson)
+                .toString()
+            val response = JSONObject(nativeSealShareJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            response.getString("capsule_b64")
+        }
+    }
+
+    /// Open a share capsule sealed by a sender using our share secret key (base64, 3200 B).
+    /// Returns the decrypted item JSON on success, null on error.
+    fun openShare(shareDkB64: String, capsuleB64: String): String? {
+        return callNative {
+            val request = JSONObject()
+                .put("share_dk_b64", shareDkB64)
+                .put("capsule_b64", capsuleB64)
+                .toString()
+            val response = JSONObject(nativeOpenShareJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            response.getString("item_json")
+        }
+    }
+
     private inline fun <T> callNative(block: () -> T): T? {
         if (!loaded) return null
         return runCatching(block).getOrElse { error("Native VELA bridge call failed: ${it.message}") }
@@ -125,7 +163,10 @@ object NativeVelaCore {
     private external fun nativeEncryptVaultChunkJson(requestJson: String): String
     private external fun nativeDecryptVaultChunkJson(requestJson: String): String
     private external fun nativeGenerateServerIdentityJson(): String
+    private external fun nativeGenerateShareKeypairJson(): String
     private external fun nativeCreateAuthSignatureJson(requestJson: String): String
     private external fun nativeDecryptRmsCapsuleJson(requestJson: String): String
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
+    private external fun nativeSealShareJson(requestJson: String): String
+    private external fun nativeOpenShareJson(requestJson: String): String
 }

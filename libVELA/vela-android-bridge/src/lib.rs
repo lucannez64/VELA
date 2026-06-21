@@ -14,6 +14,7 @@ use std::slice;
 use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
 use vela_crypto::aead;
 use vela_crypto::kdf;
+use vela_crypto::kem;
 use vela_crypto::signing;
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
@@ -81,6 +82,36 @@ struct GenerateIdentityResponse {
     hybrid_ek_b64: String,
     hybrid_vk_b64: String,
     hybrid_sk_b64: String,
+    share_ek_b64: String,
+    share_dk_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ShareKeypairResponse {
+    share_ek_b64: String,
+    share_dk_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SealShareRequest {
+    recipient_share_ek_b64: String,
+    item_json: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SealShareResponse {
+    capsule_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OpenShareRequest {
+    share_dk_b64: String,
+    capsule_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OpenShareResponse {
+    item_json: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -193,6 +224,20 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeGenerateS
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeGenerateShareKeypairJson(
+    mut env: JNIEnv,
+    _object: JObject,
+) -> jstring {
+    let response = match generate_share_keypair() {
+        Ok(value) => {
+            serde_json::to_string(&value).unwrap_or_else(|error| error_json(&error.to_string()))
+        }
+        Err(error) => error_json(&error.to_string()),
+    };
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCreateAuthSignatureJson(
     mut env: JNIEnv,
     _object: JObject,
@@ -225,6 +270,26 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptEn
     let response = jni_json_result(&mut env, request_json, |request| {
         decrypt_enrollment_package_json(request)
     });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeSealShareJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| seal_share_json(request));
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenShareJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| open_share_json(request));
     jni_string(&mut env, &response)
 }
 
@@ -346,10 +411,43 @@ fn generate_server_identity() -> anyhow_like::Result<GenerateIdentityResponse> {
     let hybrid_vk = signing_vk.to_bytes().to_vec();
     let hybrid_sk = signing_sk.into_bytes();
 
+    let (share_pk, share_sk) = kem::generate_keypair();
+
     Ok(GenerateIdentityResponse {
         hybrid_ek_b64: B64.encode(hybrid_ek),
         hybrid_vk_b64: B64.encode(hybrid_vk),
         hybrid_sk_b64: B64.encode(hybrid_sk),
+        share_ek_b64: B64.encode(share_pk.to_bytes()),
+        share_dk_b64: B64.encode(share_sk.to_bytes()),
+    })
+}
+
+fn generate_share_keypair() -> anyhow_like::Result<ShareKeypairResponse> {
+    let (share_pk, share_sk) = kem::generate_keypair();
+    Ok(ShareKeypairResponse {
+        share_ek_b64: B64.encode(share_pk.to_bytes()),
+        share_dk_b64: B64.encode(share_sk.to_bytes()),
+    })
+}
+
+fn seal_share_json(request_json: &str) -> anyhow_like::Result<SealShareResponse> {
+    let req: SealShareRequest = serde_json::from_str(request_json)?;
+    let ek_bytes = B64.decode(req.recipient_share_ek_b64.as_bytes())?;
+    let pk = kem::HybridPublicKey::from_bytes(&ek_bytes)?;
+    let capsule = kem::seal_share(&pk, req.item_json.as_bytes())?;
+    Ok(SealShareResponse {
+        capsule_b64: B64.encode(capsule),
+    })
+}
+
+fn open_share_json(request_json: &str) -> anyhow_like::Result<OpenShareResponse> {
+    let req: OpenShareRequest = serde_json::from_str(request_json)?;
+    let dk_bytes = B64.decode(req.share_dk_b64.as_bytes())?;
+    let sk = kem::HybridSecretKey::from_bytes(&dk_bytes)?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let plaintext = kem::open_share(&sk, &capsule)?;
+    Ok(OpenShareResponse {
+        item_json: String::from_utf8(plaintext)?,
     })
 }
 

@@ -32,6 +32,12 @@ pub struct IdentityKeysStore {
     /// before enrollment support; those devices cannot enroll other devices.
     #[serde(default)]
     pub hybrid_sk: Vec<u8>,
+    /// ML-KEM-1024 + X25519 share public key (1600 B). Used by others to seal shares for us.
+    #[serde(default)]
+    pub share_ek: Vec<u8>,
+    /// ML-KEM-1024 DK seed (64 B) ‖ X25519 sk (32 B) = 96 B. Used to open shares addressed to us.
+    #[serde(default)]
+    pub share_dk: Vec<u8>,
 }
 
 pub struct Store {
@@ -231,6 +237,18 @@ impl Store {
         hybrid_sk: &[u8],
         crypto: &Crypto,
     ) -> anyhow::Result<()> {
+        self.save_identity_keys_full(hybrid_ek, hybrid_vk, hybrid_sk, &[], &[], crypto)
+    }
+
+    pub fn save_identity_keys_full(
+        &self,
+        hybrid_ek: &[u8],
+        hybrid_vk: &[u8],
+        hybrid_sk: &[u8],
+        share_ek: &[u8],
+        share_dk: &[u8],
+        crypto: &Crypto,
+    ) -> anyhow::Result<()> {
         let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
 
         if let Some(parent) = identity_path.parent() {
@@ -243,6 +261,8 @@ impl Store {
             hybrid_ek: hybrid_ek.to_vec(),
             hybrid_vk: hybrid_vk.to_vec(),
             hybrid_sk: hybrid_sk.to_vec(),
+            share_ek: share_ek.to_vec(),
+            share_dk: share_dk.to_vec(),
         };
         let plaintext = serde_json::to_vec(&store)?;
         let key = Self::derive_identity_file_key(crypto);
@@ -266,7 +286,14 @@ impl Store {
             let plaintext = decrypt(&key, &bytes)?;
             serde_json::from_slice(&plaintext)?
         };
-        self.save_identity_keys(&store.hybrid_ek, &store.hybrid_vk, &store.hybrid_sk, crypto)?;
+        self.save_identity_keys_full(
+            &store.hybrid_ek,
+            &store.hybrid_vk,
+            &store.hybrid_sk,
+            &store.share_ek,
+            &store.share_dk,
+            crypto,
+        )?;
         Ok(Some(store))
     }
 }

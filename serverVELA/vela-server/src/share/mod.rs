@@ -424,6 +424,89 @@ pub async fn delete_linked_item(
     Ok((headers, Json(serde_json::json!({ "deleted": true }))))
 }
 
+/// Return the share encapsulation key registered by a given user.
+///
+/// Used by senders to encrypt a share capsule for a specific recipient before
+/// calling `POST /share/send`.
+pub async fn get_recipient_ek(
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    session: AuthSession,
+) -> Result<(HeaderMap, Json<serde_json::Value>)> {
+    let rows = state
+        .db
+        .query(
+            "SELECT share_ek FROM users WHERE id = $1",
+            stoolap::params![user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let row = rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::NotFound("user not found".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let ek_v = crate::db::row_val(&row, 0)?;
+    let share_ek = ek_v
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::NotFound("user has no share key registered".into()))?
+        .to_string();
+
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, &session);
+    Ok((headers, Json(serde_json::json!({ "share_ek": share_ek }))))
+}
+
+/// ML-KEM-1024 EK (1568) + X25519 PK (32). Matches `account::SHARE_EK_LEN`.
+const SHARE_EK_LEN: usize = 1568 + 32;
+
+#[derive(Deserialize)]
+pub struct PutShareEkRequest {
+    pub share_ek: String,
+}
+
+/// Register (or update) the authenticated user's own share encapsulation key.
+///
+/// Backfill path for accounts created before share keys existed: an already
+/// registered client that detects an empty local share key generates a fresh
+/// KEM keypair and uploads the public half here, keeping its device identity
+/// and vault intact.
+pub async fn put_my_ek(
+    State(state): State<AppState>,
+    session: AuthSession,
+    Json(body): Json<PutShareEkRequest>,
+) -> Result<(HeaderMap, Json<serde_json::Value>)> {
+    let ek_bytes = B64
+        .decode(&body.share_ek)
+        .map_err(|_| AppError::BadRequest("share_ek is not valid base64".into()))?;
+
+    if ek_bytes.len() != SHARE_EK_LEN {
+        return Err(AppError::BadRequest(format!(
+            "share_ek must be exactly {SHARE_EK_LEN} bytes"
+        )));
+    }
+
+    let n: i64 = state
+        .db
+        .execute(
+            "UPDATE users SET share_ek = $1 WHERE id = $2",
+            stoolap::params![body.share_ek, session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    if n == 0 {
+        return Err(AppError::NotFound("user not found".into()));
+    }
+
+    tracing::info!(user_id = %session.user_id, "share key registered (backfill)");
+
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, &session);
+    Ok((headers, Json(serde_json::json!({ "updated": true }))))
+}
+
 pub async fn inbox_cleanup_task(db: stoolap::Database) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(6 * 60 * 60));
 

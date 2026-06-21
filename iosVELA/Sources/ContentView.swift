@@ -7,8 +7,14 @@ struct ContentView: View {
 
     init() {
         let vault = VaultViewModel()
+        let account = AccountViewModel(vault: vault)
+        // Wire the update callback so that when a vault item changes, the account
+        // layer re-seals and pushes updated capsules to all share recipients.
+        vault.onItemUpdated = { [weak account] item in
+            await account?.pushShareUpdates(for: item)
+        }
         _vm = StateObject(wrappedValue: vault)
-        _accountVM = StateObject(wrappedValue: AccountViewModel(vault: vault))
+        _accountVM = StateObject(wrappedValue: account)
     }
 
     var body: some View {

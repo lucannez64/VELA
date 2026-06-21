@@ -21,29 +21,53 @@ const MAC_KEY_CONTEXT: &str = "vela mac key v1";
 const SHARE_KEY_CONTEXT: &str = "vela share encryption v1";
 const ORAM_KEY_CONTEXT: &str = "vela oram position map v1";
 
-const HYBRID_EK_LEN: usize = 1600;
-
 #[derive(Clone)]
 pub struct IdentityKeypair {
     pub hybrid_ek: Vec<u8>,
     pub hybrid_vk: Vec<u8>,
     pub hybrid_sk: Vec<u8>,
+    pub share_ek: Vec<u8>,
+    pub share_dk: Vec<u8>,
 }
 
 pub fn generate_identity_keypair() -> Result<IdentityKeypair, String> {
-    let (_kem_pk, _kem_sk) = kem::generate_keypair();
-    let hybrid_ek = serialize_hybrid_ek(&[]);
+    let mut hybrid_ek = vec![0u8; 1600];
+    getrandom::getrandom(&mut hybrid_ek).map_err(|e| format!("OS random failed: {e}"))?;
 
     let (signing_vk, signing_sk) = signing::generate_keypair()
         .map_err(|e| format!("Failed to generate signing keypair: {}", e))?;
     let hybrid_vk = signing_vk.to_bytes().to_vec();
     let hybrid_sk = signing_sk.into_bytes();
 
+    let (share_pk, share_sk) = kem::generate_keypair();
+
     Ok(IdentityKeypair {
         hybrid_ek,
         hybrid_vk,
         hybrid_sk,
+        share_ek: share_pk.to_bytes(),
+        share_dk: share_sk.to_bytes(),
     })
+}
+
+/// Generate only a fresh share keypair `(share_ek, share_dk)`. Used to backfill
+/// share keys for identities created before sharing existed, without disturbing
+/// the device-auth hybrid keys.
+pub fn generate_share_keypair() -> (Vec<u8>, Vec<u8>) {
+    let (share_pk, share_sk) = kem::generate_keypair();
+    (share_pk.to_bytes(), share_sk.to_bytes())
+}
+
+/// Encrypt a vault item for a recipient using their share public key.
+pub fn seal_share(share_ek_bytes: &[u8], item_json: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let pk = kem::HybridPublicKey::from_bytes(share_ek_bytes)?;
+    Ok(kem::seal_share(&pk, item_json)?)
+}
+
+/// Decrypt a share capsule using our share secret key.
+pub fn open_share(share_dk_bytes: &[u8], capsule: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let sk = kem::HybridSecretKey::from_bytes(share_dk_bytes)?;
+    Ok(kem::open_share(&sk, capsule)?)
 }
 
 /// Sign the security-relevant enrollment payload with the enrolling device's key.
@@ -81,12 +105,6 @@ pub fn decrypt_rms_capsule(transfer_key: &[u8; 32], capsule: &[u8]) -> Result<[u
     let mut rms = [0u8; 32];
     rms.copy_from_slice(&plaintext[..32]);
     Ok(rms)
-}
-
-fn serialize_hybrid_ek(_kem_pk: &[u8]) -> Vec<u8> {
-    let mut bytes = vec![0u8; HYBRID_EK_LEN];
-    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
-    bytes
 }
 
 /// Sign a server-issued challenge for authentication.
