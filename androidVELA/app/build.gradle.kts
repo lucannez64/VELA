@@ -25,9 +25,31 @@ android {
         compose = true
     }
 
+    // Stable release signing: when a keystore is supplied (CI secrets, via
+    // -Pvela* properties or VELA_* env vars) sign with it so every build is
+    // mutually upgradeable. Otherwise fall back to the per-machine debug key so
+    // local `assembleRelease` still works.
+    val releaseKeystorePath = (project.findProperty("velaKeystoreFile") as String?)
+        ?: System.getenv("VELA_KEYSTORE_FILE")
+
+    signingConfigs {
+        if (!releaseKeystorePath.isNullOrBlank() && File(releaseKeystorePath).exists()) {
+            create("release") {
+                storeFile = File(releaseKeystorePath)
+                storePassword = (project.findProperty("velaKeystorePassword") as String?)
+                    ?: System.getenv("VELA_KEYSTORE_PASSWORD")
+                keyAlias = (project.findProperty("velaKeyAlias") as String?)
+                    ?: System.getenv("VELA_KEY_ALIAS")
+                keyPassword = (project.findProperty("velaKeyPassword") as String?)
+                    ?: System.getenv("VELA_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 
