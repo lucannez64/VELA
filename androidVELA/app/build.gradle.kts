@@ -14,8 +14,9 @@ android {
         applicationId = "com.vela.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Overridable from CI: -PvelaVersionCode=<int> -PvelaVersionName=<str>.
+        versionCode = (project.findProperty("velaVersionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("velaVersionName") as String?) ?: "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -129,18 +130,30 @@ tasks.register("buildRustBridge") {
     outputs.dir(outputRoot)
 
     doLast {
+        // Host-OS-aware NDK toolchain layout so the bridge builds on Windows
+        // (local dev) and Linux/macOS (CI) alike.
+        val osName = System.getProperty("os.name").lowercase()
+        val isWindows = osName.contains("win")
+        val hostPrefix = when {
+            isWindows -> "windows-"
+            osName.contains("mac") || osName.contains("darwin") -> "darwin-"
+            else -> "linux-"
+        }
+        val exeSuffix = if (isWindows) ".exe" else ""
+        val clangSuffix = if (isWindows) ".cmd" else ""
+
         val sdkDir = findAndroidSdkDir()
         val ndkDir = findAndroidNdkDir(sdkDir)
         val hostToolchain = ndkDir.resolve("toolchains/llvm/prebuilt")
             .listFiles()
-            ?.firstOrNull { it.isDirectory && it.name.startsWith("windows-") }
-            ?: error("NDK LLVM Windows toolchain not found in ${ndkDir.absolutePath}")
+            ?.firstOrNull { it.isDirectory && it.name.startsWith(hostPrefix) }
+            ?: error("NDK LLVM '$hostPrefix' toolchain not found in ${ndkDir.absolutePath}")
         val binDir = hostToolchain.resolve("bin")
-        val ar = binDir.resolve("llvm-ar.exe")
+        val ar = binDir.resolve("llvm-ar$exeSuffix")
         val bridgeDir = rootProject.projectDir.parentFile.resolve("libVELA/vela-android-bridge")
 
         rustAndroidAbis.forEach { abi ->
-            val linker = binDir.resolve("${abi.clangPrefix}-clang.cmd")
+            val linker = binDir.resolve("${abi.clangPrefix}-clang$clangSuffix")
             require(linker.isFile) { "Missing Android linker: ${linker.absolutePath}" }
 
             val cargo = ProcessBuilder("cargo", "build", "--release", "--target", abi.rustTarget)
