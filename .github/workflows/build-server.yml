@@ -9,6 +9,9 @@ on:
     paths:
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-core/**"
+      - "libVELA/vela-wasm-bridge/**"
+      - "webVELA/**"
       - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/build-server.yml"

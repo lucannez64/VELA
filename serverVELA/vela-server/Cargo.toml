@@ -20,7 +20,7 @@ vela-crypto = { path = "../../libVELA/vela-crypto" }
 axum              = { version = "0.7", features = ["macros", "multipart"] }
 tokio             = { version = "1",   features = ["full"] }
 tower             = { version = "0.4", features = ["util"] }
-tower-http        = { version = "0.5", features = ["trace", "cors", "limit"] }
+tower-http        = { version = "0.5", features = ["trace", "cors", "limit", "fs"] }
 bytes             = "1"
 http-body-util    = "0.1"
 hyper             = { version = "1", features = ["server", "http1", "http2"] }

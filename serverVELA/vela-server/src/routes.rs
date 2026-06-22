@@ -51,7 +51,7 @@ pub fn build(state: AppState) -> Router {
             ])
     };
 
-    Router::new()
+    let mut router = Router::new()
         .route("/account/register", post(crate::account::post_register))
         .route("/account", delete(crate::account::delete::delete_account))
         .route(
@@ -137,7 +137,24 @@ pub fn build(state: AppState) -> Router {
             "/recovery/recover",
             post(crate::recovery::recover::post_recover),
         )
-        .route("/health", get(health))
+        .route("/health", get(health));
+
+    // Serve the ephemeral web vault SPA same-origin when WEB_DIR is configured.
+    // The explicit API routes above match first; this fallback only handles
+    // unmatched paths (the SPA's index and its built assets), with index.html as
+    // the catch-all so client-side routing works. Unset (dev / tests) → no static
+    // serving, behaviour unchanged.
+    if let Ok(web_dir) = std::env::var("WEB_DIR") {
+        if !web_dir.is_empty() {
+            let index = std::path::Path::new(&web_dir).join("index.html");
+            router = router.fallback_service(
+                tower_http::services::ServeDir::new(&web_dir)
+                    .fallback(tower_http::services::ServeFile::new(index)),
+            );
+        }
+    }
+
+    router
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(state.clone(), enforce_https))
         .layer(cors)

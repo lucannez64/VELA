@@ -3,7 +3,26 @@
 # VELA server image (used by Coolify's Dockerfile build pack).
 # Build context is the repository root.
 
-# ---- build stage ----
+# ---- web build stage: the ephemeral web vault SPA (wasm core + Vite bundle) ----
+FROM rust:1-bookworm AS web
+# bun (JS toolchain), wasm-pack (prebuilt installer), and the wasm target.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL https://bun.sh/install | bash \
+ && curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh \
+ && rustup target add wasm32-unknown-unknown
+ENV PATH="/root/.bun/bin:${PATH}"
+WORKDIR /src
+# vela-wasm-bridge depends on vela-crypto + vela-core.
+COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+COPY libVELA/vela-core/ libVELA/vela-core/
+COPY libVELA/vela-wasm-bridge/ libVELA/vela-wasm-bridge/
+COPY webVELA/ webVELA/
+WORKDIR /src/webVELA
+RUN bun install --frozen-lockfile && bun run build:all
+
+# ---- server build stage ----
 FROM rust:1-bookworm AS build
 WORKDIR /src
 # Copy only what the server workspace needs, preserving the relative layout that
@@ -28,10 +47,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/serverVELA/target/release/vela-server /usr/local/bin/vela-server
+# The built SPA, served same-origin by the server when WEB_DIR is set.
+COPY --from=web /src/webVELA/dist /usr/local/share/vela-web
 # DATA_DIR points at the Coolify persistent volume mounted here at runtime.
 # Override LISTEN_ADDR/PASETO_SECRET_KEY/WEBAUTHN_* via Coolify environment variables.
 ENV DATA_DIR=/var/lib/vela \
-    LISTEN_ADDR=0.0.0.0:8443
+    LISTEN_ADDR=0.0.0.0:8443 \
+    WEB_DIR=/usr/local/share/vela-web
 EXPOSE 8443
 ENTRYPOINT ["/usr/local/bin/vela-server"]
 CMD ["serve"]
