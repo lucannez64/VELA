@@ -45,6 +45,7 @@ import com.vela.android.ui.screens.SettingsScreen
 import com.vela.android.ui.screens.SharingScreen
 import com.vela.android.ui.screens.UnlockScreen
 import com.vela.android.ui.screens.VaultBrowserScreen
+import com.vela.android.ui.screens.WebAccessScreen
 import com.vela.android.ui.screens.WelcomeScreen
 import com.vela.android.ui.theme.VelaColors
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,7 @@ object VelaRoutes {
     const val SETTINGS = "settings"
     const val ENROLL = "enroll"
     const val DEVICES = "devices"
+    const val WEB_ACCESS = "web_access"
     const val SHARING = "sharing"
     const val AUDIT_LOG = "audit_log"
     const val BREACH_MONITOR = "breach_monitor"
@@ -369,7 +371,14 @@ fun VelaNavHost(
             }
 
             composable(VelaRoutes.DEVICES) {
-                DevicesScreen(onBack = { navController.popBackStack() })
+                DevicesScreen(
+                    onBack = { navController.popBackStack() },
+                    onWebAccess = { navController.navigate(VelaRoutes.WEB_ACCESS) },
+                )
+            }
+
+            composable(VelaRoutes.WEB_ACCESS) {
+                WebAccessScreen(onBack = { navController.popBackStack() })
             }
 
             composable(VelaRoutes.AUDIT_LOG) {

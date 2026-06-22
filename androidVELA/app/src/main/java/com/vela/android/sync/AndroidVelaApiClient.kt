@@ -386,6 +386,26 @@ class AndroidVelaApiClient(
         return response.newToken
     }
 
+    /// Approve an ephemeral web session: deliver the sealed capsule with the
+    /// chosen mode and TTL. Returns the server-clamped expiry (RFC3339).
+    fun grantWebSession(
+        token: String,
+        sessionId: String,
+        mode: String,
+        capsuleB64: String,
+        ttlSecs: Long,
+    ): String {
+        val body = JSONObject()
+            .put("mode", mode)
+            .put("capsule", capsuleB64)
+            .put("ttl_secs", ttlSecs)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val response = request("POST", "/web-session/$sessionId/grant", token, body, contentType = "application/json")
+        response.requireSuccess("Grant web access failed")
+        return JSONObject(response.body.toString(Charsets.UTF_8)).getString("expires_at")
+    }
+
     private fun request(
         method: String,
         path: String,
