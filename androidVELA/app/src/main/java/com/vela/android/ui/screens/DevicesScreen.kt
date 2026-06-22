@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
@@ -43,7 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun DevicesScreen(onBack: () -> Unit) {
+fun DevicesScreen(onBack: () -> Unit, onWebAccess: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -85,7 +86,10 @@ fun DevicesScreen(onBack: () -> Unit) {
 
     Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase).padding(20.dp)) {
         ScreenHeader("My Devices", onBack, trailing = {
-            VelaButton("Refresh", { load() }, style = VelaButtonStyle.Surface, icon = Icons.Filled.Refresh, fullWidth = false, enabled = !loading)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                VelaButton("Web access", onWebAccess, style = VelaButtonStyle.Surface, icon = Icons.Filled.Public, fullWidth = false)
+                VelaButton("Refresh", { load() }, style = VelaButtonStyle.Surface, icon = Icons.Filled.Refresh, fullWidth = false, enabled = !loading)
+            }
         })
         error?.let {
             Spacer(Modifier.height(12.dp))

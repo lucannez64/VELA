@@ -8,6 +8,7 @@ import java.net.URLEncoder
 import java.net.URL
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 
 enum class ShareDirection { Received, Sent }
@@ -193,6 +194,42 @@ class SharingRepository(
                 client.updateLinkedShare(token, record.shareId, newCapsule)
             }
         }
+    }
+
+    /// Approve a browser's ephemeral web access. Parses the link QR, seals the
+    /// appropriate capsule (RO vault snapshot / RW RMS) to the browser's ephemeral
+    /// key, grants it, and records the audit event. Returns the granted expiry.
+    /// See EPHEMERAL_WEB_ACCESS_DESIGN.md §14 for the wire formats.
+    fun grantWebAccess(qrJson: String, mode: String, ttlSecs: Long): String {
+        require(mode == "ro" || mode == "rw") { "mode must be 'ro' or 'rw'" }
+        val qr = JSONObject(qrJson.trim())
+        val sessionId = qr.getString("session_id")
+        val ephemeralPk = qr.getString("ephemeral_pk")
+        val webVk = qr.optString("web_vk").takeIf { it.isNotBlank() }
+
+        val envelope = JSONObject().put("v", 1).put("mode", mode)
+        if (mode == "rw") {
+            if (webVk == null) error("This browser did not offer read-write access; choose read-only.")
+            val rms = security.currentRmsCopy() ?: error("Vault is locked")
+            try {
+                envelope.put("rms_b64", Base64.getEncoder().encodeToString(rms))
+            } finally {
+                rms.fill(0)
+            }
+        } else {
+            val vaultJson = VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8)
+            envelope.put("vault", JSONObject(vaultJson))
+        }
+
+        val capsuleB64 = NativeVelaCore.sealShare(ephemeralPk, envelope.toString())
+            ?: error("Native VELA bridge is required for web access")
+
+        val expiresAt = sync.withAuthenticatedClient { client, token ->
+            client.grantWebSession(token, sessionId, mode, capsuleB64, ttlSecs)
+        }
+        val label = if (mode == "rw") "read-write" else "read-only"
+        VelaRepositories.audit.record("web_session_granted", "$label · ${ttlSecs / 60} min")
+        return expiresAt
     }
 
     private fun openShareItem(shareDkB64: String, capsuleB64: String): VaultItem? {
