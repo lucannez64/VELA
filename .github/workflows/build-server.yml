@@ -66,16 +66,26 @@ jobs:
       # The image is already on GHCR at this point, so a deploy-hook hiccup must
       # not fail the build. Capture the HTTP status + body for diagnosis and
       # surface a non-2xx response as a warning instead of erroring out.
+      # COOLIFY_DEPLOY_SECRET (optional): a shared secret sent as the
+      # X-Deploy-Secret header. Pair it with a Cloudflare WAF custom rule that
+      # skips Bot Fight Mode for /api/v1/deploy when this header matches, so the
+      # GitHub runner (a datacenter IP) isn't challenged.
       - name: Trigger Coolify deploy
         env:
           HOOK: ${{ secrets.COOLIFY_DEPLOY_HOOK }}
           TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          DEPLOY_SECRET: ${{ secrets.COOLIFY_DEPLOY_SECRET }}
         if: ${{ env.HOOK != '' }}
         run: |
           if [ -n "$TOKEN" ]; then
-            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X GET -H "Authorization: Bearer $TOKEN" "$HOOK")
+            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X GET \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "X-Deploy-Secret: $DEPLOY_SECRET" \
+              "$HOOK")
           else
-            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X GET "$HOOK")
+            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X GET \
+              -H "X-Deploy-Secret: $DEPLOY_SECRET" \
+              "$HOOK")
           fi
           echo "Coolify responded HTTP $CODE"
           echo "--- response body ---"
