@@ -1,0 +1,36 @@
+[package]
+name = "vela-wasm-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly (wasm-bindgen) bridge for the shared VELA Rust core, used by the ephemeral web vault client"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "vela_wasm_bridge"
+# cdylib -> the .wasm consumed by the web SPA; rlib -> native `cargo test`.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+# `js` enables the browser RNG backend on wasm32-unknown-unknown (additive across
+# the whole dep tree, so vela-crypto's OsRng works in the browser too).
+getrandom = { version = "0.2", features = ["js"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+# Argon2id for the RW reload-survival PIN wrap (EPHEMERAL_WEB_ACCESS_DESIGN §8.1).
+argon2 = "0.5"
+vela-core = { path = "../vela-core" }
+vela-crypto = { path = "../vela-crypto", default-features = false }
+
+# `crypto-common` (pulled transitively via ml-kem / blake3 / digest) depends on
+# getrandom 0.4, whose browser backend must be explicitly enabled. We force its
+# `wasm_js` feature here (and set the matching `getrandom_backend` cfg in
+# .cargo/config.toml). Only needed when targeting wasm.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_v04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+# uuid (transitive via vela-core's vault model) also needs a wasm RNG source.
+uuid = { version = "1", features = ["js"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

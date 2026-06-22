@@ -1,0 +1,6 @@
+# getrandom 0.4 (transitive via crypto-common → ml-kem/blake3) requires selecting
+# its WebAssembly backend explicitly, in addition to the `wasm_js` cargo feature
+# enabled in Cargo.toml. Without this the wasm build fails with
+# "wasm32-unknown-unknown is not supported by default".
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
