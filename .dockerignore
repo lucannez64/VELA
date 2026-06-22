@@ -1,18 +1,21 @@
-# Keep the Docker build context small. The Dockerfile only needs serverVELA/ and
-# libVELA/vela-crypto/, so exclude build artifacts and unrelated components.
+# Keep the Docker build context small. The image needs serverVELA/,
+# libVELA/{vela-crypto,vela-core,vela-wasm-bridge}/ and webVELA/ (the web build
+# stage compiles the SPA), so exclude only build artifacts and unrelated parts.
 
-# Build artifacts (serverVELA/target can be gigabytes)
+# Build artifacts (serverVELA/target can be gigabytes); the web stage regenerates
+# webVELA/node_modules, webVELA/src/wasm and webVELA/dist.
 **/target/
 **/node_modules/
 **/dist/
+webVELA/src/wasm/
 
-# Components not needed to build the server
+# Components not needed to build the server image
 desktopVELA/
 androidVELA/
 extension/
 libVELA/cyclo/
 libVELA/vela-android-bridge/
-libVELA/vela-core/
+libVELA/vela-apple-bridge/
 
 # Secrets, local data, VCS
 **/.env
