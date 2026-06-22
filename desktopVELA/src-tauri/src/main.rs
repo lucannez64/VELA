@@ -226,6 +226,7 @@ fn main() {
             commands::sharing::accept_share,
             commands::sharing::decline_share,
             commands::sharing::delete_share,
+            commands::web_session::grant_web_session,
             commands::audit::get_audit_log,
             commands::audit::log_audit_event,
             commands::audit::clear_audit_log,

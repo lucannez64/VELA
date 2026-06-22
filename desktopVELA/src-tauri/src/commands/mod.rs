@@ -8,4 +8,5 @@ pub mod sharing;
 pub mod sync;
 pub mod totp;
 pub mod vault;
+pub mod web_session;
 pub mod window;
