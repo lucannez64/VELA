@@ -16,6 +16,8 @@ Each takes a JSON request string and returns a JSON response string
 | :--- | :--- |
 | `vela_wasm_version()` | → version string |
 | `generate_ephemeral_keypair()` | → `{ share_ek_b64, share_dk_b64 }` |
+| `generate_signing_keypair()` | → `{ vk_b64, sk_b64 }` (RW token auth) |
+| `create_auth_signature_json` | `{ sk_b64, device_id, challenge_b64 }` → `{ signature_b64 }` |
 | `open_share_json` | `{ share_dk_b64, capsule_b64 }` → `{ item_json }` |
 | `encrypt_vault_chunk_json` | `{ rms_b64, chunk_id, vault_json }` → `{ ciphertext_b64 }` |
 | `decrypt_vault_chunk_json` | `{ rms_b64, chunk_id, ciphertext_b64 }` → `{ vault_json }` |
