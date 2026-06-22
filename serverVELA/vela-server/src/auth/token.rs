@@ -69,8 +69,11 @@ impl TokenService {
         hard_cap: Option<DateTime<Utc>>,
     ) -> Result<(String, String)> {
         let now = Utc::now();
-        let exp = now + Duration::seconds(TOKEN_LIFE);
         let hcap = hard_cap.unwrap_or_else(|| now + Duration::seconds(HARD_CAP_SECS));
+        // Never let a token outlive its session ceiling. For permanent devices the
+        // 8 h cap is far away so this is a no-op; for ephemeral web sessions the
+        // ceiling is the granted TTL, so a short-lived session gets a short exp.
+        let exp = (now + Duration::seconds(TOKEN_LIFE)).min(hcap);
         let jti = Uuid::new_v4().to_string();
 
         let mut claims =

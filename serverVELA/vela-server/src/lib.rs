@@ -21,3 +21,4 @@ pub mod state;
 pub mod store;
 pub mod transport;
 pub mod vault;
+pub mod web_session;
