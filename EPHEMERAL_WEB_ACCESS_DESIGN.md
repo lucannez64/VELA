@@ -397,3 +397,38 @@ The initial open questions are resolved (see the summary table in §3):
   to the encrypted device audit log by trusted devices only. (§9.2)
 
 Nothing remains open; the design is ready to implement.
+
+---
+
+## 14. Wire formats (v1) — implemented
+
+Defined while building the approver (phase 3) so the web SPA (phase 4) and every
+approver platform agree.
+
+### 14.1 Link QR payload
+
+The browser encodes this JSON in the QR it shows (and the desktop approver accepts
+it pasted):
+
+```json
+{
+  "session_id": "<uuid>",
+  "ephemeral_pk": "<base64 1600 B hybrid KEM public key>",
+  "web_vk": "<base64 2624 B hybrid signing verification key>",  // omit for RO-only
+  "link_nonce": "<base64 32 B>"
+}
+```
+
+### 14.2 Sealed capsule envelope
+
+The approver seals this JSON (UTF-8) to `ephemeral_pk` via the hybrid KEM
+(`seal_share`); the browser recovers it with `open_share`:
+
+```json
+{ "v": 1, "mode": "ro", "vault": { /* VaultStore */ } }   // read-only snapshot
+{ "v": 1, "mode": "rw", "rms_b64": "<base64 32 B RMS>" }   // read-write live
+```
+
+Wrapping binary (the RMS) as base64 text keeps the sealed plaintext valid UTF-8,
+which the JSON-string `open_share` API requires. The `grant` body is then
+`{ mode, capsule: base64(sealed_bytes), ttl_secs }`.

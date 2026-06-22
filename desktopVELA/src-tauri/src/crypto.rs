@@ -137,6 +137,12 @@ impl Crypto {
         rms
     }
 
+    /// The raw Root Master Seed. Only used to seal an RW ephemeral web session
+    /// capsule to a browser's ephemeral key (`EPHEMERAL_WEB_ACCESS_DESIGN.md`).
+    pub fn rms(&self) -> [u8; 32] {
+        self.rms
+    }
+
     pub fn vault_key(&self) -> DerivedKey {
         kdf::derive(VAULT_KEY_CONTEXT, &self.rms)
     }

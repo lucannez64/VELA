@@ -54,6 +54,10 @@ pub enum AuditAction {
         item_type: String,
     },
     SettingsChanged,
+    WebSessionGranted {
+        mode: String,
+        ttl_secs: i64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import QRCode from 'qrcode';
 import { useApp } from '../context/AppContext';
+import WebAccessModal from '../components/WebAccessModal';
 
 interface Device {
   id: string;
@@ -25,6 +26,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [showRevokeModal, setShowRevokeModal] = useState<Device | null>(null);
   const [enrolling, setEnrolling] = useState(false);
+  const [showWebAccess, setShowWebAccess] = useState(false);
   const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
   const [qrImages, setQrImages] = useState<string[]>([]);
@@ -140,15 +142,27 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
           <h1 className="font-headline text-3xl font-bold text-on-surface mb-2">My Devices</h1>
           <p className="text-on-surface-variant">Manage devices that have access to your vault</p>
         </div>
-        <button
-          onClick={handleEnrollDevice}
-          disabled={enrolling}
-          className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
-        >
-          <span className="material-symbols-outlined">add</span>
-          {enrolling ? 'Generating code…' : 'Enroll new device'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowWebAccess(true)}
+            className="flex items-center gap-2 bg-surface text-on-surface border border-outline-variant/20 px-6 py-3 rounded-xl font-bold hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined">public</span>
+            Web access
+          </button>
+          <button
+            onClick={handleEnrollDevice}
+            disabled={enrolling}
+            className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined">add</span>
+            {enrolling ? 'Generating code…' : 'Enroll new device'}
+          </button>
+        </div>
       </div>
+
+      <WebAccessModal open={showWebAccess} onClose={() => setShowWebAccess(false)} />
+
 
       <div className="flex items-center justify-between mb-4">
         <span className="text-sm text-on-surface-variant">

@@ -647,6 +647,41 @@ impl ApiClient {
         Ok(result.share_ek)
     }
 
+    /// Approve an ephemeral web session: deliver the sealed capsule (RO snapshot
+    /// or RW RMS) with the chosen mode and TTL. Returns the server-clamped expiry.
+    pub async fn grant_web_session(
+        &self,
+        token: &str,
+        session_id: &str,
+        mode: &str,
+        capsule_b64: &str,
+        ttl_secs: i64,
+    ) -> Result<String> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/web-session/{}/grant", self.base_url, session_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({
+                        "mode": mode,
+                        "capsule": capsule_b64,
+                        "ttl_secs": ttl_secs,
+                    }))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Grant web session failed: {}", resp.status());
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GrantResp {
+            expires_at: String,
+        }
+        let r: GrantResp = resp.json().await?;
+        Ok(r.expires_at)
+    }
+
     /// Register (or update) the caller's own share encapsulation key. Backfill
     /// path for accounts created before share keys existed.
     pub async fn put_my_share_ek(&self, token: &str, share_ek: &str) -> Result<Option<String>> {
