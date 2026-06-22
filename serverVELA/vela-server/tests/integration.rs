@@ -444,3 +444,89 @@ async fn share_send_without_token_returns_401() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn web_session_start_and_poll_pending() {
+    // Build a clonable Router directly so both requests share one in-memory DB.
+    let app = vela_server::routes::build(helpers::test_state().await);
+
+    let body = serde_json::to_string(&json!({
+        "ephemeral_pk": B64.encode(vec![0u8; 1600]),
+        "link_nonce": B64.encode(vec![0u8; 32]),
+    }))
+    .unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/web-session/start")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let session_id = v["session_id"].as_str().unwrap().to_string();
+
+    // The browser polls; before any grant the session is pending.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/web-session/{session_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["status"], "pending");
+    assert!(v.get("capsule").is_none());
+}
+
+#[tokio::test]
+async fn web_session_start_rejects_bad_key_length() {
+    let app = app().await;
+
+    let body = serde_json::to_string(&json!({
+        "ephemeral_pk": B64.encode(vec![0u8; 100]), // wrong length
+        "link_nonce": B64.encode(vec![0u8; 32]),
+    }))
+    .unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/web-session/start")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn web_session_grant_requires_auth() {
+    let app = app().await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/web-session/{}/grant", Uuid::new_v4()))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({ "mode": "ro", "capsule": B64.encode(vec![0u8; 64]) })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

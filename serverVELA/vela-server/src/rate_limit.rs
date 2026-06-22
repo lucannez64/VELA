@@ -96,6 +96,21 @@ pub fn share_send_by_sender(store: &Store, sender: &str) -> Result<()> {
     check(store, &format!("rl:share:send:user:{sender}"), 120, HOUR_SECS)
 }
 
+/// 30 ephemeral-web-session starts/hour per IP (the endpoint is unauthenticated).
+pub fn web_session_start_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:websession:start:ip:{ip}"), 30, HOUR_SECS)
+}
+
+/// 10 RW token attempts/min per session (throttle ephemeral-key proof guessing).
+pub fn web_session_token_by_session(store: &Store, session_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:websession:token:{session_id}"),
+        10,
+        WINDOW_SECS,
+    )
+}
+
 // ─── Exponential backoff enforcement ─────────────────────────────────────────
 
 /// On consecutive failures (≥3) the spec mandates exponential backoff

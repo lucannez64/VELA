@@ -150,6 +150,30 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_shared_items_recipient ON shared_items(recipient_user_id, updated_at)",
         (),
     )?;
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS web_sessions (
+            id            TEXT UNIQUE NOT NULL,
+            user_id       TEXT,
+            ephemeral_pk  TEXT NOT NULL,
+            web_vk        TEXT,
+            link_nonce    TEXT NOT NULL,
+            mode          TEXT,
+            status        TEXT NOT NULL,
+            capsule       TEXT,
+            approved_by   TEXT,
+            created_at    TIMESTAMP NOT NULL,
+            expires_at    TIMESTAMP
+        )",
+        (),
+    )?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status)",
+        (),
+    )?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at)",
+        (),
+    )?;
     migrate_vault_chunks_schema(db)?;
     Ok(())
 }

@@ -101,6 +101,23 @@ pub fn build(state: AppState) -> Router {
             get(crate::share::get_recipient_ek),
         )
         .route("/share/my-ek", put(crate::share::put_my_ek))
+        .route(
+            "/web-session/start",
+            post(crate::web_session::post_start),
+        )
+        .route("/web-session/:id", get(crate::web_session::get_session))
+        .route(
+            "/web-session/:id",
+            delete(crate::web_session::delete_session),
+        )
+        .route(
+            "/web-session/:id/grant",
+            post(crate::web_session::post_grant),
+        )
+        .route(
+            "/web-session/:id/token",
+            post(crate::web_session::post_token),
+        )
         .route("/recovery/share", put(crate::recovery::put_share))
         .route("/recovery/share", get(crate::recovery::get_share))
         .route("/recovery/share", delete(crate::recovery::delete_share))
