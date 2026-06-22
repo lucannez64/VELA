@@ -2,5 +2,10 @@
 # its WebAssembly backend explicitly, in addition to the `wasm_js` cargo feature
 # enabled in Cargo.toml. Without this the wasm build fails with
 # "wasm32-unknown-unknown is not supported by default".
+# Also raise the wasm linear-memory stack to 8 MiB: ML-DSA-87 keygen/sign and
+# ML-KEM decapsulation are stack-heavy and overflow the 1 MiB default in-browser.
 [target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+rustflags = [
+    '--cfg', 'getrandom_backend="wasm_js"',
+    '-C', 'link-arg=-zstack-size=8388608',
+]
