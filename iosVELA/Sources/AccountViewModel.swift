@@ -1,6 +1,14 @@
 import Foundation
 import SwiftUI
 
+/// The payload encoded in a browser's ephemeral-web-access link QR / code.
+struct WebSessionQR: Decodable {
+    let session_id: String
+    let ephemeral_pk: String
+    let web_vk: String?
+    let link_nonce: String?
+}
+
 /// Drives the Phase 4 server flows: register/enroll this device, authenticate,
 /// two-way vault sync, sharing, and recovery-share setup — all over `VelaClient`.
 @MainActor
@@ -147,6 +155,45 @@ final class AccountViewModel: ObservableObject {
             ))
             AuditLog.shared.record("share_sent", String(recipientUserID.prefix(8)))
             return "Shared (inbox \(resp.inbox_id.prefix(8))…)"
+        }
+    }
+
+    /// Approve a browser's temporary, revocable web access. Parses the pasted
+    /// code, seals the capsule (RO vault snapshot / RW RMS) to the browser's
+    /// ephemeral key, grants it, and records the audit event.
+    /// See EPHEMERAL_WEB_ACCESS_DESIGN.md §14 for the wire formats.
+    func grantWebAccess(codeJSON: String, mode: String, ttlSecs: Int) {
+        run("Approving web access") { [self] in
+            guard account != nil else { throw Failure("register first") }
+            guard let data = codeJSON.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+                  let qr = try? JSONDecoder().decode(WebSessionQR.self, from: data) else {
+                throw Failure("Invalid web access code")
+            }
+
+            let envelope: String
+            if mode == "rw" {
+                guard qr.web_vk != nil else {
+                    throw Failure("This browser did not offer read-write access; choose read-only.")
+                }
+                guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
+                envelope = "{\"v\":1,\"mode\":\"rw\",\"rms_b64\":\"\(rms.base64EncodedString())\"}"
+            } else {
+                let itemsJSON = String(decoding: try JSONEncoder().encode(vault.items), as: UTF8.self)
+                envelope = "{\"v\":1,\"mode\":\"ro\",\"vault\":{\"items\":\(itemsJSON),\"tombstones\":[]}}"
+            }
+
+            guard let capsuleB64 = VelaCoreFFI.sealShare(
+                recipientShareEKBase64: qr.ephemeral_pk, itemJSON: envelope) else {
+                throw Failure("KEM sealing failed")
+            }
+            let client = client()
+            let expiresAt = try await client.grantWebSession(
+                sessionID: qr.session_id, mode: mode, capsuleBase64: capsuleB64, ttlSecs: ttlSecs)
+            await persistRenewedToken(from: client)
+            AuditLog.shared.record(
+                "web_session_granted",
+                "\(mode == "rw" ? "read-write" : "read-only") · \(ttlSecs / 60) min")
+            return "Web access granted until \(expiresAt.prefix(16))"
         }
     }
 

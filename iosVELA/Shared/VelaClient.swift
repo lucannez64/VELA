@@ -199,6 +199,18 @@ actor VelaClient {
                                                   json: ["share_ek": shareEK], auth: true)
     }
 
+    struct GrantWebResponse: Decodable { let granted: Bool; let expires_at: String }
+
+    /// Approve an ephemeral web session: deliver the sealed capsule with the
+    /// chosen mode and TTL. Returns the server-clamped expiry (RFC3339).
+    func grantWebSession(sessionID: String, mode: String,
+                         capsuleBase64: String, ttlSecs: Int) async throws -> String {
+        let resp: GrantWebResponse = try await request(
+            "POST", "/web-session/\(sessionID)/grant",
+            json: ["mode": mode, "capsule": capsuleBase64, "ttl_secs": ttlSecs], auth: true)
+        return resp.expires_at
+    }
+
     // MARK: - Devices
 
     struct DeviceInfo: Decodable, Identifiable {

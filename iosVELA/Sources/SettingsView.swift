@@ -43,6 +43,8 @@ struct SettingsView: View {
                         .accessibilityIdentifier("sharingLink")
                     NavigationLink("Devices") { DevicesView(account: accountVM) }
                         .accessibilityIdentifier("devicesLink")
+                    NavigationLink("Web access") { WebAccessView(account: accountVM) }
+                        .accessibilityIdentifier("webAccessLink")
                 }
 
                 Section("Tools") {
