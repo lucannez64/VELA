@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class DevicesViewModel: ObservableObject {
     @Published var devices: [VelaClient.DeviceInfo] = []
+    @Published var webSessions: [VelaClient.WebSessionInfo] = []
     @Published var status = ""
     @Published var busy = false
 
@@ -15,11 +16,14 @@ final class DevicesViewModel: ObservableObject {
     var currentDeviceID: String? { account.deviceID }
 
     func refresh() {
-        run("Loading devices") { [self] in
+        run("Loading") { [self] in
             guard let client = account.makeClient() else { throw Fail("register first") }
-            let list = try await client.listDevices()
+            async let deviceList = client.listDevices()
+            async let sessionList = client.listWebSessions()
+            let (list, sessions) = try await (deviceList, sessionList)
             await account.adoptToken(from: client)
             devices = list
+            webSessions = sessions
             return "\(list.filter { !$0.revoked }.count) active device(s)"
         }
     }
@@ -33,6 +37,18 @@ final class DevicesViewModel: ObservableObject {
             devices = list
             AuditLog.shared.record("device_revoked", device.name)
             return "Revoked \(device.name)"
+        }
+    }
+
+    func revokeWebSession(_ session: VelaClient.WebSessionInfo) {
+        run("Revoking web session") { [self] in
+            guard let client = account.makeClient() else { throw Fail("register first") }
+            try await client.revokeWebSession(id: session.id)
+            let sessions = try await client.listWebSessions()
+            await account.adoptToken(from: client)
+            webSessions = sessions
+            AuditLog.shared.record("web_session_revoked", session.mode)
+            return "Web session revoked"
         }
     }
 

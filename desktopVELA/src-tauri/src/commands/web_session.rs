@@ -16,7 +16,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::api::ApiClient;
+use crate::api::{ApiClient, WebSessionInfo};
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::AppState;
 
@@ -126,4 +126,38 @@ pub async fn grant_web_session(
     );
 
     Ok(GrantResult { expires_at, mode })
+}
+
+/// List the caller's active (granted, not-yet-expired) web sessions.
+#[tauri::command]
+pub async fn list_web_sessions(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<WebSessionInfo>, String> {
+    let token = state
+        .get_session_token()
+        .ok_or("Not authenticated")?;
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    client
+        .list_web_sessions(&token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Revoke an active web session by its id.
+#[tauri::command]
+pub async fn revoke_web_session(
+    state: State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<(), String> {
+    let token = state
+        .get_session_token()
+        .ok_or("Not authenticated")?;
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    client
+        .revoke_web_session(&token, &session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

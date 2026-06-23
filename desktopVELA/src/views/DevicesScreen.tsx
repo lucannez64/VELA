@@ -16,6 +16,14 @@ interface Device {
   pending: boolean;
 }
 
+interface WebSession {
+  id: string;
+  mode: string;
+  status: string;
+  created_at: string;
+  expires_at: string | null;
+}
+
 interface Props {
   onItemsChanged?: () => void;
 }
@@ -27,6 +35,8 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   const [showRevokeModal, setShowRevokeModal] = useState<Device | null>(null);
   const [enrolling, setEnrolling] = useState(false);
   const [showWebAccess, setShowWebAccess] = useState(false);
+  const [webSessions, setWebSessions] = useState<WebSession[]>([]);
+  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
   const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
   const [qrImages, setQrImages] = useState<string[]>([]);
@@ -35,6 +45,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
 
   useEffect(() => {
     loadDevices();
+    loadWebSessions();
   }, []);
 
   const displayDevices = devices
@@ -52,6 +63,28 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
       setDevices(result);
     } catch (e) {
       showToast('Failed to load devices', 'error');
+    }
+  };
+
+  const loadWebSessions = async () => {
+    try {
+      const result = await invoke<WebSession[]>('list_web_sessions');
+      setWebSessions(result);
+    } catch {
+      // silently ignore — user may not have any sessions
+    }
+  };
+
+  const handleRevokeWebSession = async (session: WebSession) => {
+    setRevokingSessionId(session.id);
+    try {
+      await invoke('revoke_web_session', { sessionId: session.id });
+      showToast('Web session revoked', 'success');
+      await loadWebSessions();
+    } catch (e) {
+      showToast('Failed to revoke web session', 'error');
+    } finally {
+      setRevokingSessionId(null);
     }
   };
 
@@ -222,6 +255,59 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Web Sessions */}
+      <div className="mt-10">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="font-headline text-xl font-bold text-on-surface">Temporary Web Sessions</h2>
+            <p className="text-sm text-on-surface-variant">Active browser sessions approved from this account</p>
+          </div>
+          <button
+            onClick={loadWebSessions}
+            className="flex items-center gap-2 bg-surface text-on-surface border border-outline-variant/20 px-4 py-2 rounded-xl text-sm hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm">refresh</span>
+            Refresh
+          </button>
+        </div>
+        {webSessions.length === 0 ? (
+          <div className="p-6 rounded-xl bg-surface-container border border-outline-variant/5 text-on-surface-variant text-sm">
+            No active web sessions.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {webSessions.map(ws => (
+              <div key={ws.id} className="p-5 rounded-xl bg-surface-container border border-outline-variant/5 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-11 h-11 rounded-xl bg-surface-bright flex items-center justify-center">
+                    <span className="material-symbols-outlined text-xl text-primary">language</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-on-surface">Web Browser</span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-label ${ws.mode === 'rw' ? 'bg-violet-500/20 text-violet-300' : 'bg-primary/20 text-primary'}`}>
+                        {ws.mode === 'rw' ? 'Read-Write' : 'Read-Only'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-on-surface-variant">
+                      Started {formatDate(ws.created_at)}
+                      {ws.expires_at && ` · Expires ${formatLastActive(ws.expires_at)}`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleRevokeWebSession(ws)}
+                  disabled={revokingSessionId === ws.id}
+                  className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors text-red-400 hover:text-red-300 disabled:opacity-50"
+                >
+                  {revokingSessionId === ws.id ? 'Revoking…' : 'Revoke'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {enrollmentCode && (

@@ -479,6 +479,78 @@ pub async fn delete_session(
     Ok((headers, Json(serde_json::json!({ "revoked": true }))))
 }
 
+// ── GET /web-sessions (list user's active sessions) ─────────────────────────────
+
+#[derive(Serialize)]
+pub struct WebSessionInfo {
+    pub id: String,
+    pub mode: String,
+    pub status: String,
+    pub created_at: String,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+pub struct SessionsListResponse {
+    pub sessions: Vec<WebSessionInfo>,
+}
+
+pub async fn get_sessions_list(
+    State(state): State<AppState>,
+    session: AuthSession,
+) -> Result<(HeaderMap, Json<SessionsListResponse>)> {
+    let rows = state
+        .db
+        .query(
+            "SELECT id, mode, status, created_at, expires_at
+             FROM web_sessions
+             WHERE user_id = $1 AND status = 'granted'
+             ORDER BY created_at DESC",
+            stoolap::params![session.user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let now = Utc::now();
+    let mut sessions = Vec::new();
+    for row in rows {
+        let row = row.map_err(|e| AppError::Internal(e.to_string()))?;
+        let id = crate::db::row_val(&row, 0)?
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let mode = crate::db::row_val(&row, 1)?
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let status = crate::db::row_val(&row, 2)?
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let created_at = crate::db::row_val(&row, 3)?
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let expires_at = crate::db::row_val(&row, 4)?.as_timestamp();
+
+        // Skip expired sessions (cleanup task handles deletion asynchronously).
+        if expires_at.map(|e| now > e).unwrap_or(false) {
+            continue;
+        }
+
+        sessions.push(WebSessionInfo {
+            id,
+            mode,
+            status,
+            created_at,
+            expires_at,
+        });
+    }
+
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, &session);
+    Ok((headers, Json(SessionsListResponse { sessions })))
+}
+
 // ── Background cleanup ──────────────────────────────────────────────────────────
 
 /// Periodically prune revoked sessions, granted sessions past their expiry, and
