@@ -711,6 +711,50 @@ impl ApiClient {
         Ok(r.expires_at)
     }
 
+    /// List the caller's active (granted, not-yet-expired) web sessions.
+    pub async fn list_web_sessions(&self, token: &str) -> Result<Vec<WebSessionInfo>> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .get(format!("{}/web-sessions", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("List web sessions failed: {}", resp.status());
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ListResp {
+            sessions: Vec<WebSessionInfo>,
+        }
+        let r: ListResp = resp.json().await?;
+        Ok(r.sessions)
+    }
+
+    /// Revoke an active web session.
+    pub async fn revoke_web_session(&self, token: &str, session_id: &str) -> Result<Option<String>> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .delete(format!("{}/web-session/{}", self.base_url, session_id))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Revoke web session failed: {}", resp.status());
+        }
+        let new_token = resp
+            .headers()
+            .get("x-new-token")
+            .and_then(|v| v.to_str().ok())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        Ok(new_token)
+    }
+
     /// Register (or update) the caller's own share encapsulation key. Backfill
     /// path for accounts created before share keys existed.
     pub async fn put_my_share_ek(&self, token: &str, share_ek: &str) -> Result<Option<String>> {
@@ -972,6 +1016,15 @@ pub struct DeviceInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrollResponse {
     pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSessionInfo {
+    pub id: String,
+    pub mode: String,
+    pub status: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
 }
 
 /// Request body for `POST /device/enroll`.

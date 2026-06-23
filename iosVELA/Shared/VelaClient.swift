@@ -226,6 +226,26 @@ actor VelaClient {
         return resp.expires_at
     }
 
+    // MARK: - Web sessions
+
+    struct WebSessionInfo: Decodable, Identifiable {
+        let id: String
+        let mode: String
+        let status: String
+        let created_at: String
+        let expires_at: String?
+    }
+    private struct WebSessionsResponse: Decodable { let sessions: [WebSessionInfo] }
+
+    func listWebSessions() async throws -> [WebSessionInfo] {
+        let resp: WebSessionsResponse = try await request("GET", "/web-sessions", auth: true)
+        return resp.sessions
+    }
+
+    func revokeWebSession(id: String) async throws {
+        _ = try await requestRaw("DELETE", "/web-session/\(id)", body: nil)
+    }
+
     // MARK: - Devices
 
     struct DeviceInfo: Decodable, Identifiable {

@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.core.VelaRepositories
+import com.vela.android.sync.AndroidVelaApiClient
 import com.vela.android.sync.DeviceInfo
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
@@ -47,6 +48,7 @@ import kotlinx.coroutines.withContext
 fun DevicesScreen(onBack: () -> Unit, onWebAccess: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
+    var webSessions by remember { mutableStateOf<List<AndroidVelaApiClient.WebSessionInfo>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var hideRevoked by remember { mutableStateOf(false) }
@@ -71,10 +73,15 @@ fun DevicesScreen(onBack: () -> Unit, onWebAccess: () -> Unit = {}) {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 VelaRepositories.sync.withAuthenticatedClient { client, token ->
-                    client.getDevices(token).first
+                    val deviceList = client.getDevices(token).first
+                    val sessionList = runCatching { client.listWebSessions(token) }.getOrDefault(emptyList())
+                    deviceList to sessionList
                 }
-            }.onSuccess { result ->
-                withContext(Dispatchers.Main) { devices = result }
+            }.onSuccess { (deviceList, sessionList) ->
+                withContext(Dispatchers.Main) {
+                    devices = deviceList
+                    webSessions = sessionList
+                }
             }.onFailure { e ->
                 withContext(Dispatchers.Main) { error = e.message ?: "Failed to load devices" }
             }
@@ -155,6 +162,57 @@ fun DevicesScreen(onBack: () -> Unit, onWebAccess: () -> Unit = {}) {
                                                 client.revokeDevice(token, device.id)
                                             }
                                             VelaRepositories.audit.record("device_revoked", device.id.take(8))
+                                        }
+                                        withContext(Dispatchers.Main) { load() }
+                                    }
+                                },
+                                style = VelaButtonStyle.Destructive,
+                                fullWidth = false
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Web Sessions section header
+            item {
+                Spacer(Modifier.height(14.dp))
+                Text("Temporary Web Sessions", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Active browser sessions approved from this account", color = VelaColors.TextMuted, fontSize = 13.sp)
+                Spacer(Modifier.height(6.dp))
+            }
+
+            if (webSessions.isEmpty()) {
+                item {
+                    VelaCard {
+                        Text("No active web sessions.", color = VelaColors.TextSecondary)
+                    }
+                }
+            } else {
+                items(webSessions, key = { "ws_${it.id}" }) { ws ->
+                    VelaCard {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Public, null, tint = if (ws.mode == "rw") androidx.compose.ui.graphics.Color(0xFFAB8BFF) else VelaColors.Green)
+                            Spacer(Modifier.padding(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Web Browser", fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.padding(4.dp))
+                                    StatusBadge(if (ws.mode == "rw") "RW" else "RO")
+                                }
+                                ws.expiresAt?.let {
+                                    Text("Expires: ${it.take(16).replace('T', ' ')}", color = VelaColors.TextMuted, fontSize = 12.sp)
+                                }
+                            }
+                            VelaButton(
+                                text = "Revoke",
+                                onClick = {
+                                    scope.launch(Dispatchers.IO) {
+                                        runCatching {
+                                            VelaRepositories.sync.withAuthenticatedClient { client, token ->
+                                                client.revokeWebSession(token, ws.id)
+                                            }
+                                            VelaRepositories.audit.record("web_session_revoked", ws.mode)
                                         }
                                         withContext(Dispatchers.Main) { load() }
                                     }

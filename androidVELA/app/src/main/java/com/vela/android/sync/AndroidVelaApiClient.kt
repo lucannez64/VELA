@@ -415,6 +415,36 @@ class AndroidVelaApiClient(
         return JSONObject(response.body.toString(Charsets.UTF_8)).getString("expires_at")
     }
 
+    data class WebSessionInfo(
+        val id: String,
+        val mode: String,
+        val status: String,
+        val createdAt: String,
+        val expiresAt: String?,
+    )
+
+    fun listWebSessions(token: String): List<WebSessionInfo> {
+        val response = request("GET", "/web-sessions", token)
+        response.requireSuccess("List web sessions failed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        val arr = json.getJSONArray("sessions")
+        return (0 until arr.length()).map { i ->
+            val obj = arr.getJSONObject(i)
+            WebSessionInfo(
+                id = obj.getString("id"),
+                mode = obj.getString("mode"),
+                status = obj.getString("status"),
+                createdAt = obj.getString("created_at"),
+                expiresAt = obj.optString("expires_at").takeIf { it.isNotEmpty() },
+            )
+        }
+    }
+
+    fun revokeWebSession(token: String, sessionId: String) {
+        val response = request("DELETE", "/web-session/$sessionId", token)
+        response.requireSuccess("Revoke web session failed")
+    }
+
     private fun request(
         method: String,
         path: String,

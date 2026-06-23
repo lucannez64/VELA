@@ -10,12 +10,24 @@ struct DevicesView: View {
 
     var body: some View {
         List {
-            if vm.devices.isEmpty {
-                Text("No devices").foregroundStyle(.secondary)
+            Section("Enrolled Devices") {
+                if vm.devices.isEmpty {
+                    Text("No devices").foregroundStyle(.secondary)
+                }
+                ForEach(vm.devices) { device in
+                    row(device)
+                }
             }
-            ForEach(vm.devices) { device in
-                row(device)
+
+            Section("Temporary Web Sessions") {
+                if vm.webSessions.isEmpty {
+                    Text("No active web sessions").foregroundStyle(.secondary)
+                }
+                ForEach(vm.webSessions) { session in
+                    webSessionRow(session)
+                }
             }
+
             if !vm.status.isEmpty {
                 Section { Text(vm.status).font(.callout).foregroundStyle(.secondary) }
             }
@@ -50,6 +62,27 @@ struct DevicesView: View {
                 Button("Revoke", role: .destructive) { vm.revoke(device) }
                     .buttonStyle(.bordered)
             }
+        }
+    }
+
+    private func webSessionRow(_ session: VelaClient.WebSessionInfo) -> some View {
+        HStack {
+            Image(systemName: "globe")
+                .foregroundStyle(session.mode == "rw" ? Color.purple : Color.green)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Web Browser")
+                    tag(session.mode == "rw" ? "RW" : "RO",
+                        session.mode == "rw" ? .purple : .green)
+                }
+                if let exp = session.expires_at {
+                    Text("Expires \(exp.prefix(16).replacingOccurrences(of: "T", with: " "))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button("Revoke", role: .destructive) { vm.revokeWebSession(session) }
+                .buttonStyle(.bordered)
         }
     }
 
