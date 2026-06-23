@@ -11,6 +11,8 @@ import {
   bytesToB64,
   b64ToBytes,
   randomB64,
+  argon2Wrap,
+  argon2Unwrap,
 } from './vela';
 import { startSession, pollSession, getChallenge, getSessionToken, AuthedSession, type PollResponse } from './api';
 
@@ -26,6 +28,40 @@ let polling = false;
 let authed: AuthedSession | null = null;
 let items: Record<string, unknown>[] = [];
 let dirty = false;
+let rwExpiresAt: string | undefined;
+
+// RW reload survival (design §8.1): the RMS + signing key are Argon2id-wrapped
+// under a user PIN in sessionStorage (per-tab, cleared on close), so a reload can
+// resume without re-linking from the phone.
+const RW_STORE_KEY = 'vela.rw.v1';
+function clearRwStore() {
+  sessionStorage.removeItem(RW_STORE_KEY);
+}
+function persistRw(pin: string) {
+  const payload = btoa(JSON.stringify({ rms: rmsB64, sk: signingSk, sid: sessionId, exp: rwExpiresAt ?? '' }));
+  sessionStorage.setItem(RW_STORE_KEY, argon2Wrap(pin, payload));
+}
+async function restoreRw(pin: string): Promise<boolean> {
+  const blob = sessionStorage.getItem(RW_STORE_KEY);
+  if (!blob) return false;
+  let data: { rms: string; sk: string; sid: string; exp: string };
+  try {
+    data = JSON.parse(atob(argon2Unwrap(pin, blob)));
+  } catch {
+    return false; // wrong PIN
+  }
+  rmsB64 = data.rms;
+  signingSk = data.sk;
+  sessionId = data.sid;
+  rwExpiresAt = data.exp || undefined;
+  try {
+    await loadReadWrite(rwExpiresAt);
+    return true;
+  } catch {
+    clearRwStore(); // session expired / revoked
+    return false;
+  }
+}
 
 // Vault chunking — must match the apps (Android `VaultSyncManager` / desktop sync):
 // the vault JSON is split across `vault-data-NNNNNN` chunks (≤ 1 MiB − 4 KiB each),
@@ -145,13 +181,19 @@ function itemType(it: Record<string, unknown>): string {
   return (it.type as string) ?? (it.kind as string) ?? Object.keys(it).find((k) => k !== 'meta') ?? 'item';
 }
 const SECRET = /pass|pin|cvv|secret|totp|seed|key|cvc/i;
+// Internal/metadata fields — never shown or edited (only real content is).
+const META_HIDE = new Set([
+  'id', 'type', 'kind', 'item_type', 'createdat', 'updatedat', 'created_at', 'updated_at',
+  'lastmodifieddevice', 'last_modified_device', 'favorite', 'shared', 'sharerecipient',
+  'share_recipient', 'version', 'lamport', 'conflictrefs', 'conflict_refs',
+]);
 
 interface Leaf { path: string; key: string; value: string; isString: boolean; }
 function leaves(it: Record<string, unknown>): Leaf[] {
   const out: Leaf[] = [];
   const visit = (obj: Record<string, unknown>, prefix: string) => {
     for (const [k, v] of Object.entries(obj)) {
-      if (k === 'id' || k === 'type' || k === 'kind') continue;
+      if (META_HIDE.has(k.toLowerCase())) continue;
       const path = prefix ? `${prefix}.${k}` : k;
       if (typeof v === 'string' || typeof v === 'number') {
         if (String(v).length) out.push({ path, key: k, value: String(v), isString: typeof v === 'string' });
@@ -168,6 +210,16 @@ function setByPath(obj: Record<string, unknown>, path: string, value: string) {
   let cur: Record<string, unknown> = obj;
   for (let i = 0; i < segs.length - 1; i++) cur = cur[segs[i]] as Record<string, unknown>;
   cur[segs[segs.length - 1]] = value;
+}
+
+/** Stamp an edited item so the apps' merge (which compares `updatedAt`) keeps it. */
+function touchItem(it: Record<string, unknown>) {
+  const now = new Date().toISOString();
+  const meta = it.meta as Record<string, unknown> | undefined;
+  if ('updatedAt' in it) it.updatedAt = now;
+  if (meta && 'updatedAt' in meta) meta.updatedAt = now;
+  if ('lastModifiedDevice' in it) it.lastModifiedDevice = 'web';
+  if (meta && 'lastModifiedDevice' in meta) meta.lastModifiedDevice = 'web';
 }
 
 function fieldRow(ii: number, leaf: Leaf, editable: boolean): string {
@@ -236,6 +288,7 @@ function wireItemEvents(node: HTMLElement, editable: boolean, onDirty: () => voi
       inp.oninput = () => {
         const ii = Number(inp.dataset.ii);
         setByPath(items[ii], inp.dataset.path!, inp.value);
+        touchItem(items[ii]);
         onDirty();
       };
     });
@@ -248,6 +301,7 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
     <div class="banner ${opts.editable ? 'rw' : ''}">
       <span class="pill"><span class="dot"></span>${opts.editable ? 'Read &amp; write' : 'Read-only'}${until ? ` · until ${esc(until)}` : ''}</span>
       <span class="actions">
+        ${opts.editable ? '<button class="small ghost" id="keep" title="Resume this session after a reload">🔒 Keep</button>' : ''}
         ${opts.editable ? '<button class="small primary" id="save" disabled>Saved</button>' : ''}
         <button class="small ghost" id="end">End</button>
       </span>
@@ -261,9 +315,19 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
   render(node);
 
   node.querySelector<HTMLButtonElement>('#end')!.onclick = () => {
+    clearRwStore();
     wipe();
     location.reload();
   };
+  node.querySelector<HTMLButtonElement>('#keep')?.addEventListener('click', () => {
+    const pin = window.prompt('Set a PIN (min 4 chars) to resume this session if the page reloads:');
+    if (pin && pin.length >= 4) {
+      persistRw(pin);
+      toast('This session will resume on reload');
+    } else if (pin !== null) {
+      toast('PIN must be at least 4 characters');
+    }
+  });
   const search = node.querySelector<HTMLInputElement>('#search')!;
   search.oninput = () => {
     const q = search.value.trim().toLowerCase();
@@ -304,6 +368,7 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
 // ── RW: authenticate, fetch live vault, save ────────────────────────────────────
 
 async function loadReadWrite(expiresAt?: string) {
+  rwExpiresAt = expiresAt;
   showSplash('Connecting to your vault…');
   const challenge = await getChallenge();
   const signature = createAuthSignature(signingSk, sessionId, challenge);
@@ -403,10 +468,43 @@ async function pollLoop() {
   }
 }
 
+function showResumeScreen(errorMsg?: string) {
+  const node = el(`<div>${brand}
+    <h1>Resume your session</h1>
+    <p class="sub">Enter the PIN you set to continue your read &amp; write session.</p>
+    <div class="card">
+      ${errorMsg ? `<p class="error">${esc(errorMsg)}</p><div style="height:12px"></div>` : ''}
+      <input class="search" id="pin" type="password" placeholder="Session PIN" autocomplete="off" />
+      <div style="height:14px"></div>
+      <button class="primary" id="go">Resume</button>
+      <div style="height:8px"></div>
+      <button class="ghost" id="fresh">Start a new session</button>
+    </div>
+  </div>`);
+  render(node);
+  const pin = node.querySelector<HTMLInputElement>('#pin')!;
+  const submit = async () => {
+    if (!pin.value) return;
+    showSplash('Resuming…');
+    if (!(await restoreRw(pin.value))) showResumeScreen('Wrong PIN, or the session has expired.');
+  };
+  node.querySelector<HTMLButtonElement>('#go')!.onclick = submit;
+  pin.onkeydown = (e) => {
+    if (e.key === 'Enter') submit();
+  };
+  node.querySelector<HTMLButtonElement>('#fresh')!.onclick = () => {
+    clearRwStore();
+    location.reload();
+  };
+}
+
 async function start() {
   showSplash('Loading secure core…');
   try {
     await initVela();
+    if (sessionStorage.getItem(RW_STORE_KEY)) {
+      return showResumeScreen();
+    }
     const kem = generateEphemeralKeypair();
     const sign = generateSigningKeypair();
     shareDk = kem.share_dk_b64;
