@@ -106,11 +106,17 @@ actor VelaClient {
 
     func getChunk(_ chunkID: String) async throws -> FetchedChunk {
         let (data, http) = try await requestRaw("GET", "/vault/chunk/\(chunkID)", body: nil)
-        // Server returns the stored base64 ciphertext as the body.
-        let ciphertextB64 = String(decoding: data, as: UTF8.self)
+        // The server returns the raw ciphertext bytes; base64-encode them for the core.
+        let ciphertextB64 = data.base64EncodedString()
         let version = Int(http.value(forHTTPHeaderField: "X-Chunk-Version") ?? "") ?? 0
         let lamport = Int(http.value(forHTTPHeaderField: "X-Lamport-Clock") ?? "") ?? 0
         return FetchedChunk(ciphertextBase64: ciphertextB64, version: version, lamportClock: lamport)
+    }
+
+    /// Delete a stale chunk (used when the vault shrinks or migrates chunk ids).
+    func deleteChunk(_ chunkID: String, ifMatch: Int) async throws {
+        _ = try await requestRaw("DELETE", "/vault/chunk/\(chunkID)", body: nil,
+                                 headers: ["If-Match": String(ifMatch)])
     }
 
     /// Upload a chunk. `ifMatch` = 0 to insert, else the current version. Returns the new version.
