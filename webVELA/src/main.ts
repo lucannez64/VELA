@@ -56,11 +56,16 @@ function splitUtf8(s: string, maxBytes: number): string[] {
 
 const app = document.getElementById('app')!;
 
-function wipe() {
+/** Drop the in-memory secrets (keys / RMS / token) but keep what's on screen. */
+function wipeKeys() {
   shareDk = '';
   signingSk = '';
   rmsB64 = '';
   authed = null;
+}
+/** Full wipe: secrets and the decrypted vault. */
+function wipe() {
+  wipeKeys();
   items = [];
 }
 window.addEventListener('beforeunload', wipe);
@@ -372,7 +377,7 @@ async function onGranted(res: PollResponse) {
     }
   } else {
     items = (envelope.vault?.items ?? []) as Record<string, unknown>[];
-    wipe();
+    wipeKeys(); // RO snapshot is self-contained — drop keys but keep the items
     showVault({ editable: false, expiresAt: res.expires_at });
   }
 }
