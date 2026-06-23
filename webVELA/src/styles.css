@@ -63,6 +63,11 @@ p.muted { color: var(--muted); margin: 6px 0 14px; font-size: 0.92rem; }
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.22);
 }
 
+/* Spacer utilities (replaces inline style="height:Xpx" to keep CSP style-src clean) */
+.gap-xs { height: 8px; }
+.gap-sm { height: 12px; }
+.gap-md { height: 14px; }
+
 /* QR */
 .qr { display: flex; justify-content: center; padding: 14px; background: #fff; border-radius: 12px; }
 .qr img { width: 232px; height: 232px; image-rendering: pixelated; }

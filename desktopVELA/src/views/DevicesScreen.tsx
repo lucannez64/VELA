@@ -46,6 +46,10 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   useEffect(() => {
     loadDevices();
     loadWebSessions();
+    // Auto-refresh web sessions every 30 s so sessions approved by another device
+    // become visible without manual refresh (real-time notification substitute).
+    const t = setInterval(loadWebSessions, 30_000);
+    return () => clearInterval(t);
   }, []);
 
   const displayDevices = devices

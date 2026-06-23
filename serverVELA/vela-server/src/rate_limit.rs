@@ -101,6 +101,18 @@ pub fn web_session_start_by_ip(store: &Store, ip: &str) -> Result<()> {
     check(store, &format!("rl:websession:start:ip:{ip}"), 30, HOUR_SECS)
 }
 
+/// 120 polls/min per IP for GET /web-session/:id (browser polls every 2 s = 30/min normally;
+/// 120 gives 4× headroom while still blocking enumeration attacks).
+pub fn web_session_poll_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:websession:poll:ip:{ip}"), 120, WINDOW_SECS)
+}
+
+/// 60 key-fetches/min per authenticated user for GET /web-session/:id/keys
+/// (anti-enumeration on the approver side).
+pub fn web_session_keys_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(store, &format!("rl:websession:keys:user:{user_id}"), 60, WINDOW_SECS)
+}
+
 /// 10 RW token attempts/min per session (throttle ephemeral-key proof guessing).
 pub fn web_session_token_by_session(store: &Store, session_id: &str) -> Result<()> {
     check(

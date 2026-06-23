@@ -11,8 +11,6 @@ import {
   bytesToB64,
   b64ToBytes,
   randomB64,
-  argon2Wrap,
-  argon2Unwrap,
 } from './vela';
 import { startSession, pollSession, getChallenge, getSessionToken, AuthedSession, type PollResponse } from './api';
 
@@ -30,37 +28,12 @@ let items: Record<string, unknown>[] = [];
 let dirty = false;
 let rwExpiresAt: string | undefined;
 
-// RW reload survival (design §8.1): the RMS + signing key are Argon2id-wrapped
-// under a user PIN in sessionStorage (per-tab, cleared on close), so a reload can
-// resume without re-linking from the phone.
+// RW session storage key — kept only as a purge target; the resume-with-PIN
+// feature has been removed (clearRwStore is called in beforeunload so the blob
+// never survives a navigation or close).
 const RW_STORE_KEY = 'vela.rw.v1';
 function clearRwStore() {
   sessionStorage.removeItem(RW_STORE_KEY);
-}
-function persistRw(pin: string) {
-  const payload = btoa(JSON.stringify({ rms: rmsB64, sk: signingSk, sid: sessionId, exp: rwExpiresAt ?? '' }));
-  sessionStorage.setItem(RW_STORE_KEY, argon2Wrap(pin, payload));
-}
-async function restoreRw(pin: string): Promise<boolean> {
-  const blob = sessionStorage.getItem(RW_STORE_KEY);
-  if (!blob) return false;
-  let data: { rms: string; sk: string; sid: string; exp: string };
-  try {
-    data = JSON.parse(atob(argon2Unwrap(pin, blob)));
-  } catch {
-    return false; // wrong PIN
-  }
-  rmsB64 = data.rms;
-  signingSk = data.sk;
-  sessionId = data.sid;
-  rwExpiresAt = data.exp || undefined;
-  try {
-    await loadReadWrite(rwExpiresAt);
-    return true;
-  } catch {
-    clearRwStore(); // session expired / revoked
-    return false;
-  }
 }
 
 // Vault chunking — must match the apps (Android `VaultSyncManager` / desktop sync):
@@ -104,7 +77,9 @@ function wipe() {
   wipeKeys();
   items = [];
 }
-window.addEventListener('beforeunload', wipe);
+// Clear the RW session blob on every navigation/close — prevents the Argon2-wrapped
+// RMS from lingering in sessionStorage on shared machines.
+window.addEventListener('beforeunload', () => { clearRwStore(); wipe(); });
 
 // ── DOM helpers ─────────────────────────────────────────────────────────────────
 function el(html: string): HTMLElement {
@@ -146,10 +121,33 @@ function showError(message: string) {
   node.querySelector<HTMLButtonElement>('#retry')!.onclick = () => location.reload();
 }
 
+// ── Key fingerprint ─────────────────────────────────────────────────────────────
+// The QR embeds `{sessionId}#{base32(sha256(share_ek)[0:8])}` so the approver
+// app can verify that the key returned by the server matches what the browser
+// registered — preventing a compromised server from silently substituting its
+// own key (§ key-substitution threat).
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32Encode(bytes: Uint8Array): string {
+  let bits = 0, value = 0, out = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) { out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  return out;
+}
+async function ekFingerprint(ekB64: string): Promise<string> {
+  const hash = await crypto.subtle.digest('SHA-256', b64ToBytes(ekB64));
+  return base32Encode(new Uint8Array(hash).slice(0, 8));
+}
+
 async function showLinkScreen() {
-  // The QR carries only the short session id; the app fetches the key from the
-  // server, keeping the QR easy to scan.
-  const qrDataUrl = await QRCode.toDataURL(sessionId, { errorCorrectionLevel: 'M', margin: 1, width: 232 });
+  // QR = "{sessionId}#{base32 fingerprint of share_ek}" (≈50 chars, easily scannable).
+  // The approver fetches share_ek from the server then verifies it matches the fingerprint.
+  const fingerprint = await ekFingerprint(linkPayload.ephemeral_pk);
+  const linkCode = `${sessionId}#${fingerprint}`;
+  const qrDataUrl = await QRCode.toDataURL(linkCode, { errorCorrectionLevel: 'M', margin: 1, width: 232 });
   const node = el(`<div>${brand}
     <h1>Open your vault here</h1>
     <p class="sub">Temporary, expiring, revocable access — no install, no permanent device.</p>
@@ -157,16 +155,16 @@ async function showLinkScreen() {
       <h2>In the VELA app</h2>
       <p class="muted">Open <b>Devices&nbsp;/&nbsp;Settings → Web access</b>, scan this code (or paste it), pick a duration, and approve.</p>
       <div class="qr"><img src="${qrDataUrl}" alt="link code" /></div>
-      <div style="height:14px"></div>
-      <div class="code" id="code">${esc(sessionId)}</div>
-      <div style="height:12px"></div>
+      <div class="gap-md"></div>
+      <div class="code" id="code">${esc(linkCode)}</div>
+      <div class="gap-sm"></div>
       <button class="small" id="copy">Copy code</button>
     </div>
     <div class="card center"><span class="spinner">Waiting for approval…</span></div>
   </div>`);
   render(node);
   node.querySelector<HTMLButtonElement>('#copy')!.onclick = async () => {
-    await navigator.clipboard.writeText(sessionId);
+    await navigator.clipboard.writeText(linkCode);
     node.querySelector<HTMLButtonElement>('#copy')!.textContent = 'Copied ✓';
   };
 }
@@ -301,7 +299,6 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
     <div class="banner ${opts.editable ? 'rw' : ''}">
       <span class="pill"><span class="dot"></span>${opts.editable ? 'Read &amp; write' : 'Read-only'}${until ? ` · until ${esc(until)}` : ''}</span>
       <span class="actions">
-        ${opts.editable ? '<button class="small ghost" id="keep" title="Resume this session after a reload">🔒 Keep</button>' : ''}
         ${opts.editable ? '<button class="small primary" id="save" disabled>Saved</button>' : ''}
         <button class="small ghost" id="end">End</button>
       </span>
@@ -319,15 +316,6 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
     wipe();
     location.reload();
   };
-  node.querySelector<HTMLButtonElement>('#keep')?.addEventListener('click', () => {
-    const pin = window.prompt('Set a PIN (min 4 chars) to resume this session if the page reloads:');
-    if (pin && pin.length >= 4) {
-      persistRw(pin);
-      toast('This session will resume on reload');
-    } else if (pin !== null) {
-      toast('PIN must be at least 4 characters');
-    }
-  });
   const search = node.querySelector<HTMLInputElement>('#search')!;
   search.oninput = () => {
     const q = search.value.trim().toLowerCase();
@@ -468,43 +456,11 @@ async function pollLoop() {
   }
 }
 
-function showResumeScreen(errorMsg?: string) {
-  const node = el(`<div>${brand}
-    <h1>Resume your session</h1>
-    <p class="sub">Enter the PIN you set to continue your read &amp; write session.</p>
-    <div class="card">
-      ${errorMsg ? `<p class="error">${esc(errorMsg)}</p><div style="height:12px"></div>` : ''}
-      <input class="search" id="pin" type="password" placeholder="Session PIN" autocomplete="off" />
-      <div style="height:14px"></div>
-      <button class="primary" id="go">Resume</button>
-      <div style="height:8px"></div>
-      <button class="ghost" id="fresh">Start a new session</button>
-    </div>
-  </div>`);
-  render(node);
-  const pin = node.querySelector<HTMLInputElement>('#pin')!;
-  const submit = async () => {
-    if (!pin.value) return;
-    showSplash('Resuming…');
-    if (!(await restoreRw(pin.value))) showResumeScreen('Wrong PIN, or the session has expired.');
-  };
-  node.querySelector<HTMLButtonElement>('#go')!.onclick = submit;
-  pin.onkeydown = (e) => {
-    if (e.key === 'Enter') submit();
-  };
-  node.querySelector<HTMLButtonElement>('#fresh')!.onclick = () => {
-    clearRwStore();
-    location.reload();
-  };
-}
-
 async function start() {
   showSplash('Loading secure core…');
+  clearRwStore(); // purge any stale blob from a previous session
   try {
     await initVela();
-    if (sessionStorage.getItem(RW_STORE_KEY)) {
-      return showResumeScreen();
-    }
     const kem = generateEphemeralKeypair();
     const sign = generateSigningKeypair();
     shareDk = kem.share_dk_b64;

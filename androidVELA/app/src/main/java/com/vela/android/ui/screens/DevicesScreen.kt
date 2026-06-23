@@ -89,7 +89,14 @@ fun DevicesScreen(onBack: () -> Unit, onWebAccess: () -> Unit = {}) {
         }
     }
 
-    LaunchedEffect(Unit) { load() }
+    // Initial load + auto-refresh every 30 s so sessions approved by another
+    // enrolled device become visible without a manual refresh.
+    LaunchedEffect(Unit) {
+        while (true) {
+            load()
+            kotlinx.coroutines.delay(30_000L)
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase).padding(20.dp)) {
         ScreenHeader("My Devices", onBack, trailing = {

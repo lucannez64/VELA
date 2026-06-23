@@ -190,7 +190,12 @@ fn is_expired(expires_at: Option<DateTime<Utc>>) -> bool {
 pub async fn get_session(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
 ) -> Result<Json<PollResponse>> {
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    rate_limit::web_session_poll_by_ip(&state.store, &ip)?;
+
     let session = load_session(&state, id)?;
 
     if session.status == "granted" && is_expired(session.expires_at) {
@@ -248,6 +253,8 @@ pub async fn get_keys(
     Path(id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<KeysResponse>)> {
+    rate_limit::web_session_keys_by_user(&state.store, &session.user_id.to_string())?;
+
     let rows = state
         .db
         .query(
