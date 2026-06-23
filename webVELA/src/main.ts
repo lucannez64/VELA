@@ -50,11 +50,10 @@ function showError(message: string) {
 }
 
 async function showLinkScreen() {
-  const qrPayload = JSON.stringify({
-    session_id: sessionId,
-    ephemeral_pk: linkPayload.ephemeral_pk,
-    link_nonce: linkPayload.link_nonce,
-  });
+  // The QR carries only the short session id (the app fetches the ephemeral key
+  // from the server), which keeps it easy to scan. `linkPayload` is still sent at
+  // /start so the server has the key.
+  const qrPayload = sessionId;
   const qrDataUrl = await QRCode.toDataURL(qrPayload, { errorCorrectionLevel: 'M', margin: 2, width: 240 });
 
   const node = el(`<div>

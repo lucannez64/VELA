@@ -386,6 +386,15 @@ class AndroidVelaApiClient(
         return response.newToken
     }
 
+    /// Look up a pending web session's ephemeral public keys (the QR carries only
+    /// the session id). Returns (ephemeral_pk_b64, web_vk_b64); web_vk is "" for RO.
+    fun getWebSessionKeys(token: String, sessionId: String): Pair<String, String> {
+        val response = request("GET", "/web-session/$sessionId/keys", token)
+        response.requireSuccess("Fetch web session keys failed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        return json.getString("ephemeral_pk") to json.optString("web_vk")
+    }
+
     /// Approve an ephemeral web session: deliver the sealed capsule with the
     /// chosen mode and TTL. Returns the server-clamped expiry (RFC3339).
     fun grantWebSession(
