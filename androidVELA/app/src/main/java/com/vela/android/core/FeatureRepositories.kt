@@ -202,12 +202,23 @@ class SharingRepository(
     /// See EPHEMERAL_WEB_ACCESS_DESIGN.md §14 for the wire formats.
     fun grantWebAccess(qrJson: String, mode: String, ttlSecs: Long): String {
         require(mode == "ro" || mode == "rw") { "mode must be 'ro' or 'rw'" }
-        // The QR/code now carries only the session id; fetch the browser's
-        // ephemeral key from the server (keeps the QR small enough to scan).
-        val sessionId = parseSessionId(qrJson)
+        // The QR/code now carries only the session id (and optional #fingerprint); fetch the
+        // browser's ephemeral key from the server (keeps the QR small enough to scan).
+        val (sessionId, expectedFp) = parseSessionId(qrJson)
 
         val expiresAt = sync.withAuthenticatedClient { client, token ->
             val (ephemeralPk, webVk) = client.getWebSessionKeys(token, sessionId)
+
+            // Verify fingerprint if present to detect server-side key substitution.
+            if (expectedFp != null) {
+                val keyBytes = android.util.Base64.decode(ephemeralPk, android.util.Base64.DEFAULT)
+                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(keyBytes)
+                val actualFp = base32Encode(digest.take(8).toByteArray())
+                require(actualFp == expectedFp) {
+                    "Key fingerprint mismatch — possible server-side key substitution. " +
+                    "Expected $expectedFp, got $actualFp. Approval aborted."
+                }
+            }
 
             val envelope = JSONObject().put("v", 1).put("mode", mode)
             if (mode == "rw") {
@@ -232,10 +243,25 @@ class SharingRepository(
         return expiresAt
     }
 
-    /// The scanned/pasted code is a bare session id, or (older) a JSON object with one.
-    private fun parseSessionId(input: String): String {
+    /// The scanned/pasted code is `{id}#{fingerprint}`, a bare id, or (older) JSON.
+    /// Returns `Pair(sessionId, expectedFingerprint?)`.
+    private fun parseSessionId(input: String): Pair<String, String?> {
         val t = input.trim()
-        return if (t.startsWith("{")) JSONObject(t).getString("session_id") else t
+        if (t.startsWith("{")) return Pair(JSONObject(t).getString("session_id"), null)
+        val hash = t.indexOf('#')
+        return if (hash >= 0) Pair(t.substring(0, hash), t.substring(hash + 1).ifEmpty { null })
+        else Pair(t, null)
+    }
+
+    private fun base32Encode(bytes: ByteArray): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        var bits = 0; var value = 0; val out = StringBuilder()
+        for (b in bytes) {
+            value = (value shl 8) or (b.toInt() and 0xff); bits += 8
+            while (bits >= 5) { out.append(alphabet[(value shr (bits - 5)) and 31]); bits -= 5 }
+        }
+        if (bits > 0) out.append(alphabet[(value shl (5 - bits)) and 31])
+        return out.toString()
     }
 
     private fun openShareItem(shareDkB64: String, capsuleB64: String): VaultItem? {

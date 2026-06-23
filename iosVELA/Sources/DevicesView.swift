@@ -41,6 +41,11 @@ struct DevicesView: View {
             }
         }
         .onAppear { vm.refresh() }
+        // Auto-refresh web sessions every 30 s so a session approved by another
+        // enrolled device becomes visible without a manual refresh.
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            vm.refresh()
+        }
     }
 
     private func row(_ device: VelaClient.DeviceInfo) -> some View {

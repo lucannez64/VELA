@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SwiftUI
 
@@ -162,11 +163,22 @@ final class AccountViewModel: ObservableObject {
     func grantWebAccess(codeJSON: String, mode: String, ttlSecs: Int) {
         run("Approving web access") { [self] in
             guard account != nil else { throw Failure("register first") }
-            // The code is a bare session id; fetch the browser's ephemeral key
-            // from the server (keeps the QR small enough to scan).
-            let sessionID = try parseWebSessionID(codeJSON)
+            // The code is a bare session id (optionally with a #fingerprint suffix); fetch
+            // the browser's ephemeral key from the server (keeps the QR small enough to scan).
+            let (sessionID, expectedFP) = try parseWebSessionID(codeJSON)
             let client = client()
             let (ephemeralPK, webVK) = try await client.getWebSessionKeys(sessionID: sessionID)
+
+            // Verify fingerprint if present to detect server-side key substitution.
+            if let expected = expectedFP {
+                guard let keyData = Data(base64Encoded: ephemeralPK) else {
+                    throw Failure("Invalid ephemeral key from server")
+                }
+                let actual = ekFingerprint(keyData)
+                guard actual == expected else {
+                    throw Failure("Key fingerprint mismatch — possible server-side key substitution. Expected \(expected), got \(actual). Approval aborted.")
+                }
+            }
 
             let envelope: String
             if mode == "rw" {
@@ -194,18 +206,43 @@ final class AccountViewModel: ObservableObject {
         }
     }
 
-    /// The scanned/pasted code is a bare session id, or (older) a JSON object with one.
-    private func parseWebSessionID(_ code: String) throws -> String {
+    /// The scanned/pasted code is `{id}#{fingerprint}`, a bare id, or (older) a JSON object.
+    /// Returns `(sessionID, expectedFingerprint?)`.
+    private func parseWebSessionID(_ code: String) throws -> (String, String?) {
         let t = code.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.hasPrefix("{") {
             guard let data = t.data(using: .utf8),
                   let qr = try? JSONDecoder().decode(WebSessionQR.self, from: data) else {
                 throw Failure("Invalid web access code")
             }
-            return qr.session_id
+            return (qr.session_id, nil)
         }
         guard !t.isEmpty else { throw Failure("Empty web access code") }
-        return t
+        if let hash = t.firstIndex(of: "#") {
+            let id = String(t[t.startIndex..<hash])
+            let fp = String(t[t.index(after: hash)...])
+            return (id, fp.isEmpty ? nil : fp)
+        }
+        return (t, nil)
+    }
+
+    /// Compute the key fingerprint: base32(sha256(rawKeyBytes)[0:8]).
+    private func ekFingerprint(_ data: Data) -> String {
+        let hash = SHA256.hash(data: data)
+        return base32Encode(Array(hash.prefix(8)))
+    }
+
+    private func base32Encode(_ bytes: [UInt8]) -> String {
+        let alphabet: [Character] = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+        var out = ""
+        var bits = 0, value = 0
+        for b in bytes {
+            value = (value << 8) | Int(b)
+            bits += 8
+            while bits >= 5 { out.append(alphabet[(value >> (bits - 5)) & 31]); bits -= 5 }
+        }
+        if bits > 0 { out.append(alphabet[(value << (5 - bits)) & 31]) }
+        return out
     }
 
     /// Re-seal and push updated capsules to all recipients who have linked shares for `item`.
