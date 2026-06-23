@@ -5,6 +5,8 @@ import init, {
   generate_signing_keypair,
   create_auth_signature_json,
   open_share_json,
+  encrypt_vault_chunk_json,
+  decrypt_vault_chunk_json,
   argon2_wrap_json,
   argon2_unwrap_json,
 } from './wasm/vela_wasm_bridge.js';
@@ -42,6 +44,33 @@ export function openShare(shareDkB64: string, capsuleB64: string): string {
   return parse<{ item_json: string }>(
     open_share_json(JSON.stringify({ share_dk_b64: shareDkB64, capsule_b64: capsuleB64 })),
   ).item_json;
+}
+
+/** Decrypt a vault chunk → its `VaultStore` JSON (RW live read). */
+export function decryptVaultChunk(rmsB64: string, chunkId: string, ciphertextB64: string): string {
+  return parse<{ vault_json: string }>(
+    decrypt_vault_chunk_json(JSON.stringify({ rms_b64: rmsB64, chunk_id: chunkId, ciphertext_b64: ciphertextB64 })),
+  ).vault_json;
+}
+
+/** Encrypt a vault chunk for upload → base64 ciphertext (RW save). */
+export function encryptVaultChunk(rmsB64: string, chunkId: string, vaultJson: string): string {
+  return parse<{ ciphertext_b64: string }>(
+    encrypt_vault_chunk_json(JSON.stringify({ rms_b64: rmsB64, chunk_id: chunkId, vault_json: vaultJson })),
+  ).ciphertext_b64;
+}
+
+/** base64 ↔ bytes helpers for the raw chunk wire format. */
+export function bytesToB64(bytes: Uint8Array): string {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+export function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 /** Argon2id-wrap bytes under a PIN (RW reload survival, design §8.1). */
