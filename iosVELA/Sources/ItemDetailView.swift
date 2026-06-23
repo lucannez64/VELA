@@ -15,6 +15,28 @@ struct ItemDetailView: View {
 
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: 16) {
+                    FaviconImage(
+                        url: current.kind == .login ? current.url : nil,
+                        fallback: current.kind.systemImage,
+                        size: 64,
+                        cornerRadius: 14
+                    )
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(current.name)
+                            .font(.title2.bold())
+                        Text(current.kind.displayName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+            }
+            .listRowBackground(Color.clear)
+
             switch current.kind {
             case .login: loginSection
             case .creditCard: cardSection

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem, toBackendItem } from '../context/AppContext';
+import FaviconIcon from '../components/FaviconIcon';
 
 interface Props {
   item: VaultItem;
@@ -110,8 +111,14 @@ export default function ItemDetail({ item, onEdit }: Props) {
             <button onClick={() => setSelectedItem(null)} className="mt-7 shrink-0 text-on-surface-variant hover:text-primary transition-colors">
               <span className="material-symbols-outlined">arrow_back</span>
             </button>
-            <div className="w-20 h-20 shrink-0 rounded-2xl bg-surface-bright flex items-center justify-center shadow-2xl relative">
-              <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>{getIcon()}</span>
+            <div className="relative">
+              <FaviconIcon
+                url={item.url}
+                itemType={item.item_type}
+                icon={getIcon()}
+                className="w-20 h-20 rounded-2xl bg-surface-bright shadow-2xl"
+                fallbackClassName="text-4xl text-primary"
+              />
               <div className="absolute -bottom-2 -right-2 bg-secondary text-on-secondary px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">SECURE</div>
             </div>
             <div className="min-w-0 pt-2">

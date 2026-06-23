@@ -1,10 +1,7 @@
 package com.vela.android.ui.screens
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -34,7 +30,6 @@ import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,22 +38,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.core.VaultItem
+import com.vela.android.ui.components.FaviconIcon
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
 import com.vela.android.ui.components.VelaSearchField
 import com.vela.android.ui.theme.VelaColors
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.net.URI
-import java.net.URL
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -237,7 +227,12 @@ fun VaultItemRow(item: VaultItem, onClick: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             if (item is VaultItem.Login && item.url.isNotBlank()) {
-                WebsiteIcon(item.url, fallback = icon)
+                FaviconIcon(
+                    url = item.url,
+                    fallback = icon,
+                    size = 22.dp,
+                    shape = RoundedCornerShape(6.dp)
+                )
             } else {
                 Icon(icon, null, modifier = Modifier.size(22.dp), tint = VelaColors.Green)
             }
@@ -289,37 +284,6 @@ fun VaultItemRow(item: VaultItem, onClick: () -> Unit) {
             }
         }
     }
-}
-
-@Composable
-private fun WebsiteIcon(url: String, fallback: ImageVector) {
-    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
-    val host = remember(url) { hostOf(url) }
-
-    LaunchedEffect(host) {
-        bitmap = null
-        if (host != null) {
-            bitmap = withContext(Dispatchers.IO) {
-                runCatching {
-                    URL("https://www.google.com/s2/favicons?domain=$host&sz=64")
-                        .openStream()
-                        .use(BitmapFactory::decodeStream)
-                }.getOrNull()
-            }
-        }
-    }
-
-    val image = bitmap
-    if (image != null) {
-        Image(image.asImageBitmap(), null, modifier = Modifier.size(24.dp).clip(RoundedCornerShape(5.dp)))
-    } else {
-        Icon(fallback, null, modifier = Modifier.size(22.dp), tint = VelaColors.Green)
-    }
-}
-
-private fun hostOf(value: String): String? {
-    val normalized = if (value.startsWith("http://") || value.startsWith("https://")) value else "https://$value"
-    return runCatching { URI(normalized).host?.removePrefix("www.") }.getOrNull()
 }
 
 private val VaultItem.typeLabel: String

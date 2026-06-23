@@ -37,6 +37,7 @@ psl = "2.1.213"
 base64 = "0.22"
 urlencoding = "2"
 hex = "0.4"
+scraper = "0.23"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]
