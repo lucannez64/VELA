@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem } from '../context/AppContext';
+import FaviconIcon from '../components/FaviconIcon';
 
 interface Props {
   items: VaultItem[];
@@ -17,7 +18,6 @@ interface VaultHealth {
 }
 
 type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote';
-const faviconCache = new Map<string, string | null>();
 
 export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, onAddItem }: Props) {
   const { setSelectedItem, showToast } = useApp();
@@ -151,7 +151,11 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                   className="group flex items-center justify-between gap-4 p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
                 >
                   <div className="flex items-center gap-4 min-w-0">
-                    <ItemIcon item={item} icon={getIcon(item.item_type)} />
+                    <FaviconIcon
+                      url={item.url}
+                      itemType={item.item_type}
+                      icon={getIcon(item.item_type)}
+                    />
                     <div className="min-w-0">
                       <h3 className="font-body font-bold text-on-surface truncate">{item.name}</h3>
                       <p className="font-mono text-xs text-on-surface-variant/60 truncate">
@@ -276,62 +280,4 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
   );
 }
 
-function ItemIcon({ item, icon }: { item: VaultItem; icon: string }) {
-  const [failed, setFailed] = useState(false);
-  const [favicon, setFavicon] = useState<string | undefined>(undefined);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    if (item.item_type !== 'login' || !item.url) {
-      setFavicon(undefined);
-      setFailed(false);
-      return;
-    }
-
-    const cacheKey = item.url;
-    const cached = faviconCache.get(cacheKey);
-    if (cached !== undefined) {
-      setFavicon(cached ?? undefined);
-      setFailed(cached === null);
-      return;
-    }
-
-    setFavicon(undefined);
-    setFailed(false);
-
-    invoke<string | null>('fetch_favicon', { url: item.url })
-      .then((result) => {
-        if (cancelled) return;
-        faviconCache.set(cacheKey, result);
-        setFavicon(result ?? undefined);
-        setFailed(!result);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        faviconCache.set(cacheKey, null);
-        setFailed(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [item.item_type, item.url]);
-
-  if (favicon && !failed) {
-    return (
-      <img
-        src={favicon}
-        alt=""
-        className="w-12 h-12 shrink-0 rounded-xl object-cover bg-surface-bright"
-        onError={() => setFailed(true)}
-      />
-    );
-  }
-
-  return (
-    <div className="w-12 h-12 shrink-0 rounded-xl bg-surface-bright flex items-center justify-center">
-      <span className="material-symbols-outlined text-primary">{icon}</span>
-    </div>
-  );
-}

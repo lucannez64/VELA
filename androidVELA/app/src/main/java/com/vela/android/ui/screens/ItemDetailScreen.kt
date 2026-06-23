@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.core.VaultItem
+import com.vela.android.ui.components.FaviconIcon
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
@@ -101,6 +102,43 @@ fun ItemDetailScreen(
                 .padding(horizontal = 20.dp)
         ) {
             Spacer(Modifier.height(16.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val fallbackIcon = when (item) {
+                    is VaultItem.Login -> Icons.Filled.Key
+                    is VaultItem.CreditCard -> Icons.Filled.CreditCard
+                    is VaultItem.SecureNote -> Icons.Filled.Description
+                    else -> Icons.Filled.Description
+                }
+                if (item is VaultItem.Login && item.url.isNotBlank()) {
+                    FaviconIcon(
+                        url = item.url,
+                        fallback = fallbackIcon,
+                        size = 64.dp,
+                        shape = RoundedCornerShape(16.dp),
+                        showBackground = true
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(VelaColors.Green.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(fallbackIcon, null, modifier = Modifier.size(32.dp), tint = VelaColors.Green)
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    item.name,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = VelaColors.TextPrimary
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusBadge(text = item.typeLabel)
