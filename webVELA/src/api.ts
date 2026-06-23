@@ -60,6 +60,11 @@ export async function getSessionToken(id: string, challenge: string, signature: 
 // A tiny session that carries the PASETO bearer and adopts a rotated token from
 // the `X-New-Token` response header.
 
+export interface ChunkMeta {
+  version: number;
+  lamport: number;
+}
+
 export class AuthedSession {
   constructor(public token: string) {}
 
@@ -74,28 +79,27 @@ export class AuthedSession {
     return r;
   }
 
-  /** The single `vault` chunk's version, or 0 if absent. */
-  async vaultChunkVersion(): Promise<number> {
+  /** All vault chunks the server holds, keyed by chunk id. */
+  async manifest(): Promise<Map<string, ChunkMeta>> {
     const r = await this.req('GET', '/vault/sync');
-    if (!r.ok) throw new Error(`Sync manifest failed (HTTP ${r.status})`);
-    const manifest = (await r.json()) as { chunks: { chunk_id: string; version: number }[] };
-    return manifest.chunks.find((c) => c.chunk_id === 'vault')?.version ?? 0;
+    if (!r.ok) throw new Error(`Sync failed (HTTP ${r.status})`);
+    const m = (await r.json()) as { chunks: { chunk_id: string; version: number; lamport_clock: number }[] };
+    const out = new Map<string, ChunkMeta>();
+    for (const c of m.chunks) out.set(c.chunk_id, { version: c.version, lamport: c.lamport_clock });
+    return out;
   }
 
-  /** Fetch the `vault` chunk (raw ciphertext bytes) + its version/lamport. */
-  async getVaultChunk(): Promise<{ ciphertext: Uint8Array; version: number; lamport: number } | null> {
-    const r = await this.req('GET', '/vault/chunk/vault');
+  /** Fetch a chunk's raw ciphertext bytes (null on 404). */
+  async getChunk(chunkId: string): Promise<Uint8Array | null> {
+    const r = await this.req('GET', `/vault/chunk/${chunkId}`);
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(`Chunk fetch failed (HTTP ${r.status})`);
-    const version = Number(r.headers.get('X-Chunk-Version') ?? '0');
-    const lamport = Number(r.headers.get('X-Lamport-Clock') ?? '0');
-    const ciphertext = new Uint8Array(await r.arrayBuffer());
-    return { ciphertext, version, lamport };
+    return new Uint8Array(await r.arrayBuffer());
   }
 
-  /** Upload the `vault` chunk (raw ciphertext bytes). Returns the new version. */
-  async putVaultChunk(ciphertext: Uint8Array, ifMatch: number, lamport: number): Promise<number> {
-    const r = await this.req('PUT', '/vault/chunk/vault', ciphertext as BodyInit, {
+  /** Upload a chunk (raw ciphertext bytes). Returns the new version. */
+  async putChunk(chunkId: string, ciphertext: Uint8Array, ifMatch: number, lamport: number): Promise<number> {
+    const r = await this.req('PUT', `/vault/chunk/${chunkId}`, ciphertext as BodyInit, {
       'Content-Type': 'application/octet-stream',
       'If-Match': String(ifMatch),
       'X-Lamport-Clock': String(lamport),
@@ -104,5 +108,10 @@ export class AuthedSession {
     if (!r.ok) throw new Error(`Save failed (HTTP ${r.status})`);
     const body = (await r.json().catch(() => ({}))) as { version?: number };
     return body.version ?? ifMatch + 1;
+  }
+
+  /** Delete a stale chunk (best-effort). */
+  async deleteChunk(chunkId: string, ifMatch: number): Promise<void> {
+    await this.req('DELETE', `/vault/chunk/${chunkId}`, undefined, { 'If-Match': String(ifMatch) });
   }
 }

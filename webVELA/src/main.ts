@@ -25,9 +25,34 @@ let polling = false;
 // RW state
 let authed: AuthedSession | null = null;
 let items: Record<string, unknown>[] = [];
-let chunkVersion = 0;
-let chunkLamport = 0;
 let dirty = false;
+
+// Vault chunking — must match the apps (Android `VaultSyncManager` / desktop sync):
+// the vault JSON is split across `vault-data-NNNNNN` chunks (≤ 1 MiB − 4 KiB each),
+// with `vault-main` as a legacy single chunk and `vault` as the iOS single chunk.
+const VAULT_CHUNK_PLAINTEXT_SIZE = 1024 * 1024 - 4096;
+const DATA_PREFIX = 'vault-data-';
+function dataChunkId(i: number): string {
+  return DATA_PREFIX + String(i).padStart(6, '0');
+}
+function splitUtf8(s: string, maxBytes: number): string[] {
+  const enc = new TextEncoder();
+  const out: string[] = [];
+  let cur = '';
+  let curBytes = 0;
+  for (const ch of s) {
+    const b = enc.encode(ch).length;
+    if (cur && curBytes + b > maxBytes) {
+      out.push(cur);
+      cur = '';
+      curBytes = 0;
+    }
+    cur += ch;
+    curBytes += b;
+  }
+  if (cur || out.length === 0) out.push(cur);
+  return out;
+}
 
 const app = document.getElementById('app')!;
 
@@ -280,28 +305,49 @@ async function loadReadWrite(expiresAt?: string) {
   const tok = await getSessionToken(sessionId, challenge, signature);
   authed = new AuthedSession(tok.token);
 
-  const chunk = await authed.getVaultChunk();
-  if (chunk) {
-    const vaultJson = decryptVaultChunk(rmsB64, 'vault', bytesToB64(chunk.ciphertext));
-    const store = JSON.parse(vaultJson) as { items?: Record<string, unknown>[] };
-    items = store.items ?? [];
-    chunkVersion = chunk.version;
-    chunkLamport = chunk.lamport;
-  } else {
-    items = [];
-    chunkVersion = 0;
-    chunkLamport = 0;
+  const man = await authed.manifest();
+
+  // Read the chunks the user's apps actually wrote (current → legacy → iOS).
+  const dataIds = [...man.keys()].filter((k) => k.startsWith(DATA_PREFIX)).sort();
+  let readIds: string[];
+  if (dataIds.length) readIds = dataIds;
+  else if (man.has('vault-main')) readIds = ['vault-main'];
+  else if (man.has('vault')) readIds = ['vault'];
+  else readIds = [];
+
+  let json = '';
+  for (const id of readIds) {
+    const ct = await authed.getChunk(id);
+    if (ct) json += decryptVaultChunk(rmsB64, id, bytesToB64(ct));
   }
+  items = json ? ((JSON.parse(json) as { items?: Record<string, unknown>[] }).items ?? []) : [];
   showVault({ editable: true, expiresAt });
 }
 
 async function saveVault() {
   if (!authed) throw new Error('Session ended');
-  const store = JSON.stringify({ items, tombstones: [] });
-  const ctB64 = encryptVaultChunk(rmsB64, 'vault', store);
-  const ct = b64ToBytes(ctB64);
-  chunkVersion = await authed.putVaultChunk(ct, chunkVersion, chunkLamport + 1);
-  chunkLamport += 1;
+  const man = await authed.manifest(); // fresh versions for optimistic concurrency
+  const pieces = splitUtf8(JSON.stringify({ items, tombstones: [] }), VAULT_CHUNK_PLAINTEXT_SIZE);
+
+  let lamport = Math.max(0, ...[...man.values()].map((m) => m.lamport));
+  for (let i = 0; i < pieces.length; i++) {
+    const id = dataChunkId(i);
+    const ct = b64ToBytes(encryptVaultChunk(rmsB64, id, pieces[i]));
+    const existing = man.get(id);
+    lamport = Math.max(lamport, existing?.lamport ?? 0) + 1;
+    await authed.putChunk(id, ct, existing?.version ?? 0, lamport);
+  }
+
+  // Drop stale chunks: extra data chunks if the vault shrank, plus any legacy /
+  // iOS single chunks so future reads resolve to `vault-data-*`.
+  for (const [id, meta] of man) {
+    if (id.startsWith(DATA_PREFIX)) {
+      const idx = parseInt(id.slice(DATA_PREFIX.length), 10);
+      if (idx >= pieces.length) await authed.deleteChunk(id, meta.version);
+    } else if (id === 'vault-main' || id === 'vault') {
+      await authed.deleteChunk(id, meta.version);
+    }
+  }
 }
 
 // ── Flow ────────────────────────────────────────────────────────────────────────
