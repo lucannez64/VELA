@@ -227,6 +227,64 @@ pub async fn get_session(
     }))
 }
 
+// ── GET /web-session/:id/keys (approver) ────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct KeysResponse {
+    /// Ephemeral hybrid KEM public key (b64, 1600 B) the approver seals to.
+    pub ephemeral_pk: String,
+    /// Ephemeral signing verification key (b64, 2624 B), empty for RO-only.
+    pub web_vk: String,
+}
+
+/// Return the browser's registered ephemeral public keys for a pending session.
+///
+/// Lets the link QR carry only the (short) `session_id` instead of the ~2 KB
+/// public key — the approver fetches the key here, keeping the QR scannable. The
+/// keys are public; this is gated to the authenticated approver and to pending
+/// sessions.
+pub async fn get_keys(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    session: AuthSession,
+) -> Result<(HeaderMap, Json<KeysResponse>)> {
+    let rows = state
+        .db
+        .query(
+            "SELECT ephemeral_pk, web_vk, status FROM web_sessions WHERE id = $1",
+            stoolap::params![id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let row = rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::NotFound("web session not found".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let ephemeral_pk = crate::db::row_val(&row, 0)?
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::Internal("ephemeral_pk missing".into()))?;
+    let web_vk = crate::db::row_val(&row, 1)?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let status = crate::db::row_val(&row, 2)?
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    if status != "pending" {
+        return Err(AppError::Conflict(
+            "web session is no longer pending".into(),
+        ));
+    }
+
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, &session);
+    Ok((headers, Json(KeysResponse { ephemeral_pk, web_vk })))
+}
+
 // ── POST /web-session/:id/grant (approver) ──────────────────────────────────────
 
 #[derive(Deserialize)]

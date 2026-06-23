@@ -199,6 +199,15 @@ actor VelaClient {
                                                   json: ["share_ek": shareEK], auth: true)
     }
 
+    struct WebKeysResponse: Decodable { let ephemeral_pk: String; let web_vk: String }
+
+    /// Look up a pending web session's ephemeral public keys (the QR carries only
+    /// the session id). Returns `(ephemeral_pk, web_vk)`; `web_vk` is empty for RO.
+    func getWebSessionKeys(sessionID: String) async throws -> (String, String) {
+        let resp: WebKeysResponse = try await request("GET", "/web-session/\(sessionID)/keys", auth: true)
+        return (resp.ephemeral_pk, resp.web_vk)
+    }
+
     struct GrantWebResponse: Decodable { let granted: Bool; let expires_at: String }
 
     /// Approve an ephemeral web session: deliver the sealed capsule with the

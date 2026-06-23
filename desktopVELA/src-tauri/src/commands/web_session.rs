@@ -20,17 +20,26 @@ use crate::api::ApiClient;
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::AppState;
 
-/// The payload encoded in the browser's link QR.
+/// Optional JSON form of the link code (older format). The current QR/code is
+/// just the bare `session_id`; we still accept a JSON blob containing one.
 #[derive(Debug, Deserialize)]
 pub struct WebSessionQr {
     pub session_id: String,
-    /// Ephemeral hybrid KEM public key (b64, 1600 B) — what we seal to.
-    pub ephemeral_pk: String,
-    /// Ephemeral signing verification key (b64, 2624 B); required for RW.
-    #[serde(default)]
-    pub web_vk: Option<String>,
-    #[serde(default)]
-    pub link_nonce: Option<String>,
+}
+
+/// Extract the session id from the scanned/pasted code (a bare UUID, or a JSON
+/// object with a `session_id`).
+fn parse_session_id(input: &str) -> Result<String, String> {
+    let t = input.trim();
+    if t.starts_with('{') {
+        let qr: WebSessionQr =
+            serde_json::from_str(t).map_err(|e| format!("Invalid web access code: {e}"))?;
+        Ok(qr.session_id)
+    } else if t.is_empty() {
+        Err("Empty web access code".into())
+    } else {
+        Ok(t.to_string())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -54,15 +63,23 @@ pub async fn grant_web_session(
         return Err("mode must be 'ro' or 'rw'".into());
     }
 
-    let qr: WebSessionQr = serde_json::from_str(qr_payload.trim())
-        .map_err(|e| format!("Invalid web access code: {e}"))?;
-    let ephemeral_pk = B64
-        .decode(qr.ephemeral_pk.as_bytes())
-        .map_err(|_| "Invalid ephemeral key in code".to_string())?;
+    let session_id = parse_session_id(&qr_payload)?;
 
     let token = state
         .get_session_token()
         .ok_or("Not authenticated — unlock your vault first.")?;
+
+    // Fetch the browser's ephemeral public key from the server (the QR only
+    // carries the session id, so it stays scannable).
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let (ephemeral_pk_b64, web_vk) = client
+        .get_web_session_keys(&token, &session_id)
+        .await
+        .map_err(|e| format!("Could not look up the web request: {e}"))?;
+    let ephemeral_pk = B64
+        .decode(ephemeral_pk_b64.as_bytes())
+        .map_err(|_| "Invalid ephemeral key from server".to_string())?;
 
     // Build the capsule plaintext from the current (unlocked) state.
     let plaintext = {
@@ -72,7 +89,7 @@ pub async fn grant_web_session(
             .ok_or("Vault is locked — unlock it to approve web access.")?;
         let envelope = match mode.as_str() {
             "rw" => {
-                if qr.web_vk.is_none() {
+                if web_vk.is_empty() {
                     return Err(
                         "This browser did not offer read-write access; choose read-only.".into(),
                     );
@@ -95,10 +112,8 @@ pub async fn grant_web_session(
         .map_err(|e| format!("Failed to seal web access capsule: {e}"))?;
     let capsule_b64 = B64.encode(&capsule);
 
-    let server_url = state.server_url.read().clone();
-    let client = ApiClient::with_url(server_url);
     let expires_at = client
-        .grant_web_session(&token, &qr.session_id, &mode, &capsule_b64, ttl_secs)
+        .grant_web_session(&token, &session_id, &mode, &capsule_b64, ttl_secs)
         .await
         .map_err(|e| format!("Failed to grant web access: {e}"))?;
 

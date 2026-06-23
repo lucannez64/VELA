@@ -1,12 +1,9 @@
 import Foundation
 import SwiftUI
 
-/// The payload encoded in a browser's ephemeral-web-access link QR / code.
+/// Older JSON form of the link code. The current code is a bare `session_id`.
 struct WebSessionQR: Decodable {
     let session_id: String
-    let ephemeral_pk: String
-    let web_vk: String?
-    let link_nonce: String?
 }
 
 /// Drives the Phase 4 server flows: register/enroll this device, authenticate,
@@ -165,14 +162,15 @@ final class AccountViewModel: ObservableObject {
     func grantWebAccess(codeJSON: String, mode: String, ttlSecs: Int) {
         run("Approving web access") { [self] in
             guard account != nil else { throw Failure("register first") }
-            guard let data = codeJSON.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
-                  let qr = try? JSONDecoder().decode(WebSessionQR.self, from: data) else {
-                throw Failure("Invalid web access code")
-            }
+            // The code is a bare session id; fetch the browser's ephemeral key
+            // from the server (keeps the QR small enough to scan).
+            let sessionID = try parseWebSessionID(codeJSON)
+            let client = client()
+            let (ephemeralPK, webVK) = try await client.getWebSessionKeys(sessionID: sessionID)
 
             let envelope: String
             if mode == "rw" {
-                guard qr.web_vk != nil else {
+                guard !webVK.isEmpty else {
                     throw Failure("This browser did not offer read-write access; choose read-only.")
                 }
                 guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
@@ -183,18 +181,31 @@ final class AccountViewModel: ObservableObject {
             }
 
             guard let capsuleB64 = VelaCoreFFI.sealShare(
-                recipientShareEKBase64: qr.ephemeral_pk, itemJSON: envelope) else {
+                recipientShareEKBase64: ephemeralPK, itemJSON: envelope) else {
                 throw Failure("KEM sealing failed")
             }
-            let client = client()
             let expiresAt = try await client.grantWebSession(
-                sessionID: qr.session_id, mode: mode, capsuleBase64: capsuleB64, ttlSecs: ttlSecs)
+                sessionID: sessionID, mode: mode, capsuleBase64: capsuleB64, ttlSecs: ttlSecs)
             await persistRenewedToken(from: client)
             AuditLog.shared.record(
                 "web_session_granted",
                 "\(mode == "rw" ? "read-write" : "read-only") · \(ttlSecs / 60) min")
             return "Web access granted until \(expiresAt.prefix(16))"
         }
+    }
+
+    /// The scanned/pasted code is a bare session id, or (older) a JSON object with one.
+    private func parseWebSessionID(_ code: String) throws -> String {
+        let t = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasPrefix("{") {
+            guard let data = t.data(using: .utf8),
+                  let qr = try? JSONDecoder().decode(WebSessionQR.self, from: data) else {
+                throw Failure("Invalid web access code")
+            }
+            return qr.session_id
+        }
+        guard !t.isEmpty else { throw Failure("Empty web access code") }
+        return t
     }
 
     /// Re-seal and push updated capsules to all recipients who have linked shares for `item`.

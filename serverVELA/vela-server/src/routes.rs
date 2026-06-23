@@ -107,6 +107,10 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/web-session/:id", get(crate::web_session::get_session))
         .route(
+            "/web-session/:id/keys",
+            get(crate::web_session::get_keys),
+        )
+        .route(
             "/web-session/:id",
             delete(crate::web_session::delete_session),
         )

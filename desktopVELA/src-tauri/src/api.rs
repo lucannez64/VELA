@@ -647,6 +647,35 @@ impl ApiClient {
         Ok(result.share_ek)
     }
 
+    /// Look up a pending web session's ephemeral public keys (the QR carries only
+    /// the session id). Returns `(ephemeral_pk_b64, web_vk_b64)`; `web_vk` is empty
+    /// for read-only-only sessions.
+    pub async fn get_web_session_keys(
+        &self,
+        token: &str,
+        session_id: &str,
+    ) -> Result<(String, String)> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .get(format!("{}/web-session/{}/keys", self.base_url, session_id))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Fetch web session keys failed: {}", resp.status());
+        }
+
+        #[derive(serde::Deserialize)]
+        struct Keys {
+            ephemeral_pk: String,
+            web_vk: String,
+        }
+        let k: Keys = resp.json().await?;
+        Ok((k.ephemeral_pk, k.web_vk))
+    }
+
     /// Approve an ephemeral web session: deliver the sealed capsule (RO snapshot
     /// or RW RMS) with the chosen mode and TTL. Returns the server-clamped expiry.
     pub async fn grant_web_session(

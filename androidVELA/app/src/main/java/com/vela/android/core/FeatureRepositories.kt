@@ -202,34 +202,40 @@ class SharingRepository(
     /// See EPHEMERAL_WEB_ACCESS_DESIGN.md §14 for the wire formats.
     fun grantWebAccess(qrJson: String, mode: String, ttlSecs: Long): String {
         require(mode == "ro" || mode == "rw") { "mode must be 'ro' or 'rw'" }
-        val qr = JSONObject(qrJson.trim())
-        val sessionId = qr.getString("session_id")
-        val ephemeralPk = qr.getString("ephemeral_pk")
-        val webVk = qr.optString("web_vk").takeIf { it.isNotBlank() }
-
-        val envelope = JSONObject().put("v", 1).put("mode", mode)
-        if (mode == "rw") {
-            if (webVk == null) error("This browser did not offer read-write access; choose read-only.")
-            val rms = security.currentRmsCopy() ?: error("Vault is locked")
-            try {
-                envelope.put("rms_b64", Base64.getEncoder().encodeToString(rms))
-            } finally {
-                rms.fill(0)
-            }
-        } else {
-            val vaultJson = VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8)
-            envelope.put("vault", JSONObject(vaultJson))
-        }
-
-        val capsuleB64 = NativeVelaCore.sealShare(ephemeralPk, envelope.toString())
-            ?: error("Native VELA bridge is required for web access")
+        // The QR/code now carries only the session id; fetch the browser's
+        // ephemeral key from the server (keeps the QR small enough to scan).
+        val sessionId = parseSessionId(qrJson)
 
         val expiresAt = sync.withAuthenticatedClient { client, token ->
+            val (ephemeralPk, webVk) = client.getWebSessionKeys(token, sessionId)
+
+            val envelope = JSONObject().put("v", 1).put("mode", mode)
+            if (mode == "rw") {
+                if (webVk.isBlank()) error("This browser did not offer read-write access; choose read-only.")
+                val rms = security.currentRmsCopy() ?: error("Vault is locked")
+                try {
+                    envelope.put("rms_b64", Base64.getEncoder().encodeToString(rms))
+                } finally {
+                    rms.fill(0)
+                }
+            } else {
+                val vaultJson = VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8)
+                envelope.put("vault", JSONObject(vaultJson))
+            }
+
+            val capsuleB64 = NativeVelaCore.sealShare(ephemeralPk, envelope.toString())
+                ?: error("Native VELA bridge is required for web access")
             client.grantWebSession(token, sessionId, mode, capsuleB64, ttlSecs)
         }
         val label = if (mode == "rw") "read-write" else "read-only"
         VelaRepositories.audit.record("web_session_granted", "$label · ${ttlSecs / 60} min")
         return expiresAt
+    }
+
+    /// The scanned/pasted code is a bare session id, or (older) a JSON object with one.
+    private fun parseSessionId(input: String): String {
+        val t = input.trim()
+        return if (t.startsWith("{")) JSONObject(t).getString("session_id") else t
     }
 
     private fun openShareItem(shareDkB64: String, capsuleB64: String): VaultItem? {
