@@ -683,7 +683,7 @@ pub mod tpm {
             use vela_crypto::{aead::encrypt, kdf};
 
             let mut salt = [0u8; 16];
-            getrandom::getrandom(&mut salt)?;
+            getrandom::getrandom(&mut salt).map_err(|e| anyhow::anyhow!("getrandom failed: {}", e))?;
 
             let key_material = kdf::derive("vela fallback key v1", password.as_bytes());
             let derived_key = kdf::derive("vela fallback encryption v1", key_material.as_bytes());

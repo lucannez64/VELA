@@ -52,3 +52,7 @@ desktopVELA/dist/
 # pnpm lock files (use bun.lock instead)
 **/pnpm-lock.yaml
 .claude/
+
+# Native messaging host wrapper generated locally by register-host.sh /
+# register-firefox-host.sh (bakes in an absolute machine-specific path)
+extension/native-messaging/vela-native-messaging-host

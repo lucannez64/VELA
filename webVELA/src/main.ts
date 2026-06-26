@@ -26,7 +26,6 @@ let polling = false;
 let authed: AuthedSession | null = null;
 let items: Record<string, unknown>[] = [];
 let dirty = false;
-let rwExpiresAt: string | undefined;
 
 // RW session storage key — kept only as a purge target; the resume-with-PIN
 // feature has been removed (clearRwStore is called in beforeunload so the blob
@@ -138,7 +137,10 @@ function base32Encode(bytes: Uint8Array): string {
   return out;
 }
 async function ekFingerprint(ekB64: string): Promise<string> {
-  const hash = await crypto.subtle.digest('SHA-256', b64ToBytes(ekB64));
+  const bytes = b64ToBytes(ekB64);
+  const buf = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buf).set(bytes);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
   return base32Encode(new Uint8Array(hash).slice(0, 8));
 }
 
@@ -356,7 +358,6 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
 // ── RW: authenticate, fetch live vault, save ────────────────────────────────────
 
 async function loadReadWrite(expiresAt?: string) {
-  rwExpiresAt = expiresAt;
   showSplash('Connecting to your vault…');
   const challenge = await getChallenge();
   const signature = createAuthSignature(signingSk, sessionId, challenge);
