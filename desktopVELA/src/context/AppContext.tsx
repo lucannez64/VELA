@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, ReactNode, Dispatch, SetStateAction } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, ReactNode, Dispatch, SetStateAction } from 'react';
+import type { ThemeSetting } from '../themes';
 
 export interface SessionStatus {
   active: boolean;
@@ -181,7 +182,7 @@ export interface Settings {
   require_biometric_on_reveal: boolean;
   sync_on_startup: boolean;
   background_sync_minutes: number;
-  theme: 'system' | 'dark' | 'light';
+  theme: ThemeSetting;
   compact_list: boolean;
   user_id: string;
   server_url: string;
@@ -229,10 +230,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [clipboardTimer, setClipboardTimer] = useState<NodeJS.Timeout | null>(null);
   const [pendingShareItemId, setPendingShareItemId] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 3000);
   }, []);
 
   const value: AppContextType = {

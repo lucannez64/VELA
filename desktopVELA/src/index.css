@@ -162,10 +162,127 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------------------------------------------------------------------------
+ * Theme system
+ * Each theme defines space-separated RGB channels consumed by Tailwind via
+ * rgb(var(--token) / <alpha-value>). The active theme is selected with the
+ * data-theme attribute on <html>. `:root` holds the default (VELA dark) so
+ * the app is correctly themed before JS runs.
+ * ------------------------------------------------------------------------- */
+
+:root,
+[data-theme='vela'] {
+  color-scheme: dark;
+  --color-primary: 115 219 154;           /* #73db9a */
+  --color-primary-dim: 28 143 86;         /* #1c8f56 */
+  --color-secondary: 68 226 205;          /* #44e2cd */
+  --color-error: 255 180 171;             /* #ffb4ab */
+  --color-accent-violet: 139 92 246;      /* #8b5cf6 */
+  --color-surface: 18 20 22;              /* #121416 */
+  --color-surface-dim: 18 20 22;
+  --color-surface-bright: 55 57 59;       /* #37393b */
+  --color-surface-container-lowest: 12 14 16;
+  --color-surface-container-low: 26 28 30;
+  --color-surface-container: 30 32 34;
+  --color-surface-container-high: 40 42 44;
+  --color-surface-container-highest: 51 53 55;
+  --color-surface-variant: 51 53 55;
+  --color-on-surface: 226 226 229;
+  --color-on-surface-variant: 196 199 199;
+  --color-on-primary: 0 57 29;
+  --color-on-secondary: 0 55 49;
+  --color-outline: 142 145 146;
+  --color-outline-variant: 68 71 72;
+}
+
+/* Catppuccin Macchiato */
+[data-theme='macchiato'] {
+  color-scheme: dark;
+  --color-primary: 166 218 149;           /* green  #a6da95 */
+  --color-primary-dim: 108 142 97;
+  --color-secondary: 139 213 202;         /* teal   #8bd5ca */
+  --color-error: 237 135 150;             /* red    #ed8796 */
+  --color-accent-violet: 198 160 246;     /* mauve  #c6a0f6 */
+  --color-surface: 36 39 58;              /* base   #24273a */
+  --color-surface-dim: 30 32 48;          /* mantle #1e2030 */
+  --color-surface-bright: 73 77 100;      /* surface1 */
+  --color-surface-container-lowest: 24 25 38;   /* crust #181926 */
+  --color-surface-container-low: 30 32 48;      /* mantle */
+  --color-surface-container: 36 39 58;          /* base */
+  --color-surface-container-high: 54 58 79;     /* surface0 */
+  --color-surface-container-highest: 73 77 100; /* surface1 */
+  --color-surface-variant: 91 96 120;           /* surface2 */
+  --color-on-surface: 202 211 245;        /* text #cad3f5 */
+  --color-on-surface-variant: 165 173 203;/* subtext0 */
+  --color-on-primary: 24 25 38;
+  --color-on-secondary: 24 25 38;
+  --color-outline: 128 135 162;           /* overlay1 */
+  --color-outline-variant: 91 96 120;     /* surface2 */
+}
+
+/* Catppuccin Latte (light) */
+[data-theme='latte'] {
+  color-scheme: light;
+  --color-primary: 64 160 43;             /* green  #40a02b */
+  --color-primary-dim: 45 112 30;
+  --color-secondary: 23 146 153;          /* teal   #179299 */
+  --color-error: 210 15 57;               /* red    #d20f39 */
+  --color-accent-violet: 136 57 239;      /* mauve  #8839ef */
+  --color-surface: 239 241 245;           /* base   #eff1f5 */
+  --color-surface-dim: 230 233 239;       /* mantle #e6e9ef */
+  --color-surface-bright: 255 255 255;
+  --color-surface-container-lowest: 255 255 255;
+  --color-surface-container-low: 239 241 245;   /* base */
+  --color-surface-container: 230 233 239;       /* mantle */
+  --color-surface-container-high: 220 224 232;  /* crust */
+  --color-surface-container-highest: 204 208 218; /* surface0 */
+  --color-surface-variant: 188 192 204;         /* surface1 */
+  --color-on-surface: 76 79 105;          /* text #4c4f69 */
+  --color-on-surface-variant: 108 111 133;/* subtext0 */
+  --color-on-primary: 255 255 255;
+  --color-on-secondary: 255 255 255;
+  --color-outline: 140 143 161;           /* overlay1 */
+  --color-outline-variant: 172 176 190;   /* surface2 */
+}
+
+/* Gruvbox Dark */
+[data-theme='gruvbox'] {
+  color-scheme: dark;
+  --color-primary: 184 187 38;            /* green  #b8bb26 */
+  --color-primary-dim: 152 151 26;        /* #98971a */
+  --color-secondary: 142 192 124;         /* aqua   #8ec07c */
+  --color-error: 251 73 52;               /* red    #fb4934 */
+  --color-accent-violet: 211 134 155;     /* purple #d3869b */
+  --color-surface: 40 40 40;              /* bg0    #282828 */
+  --color-surface-dim: 29 32 33;          /* bg0_h  #1d2021 */
+  --color-surface-bright: 80 73 69;       /* bg2    #504945 */
+  --color-surface-container-lowest: 29 32 33;   /* bg0_h */
+  --color-surface-container-low: 40 40 40;      /* bg0 */
+  --color-surface-container: 50 48 47;          /* bg0_s #32302f */
+  --color-surface-container-high: 60 56 54;     /* bg1 #3c3836 */
+  --color-surface-container-highest: 80 73 69;  /* bg2 */
+  --color-surface-variant: 80 73 69;
+  --color-on-surface: 235 219 178;        /* fg1 #ebdbb2 */
+  --color-on-surface-variant: 213 196 161;/* fg2 #d5c4a1 */
+  --color-on-primary: 40 40 40;
+  --color-on-secondary: 40 40 40;
+  --color-outline: 146 131 116;           /* gray #928374 */
+  --color-outline-variant: 102 92 84;     /* bg3 #665c54 */
+}
+
 @layer base {
   * {
     -webkit-user-select: none;
     user-select: none;
+  }
+
+  html {
+    background-color: rgb(var(--color-surface));
+  }
+
+  body {
+    background-color: rgb(var(--color-surface));
+    color: rgb(var(--color-on-surface));
   }
 
   input, textarea {
@@ -183,12 +300,20 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #444748;
+    background: rgb(var(--color-outline-variant));
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #8e9192;
+    background: rgb(var(--color-outline));
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  select:focus-visible,
+  [role='button']:focus-visible {
+    outline: 2px solid rgb(var(--color-primary) / 0.7);
+    outline-offset: 2px;
   }
 }
 
@@ -209,12 +334,12 @@
   }
 
   .glass-panel {
-    background: rgba(30, 32, 34, 0.6);
+    background: rgb(var(--color-surface-container) / 0.72);
     backdrop-filter: blur(20px);
   }
 
   .glow-button:hover {
-    box-shadow: 0 0 20px rgba(115, 219, 154, 0.15);
+    box-shadow: 0 0 20px rgb(var(--color-primary) / 0.15);
   }
 
   .security-pulse {
@@ -222,7 +347,14 @@
   }
 
   .biometric-glow {
-    box-shadow: 0 0 60px -15px rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 60px -15px rgb(var(--color-accent-violet) / 0.3);
+  }
+
+  .obsidian-gradient {
+    background:
+      radial-gradient(ellipse 90% 60% at 75% -10%, rgb(var(--color-accent-violet) / 0.14), transparent),
+      radial-gradient(ellipse 70% 55% at 15% 110%, rgb(var(--color-primary) / 0.09), transparent),
+      rgb(var(--color-surface));
   }
 
   .drag-region {
@@ -251,5 +383,22 @@
   75%, 100% {
     transform: scale(2);
     opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .security-pulse,
+  .animate-pulse,
+  .animate-ping,
+  .animate-pulse-slow,
+  .animate-ping-slow {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -56,7 +56,7 @@ export default function TrustedContactRecovery({ onComplete, onSkip }: Props) {
       {!sent ? (
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">
+            <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">
               VELA Username or Email
             </label>
             <input

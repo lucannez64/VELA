@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem, toBackendItem } from '../context/AppContext';
+import { useClipboard } from '../hooks/useClipboard';
 import FaviconIcon from '../components/FaviconIcon';
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
 
 export default function ItemDetail({ item, onEdit }: Props) {
   const { setSelectedItem, showToast, setCurrentView, setPendingShareItemId } = useApp();
+  const { copyToClipboard } = useClipboard();
   const [showPassword, setShowPassword] = useState(false);
   const [showCardNumber, setShowCardNumber] = useState(false);
   const [showCVV, setShowCVV] = useState(false);
@@ -42,27 +44,6 @@ export default function ItemDetail({ item, onEdit }: Props) {
     const interval = setInterval(generateTOTP, 1000);
     return () => clearInterval(interval);
   }, [item.totp]);
-
-  const copyToClipboard = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast(`${label} copied`, 'success');
-    } catch (e) {
-      try {
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-9999px';
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        showToast(`${label} copied`, 'success');
-      } catch (fallbackError) {
-        showToast('Failed to copy', 'error');
-      }
-    }
-  };
 
   const handleDelete = async () => {
     if (confirm('Are you sure you want to delete this item?')) {
@@ -105,7 +86,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
   return (
     <div className="flex-1 bg-surface-container-lowest overflow-y-auto">
-      <div className="max-w-5xl mx-auto py-10 px-6 lg:px-10">
+      <div className="max-w-5xl mx-auto py-6 sm:py-10 px-4 sm:px-6 lg:px-10">
         <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-6 mb-10">
           <div className="flex items-start gap-5 min-w-0">
             <button onClick={() => setSelectedItem(null)} className="mt-7 shrink-0 text-on-surface-variant hover:text-primary transition-colors">
@@ -158,7 +139,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {item.username && (
             <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
-              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Username</label>
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Username</label>
               <div className="flex items-center justify-between gap-3 min-w-0">
                 <span className="text-on-surface text-lg font-medium min-w-0 break-all">{item.username}</span>
                 <button 
@@ -173,7 +154,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
           {item.password && (
             <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
-              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Password</label>
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Password</label>
               <div className="flex items-center justify-between gap-3 min-w-0">
                 <span className={`text-on-surface text-xl lg:text-2xl tracking-[0.2em] font-mono leading-none pt-1 min-w-0 break-all ${!showPassword ? '' : 'text-primary'}`}>
                   {showPassword ? item.password : '••••••••••••'}
@@ -181,7 +162,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
                 <div className="flex gap-1 shrink-0">
                   <button 
                     onClick={() => setShowPassword(!showPassword)}
-                    className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                    className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
                   >
                     <span className="material-symbols-outlined text-xl">{showPassword ? 'visibility_off' : 'visibility'}</span>
                   </button>
@@ -199,14 +180,14 @@ export default function ItemDetail({ item, onEdit }: Props) {
           {item.totp && (
             <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 col-span-1 md:col-span-2">
               <div className="flex items-center justify-between mb-4">
-                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline">
                   TOTP (2FA) <span className="ml-2 text-primary">ACTIVE</span>
                 </label>
-                <span className="text-[10px] text-slate-500 font-mono">EXPIRES IN {totpTimeLeft}S</span>
+                <span className="text-[10px] text-outline font-mono">EXPIRES IN {totpTimeLeft}S</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-baseline gap-4">
-                  <span className="text-on-surface text-4xl font-mono tracking-widest font-light">{totpCode}</span>
+                  <span className="text-on-surface text-3xl sm:text-4xl font-mono tracking-widest font-light break-all">{totpCode}</span>
                 </div>
                 <button 
                   onClick={() => copyToClipboard(totpCode.replace(' ', ''), 'Code')}
@@ -227,7 +208,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
           {item.url && (
             <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
-              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Website</label>
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Website</label>
               <div className="flex items-center justify-between gap-3 min-w-0">
                 <a 
                   href={item.url} 
@@ -240,7 +221,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
                 </a>
                 <button 
                   onClick={() => copyToClipboard(item.url!, 'URL')}
-                  className="p-2 shrink-0 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-500"
+                  className="p-2 shrink-0 hover:bg-surface-container-highest rounded-lg transition-colors text-outline"
                 >
                   <span className="material-symbols-outlined text-xl">content_copy</span>
                 </button>
@@ -252,7 +233,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
             <>
               {item.cardholder_name && (
                 <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Cardholder Name</label>
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Cardholder Name</label>
                   <div className="flex items-center justify-between">
                     <span className="text-on-surface text-lg font-medium">{item.cardholder_name}</span>
                     <button 
@@ -266,7 +247,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
               )}
 
               <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Card Number</label>
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Card Number</label>
                 <div className="flex items-center justify-between">
                   <span className="text-on-surface text-xl font-mono tracking-wider">
                     {showCardNumber ? item.card_number : `•••• •••• •••• ${item.card_number?.slice(-4)}`}
@@ -274,7 +255,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
                   <div className="flex gap-1">
                     <button 
                       onClick={() => setShowCardNumber(!showCardNumber)}
-                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
                     >
                       <span className="material-symbols-outlined text-xl">{showCardNumber ? 'visibility_off' : 'visibility'}</span>
                     </button>
@@ -288,9 +269,9 @@ export default function ItemDetail({ item, onEdit }: Props) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Expiry</label>
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Expiry</label>
                   <div className="flex items-center justify-between">
                     <span className="text-on-surface font-mono">{item.card_exp || '—'}</span>
                     {item.card_exp && (
@@ -305,13 +286,13 @@ export default function ItemDetail({ item, onEdit }: Props) {
                 </div>
 
                 <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">CVV</label>
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">CVV</label>
                   <div className="flex items-center justify-between">
                     <span className="text-on-surface font-mono">{showCVV ? item.card_cvv : '•••'}</span>
                     <div className="flex gap-1">
                       <button 
                         onClick={() => setShowCVV(!showCVV)}
-                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
                       >
                         <span className="material-symbols-outlined text-xl">{showCVV ? 'visibility_off' : 'visibility'}</span>
                       </button>
@@ -330,13 +311,13 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
               {item.card_pin && (
                 <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">PIN</label>
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">PIN</label>
                   <div className="flex items-center justify-between">
                     <span className="text-on-surface font-mono">{showCardPin ? item.card_pin : '••••'}</span>
                     <div className="flex gap-1">
                       <button 
                         onClick={() => setShowCardPin(!showCardPin)}
-                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-slate-400"
+                        className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
                       >
                         <span className="material-symbols-outlined text-xl">{showCardPin ? 'visibility_off' : 'visibility'}</span>
                       </button>
@@ -356,14 +337,14 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
         {item.secure_note_content && (
           <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Secure Note</label>
+            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Secure Note</label>
             <p className="text-on-surface whitespace-pre-wrap font-mono">{item.secure_note_content}</p>
           </div>
         )}
 
         {item.notes && (
           <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 block mb-4">Additional Notes</label>
+            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Additional Notes</label>
             <p className="text-on-surface whitespace-pre-wrap text-sm leading-relaxed">{item.notes}</p>
           </div>
         )}
@@ -382,11 +363,11 @@ export default function ItemDetail({ item, onEdit }: Props) {
           )}
           <div className="flex flex-wrap gap-8">
             <div className="flex flex-col">
-              <span className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 mb-1">Last Modified</span>
+              <span className="font-label text-[10px] tracking-[0.2em] uppercase text-outline mb-1">Last Modified</span>
               <span className="text-xs text-on-surface">{new Date(item.updated_at).toLocaleDateString()}</span>
             </div>
             <div className="flex flex-col">
-              <span className="font-label text-[10px] tracking-[0.2em] uppercase text-slate-500 mb-1">Encryption</span>
+              <span className="font-label text-[10px] tracking-[0.2em] uppercase text-outline mb-1">Encryption</span>
               <span className="text-xs text-secondary font-mono">AES-256-GCM</span>
             </div>
           </div>

@@ -58,7 +58,7 @@ export default function PasswordGenerator({ onSelect, onClose }: Props) {
   };
 
   return (
-    <div className="absolute top-full left-0 mt-2 w-96 bg-surface-container rounded-xl shadow-2xl border border-outline-variant/20 p-4 z-50">
+    <div className="absolute top-full left-0 mt-2 w-72 sm:w-96 max-w-[calc(100vw-3rem)] bg-surface-container rounded-xl shadow-2xl border border-outline-variant/20 p-4 z-50">
       <div className="flex items-center justify-between mb-4">
         <span className="text-sm font-label text-on-surface-variant">Generated</span>
         <button onClick={onClose} className="p-1 hover:bg-surface-container-high rounded">

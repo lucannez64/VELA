@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AppProvider, useApp, SessionStatus, VaultItem, fromBackendItem, Settings } from './context/AppContext';
+import { applyTheme } from './themes';
 import TitleBar from './components/TitleBar';
 import Sidebar from './components/Sidebar';
 import WelcomeScreen from './views/WelcomeScreen';
@@ -160,6 +161,17 @@ function AppContent() {
     }
   }, [session?.active, settings?.sync_on_startup]);
 
+  // Apply the configured theme; follow OS preference when set to "system".
+  useEffect(() => {
+    const setting = settings?.theme ?? 'system';
+    applyTheme(setting);
+    if (setting !== 'system') return;
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => applyTheme('system');
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [settings?.theme]);
+
   useEffect(() => {
     if (session?.active) {
       loadItems();
@@ -210,9 +222,12 @@ function AppContent() {
 
   if (checkingVault || !sessionChecked) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-surface">
-        <span className="material-symbols-outlined text-4xl text-primary animate-spin">progress_activity</span>
-        <p className="mt-4 text-on-surface-variant">Loading...</p>
+      <div className="h-screen flex flex-col items-center justify-center bg-surface obsidian-gradient">
+        <div className="w-14 h-14 rounded-2xl bg-primary-container border border-primary/20 flex items-center justify-center mb-4">
+          <span className="material-symbols-outlined text-primary text-3xl" style={{ fontVariationSettings: "'FILL' 1" }}>shield_lock</span>
+        </div>
+        <span className="font-headline text-xl font-bold tracking-[0.25em] text-primary mb-6">VELA</span>
+        <span className="material-symbols-outlined text-2xl text-on-surface-variant animate-spin">progress_activity</span>
       </div>
     );
   }

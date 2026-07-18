@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useApp, Settings } from '../context/AppContext';
+import { THEMES, ThemeSetting } from '../themes';
 
 export default function SettingsScreen() {
   const { showToast, setSession, setItems, setSelectedItem, settings: contextSettings, setSettings: setContextSettings } = useApp();
@@ -104,14 +105,65 @@ export default function SettingsScreen() {
   }
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto">
-      <h1 className="font-headline text-3xl font-bold text-on-surface mb-8">Settings</h1>
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface mb-8">Settings</h1>
 
       <div className="max-w-2xl space-y-8">
         <section>
-          <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Security</h2>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Appearance</h2>
+          <div className="bg-surface-container rounded-xl p-6">
+            <label className="font-body font-medium text-on-surface">Theme</label>
+            <p className="text-sm text-on-surface-variant mb-4">Choose how VELA looks on this device</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {[
+                {
+                  id: 'system' as ThemeSetting,
+                  label: 'System',
+                  description: 'Follow OS appearance',
+                  swatches: ['#121416', '#73db9a', '#eff1f5', '#40a02b'] as [string, string, string, string],
+                },
+                ...THEMES,
+              ].map(theme => {
+                const selected = (settings.theme ?? 'system') === theme.id
+                  || (settings.theme === 'dark' && theme.id === 'vela')
+                  || (settings.theme === 'light' && theme.id === 'latte');
+                return (
+                  <button
+                    key={theme.id}
+                    onClick={() => handleUpdateSettings({ ...settings, theme: theme.id })}
+                    className={`relative p-3 rounded-xl border text-left transition-all ${
+                      selected
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
+                        : 'border-outline-variant/20 bg-surface-container-low hover:border-outline-variant/60 hover:bg-surface-container-high'
+                    }`}
+                  >
+                    <div className="flex gap-1.5 mb-3">
+                      {theme.swatches.map(color => (
+                        <span
+                          key={color}
+                          className="w-5 h-5 rounded-md border border-black/20"
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </div>
+                    <p className="font-body text-sm font-medium text-on-surface">{theme.label}</p>
+                    <p className="text-xs text-on-surface-variant">{theme.description}</p>
+                    {selected && (
+                      <span className="absolute top-2 right-2 material-symbols-outlined text-primary text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>
+                        check_circle
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Security</h2>
           <div className="bg-surface-container rounded-xl p-6 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Auto-lock after idle</label>
                 <p className="text-sm text-on-surface-variant">Automatically lock when inactive</p>
@@ -129,7 +181,7 @@ export default function SettingsScreen() {
               </select>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Clipboard clear delay</label>
                 <p className="text-sm text-on-surface-variant">Time before copied data is cleared</p>
@@ -146,7 +198,7 @@ export default function SettingsScreen() {
               </select>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Require biometrics on reveal</label>
                 <p className="text-sm text-on-surface-variant">Authenticate before showing passwords</p>
@@ -197,7 +249,7 @@ export default function SettingsScreen() {
                       const saved = await handleUpdateSettings({ ...settings, quick_search_shortcut: shortcutDraft.trim() });
                       if (saved) setEditingShortcut(false);
                     }}
-                    className="px-4 py-2 bg-primary text-white rounded-lg hover:opacity-90 transition-opacity"
+                    className="px-4 py-2 bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity"
                   >
                     Save
                   </button>
@@ -216,7 +268,7 @@ export default function SettingsScreen() {
         </section>
 
         <section>
-          <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Sync</h2>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Sync</h2>
           <div className="bg-surface-container rounded-xl p-6 space-y-6">
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -256,7 +308,7 @@ export default function SettingsScreen() {
                       handleUpdateSettings({ ...settings, server_url: serverUrlDraft.trim() });
                       setEditingServerUrl(false);
                     }}
-                    className="px-4 py-2 bg-primary text-white rounded-lg hover:opacity-90 transition-opacity"
+                    className="px-4 py-2 bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity"
                   >
                     Save
                   </button>
@@ -272,7 +324,7 @@ export default function SettingsScreen() {
               )}
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Sync on startup</label>
                 <p className="text-sm text-on-surface-variant">Automatically sync when app opens</p>
@@ -285,7 +337,7 @@ export default function SettingsScreen() {
               </button>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Background sync interval</label>
                 <p className="text-sm text-on-surface-variant">How often to sync in the background</p>
@@ -302,7 +354,7 @@ export default function SettingsScreen() {
               </select>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Last synced</label>
                 <p className="text-sm text-on-surface-variant">Most recent sync time</p>
@@ -315,9 +367,9 @@ export default function SettingsScreen() {
         </section>
 
         <section>
-          <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Import / Export</h2>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Import / Export</h2>
           <div className="bg-surface-container rounded-xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Export vault</label>
                 <p className="text-sm text-on-surface-variant">Download as Bitwarden-compatible JSON</p>
@@ -343,7 +395,7 @@ export default function SettingsScreen() {
                 Export
               </button>
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Import vault</label>
                 <p className="text-sm text-on-surface-variant">Import from Bitwarden-compatible JSON</p>
@@ -377,9 +429,9 @@ export default function SettingsScreen() {
         </section>
 
         <section>
-          <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Browser Extension</h2>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Browser Extension</h2>
           <div className="bg-surface-container rounded-xl p-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-3">
                 <span className={`w-3 h-3 rounded-full ${settings.extension_connected ? 'bg-primary' : 'bg-amber-500'}`}></span>
                 <div>
@@ -399,9 +451,9 @@ export default function SettingsScreen() {
         </section>
 
         <section>
-          <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Account</h2>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Account</h2>
           <div className="bg-surface-container rounded-xl p-6 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">User ID</label>
                 <p className="font-mono text-xs text-on-surface-variant">{settings.user_id}</p>
@@ -411,8 +463,8 @@ export default function SettingsScreen() {
               </button>
             </div>
 
-            <div className="flex gap-4">
-              <button 
+            <div className="flex flex-col sm:flex-row gap-4">
+              <button
                 onClick={handleSignOut}
                 className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
               >
@@ -430,9 +482,9 @@ export default function SettingsScreen() {
       </div>
 
       {showDeleteModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setShowDeleteModal(false)}>
-          <div 
-            className="bg-surface-container rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-red-500/30"
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowDeleteModal(false)}>
+          <div
+            className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-md w-full shadow-2xl border border-red-500/30"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 mb-4">

@@ -66,13 +66,13 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
   };
 
   return (
-    <main className="flex-1 flex items-center justify-center p-6 relative overflow-hidden">
-      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+    <main className="flex-1 flex items-center justify-center p-4 sm:p-6 relative overflow-y-auto">
+      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-primary/5 rounded-full blur-[120px]"></div>
         <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] bg-secondary/5 rounded-full blur-[100px]"></div>
       </div>
 
-      <div className="z-10 w-full max-w-4xl grid md:grid-cols-12 gap-0 overflow-hidden rounded-xl shadow-2xl bg-surface-container-low">
+      <div className="z-10 w-full max-w-4xl grid md:grid-cols-12 gap-0 overflow-hidden rounded-xl shadow-2xl bg-surface-container-low my-auto">
         <div className="hidden md:flex md:col-span-5 bg-surface-container flex-col justify-between p-12 relative overflow-hidden">
           <div className="z-10">
             <div 
@@ -104,10 +104,10 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
           </div>
         </div>
 
-        <div className="md:col-span-7 p-10 md:p-16 flex flex-col justify-center bg-surface-container-low">
+        <div className="md:col-span-7 p-6 sm:p-10 md:p-16 flex flex-col justify-center bg-surface-container-low">
           <div className="max-w-md mx-auto w-full">
-            <header className="mb-12">
-              <h1 className="font-headline text-4xl md:text-5xl font-bold tracking-tight text-on-surface mb-4">
+            <header className="mb-8 sm:mb-12">
+              <h1 className="font-headline text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-on-surface mb-4">
                 Your vault.<br />No passwords.
               </h1>
               <p className="text-on-surface-variant font-body text-lg leading-relaxed">
@@ -147,7 +147,7 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
               </button>
             </div>
 
-            <footer className="mt-16 pt-8 border-t border-outline-variant/10">
+            <footer className="mt-10 sm:mt-16 pt-8 border-t border-outline-variant/10">
               <div className="flex items-center gap-6">
                 <div className="flex -space-x-2">
                   <div className="w-8 h-8 rounded-full border-2 border-surface-container-low bg-surface-bright flex items-center justify-center">
@@ -172,7 +172,7 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
       {showImportModal && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setShowImportModal(false)}>
           <div
-            className="bg-surface-container rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
+            className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-outline-variant/20"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 mb-6">

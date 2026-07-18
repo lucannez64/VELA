@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem } from '../context/AppContext';
+import { useClipboard } from '../hooks/useClipboard';
 import FaviconIcon from '../components/FaviconIcon';
 
 interface Props {
@@ -20,7 +21,8 @@ interface VaultHealth {
 type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote';
 
 export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, onAddItem }: Props) {
-  const { setSelectedItem, showToast } = useApp();
+  const { setSelectedItem, showToast, setCurrentView } = useApp();
+  const { copyToClipboard } = useClipboard();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
   const [filteredItems, setFilteredItems] = useState<VaultItem[]>([]);
@@ -79,12 +81,15 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     }
   };
 
-  const handleCopy = async (value: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      showToast(`${label} copied`, 'success');
-    } catch (e) {
-      showToast('Failed to copy', 'error');
+  const handleCopy = (item: VaultItem) => {
+    if (item.password) {
+      copyToClipboard(item.password, 'Password');
+    } else if (item.card_number) {
+      copyToClipboard(item.card_number, 'Card number');
+    } else if (item.username) {
+      copyToClipboard(item.username, 'Username');
+    } else {
+      showToast('Nothing to copy', 'info');
     }
   };
 
@@ -96,8 +101,8 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
   };
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-6 mb-8">
         <div className="relative w-full max-w-xl">
           <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline-variant">search</span>
           <input
@@ -117,7 +122,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
         </button>
       </div>
 
-      <div className="flex items-center gap-8 mb-8 overflow-x-auto pb-2">
+      <div className="flex items-center gap-4 sm:gap-8 mb-8 overflow-x-auto pb-2">
         {(['all', 'login', 'creditCard', 'secureNote'] as FilterType[]).map(type => (
           <button
             key={type}
@@ -163,7 +168,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-6 shrink-0">
+                  <div className="flex items-center gap-3 sm:gap-6 shrink-0">
                     {item.shared && (
                       item.share_recipient
                         ? <div className="px-2 py-0.5 rounded bg-primary/10 text-[10px] text-primary font-label font-bold uppercase tracking-widest flex items-center gap-1">
@@ -177,8 +182,8 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                       {item.item_type === 'creditCard' ? `EXP: ${item.card_exp}` : '••••••••••••'}
                     </span>
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleCopy(item.password || item.username || '', 'Item'); }}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCopy(item); }}
                         className="p-2 hover:text-primary transition-colors"
                       >
                         <span className="material-symbols-outlined text-sm">content_copy</span>
@@ -214,7 +219,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
       )}
 
       <div className="mt-12 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 glass-panel p-8 rounded-2xl border border-outline-variant/10">
+        <div className="lg:col-span-2 glass-panel p-4 sm:p-8 rounded-2xl border border-outline-variant/10">
           <div className="flex justify-between items-start mb-6">
             <div>
               <h4 className="font-headline text-xl font-bold text-on-surface mb-1">Vault Health</h4>
@@ -238,7 +243,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
               <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
                 <div 
                   className={`h-full rounded-full ${
-                    (vaultHealth?.health_score || 0) >= 90 ? 'bg-primary shadow-[0_0_12px_#73db9a]' :
+                    (vaultHealth?.health_score || 0) >= 90 ? 'bg-primary shadow-[0_0_12px_rgb(var(--color-primary))]' :
                     (vaultHealth?.health_score || 0) >= 70 ? 'bg-green-400' :
                     (vaultHealth?.health_score || 0) >= 50 ? 'bg-amber-400' :
                     'bg-red-400'
@@ -264,13 +269,16 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-surface-container-highest to-surface-container p-8 rounded-2xl border border-outline-variant/10 flex flex-col justify-between">
+        <div className="bg-gradient-to-br from-surface-container-highest to-surface-container p-4 sm:p-8 rounded-2xl border border-outline-variant/10 flex flex-col justify-between">
           <div>
             <span className="material-symbols-outlined text-primary mb-4 text-3xl">security</span>
             <h4 className="font-headline text-lg font-bold text-on-surface mb-2">Dark Web Monitor</h4>
             <p className="text-sm text-on-surface-variant leading-relaxed">We scan for leaked credentials in real-time across the obsidian network.</p>
           </div>
-          <button className="mt-8 text-xs font-bold font-label text-primary uppercase tracking-[0.2em] flex items-center gap-2 group">
+          <button
+            onClick={() => setCurrentView('breachMonitor')}
+            className="mt-8 text-xs font-bold font-label text-primary uppercase tracking-[0.2em] flex items-center gap-2 group"
+          >
             RUN FULL SCAN
             <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
           </button>

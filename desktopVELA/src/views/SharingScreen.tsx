@@ -83,7 +83,8 @@ export default function SharingScreen() {
   const getIcon = (type: string) => {
     switch (type) {
       case 'login': return 'key';
-      case 'creditcard': return 'credit_card';
+      case 'creditCard': return 'credit_card';
+      case 'secureNote': return 'note';
       default: return 'shield';
     }
   };
@@ -94,10 +95,10 @@ export default function SharingScreen() {
   };
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto">
-      <div className="flex justify-between items-center mb-2">
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-2">
         <div>
-          <h1 className="font-headline text-3xl font-bold text-on-surface mb-2">Sharing</h1>
+          <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface mb-2">Sharing</h1>
           <p className="text-on-surface-variant">Securely share vault items with other VELA users</p>
         </div>
         <button
@@ -134,7 +135,7 @@ export default function SharingScreen() {
 
       {activeTab === 'received' && (
         <div className="mb-8">
-          <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Received</h2>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Received</h2>
           {filteredShares.length === 0 ? (
             <div className="p-8 bg-surface-container rounded-xl text-center">
               <span className="material-symbols-outlined text-4xl text-outline-variant mb-2 block">inbox</span>
@@ -143,21 +144,21 @@ export default function SharingScreen() {
           ) : (
             <div className="space-y-4">
               {filteredShares.map(share => (
-                <div key={share.id} className="p-6 bg-surface-container rounded-xl border border-outline-variant/5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-surface-bright flex items-center justify-center">
+                <div key={share.id} className="p-4 sm:p-6 bg-surface-container rounded-xl border border-outline-variant/5">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-12 h-12 shrink-0 rounded-xl bg-surface-bright flex items-center justify-center">
                         <span className="material-symbols-outlined text-primary">{getIcon(share.item_type)}</span>
                       </div>
-                      <div>
-                        <h3 className="font-body font-bold text-on-surface">{share.item_name}</h3>
+                      <div className="min-w-0">
+                        <h3 className="font-body font-bold text-on-surface break-words">{share.item_name}</h3>
                         <p className="text-sm text-on-surface-variant">
                           From: {share.from} · {formatDate(share.shared_at)}
                         </p>
                       </div>
                     </div>
                     {share.accepted === null ? (
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 shrink-0">
                         <button
                           onClick={() => handleDecline(share.id)}
                           className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
@@ -195,7 +196,7 @@ export default function SharingScreen() {
 
       {activeTab === 'sent' && (
         <div className="mb-8">
-          <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">Sent</h2>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Sent</h2>
           {filteredShares.length === 0 ? (
             <div className="p-8 bg-surface-container rounded-xl text-center">
               <span className="material-symbols-outlined text-4xl text-outline-variant mb-2 block">send</span>
@@ -204,23 +205,23 @@ export default function SharingScreen() {
           ) : (
             <div className="space-y-4">
               {filteredShares.map(share => (
-                <div key={share.id} className="p-6 bg-surface-container rounded-xl border border-outline-variant/5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-surface-bright flex items-center justify-center">
+                <div key={share.id} className="p-4 sm:p-6 bg-surface-container rounded-xl border border-outline-variant/5">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-12 h-12 shrink-0 rounded-xl bg-surface-bright flex items-center justify-center">
                         <span className="material-symbols-outlined text-primary">{getIcon(share.item_type)}</span>
                       </div>
-                      <div>
-                        <h3 className="font-body font-bold text-on-surface">
+                      <div className="min-w-0">
+                        <h3 className="font-body font-bold text-on-surface break-words">
                           {share.item_name}
                           <span className="ml-2 text-on-surface-variant font-normal">→ {share.to}</span>
                         </h3>
                         <p className="text-sm text-on-surface-variant">{formatDate(share.shared_at)}</p>
                       </div>
                     </div>
-                    <button 
+                    <button
                       onClick={() => handleRevokeSent(share.id)}
-                      className="px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg text-sm transition-colors"
+                      className="self-start sm:self-center shrink-0 px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg text-sm transition-colors"
                     >
                       Revoke access
                     </button>
@@ -291,7 +292,7 @@ function ShareModal({ items, initialItemId, onClose, onShared }: { items: VaultI
 
         <div className="space-y-4">
           <div>
-            <label className="font-label text-xs uppercase tracking-widest text-slate-500 block mb-2">Item</label>
+            <label className="font-label text-xs uppercase tracking-widest text-outline block mb-2">Item</label>
             <select 
               value={selectedItemId}
               onChange={e => setSelectedItemId(e.target.value)}
@@ -305,7 +306,7 @@ function ShareModal({ items, initialItemId, onClose, onShared }: { items: VaultI
           </div>
 
           <div>
-            <label className="font-label text-xs uppercase tracking-widest text-slate-500 block mb-2">Recipient (User ID)</label>
+            <label className="font-label text-xs uppercase tracking-widest text-outline block mb-2">Recipient (User ID)</label>
             <input
               type="text"
               value={recipient}

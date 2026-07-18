@@ -91,9 +91,9 @@ export default function ConflictResolution({ conflicts, onResolved, onClose }: P
   const changedFields = conflict ? getChangedFields() : [];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={onClose}>
-      <div 
-        className="bg-surface-container w-full max-w-3xl rounded-2xl shadow-2xl border border-amber-500/30 overflow-hidden"
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-surface-container w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl border border-amber-500/30"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-6 border-b border-outline-variant/10">
@@ -114,7 +114,7 @@ export default function ConflictResolution({ conflicts, onResolved, onClose }: P
         </div>
 
         <div className="p-6">
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="p-6 bg-surface-container-high rounded-xl border border-outline-variant/5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-headline font-bold text-on-surface">This device</h3>
@@ -179,7 +179,7 @@ export default function ConflictResolution({ conflicts, onResolved, onClose }: P
           </div>
         </div>
 
-        <div className="flex gap-4 p-6 border-t border-outline-variant/10">
+        <div className="flex flex-col sm:flex-row gap-4 p-6 border-t border-outline-variant/10">
           <button
             onClick={handleKeepLocal}
             className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"

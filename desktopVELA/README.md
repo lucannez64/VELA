@@ -22,6 +22,25 @@ The application follows the VELA design system:
 - Primary color: VELA Green (#73db9a)
 - Typography: Space Grotesk (headlines), Manrope (body), Inter (labels), JetBrains Mono (code)
 
+### Theming
+
+All colors are design tokens backed by CSS custom properties (`rgb(var(--token) / <alpha>)`)
+defined in `src/index.css` and mapped in `tailwind.config.js`. The active theme is selected
+via the `data-theme` attribute on `<html>` and can be changed in **Settings → Appearance**:
+
+| Theme | `data-theme` | Style |
+| --- | --- | --- |
+| System | (follows OS) | VELA Dark or Latte based on OS preference |
+| VELA Dark | `vela` | Default obsidian theme |
+| Macchiato | `macchiato` | Catppuccin Macchiato |
+| Latte | `latte` | Catppuccin Latte (light) |
+| Gruvbox | `gruvbox` | Gruvbox Dark |
+
+Theme metadata and resolution logic (including legacy `dark`/`light` setting values) live in
+`src/themes.ts`. When adding UI, always use the semantic tokens (`bg-surface-container`,
+`text-on-surface-variant`, `text-outline`, …) instead of fixed palette colors so every theme
+renders correctly.
+
 ## Prerequisites
 
 - Node.js 18+

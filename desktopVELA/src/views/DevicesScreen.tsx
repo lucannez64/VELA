@@ -173,16 +173,16 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   };
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto">
-      <div className="flex justify-between items-center mb-8">
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
         <div>
-          <h1 className="font-headline text-3xl font-bold text-on-surface mb-2">My Devices</h1>
+          <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface mb-2">My Devices</h1>
           <p className="text-on-surface-variant">Manage devices that have access to your vault</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => setShowWebAccess(true)}
-            className="flex items-center gap-2 bg-surface text-on-surface border border-outline-variant/20 px-6 py-3 rounded-xl font-bold hover:bg-surface-container-high transition-colors"
+            className="flex items-center gap-2 bg-surface text-on-surface border border-outline-variant/20 px-4 sm:px-6 py-3 rounded-xl font-bold hover:bg-surface-container-high transition-colors"
           >
             <span className="material-symbols-outlined">public</span>
             Web access
@@ -190,7 +190,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
           <button
             onClick={handleEnrollDevice}
             disabled={enrolling}
-            className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 bg-primary text-on-primary px-4 sm:px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             <span className="material-symbols-outlined">add</span>
             {enrolling ? 'Generating code…' : 'Enroll new device'}
@@ -222,14 +222,14 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
             key={device.id}
             className={`p-6 rounded-xl bg-surface-container border ${device.revoked ? 'border-red-500/30 opacity-60' : 'border-outline-variant/5'}`}
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-xl bg-surface-bright flex items-center justify-center">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className="w-14 h-14 shrink-0 rounded-xl bg-surface-bright flex items-center justify-center">
                   <span className="material-symbols-outlined text-2xl text-primary">{getDeviceIcon(device.device_type)}</span>
                 </div>
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-body font-bold text-on-surface">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <h3 className="font-body font-bold text-on-surface break-words">
                       {device.name}
                       {device.this_device && (
                         <span className="ml-2 text-xs text-primary">(this device)</span>
@@ -247,11 +247,11 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                   </p>
                 </div>
               </div>
-              
+
               {!device.revoked && (
-                <button 
+                <button
                   onClick={() => setShowRevokeModal(device)}
-                  className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors text-red-400 hover:text-red-300"
+                  className="self-start sm:self-center shrink-0 px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors text-red-400 hover:text-red-300"
                 >
                   {device.pending ? 'Cancel enrollment' : device.this_device ? 'Revoke (signs out everywhere)' : 'Revoke'}
                 </button>
@@ -263,7 +263,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
 
       {/* Web Sessions */}
       <div className="mt-10">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
           <div>
             <h2 className="font-headline text-xl font-bold text-on-surface">Temporary Web Sessions</h2>
             <p className="text-sm text-on-surface-variant">Active browser sessions approved from this account</p>
@@ -283,9 +283,9 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
         ) : (
           <div className="space-y-3">
             {webSessions.map(ws => (
-              <div key={ws.id} className="p-5 rounded-xl bg-surface-container border border-outline-variant/5 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 rounded-xl bg-surface-bright flex items-center justify-center">
+              <div key={ws.id} className="p-5 rounded-xl bg-surface-container border border-outline-variant/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="w-11 h-11 shrink-0 rounded-xl bg-surface-bright flex items-center justify-center">
                     <span className="material-symbols-outlined text-xl text-primary">language</span>
                   </div>
                   <div>
@@ -304,7 +304,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                 <button
                   onClick={() => handleRevokeWebSession(ws)}
                   disabled={revokingSessionId === ws.id}
-                  className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors text-red-400 hover:text-red-300 disabled:opacity-50"
+                  className="self-start sm:self-center shrink-0 px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors text-red-400 hover:text-red-300 disabled:opacity-50"
                 >
                   {revokingSessionId === ws.id ? 'Revoking…' : 'Revoke'}
                 </button>
@@ -317,7 +317,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
       {enrollmentCode && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setEnrollmentCode(null)}>
           <div
-            className="bg-surface-container rounded-2xl p-8 max-w-lg w-full mx-4 shadow-2xl border border-outline-variant/20"
+            className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-outline-variant/20"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 mb-4">
@@ -331,7 +331,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
             </p>
             {qrImages.length > 0 && (
               <div className="mb-4 p-4 bg-white rounded-xl flex flex-col items-center">
-                <img src={qrImages[qrIndex]} alt={`Enrollment QR ${qrIndex + 1} of ${qrImages.length}`} className="w-[280px] h-[280px]" />
+                <img src={qrImages[qrIndex]} alt={`Enrollment QR ${qrIndex + 1} of ${qrImages.length}`} className="w-full max-w-[280px] h-auto" />
                 <div className="mt-3 text-slate-900 font-label text-sm">
                   {qrImages.length === 1 ? 'Enrollment QR' : `QR part ${qrIndex + 1} of ${qrImages.length}`}
                 </div>
@@ -379,8 +379,8 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
 
       {showRevokeModal && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setShowRevokeModal(null)}>
-          <div 
-            className="bg-surface-container rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
+          <div
+            className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
             onClick={e => e.stopPropagation()}
           >
             <h2 className="font-headline text-2xl font-bold text-on-surface mb-4">

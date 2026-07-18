@@ -1,4 +1,10 @@
 /** @type {import('tailwindcss').Config} */
+
+// Colors are resolved from CSS custom properties so the active theme
+// (data-theme attribute on <html>) can redefine them at runtime.
+// Values are space-separated RGB channels to support Tailwind opacity modifiers.
+const themeColor = (name) => `rgb(var(${name}) / <alpha-value>)`;
+
 export default {
   content: [
     "./index.html",
@@ -8,26 +14,26 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: '#73db9a',
-        'primary-dim': '#1c8f56',
-        secondary: '#44e2cd',
-        error: '#ffb4ab',
-        'accent-violet': '#8b5cf6',
-        surface: '#121416',
-        'surface-dim': '#121416',
-        'surface-bright': '#37393b',
-        'surface-container-lowest': '#0c0e10',
-        'surface-container-low': '#1a1c1e',
-        'surface-container': '#1e2022',
-        'surface-container-high': '#282a2c',
-        'surface-container-highest': '#333537',
-        'surface-variant': '#333537',
-        'on-surface': '#e2e2e5',
-        'on-surface-variant': '#c4c7c7',
-        'on-primary': '#00391d',
-        'on-secondary': '#003731',
-        outline: '#8e9192',
-        'outline-variant': '#444748',
+        primary: themeColor('--color-primary'),
+        'primary-dim': themeColor('--color-primary-dim'),
+        secondary: themeColor('--color-secondary'),
+        error: themeColor('--color-error'),
+        'accent-violet': themeColor('--color-accent-violet'),
+        surface: themeColor('--color-surface'),
+        'surface-dim': themeColor('--color-surface-dim'),
+        'surface-bright': themeColor('--color-surface-bright'),
+        'surface-container-lowest': themeColor('--color-surface-container-lowest'),
+        'surface-container-low': themeColor('--color-surface-container-low'),
+        'surface-container': themeColor('--color-surface-container'),
+        'surface-container-high': themeColor('--color-surface-container-high'),
+        'surface-container-highest': themeColor('--color-surface-container-highest'),
+        'surface-variant': themeColor('--color-surface-variant'),
+        'on-surface': themeColor('--color-on-surface'),
+        'on-surface-variant': themeColor('--color-on-surface-variant'),
+        'on-primary': themeColor('--color-on-primary'),
+        'on-secondary': themeColor('--color-on-secondary'),
+        outline: themeColor('--color-outline'),
+        'outline-variant': themeColor('--color-outline-variant'),
       },
       fontFamily: {
         headline: ['Space Grotesk', 'sans-serif'],

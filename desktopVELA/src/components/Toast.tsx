@@ -23,10 +23,10 @@ export default function Toast({ message, type }: ToastProps) {
   }[type];
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-2rem)]">
       <div className={`glass-panel px-6 py-3 rounded-xl border ${bgColor} flex items-center gap-3`}>
-        <span className={`material-symbols-outlined text-lg ${textColor}`}>{icon}</span>
-        <span className="font-body text-sm text-on-surface">{message}</span>
+        <span className={`material-symbols-outlined text-lg shrink-0 ${textColor}`}>{icon}</span>
+        <span className="font-body text-sm text-on-surface break-words">{message}</span>
       </div>
     </div>
   );

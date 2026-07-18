@@ -37,64 +37,76 @@ export default function TitleBar() {
   };
 
   const getTimerColor = () => {
-    if (!session?.active) return 'text-slate-500';
+    if (!session?.active) return 'text-outline';
     if (session.session_time_remaining_secs <= 60) return 'text-red-500 animate-pulse';
     if (session.session_time_remaining_secs <= 180) return 'text-amber-500';
     return 'text-on-surface-variant';
   };
 
   return (
-    <header className="h-14 bg-surface border-b border-outline-variant/10 flex justify-between items-center px-4 drag-region">
+    <header
+      className="h-14 bg-surface border-b border-outline-variant/10 flex justify-between items-center px-4 drag-region"
+      onDoubleClick={(e) => {
+        // Only toggle maximize when the drag region itself is double-clicked,
+        // not the interactive controls inside the title bar.
+        if ((e.target as HTMLElement).closest('.no-drag, button')) return;
+        handleMaximize();
+      }}
+      title="Drag to move · double-click to maximize"
+    >
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-primary-container border border-primary/20 flex items-center justify-center">
           <span className="material-symbols-outlined text-primary text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>shield_lock</span>
         </div>
-        <span className="text-lg font-bold tracking-[0.2em] text-primary font-headline">VELA</span>
+        <span className="hidden sm:inline text-lg font-bold tracking-[0.2em] text-primary font-headline">VELA</span>
         <div className="hidden md:flex items-center gap-2 ml-4">
           <div className="flex items-center gap-2 px-3 py-1 bg-on-secondary-container/10 rounded-full security-pulse">
-            <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_#73db9a]"></span>
+            <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgb(var(--color-primary))]"></span>
             <span className="font-label uppercase tracking-widest text-[10px] text-primary">Zero-Knowledge Active</span>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-4 no-drag">
-        <div className="flex items-center gap-2 font-label text-xs text-slate-500">
-          <span>Session:</span>
+      <div className="flex items-center gap-2 sm:gap-4 no-drag">
+        <div className="flex items-center gap-2 font-label text-xs text-outline">
+          <span className="hidden sm:inline">Session:</span>
           <span className={`font-mono ${getTimerColor()}`}>
             {session?.active ? formatTime(session.session_time_remaining_secs) : '--'}
           </span>
         </div>
-        <button 
+        <button
           onClick={handleLock}
-          className="p-2 text-slate-500 hover:bg-surface-container hover:text-primary transition-colors rounded-lg"
+          className="p-2 text-outline hover:bg-surface-container hover:text-primary transition-colors rounded-lg"
           title="Lock Now"
         >
           <span className="material-symbols-outlined text-xl">lock_open</span>
         </button>
-        <button 
+        <button
           onClick={handleAlwaysOnTop}
-          className={`p-2 transition-colors rounded-lg ${alwaysOnTop ? 'text-primary bg-primary/10' : 'text-slate-500 hover:bg-surface-container hover:text-primary'}`}
+          className={`hidden sm:block p-2 transition-colors rounded-lg ${alwaysOnTop ? 'text-primary bg-primary/10' : 'text-outline hover:bg-surface-container hover:text-primary'}`}
           title="Always on Top"
         >
           <span className="material-symbols-outlined text-xl">{alwaysOnTop ? 'keep' : 'push_pin'}</span>
         </button>
         <div className="flex items-center gap-1 ml-2">
-          <button 
+          <button
             onClick={handleMinimize}
-            className="w-8 h-8 flex items-center justify-center text-slate-400 hover:bg-surface-container hover:text-on-surface transition-colors rounded"
+            className="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors rounded"
+            title="Minimize"
           >
             <span className="material-symbols-outlined text-lg">remove</span>
           </button>
-          <button 
+          <button
             onClick={handleMaximize}
-            className="w-8 h-8 flex items-center justify-center text-slate-400 hover:bg-surface-container hover:text-on-surface transition-colors rounded"
+            className="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors rounded"
+            title="Maximize / Restore"
           >
             <span className="material-symbols-outlined text-lg">crop_square</span>
           </button>
-          <button 
+          <button
             onClick={handleClose}
-            className="w-8 h-8 flex items-center justify-center text-slate-400 hover:bgred-500/20 hover:text-red-400 transition-colors rounded"
+            className="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:bg-red-500/20 hover:text-red-400 transition-colors rounded"
+            title="Close to tray"
           >
             <span className="material-symbols-outlined text-lg">close</span>
           </button>

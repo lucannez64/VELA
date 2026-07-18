@@ -59,8 +59,8 @@ export default function QuickSearchOverlay({ onClose }: QuickSearchOverlayProps)
   const getIcon = (type: string) => {
     switch (type) {
       case 'login': return 'key';
-      case 'creditcard': return 'credit_card';
-      case 'securenote': return 'note';
+      case 'creditCard': return 'credit_card';
+      case 'secureNote': return 'note';
       default: return 'shield';
     }
   };
@@ -70,8 +70,8 @@ export default function QuickSearchOverlay({ onClose }: QuickSearchOverlayProps)
       className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center pt-[15vh]"
       onClick={onClose}
     >
-      <div 
-        className="w-full max-w-xl bg-surface-container rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden"
+      <div
+        className="w-full max-w-xl mx-4 bg-surface-container rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-4 px-6 py-4 border-b border-outline-variant/10">
@@ -84,12 +84,12 @@ export default function QuickSearchOverlay({ onClose }: QuickSearchOverlayProps)
             className="flex-1 bg-transparent text-lg text-on-surface placeholder:text-on-surface-variant/50 outline-none"
             autoFocus
           />
-          <span className="text-xs text-slate-500 font-label">ESC to close</span>
+          <span className="text-xs text-outline font-label">ESC to close</span>
         </div>
 
         <div className="max-h-80 overflow-y-auto">
           {results.length === 0 && query.length > 0 && (
-            <div className="px-6 py-8 text-center text-slate-500">
+            <div className="px-6 py-8 text-center text-outline">
               <span className="material-symbols-outlined text-4xl mb-2 block">search_off</span>
               <p className="text-sm">No results found</p>
             </div>

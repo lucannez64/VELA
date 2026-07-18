@@ -84,8 +84,8 @@ export default function SessionExpiredOverlay({ onReauth }: Props) {
 
   if (showPassword || biometricAvailable === false) {
     return (
-      <div className="fixed inset-0 z-40 bg-surface/80 backdrop-blur-sm flex items-center justify-center">
-        <div className="glass-panel p-8 rounded-2xl border border-outline-variant/20 text-center max-w-md">
+      <div className="fixed inset-0 z-40 bg-surface/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-outline-variant/20 text-center w-full max-w-md">
           <div className="w-20 h-20 mx-auto mb-6 bg-surface-container rounded-full flex items-center justify-center">
             <span className="material-symbols-outlined text-accent-violet text-5xl" style={{ fontVariationSettings: "'wght' 200" }}>password</span>
           </div>
@@ -128,11 +128,11 @@ export default function SessionExpiredOverlay({ onReauth }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-40 bg-surface/80 backdrop-blur-sm flex items-center justify-center">
-      <div className="glass-panel p-8 rounded-2xl border border-outline-variant/20 text-center max-w-md">
-        <div className="w-20 h-20 mx-auto mb-6 bg-surface-container rounded-full flex items-center justify-center">
-          <span className="material-symbols-outlined text-accent-violet text-5xl" style={{ fontVariationSettings: "'wght' 200" }}>fingerprint</span>
-        </div>
+      <div className="fixed inset-0 z-40 bg-surface/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-outline-variant/20 text-center w-full max-w-md">
+          <div className="w-20 h-20 mx-auto mb-6 bg-surface-container rounded-full flex items-center justify-center">
+            <span className="material-symbols-outlined text-accent-violet text-5xl" style={{ fontVariationSettings: "'wght' 200" }}>fingerprint</span>
+          </div>
         <h2 className="font-headline text-2xl font-bold text-on-surface mb-2">Session expired</h2>
         <p className="text-on-surface-variant mb-6">Touch sensor to continue</p>
         {error && <p className="text-red-400 text-sm mb-4">{error}</p>}

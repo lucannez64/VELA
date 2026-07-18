@@ -145,10 +145,10 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
 
   if (showTrustedContact) {
     return (
-      <main className="flex-1 flex items-center justify-center p-6 overflow-y-auto">
+      <main className="relative flex-1 flex items-center justify-center p-6 overflow-y-auto">
         <button
           onClick={() => setShowTrustedContact(false)}
-          className="absolute top-24 left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
+          className="absolute top-4 left-4 sm:top-6 sm:left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
         >
           <span className="material-symbols-outlined">arrow_back</span>
           Back
@@ -239,8 +239,8 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
 
   if (step === 'welcome') {
     return (
-      <main className="flex-1 flex items-center justify-center p-6">
-        <div className="max-w-lg w-full text-center">
+      <main className="relative flex-1 flex items-center justify-center p-6 overflow-y-auto">
+        <div className="max-w-lg w-full text-center my-auto">
           <div className="w-24 h-24 mx-auto mb-8 bg-surface-container rounded-2xl flex items-center justify-center">
             <span className="material-symbols-outlined text-primary text-6xl" style={{ fontVariationSettings: "'FILL' 1" }}>lock</span>
           </div>
@@ -278,11 +278,11 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
     }
 
     return (
-      <main className="flex-1 flex items-center justify-center p-6">
-        <div className="max-w-lg w-full text-center">
+      <main className="relative flex-1 flex items-center justify-center p-6 overflow-y-auto">
+        <div className="max-w-lg w-full text-center my-auto">
           <button
             onClick={() => onStepChange('welcome')}
-            className="absolute top-24 left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
+            className="absolute top-4 left-4 sm:top-6 sm:left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
           >
             <span className="material-symbols-outlined">arrow_back</span>
             Back
@@ -333,11 +333,11 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
 
   if (step === 'password') {
     return (
-      <main className="flex-1 flex items-center justify-center p-6">
-        <div className="max-w-lg w-full text-center">
+      <main className="relative flex-1 flex items-center justify-center p-6 overflow-y-auto">
+        <div className="max-w-lg w-full text-center my-auto">
           <button
             onClick={() => onStepChange('welcome')}
-            className="absolute top-24 left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
+            className="absolute top-4 left-4 sm:top-6 sm:left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
           >
             <span className="material-symbols-outlined">arrow_back</span>
             Back
@@ -416,16 +416,16 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
 
   if (step === 'recovery') {
     return (
-      <main className="flex-1 flex items-center justify-center p-6 overflow-y-auto">
+      <main className="relative flex-1 flex items-center justify-center p-6 overflow-y-auto">
         <button
           onClick={() => onStepChange('password')}
-          className="absolute top-24 left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
+          className="absolute top-4 left-4 sm:top-6 sm:left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
         >
           <span className="material-symbols-outlined">arrow_back</span>
           Back
         </button>
         
-        <div className="max-w-xl w-full">
+        <div className="max-w-xl w-full my-auto">
           <h2 className="font-headline text-3xl font-bold text-on-surface mb-2">Set up recovery</h2>
           <p className="text-on-surface-variant mb-8">
             Configure at least 2 recovery methods to restore your vault if all devices are lost.
@@ -437,7 +437,7 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
                 <div className="flex items-center gap-3">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${recoverySteps.cloudBackup ? 'bg-primary' : 'bg-surface-container-highest'}`}>
                     {recoverySteps.cloudBackup ? (
-                      <span className="material-symbols-outlined text-white text-lg">check</span>
+                      <span className="material-symbols-outlined text-on-primary text-lg">check</span>
                     ) : (
                       <span className="font-bold text-sm">1</span>
                     )}
@@ -467,7 +467,7 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
                 <div className="flex items-center gap-3">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${recoverySteps.securityKey ? 'bg-primary' : 'bg-surface-container-highest'}`}>
                     {recoverySteps.securityKey ? (
-                      <span className="material-symbols-outlined text-white text-lg">check</span>
+                      <span className="material-symbols-outlined text-on-primary text-lg">check</span>
                     ) : (
                       <span className="font-bold text-sm">2</span>
                     )}
@@ -499,7 +499,7 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
                 <div className="flex items-center gap-3">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${recoverySteps.trustedContact ? 'bg-primary' : 'bg-surface-container-highest'}`}>
                     {recoverySteps.trustedContact ? (
-                      <span className="material-symbols-outlined text-white text-lg">check</span>
+                      <span className="material-symbols-outlined text-on-primary text-lg">check</span>
                     ) : (
                       <span className="font-bold text-sm">3</span>
                     )}
@@ -554,16 +554,16 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
 
   if (step === 'complete') {
     return (
-      <main className="flex-1 flex items-center justify-center p-6">
+      <main className="relative flex-1 flex items-center justify-center p-6 overflow-y-auto">
         <button
           onClick={() => onStepChange('recovery')}
-          className="absolute top-24 left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
+          className="absolute top-4 left-4 sm:top-6 sm:left-6 flex items-center gap-2 text-on-surface-variant hover:text-on-surface"
         >
           <span className="material-symbols-outlined">arrow_back</span>
           Back
         </button>
-        
-        <div className="max-w-lg w-full text-center">
+
+        <div className="max-w-lg w-full text-center my-auto">
           <div className="w-24 h-24 mx-auto mb-8 bg-primary/20 rounded-full flex items-center justify-center">
             <span className="material-symbols-outlined text-primary text-6xl" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
           </div>

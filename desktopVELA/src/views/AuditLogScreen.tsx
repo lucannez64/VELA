@@ -99,16 +99,16 @@ export default function AuditLogScreen() {
   const groupedEntries = groupByDate(entries);
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto">
-      <div className="flex justify-between items-center mb-8">
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
         <div>
-          <h1 className="font-headline text-3xl font-bold text-on-surface mb-2">Activity Log</h1>
+          <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface mb-2">Activity Log</h1>
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-secondary text-lg">lock</span>
             <p className="text-on-surface-variant text-sm">Encrypted end-to-end. Only your enrolled devices can read this.</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-4 py-2 bg-secondary/10 rounded-full">
+        <div className="flex items-center gap-2 px-4 py-2 bg-secondary/10 rounded-full self-start sm:self-center">
           <span className="w-2 h-2 bg-secondary rounded-full"></span>
           <span className="font-label text-xs text-secondary uppercase tracking-widest">Encrypted</span>
         </div>
@@ -123,7 +123,7 @@ export default function AuditLogScreen() {
           <div className="space-y-8">
             {Object.entries(groupedEntries).map(([date, dateEntries]) => (
               <div key={date}>
-                <h2 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-4">{date}</h2>
+                <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">{date}</h2>
                 <div className="space-y-2">
                   {dateEntries.map(entry => {
                     const actionInfo = getActionInfo(entry.action);
@@ -144,13 +144,13 @@ export default function AuditLogScreen() {
                             <p className="text-sm text-on-surface-variant">{details}</p>
                           )}
                         </div>
-                        <span className="text-sm text-on-surface-variant font-mono">
+                        <span className="text-sm text-on-surface-variant font-mono shrink-0">
                           {new Date(entry.timestamp).toLocaleTimeString('en-US', { 
                             hour: '2-digit', 
                             minute: '2-digit' 
                           })}
                         </span>
-                        <span className="text-sm text-on-surface-variant">{entry.device_name}</span>
+                        <span className="hidden md:block text-sm text-on-surface-variant truncate">{entry.device_name}</span>
                       </div>
                     );
                   })}

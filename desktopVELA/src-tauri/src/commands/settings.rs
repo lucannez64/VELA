@@ -37,7 +37,19 @@ fn default_quick_search_shortcut() -> String {
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     System,
+    /// Default VELA dark theme.
+    Vela,
+    /// Catppuccin Macchiato.
+    Macchiato,
+    /// Catppuccin Latte (light).
+    Latte,
+    /// Gruvbox Dark.
+    Gruvbox,
+    /// Legacy value kept for backwards compatibility with stored settings.
+    /// Treated as `Vela` by the frontend.
     Dark,
+    /// Legacy value kept for backwards compatibility with stored settings.
+    /// Treated as `Latte` by the frontend.
     Light,
 }
 

@@ -66,7 +66,7 @@ export default function WebAccessModal({ open, onClose }: Props) {
           expires automatically and can be revoked any time.
         </p>
 
-        <label className="block text-xs uppercase tracking-widest text-slate-500 mb-2">
+        <label className="block text-xs uppercase tracking-widest text-outline mb-2">
           Web access code
         </label>
         <textarea
@@ -77,7 +77,7 @@ export default function WebAccessModal({ open, onClose }: Props) {
           className="w-full rounded-xl bg-surface p-3 text-sm font-mono text-on-surface border border-outline-variant/20 mb-6 resize-none"
         />
 
-        <label className="block text-xs uppercase tracking-widest text-slate-500 mb-2">Duration</label>
+        <label className="block text-xs uppercase tracking-widest text-outline mb-2">Duration</label>
         <select
           value={ttlSecs}
           onChange={(e) => setTtlSecs(Number(e.target.value))}
@@ -99,7 +99,7 @@ export default function WebAccessModal({ open, onClose }: Props) {
           </button>
         ) : (
           <div className="mb-6">
-            <label className="block text-xs uppercase tracking-widest text-slate-500 mb-2">Mode</label>
+            <label className="block text-xs uppercase tracking-widest text-outline mb-2">Mode</label>
             <div className="flex gap-3">
               <button
                 onClick={() => setMode('ro')}

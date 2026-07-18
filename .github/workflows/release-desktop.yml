@@ -1,9 +1,14 @@
 name: release-desktop
 
-# Build the Windows desktop app (Tauri) and publish a GitHub release carrying
-# the MSI (WiX) and the NSIS setup .exe. The version is derived from the commit:
-# patch = number of commits on the branch, so it is monotonic and unique, and
-# the short SHA is recorded in the release name/body for traceability.
+# Build the desktop app (Tauri) for Windows and Linux, and publish a GitHub
+# release carrying the MSI (WiX), the NSIS setup .exe, the .deb and the .rpm.
+# The version is derived from the commit: patch = number of commits on the
+# branch, so it is monotonic and unique, and the short SHA is recorded in the
+# release name/body for traceability.
+#
+# A third job keeps the AUR package `vela-desktop-bin` in sync: it rewrites
+# the PKGBUILD with the new version + .deb checksum and pushes it to the AUR
+# (requires the AUR_SSH_PRIVATE_KEY repository secret; skipped otherwise).
 on:
   workflow_dispatch:
   push:
@@ -21,7 +26,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,12 +77,187 @@ jobs:
           tagName: ${{ steps.version.outputs.tag }}
           releaseName: "VELA Desktop v${{ steps.version.outputs.version }}"
           releaseBody: |
-            Automated Windows desktop build.
+            Automated desktop build.
 
             - Commit: ${{ github.sha }} (`${{ steps.version.outputs.sha }}`)
-            - Installers: `.msi` (WiX) and `-setup.exe` (NSIS)
+            - Windows: `.msi` (WiX) and `-setup.exe` (NSIS)
+            - Linux: `.deb` and `.rpm`
           releaseDraft: false
           prerelease: false
-          # bundle.targets = "all" in tauri.conf.json yields both the MSI (WiX)
-          # and the NSIS setup .exe on Windows.
           args: --bundles msi nsis
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive version from commit
+        id: version
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          VERSION="0.1.$COUNT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp version into tauri.conf.json
+        run: |
+          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
+            desktopVELA/src-tauri/tauri.conf.json > tmp.json
+          mv tmp.json desktopVELA/src-tauri/tauri.conf.json
+
+      # System libraries required to build a Tauri app on Linux (WebKitGTK,
+      # tray-icon support via Ayatana AppIndicator, SVG icons, xdo for the
+      # global-shortcut plugin). The .deb/.rpm bundlers are pure Rust, so no
+      # dpkg/rpmbuild tooling is needed.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktopVELA/src-tauri
+
+      - name: Install frontend deps
+        working-directory: desktopVELA
+        run: bun install
+
+      # Uploads the .deb + .rpm to the same release as the Windows job
+      # (tauri-action attaches to the existing release if it was already created).
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktopVELA
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: "VELA Desktop v${{ steps.version.outputs.version }}"
+          releaseBody: |
+            Automated desktop build.
+
+            - Commit: ${{ github.sha }} (`${{ steps.version.outputs.sha }}`)
+            - Windows: `.msi` (WiX) and `-setup.exe` (NSIS)
+            - Linux: `.deb` and `.rpm`
+          releaseDraft: false
+          prerelease: false
+          args: --bundles deb,rpm
+
+  update-aur:
+    # Keep the AUR package vela-desktop-bin in sync with the release.
+    # Skipped gracefully until the AUR_SSH_PRIVATE_KEY secret is configured.
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux]
+    env:
+      AUR_PACKAGE: vela-desktop-bin
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whether AUR publishing is configured
+        id: aur
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "::notice::AUR_SSH_PRIVATE_KEY secret not set — skipping AUR update"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Derive version from commit
+        if: steps.aur.outputs.enabled == 'true'
+        id: version
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          VERSION="0.1.$COUNT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      # pacman-package-manager provides makepkg, used to regenerate .SRCINFO.
+      - name: Install makepkg
+        if: steps.aur.outputs.enabled == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pacman-package-manager
+
+      - name: Download the released .deb and checksum it
+        if: steps.aur.outputs.enabled == 'true'
+        id: deb
+        run: |
+          gh release download "${{ steps.version.outputs.tag }}" \
+            --pattern "VELA_${{ steps.version.outputs.version }}_amd64.deb" \
+            --dir /tmp/aur-dl --clobber
+          SUM=$(sha256sum "/tmp/aur-dl/VELA_${{ steps.version.outputs.version }}_amd64.deb" | awk '{print $1}')
+          echo "sha256=$SUM" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH for the AUR
+        if: steps.aur.outputs.enabled == 'true'
+        run: |
+          install -dm700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      # Pushing this commit to the AUR creates the package if it does not
+      # exist yet (as long as the name is available and the key's account
+      # owns it), and updates it otherwise.
+      - name: Update PKGBUILD and push to AUR
+        if: steps.aur.outputs.enabled == 'true'
+        run: |
+          set -e
+          git clone "ssh://aur@aur.archlinux.org/${AUR_PACKAGE}.git" aur
+          cd aur
+
+          cat > PKGBUILD <<EOF
+          # Maintainer: VELA <https://github.com/lucannez64/VELA>
+          pkgname=${AUR_PACKAGE}
+          pkgver=${{ steps.version.outputs.version }}
+          pkgrel=1
+          pkgdesc="Passwordless, zero-knowledge vault desktop app (prebuilt binary)"
+          arch=('x86_64')
+          url="https://github.com/lucannez64/VELA"
+          license=('custom')
+          depends=('cairo' 'desktop-file-utils' 'gdk-pixbuf2' 'glib2' 'gtk3'
+                   'hicolor-icon-theme' 'libsoup3' 'pango' 'webkit2gtk-4.1'
+                   'libayatana-appindicator' 'librsvg')
+          optdepends=('gnome-keyring: system secret-storage backend'
+                      'keepassxc: alternative secret-storage backend')
+          provides=('vela-desktop')
+          conflicts=('vela-desktop')
+          source_x86_64=("VELA_\${pkgver}_amd64.deb::\${url}/releases/download/desktop-v\${pkgver}/VELA_\${pkgver}_amd64.deb")
+          sha256sums_x86_64=('${{ steps.deb.outputs.sha256 }}')
+
+          package() {
+            ar x "VELA_\${pkgver}_amd64.deb"
+            tar -xf data.tar.* -C "\${pkgdir}"
+          }
+          EOF
+
+          makepkg --printsrcinfo > .SRCINFO
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR package already up to date"
+          else
+            git commit -m "Update to ${{ steps.version.outputs.version }}"
+            git push
+          fi

@@ -115,10 +115,10 @@ export default function BreachMonitorScreen() {
   };
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto">
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
-          <h1 className="font-headline text-3xl font-bold text-on-surface">Breach Monitor</h1>
+          <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface">Breach Monitor</h1>
           <p className="text-on-surface-variant mt-1">Monitor your emails for data breaches</p>
         </div>
         <div className="flex gap-3">
@@ -131,7 +131,7 @@ export default function BreachMonitorScreen() {
           </button>
           <button
             onClick={() => setShowAddEmail(true)}
-            className="px-4 py-2 bg-primary text-white rounded-xl font-label text-sm hover:bg-primary/90 transition-colors"
+            className="px-4 py-2 bg-primary text-on-primary rounded-xl font-label text-sm hover:bg-primary/90 transition-colors"
           >
             + Add Email
           </button>
@@ -141,7 +141,7 @@ export default function BreachMonitorScreen() {
       {showAddEmail && (
         <div className="bg-surface-container rounded-xl p-6 mb-6 border border-outline-variant/20">
           <h3 className="font-body font-medium text-on-surface mb-4">Add email to monitor</h3>
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <input
               type="email"
               value={email}
@@ -152,7 +152,7 @@ export default function BreachMonitorScreen() {
             />
             <button
               onClick={handleAddEmail}
-              className="px-6 py-3 bg-primary text-white rounded-xl font-label text-sm hover:bg-primary/90"
+              className="px-6 py-3 bg-primary text-on-primary rounded-xl font-label text-sm hover:bg-primary/90"
             >
               Check & Add
             </button>
@@ -178,9 +178,9 @@ export default function BreachMonitorScreen() {
         <div className="space-y-4">
           {breachMonitorItems.map(item => (
             <div key={item.id} className="bg-surface-container rounded-xl p-6 border border-outline-variant/10">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="font-body font-medium text-on-surface text-lg">{item.email}</h3>
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+                <div className="min-w-0">
+                  <h3 className="font-body font-medium text-on-surface text-lg break-all">{item.email}</h3>
                   <p className="text-sm text-on-surface-variant">
                     Last checked: {formatDate(item.checked_at)}
                   </p>
@@ -207,7 +207,7 @@ export default function BreachMonitorScreen() {
 
               {item.breaches.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="font-label text-xs uppercase tracking-widest text-slate-500">Breached Sites</h4>
+                  <h4 className="font-label text-xs uppercase tracking-widest text-outline">Breached Sites</h4>
                   {item.breaches.map((breach, idx) => (
                     <div key={idx} className="bg-surface-container-highest rounded-lg p-4">
                       <div className="flex items-start justify-between mb-2">
@@ -298,7 +298,7 @@ export default function BreachMonitorScreen() {
       </div>
 
       <div className="mt-8 p-4 bg-surface-container rounded-xl border border-outline-variant/10">
-        <h4 className="font-label text-xs uppercase tracking-widest text-slate-500 mb-3">How it works</h4>
+        <h4 className="font-label text-xs uppercase tracking-widest text-outline mb-3">How it works</h4>
         <ul className="text-sm text-on-surface-variant space-y-1">
           <li>• <strong>Email monitoring:</strong> Add emails to check against HaveIBeenPwned for breach data</li>
           <li>• <strong>Password checking:</strong> Uses k-anonymity — only the first 5 chars of the password hash leave your device</li>

@@ -85,8 +85,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={onClose}>
-      <div 
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div
         className="bg-surface-container w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
@@ -120,7 +120,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Name *</label>
+              <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Name *</label>
               <input
                 type="text"
                 value={form.name}
@@ -133,7 +133,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
             {itemType === 'login' && (
               <>
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Username</label>
+                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Username</label>
                   <input
                     type="text"
                     value={form.username}
@@ -144,7 +144,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Password</label>
+                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Password</label>
                   <div className="relative">
                     <input
                       type="password"
@@ -170,7 +170,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Website URL</label>
+                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Website URL</label>
                   <input
                     type="url"
                     value={form.url}
@@ -181,7 +181,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">TOTP Secret</label>
+                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">TOTP Secret</label>
                   <input
                     type="text"
                     value={form.totp}
@@ -192,7 +192,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Notes</label>
+                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Notes</label>
                   <textarea
                     value={form.notes}
                     onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))}
@@ -207,7 +207,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
             {itemType === 'creditCard' && (
               <>
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Card Number</label>
+                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Card Number</label>
                   <input
                     type="text"
                     value={form.cardNumber}
@@ -218,9 +218,9 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Expiry</label>
+                    <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Expiry</label>
                     <input
                       type="text"
                       value={form.cardExp}
@@ -231,7 +231,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">CVV</label>
+                    <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">CVV</label>
                     <input
                       type="text"
                       value={form.cardCvv}
@@ -242,7 +242,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">PIN</label>
+                    <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">PIN</label>
                     <input
                       type="text"
                       value={form.cardPin}
@@ -255,7 +255,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Cardholder Name</label>
+                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Cardholder Name</label>
                   <input
                     type="text"
                     value={form.cardholderName}
@@ -269,7 +269,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
 
             {itemType === 'secureNote' && (
               <div>
-                <label className="block text-xs font-label uppercase tracking-widest text-slate-500 mb-2">Content</label>
+                <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Content</label>
                 <textarea
                   value={form.secureNote}
                   onChange={e => setForm(prev => ({ ...prev, secureNote: e.target.value }))}

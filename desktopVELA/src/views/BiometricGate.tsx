@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 const UNLOCK_TIMEOUT_MS = 15000;
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_DURATION_SECS = 30;
 
 function invokeWithTimeout<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -25,10 +27,27 @@ export default function BiometricGate({ onUnlock }: Props) {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [password, setPassword] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState(true);
+  const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
 
   useEffect(() => {
     checkBiometricAvailability();
   }, []);
+
+  useEffect(() => {
+    if (retryCount < MAX_ATTEMPTS) return;
+    setLockoutSecondsLeft(LOCKOUT_DURATION_SECS);
+    const interval = setInterval(() => {
+      setLockoutSecondsLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setRetryCount(0);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [retryCount]);
 
   const checkBiometricAvailability = async () => {
     try {
@@ -115,11 +134,11 @@ export default function BiometricGate({ onUnlock }: Props) {
     }
   };
 
-  const isLocked = retryCount >= 5;
+  const isLocked = lockoutSecondsLeft > 0;
 
   if (showPassword || !biometricAvailable) {
     return (
-      <main className="relative h-full obsidian-gradient flex flex-col items-center justify-between py-16 px-6">
+      <main className="relative h-full obsidian-gradient flex flex-col items-center justify-between gap-6 py-8 sm:py-16 px-6 overflow-y-auto">
         <header className="flex flex-col items-center space-y-2">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary-container border border-primary/20 flex items-center justify-center rounded-lg">
@@ -219,7 +238,7 @@ export default function BiometricGate({ onUnlock }: Props) {
   }
 
   return (
-    <main className="relative h-full obsidian-gradient flex flex-col items-center justify-between py-16 px-6">
+    <main className="relative h-full obsidian-gradient flex flex-col items-center justify-between gap-6 py-8 sm:py-16 px-6 overflow-y-auto">
       <header className="flex flex-col items-center space-y-2">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-primary-container border border-primary/20 flex items-center justify-center rounded-lg">
@@ -230,19 +249,19 @@ export default function BiometricGate({ onUnlock }: Props) {
         <p className="font-label text-xs uppercase tracking-[0.4em] text-on-surface-variant opacity-60">Zero-Knowledge Vault</p>
       </header>
 
-      <section className="flex flex-col items-center justify-center space-y-12">
+      <section className="flex flex-col items-center justify-center space-y-8 sm:space-y-12">
         <div className="relative flex items-center justify-center">
-          <div className="absolute w-64 h-64 border border-accent-violet/10 rounded-full scale-110"></div>
-          <div className="absolute w-48 h-48 border border-accent-violet/20 rounded-full scale-105"></div>
-          
+          <div className="absolute w-48 h-48 sm:w-64 sm:h-64 border border-accent-violet/10 rounded-full scale-110"></div>
+          <div className="absolute w-36 h-36 sm:w-48 sm:h-48 border border-accent-violet/20 rounded-full scale-105"></div>
+
           <button
             onClick={triggerAuth}
             disabled={isAuthenticating || isLocked}
-            className="relative w-40 h-40 bg-surface-container-high rounded-full biometric-glow flex items-center justify-center border border-accent-violet/30 hover:border-accent-violet transition-all duration-500 group active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="relative w-32 h-32 sm:w-40 sm:h-40 bg-surface-container-high rounded-full biometric-glow flex items-center justify-center border border-accent-violet/30 hover:border-accent-violet transition-all duration-500 group active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="absolute inset-0 rounded-full bg-accent-violet/5 group-hover:bg-accent-violet/10 transition-colors"></div>
-            <span 
-              className={`material-symbols-outlined text-accent-violet text-7xl ${isAuthenticating ? 'animate-pulse' : ''}`}
+            <span
+              className={`material-symbols-outlined text-accent-violet text-6xl sm:text-7xl ${isAuthenticating ? 'animate-pulse' : ''}`}
               style={{ fontVariationSettings: "'wght' 200" }}
             >
               fingerprint
@@ -252,23 +271,23 @@ export default function BiometricGate({ onUnlock }: Props) {
 
         <div className="text-center space-y-3">
           <h2 className="font-headline text-2xl font-light tracking-tight text-on-surface">
-            {isLocked ? 'Too many attempts' : 'Touch sensor to unlock'}
+            {isLocked ? `Too many attempts — wait ${lockoutSecondsLeft}s` : 'Touch sensor to unlock'}
           </h2>
           <div className="flex items-center justify-center gap-2">
-            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse shadow-[0_0_8px_rgba(115,219,154,0.6)]"></span>
+            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse shadow-[0_0_8px_rgb(var(--color-primary)/0.6)]"></span>
             <p className="font-label text-sm text-on-surface-variant tracking-wide">
-              {isLocked ? 'WAIT 30 SECONDS' : 'AUTHENTICATION READY'}
+              {isLocked ? `RETRY IN ${lockoutSecondsLeft}S` : 'AUTHENTICATION READY'}
             </p>
           </div>
           {error && (
             <p className="text-red-400 text-sm mt-2">
-              {error} — try again ({5 - retryCount} attempts remaining)
+              {error} — try again ({Math.max(0, MAX_ATTEMPTS - retryCount)} attempts remaining)
             </p>
           )}
         </div>
       </section>
 
-      <footer className="flex flex-col items-center space-y-8 w-full max-w-md">
+      <footer className="flex flex-col items-center space-y-4 sm:space-y-8 w-full max-w-md">
         <div className="w-full flex items-center gap-4 px-12">
           <div className="h-px flex-grow bg-outline-variant/20"></div>
           <span className="font-label text-[10px] tracking-widest text-on-surface-variant uppercase">Alternative Access</span>
@@ -306,14 +325,14 @@ export default function BiometricGate({ onUnlock }: Props) {
         </button>
       </footer>
 
-      <div className="fixed top-0 left-0 w-32 h-32 opacity-20 pointer-events-none">
+      <div className="absolute top-0 left-0 w-32 h-32 opacity-20 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-full border-t border-l border-accent-violet/40 rounded-tl-3xl"></div>
       </div>
-      <div className="fixed bottom-0 right-0 w-32 h-32 opacity-20 pointer-events-none">
+      <div className="absolute bottom-0 right-0 w-32 h-32 opacity-20 pointer-events-none">
         <div className="absolute bottom-0 right-0 w-full h-full border-b border-r border-accent-violet/40 rounded-br-3xl"></div>
       </div>
 
-      <div className="fixed top-6 right-6 flex items-center gap-3 bg-on-secondary-container/40 backdrop-blur-md px-4 py-2 rounded-full border border-secondary/10">
+      <div className="absolute top-4 right-4 hidden sm:flex items-center gap-3 bg-on-secondary-container/40 backdrop-blur-md px-4 py-2 rounded-full border border-secondary/10">
         <div className="relative w-2 h-2">
           <div className="absolute inset-0 bg-secondary rounded-full animate-ping opacity-75"></div>
           <div className="relative bg-secondary w-2 h-2 rounded-full"></div>
