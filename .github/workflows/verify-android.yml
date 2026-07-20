@@ -1,0 +1,54 @@
+name: verify-android
+
+# Build-only check for the Android app: no GitHub release is created, and
+# release-signing secrets are never touched (always builds the debug variant).
+# Mirrors release-android.yml's build steps but stops before publishing, so —
+# unlike release-android.yml, which is push:main/workflow_dispatch only — this
+# is safe to run on pull requests and arbitrary branches, including PRs whose
+# base isn't `main`.
+
+on:
+  pull_request:
+    paths:
+      - "androidVELA/**"
+      - "libVELA/vela-android-bridge/**"
+      - "libVELA/vela-crypto/**"
+      - ".github/workflows/verify-android.yml"
+  workflow_dispatch:
+
+env:
+  NDK_VERSION: "26.3.11579264"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;${NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: libVELA/vela-android-bridge
+
+      - name: Build debug APK (no signing secrets, no release)
+        working-directory: androidVELA
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
