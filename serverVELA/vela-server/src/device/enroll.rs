@@ -1,11 +1,17 @@
-use axum::{extract::State, Json};
+use axum::{
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+    Json,
+};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
+    net, rate_limit,
     state::AppState,
 };
 
@@ -34,8 +40,13 @@ pub struct EnrollResponse {
 
 pub async fn post_enroll(
     State(state): State<AppState>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<EnrollRequest>,
 ) -> Result<Json<EnrollResponse>> {
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    rate_limit::enroll_by_ip(&state.store, &ip)?;
+
     let enrolling_device_id_str = body.enrolling_device_id.to_string();
     let challenge_key = format!("challenge:{}", body.challenge);
     let consumed = state.store.get_del(&challenge_key)?;

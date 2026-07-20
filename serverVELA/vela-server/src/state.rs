@@ -29,10 +29,18 @@ impl AppStateInner {
             .map_err(|e| anyhow::anyhow!("invalid PASETO public key: {e:?}"))?;
         let rp_origin = Url::parse(&config.webauthn_rp_origin)
             .map_err(|e| anyhow::anyhow!("invalid WEBAUTHN_RP_ORIGIN: {e}"))?;
-        let webauthn = WebauthnBuilder::new(&config.webauthn_rp_id, &rp_origin)
+        let builder = WebauthnBuilder::new(&config.webauthn_rp_id, &rp_origin)
             .map_err(|e| anyhow::anyhow!("invalid WebAuthn configuration: {e:?}"))?
-            .rp_name(&config.webauthn_rp_name)
-            .allow_any_port(true)
+            .rp_name(&config.webauthn_rp_name);
+        // Only relax RP origin port binding outside production (e.g. local dev
+        // on a non-443 port). In production the origin port must match exactly,
+        // since WebAuthn is the sole factor for account recovery.
+        let builder = if config.production {
+            builder
+        } else {
+            builder.allow_any_port(true)
+        };
+        let webauthn = builder
             .build()
             .map_err(|e| anyhow::anyhow!("failed to build WebAuthn verifier: {e:?}"))?;
 

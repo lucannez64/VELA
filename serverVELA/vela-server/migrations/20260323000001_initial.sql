@@ -12,7 +12,11 @@ CREATE TABLE users (
 --
 -- Key material stored:
 --   hybrid_ek   — ML-KEM-1024 (1568 B) ‖ X25519 (32 B) = 1600 B total
---                 Used to encapsulate the RMS capsule for this device.
+--                 A real, valid KEM public key advertised as part of this
+--                 device's identity. Not currently used to seal anything —
+--                 rms_capsule below is sealed with a symmetric transfer key
+--                 delivered out-of-band via the enrollment code, not by KEM
+--                 encapsulation under hybrid_ek.
 --   hybrid_vk   — ML-DSA-87 (2592 B) ‖ Ed25519 (32 B) = 2624 B total
 --                 Used to verify authentication and enrollment signatures.
 CREATE TABLE devices (
@@ -27,8 +31,9 @@ CREATE TABLE devices (
     -- Enrollment provenance
     enrolled_by UUID        REFERENCES devices(id),   -- NULL for the first device
 
-    -- RMS capsule encrypted under this device's hybrid_ek.
-    -- Cleared after the device has downloaded and confirmed it.
+    -- RMS capsule: AEAD-encrypted under a random symmetric transfer key that
+    -- is delivered to the new device out-of-band (via the enrollment code),
+    -- not under hybrid_ek. Cleared after the device downloads it.
     rms_capsule BYTEA,
 
     -- Revocation

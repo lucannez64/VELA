@@ -57,28 +57,6 @@ pub async fn post_send(
         return Err(AppError::NotFound("recipient user not found".into()));
     }
 
-    let count_rows = state
-        .db
-        .query(
-            "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = $1",
-            stoolap::params![body.recipient_user_id.to_string()],
-        )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let count_row = count_rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Internal("count query failed".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let cv = crate::db::row_val(&count_row, 0)?;
-    let inbox_count: i64 = cv.as_int64().unwrap_or(0);
-
-    if inbox_count >= MAX_INBOX_ITEMS_PER_USER {
-        return Err(AppError::Conflict(format!(
-            "recipient inbox is full ({MAX_INBOX_ITEMS_PER_USER} items)"
-        )));
-    }
-
     let capsule_bytes = B64
         .decode(&body.capsule)
         .map_err(|_| AppError::BadRequest("capsule is not valid base64".into()))?;
@@ -89,55 +67,85 @@ pub async fn post_send(
         )));
     }
 
+    let inbox_id = Uuid::new_v4();
+    let now = Utc::now().to_rfc3339();
+
+    // Quota checks and the two inserts (shared_items + share_inbox, which must
+    // share the same id) run inside one transaction so a crash/error between
+    // them can never leave an orphaned row in one table without the other.
+    // Note: this engine has no SELECT ... FOR UPDATE / serializable isolation,
+    // so two *concurrent* sends can still both pass the quota check against
+    // the same pre-insert totals and together slightly exceed the limits —
+    // snapshot isolation only guarantees no torn/partial writes, not
+    // serialized aggregate reads. That residual race only affects anti-abuse
+    // limits, not data integrity, and is an accepted engine limitation.
+    let mut tx = state
+        .db
+        .begin_with_isolation(stoolap::IsolationLevel::SnapshotIsolation)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let count_rows = tx
+        .query(
+            "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = $1",
+            stoolap::params![body.recipient_user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let count_row = count_rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::Internal("count query failed".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let inbox_count: i64 = crate::db::row_val(&count_row, 0)?.as_int64().unwrap_or(0);
+    if inbox_count >= MAX_INBOX_ITEMS_PER_USER {
+        return Err(AppError::Conflict(format!(
+            "recipient inbox is full ({MAX_INBOX_ITEMS_PER_USER} items)"
+        )));
+    }
+
     // Anti-flooding: cap pending bytes per (sender → recipient) pair and per
     // recipient inbox, so a single sender cannot fill the victim's disk.
-    let sum_bytes = |sql: &str, p1: String, p2: Option<String>| -> Result<i64> {
-        let rows = match &p2 {
-            Some(p2) => state
-                .db
-                .query(sql, stoolap::params![p1, p2])
-                .map_err(|e| AppError::Internal(e.to_string()))?,
-            None => state
-                .db
-                .query(sql, stoolap::params![p1])
-                .map_err(|e| AppError::Internal(e.to_string()))?,
-        };
-        let row = rows
-            .into_iter()
-            .next()
-            .ok_or_else(|| AppError::Internal("sum query failed".into()))?
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        Ok(crate::db::row_val(&row, 0)?.as_int64().unwrap_or(0))
-    };
-
-    let pair_bytes = sum_bytes(
-        "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-         WHERE recipient_user_id = $1 AND sender_user_id = $2",
-        body.recipient_user_id.to_string(),
-        Some(session.user_id.to_string()),
-    )?;
+    let pair_rows = tx
+        .query(
+            "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+             WHERE recipient_user_id = $1 AND sender_user_id = $2",
+            stoolap::params![
+                body.recipient_user_id.to_string(),
+                session.user_id.to_string()
+            ],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let pair_row = pair_rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::Internal("sum query failed".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let pair_bytes: i64 = crate::db::row_val(&pair_row, 0)?.as_int64().unwrap_or(0);
     if pair_bytes + capsule_bytes.len() as i64 > MAX_SENDER_TO_RECIPIENT_BYTES {
         return Err(AppError::PayloadTooLarge(format!(
             "pending shares to this recipient exceed {MAX_SENDER_TO_RECIPIENT_BYTES} bytes"
         )));
     }
 
-    let total_bytes = sum_bytes(
-        "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-         WHERE recipient_user_id = $1",
-        body.recipient_user_id.to_string(),
-        None,
-    )?;
+    let total_rows = tx
+        .query(
+            "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+             WHERE recipient_user_id = $1",
+            stoolap::params![body.recipient_user_id.to_string()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let total_row = total_rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::Internal("sum query failed".into()))?
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let total_bytes: i64 = crate::db::row_val(&total_row, 0)?.as_int64().unwrap_or(0);
     if total_bytes + capsule_bytes.len() as i64 > MAX_RECIPIENT_INBOX_BYTES {
         return Err(AppError::PayloadTooLarge(format!(
             "recipient inbox exceeds {MAX_RECIPIENT_INBOX_BYTES} bytes"
         )));
     }
 
-    let inbox_id = Uuid::new_v4();
-    let now = Utc::now().to_rfc3339();
-
-    state.db.execute(
+    tx.execute(
         "INSERT INTO shared_items (id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked)
          VALUES ($1, $2, $3, $4, $5, $6, FALSE)",
         stoolap::params![
@@ -150,20 +158,22 @@ pub async fn post_send(
         ],
     ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state
-        .db
-        .execute(
-            "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
+    tx.execute(
+        "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
          VALUES ($1, $2, $3, $4, $5)",
-            stoolap::params![
-                inbox_id.to_string(),
-                session.user_id.to_string(),
-                body.recipient_user_id.to_string(),
-                db::encode_b64(&capsule_bytes),
-                now,
-            ],
-        )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        stoolap::params![
+            inbox_id.to_string(),
+            session.user_id.to_string(),
+            body.recipient_user_id.to_string(),
+            db::encode_b64(&capsule_bytes),
+            now,
+        ],
+    )
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    tx.commit().map_err(|e| {
+        AppError::Conflict(format!("share send raced with a concurrent request: {e}"))
+    })?;
 
     tracing::info!(
         inbox_id  = %inbox_id,
