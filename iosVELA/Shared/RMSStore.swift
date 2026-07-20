@@ -57,12 +57,18 @@ struct KeychainRMSStore: RMSStore {
 
     func store(_ rms: Data) throws {
         var error: Unmanaged<CFError>?
-        // .userPresence → biometry if available, else device passcode.
+        // .biometryCurrentSet → biometry only, no device-passcode fallback:
+        // anyone who knows the device passcode (not necessarily the vault
+        // owner — a family member, a coerced/shoulder-surfed passcode) must
+        // not be able to unlock the RMS, the root key for every vault
+        // secret. "CurrentSet" also invalidates the item if the device's
+        // enrolled biometrics change, so a newly-added fingerprint/face
+        // can't unlock a previously-sealed RMS either.
         // WhenPasscodeSetThisDeviceOnly → requires a passcode, never synced/backed up.
         guard let access = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-            .userPresence,
+            .biometryCurrentSet,
             &error
         ) else {
             throw VaultError.keychain
@@ -151,12 +157,16 @@ enum BiometricGate {
         return context
         #else
         var err: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
+        // Biometrics-only, matching the keychain item's .biometryCurrentSet
+        // access control below — using .deviceOwnerAuthentication here would
+        // let the system show a "Use Passcode" fallback that then fails
+        // confusingly against the keychain item anyway.
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err) else {
             return nil
         }
         do {
             let ok = try await context.evaluatePolicy(
-                .deviceOwnerAuthentication, localizedReason: reason
+                .deviceOwnerAuthenticationWithBiometrics, localizedReason: reason
             )
             return ok ? context : nil
         } catch {

@@ -108,6 +108,15 @@ enum VelaCoreFFI {
 
     // MARK: - Enrollment
 
+    /// Short out-of-band verification code for an enrollment code string.
+    /// Compute this right after scanning/pasting an enrollment code and show
+    /// it to the user to confirm against the enrolling device's screen
+    /// *before* importing — neither device can otherwise establish trust in
+    /// who actually produced the code.
+    static func enrollmentVerificationCode(_ code: String) -> String {
+        code.withCString { consume(vela_ffi_enrollment_verification_code($0)) }
+    }
+
     /// Decrypt an RMS capsule (AEAD under a 32-byte transfer key). Returns base64 RMS.
     static func decryptRMSCapsule(transferKeyBase64: String, capsuleBase64: String) -> String? {
         let request = json(["transfer_key_b64": transferKeyBase64, "capsule_b64": capsuleBase64])
