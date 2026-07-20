@@ -116,7 +116,22 @@ pub async fn put_chunk(
                 now.clone(),
                 now,
             ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(|e| {
+            // A concurrent If-Match:0 request can win the race between the
+            // "does it exist" check above and this INSERT; the unique index
+            // then reports it as a constraint violation instead of a plain
+            // error. Surface that as the same 409 the pre-check gives, not 500.
+            if matches!(
+                e,
+                stoolap::Error::UniqueConstraint { .. } | stoolap::Error::PrimaryKeyConstraint { .. }
+            ) {
+                AppError::Conflict(
+                    "chunk already exists; use If-Match with current version to update".into(),
+                )
+            } else {
+                AppError::Internal(e.to_string())
+            }
+        })?;
     } else {
         let n: i64 = state
             .db

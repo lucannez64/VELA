@@ -79,7 +79,18 @@ pub async fn post_verify(
         &device_id_str,
         &body.signature,
     ) {
-        let _ = rate_limit::record_verify_failure(&state.store, &device_id_str);
+        // This sets/extends the exponential backoff — it must never fail
+        // silently, or a transient store hiccup lets an attacker's failed
+        // attempt skip counting toward it. Log loudly so it's alertable;
+        // `verify_fail_by_device` below still applies its own (weaker,
+        // fixed-window) limit as a fallback regardless of this outcome.
+        if let Err(record_err) = rate_limit::record_verify_failure(&state.store, &device_id_str) {
+            tracing::error!(
+                device_id = %device_id_str,
+                error = %record_err,
+                "failed to record verify failure — exponential backoff not updated"
+            );
+        }
         rate_limit::verify_fail_by_device(&state.store, &device_id_str)?;
         return Err(e);
     }

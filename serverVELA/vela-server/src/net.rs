@@ -70,8 +70,23 @@ pub fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, config: &Config) -> 
         }
     }
 
-    peer.map(|ip| ip.to_string())
-        .unwrap_or_else(|| "127.0.0.1".to_string())
+    match peer {
+        Some(ip) => ip.to_string(),
+        None => {
+            // The router is always wired with `into_make_service_with_connect_info`
+            // (see main.rs), so `peer` should never actually be `None` in
+            // production — this path exists only because axum's extractor
+            // requires the `Option` for services set up without connect info
+            // (e.g. some test harnesses). Falling back to a fixed address
+            // would collapse every such request into one shared rate-limit
+            // bucket, so surface it loudly instead of doing that silently.
+            tracing::error!(
+                "client_ip: no ConnectInfo available — falling back to 127.0.0.1; \
+                 rate limiting is degraded for this request"
+            );
+            "127.0.0.1".to_string()
+        }
+    }
 }
 
 /// Extract a validated client IP from proxy headers, if present.

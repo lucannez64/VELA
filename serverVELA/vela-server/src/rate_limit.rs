@@ -60,6 +60,13 @@ pub fn verify_by_ip(store: &Store, ip: &str) -> Result<()> {
     check(store, &format!("rl:verify:ip:{ip}"), 10, WINDOW_SECS)
 }
 
+/// 10 attempts/min per IP for POST /device/enroll. Enrollment does ML-DSA
+/// signature verification (compute-intensive) and creates a new device row,
+/// so it needs the same per-IP throttle as /auth/verify — previously missing.
+pub fn enroll_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:enroll:ip:{ip}"), 10, WINDOW_SECS)
+}
+
 /// 5 *failed* proofs/min per device_id for POST /auth/verify.
 /// Call this only on verification failure.
 pub fn verify_fail_by_device(store: &Store, device_id: &str) -> Result<()> {

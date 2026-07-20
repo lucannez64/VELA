@@ -57,10 +57,21 @@ pub async fn get_enrollment_package(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
-    Path(token): Path<String>,
+    Path(path_token): Path<String>,
 ) -> Result<Json<FetchEnrollmentPackageResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     rate_limit::enrollment_package_fetch_by_ip(&state.store, &ip)?;
+
+    // Prefer the token from a header over the URL path: URLs are commonly
+    // written to access/proxy/CDN logs by default, while custom headers
+    // typically are not. The path segment stays for route compatibility and
+    // as a fallback if something in between strips unrecognized headers.
+    let token = headers
+        .get("x-enrollment-token")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .unwrap_or(path_token);
+
     validate_token(&token)?;
     let ciphertext = state
         .store

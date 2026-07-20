@@ -98,15 +98,24 @@ impl FromRequestParts<AppState> for AuthSession {
             let remaining_secs = (claims.hard_cap - now).num_seconds().max(0) as u64;
             let old_ttl_secs = (claims.exp - now).num_seconds().max(0) as u64;
 
-            if old_ttl_secs > 0 {
-                let _ = store.set_ex(&format!("jti:revoked:{}", claims.jti), &[1u8], old_ttl_secs);
-            }
-
-            if remaining_secs > 0 {
+            // Once `exp` is already pinned at the session's hard cap, issuing
+            // again produces an identical exp with a fresh jti — pure churn
+            // (a revoke + issue + track write on every single request for the
+            // rest of the session) with no extension benefit. Skip it; the
+            // current token rides out to the hard cap unchanged.
+            if remaining_secs > 0 && claims.exp < claims.hard_cap {
+                // Issue the replacement token BEFORE revoking the current
+                // one: if issuance fails, the client keeps its still-valid
+                // token instead of being locked out (old jti revoked with no
+                // replacement, forcing a full re-auth).
                 let (refreshed, new_jti) =
                     ts.issue(claims.user_id, claims.device_id, Some(claims.hard_cap))?;
                 let _ =
                     rate_limit::track_device_jti(store, &claims.device_id.to_string(), &new_jti);
+                if old_ttl_secs > 0 {
+                    let _ =
+                        store.set_ex(&format!("jti:revoked:{}", claims.jti), &[1u8], old_ttl_secs);
+                }
                 Some(refreshed)
             } else {
                 None

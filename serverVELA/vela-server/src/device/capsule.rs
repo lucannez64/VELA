@@ -16,8 +16,18 @@ pub async fn get_capsule(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<CapsuleResponse>)> {
-    let rows = state
+    // Read-then-clear must be atomic: two concurrent requests must never both
+    // observe the same capsule. Do both inside one snapshot-isolated
+    // transaction, and only decode/return the capsule after `commit()`
+    // actually succeeds — if a concurrent request raced us to the same row,
+    // our commit fails with a write conflict and we report 409 instead of
+    // also handing out the secret to the loser of the race.
+    let mut tx = state
         .db
+        .begin_with_isolation(stoolap::IsolationLevel::SnapshotIsolation)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let rows = tx
         .query(
             "SELECT rms_capsule FROM devices
          WHERE id = $1 AND user_id = $2 AND revoked = FALSE AND rms_capsule IS NOT NULL",
@@ -51,13 +61,17 @@ pub async fn get_capsule(
         )
     })?;
 
-    state
-        .db
-        .execute(
-            "UPDATE devices SET rms_capsule = NULL WHERE id = $1 AND user_id = $2",
-            stoolap::params![session.device_id.to_string(), session.user_id.to_string()],
-        )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.execute(
+        "UPDATE devices SET rms_capsule = NULL WHERE id = $1 AND user_id = $2",
+        stoolap::params![session.device_id.to_string(), session.user_id.to_string()],
+    )
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    tx.commit().map_err(|e| {
+        AppError::Conflict(format!(
+            "capsule delivery raced with a concurrent request, please retry: {e}"
+        ))
+    })?;
 
     let capsule_bytes = crate::db::decode_b64(&capsule_b64)?;
 

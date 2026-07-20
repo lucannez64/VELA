@@ -90,7 +90,7 @@ pub async fn delete_account(
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let device_n: i64 = state
+    state
         .db
         .execute(
             "DELETE FROM devices WHERE user_id = $1",
@@ -98,7 +98,15 @@ pub async fn delete_account(
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state
+    // Web-session-only accounts legitimately have zero rows in `devices`
+    // (a web-session RW token uses session_id as device_id and carries no
+    // devices row — see the comment in middleware.rs), so device count is
+    // not a valid existence signal: it previously reported "account not
+    // found" for such accounts even though the delete above just genuinely
+    // deleted them. Check the `users` delete's own affected-row count
+    // instead, and check it before treating the operation as done — that
+    // row is the actual account record.
+    let users_n: i64 = state
         .db
         .execute(
             "DELETE FROM users WHERE id = $1",
@@ -106,7 +114,7 @@ pub async fn delete_account(
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if device_n == 0 {
+    if users_n == 0 {
         return Err(AppError::NotFound("account not found".into()));
     }
 
