@@ -10,12 +10,20 @@ OS-local pipe/socket using a per-session capability written by the desktop app.
 import json
 import os
 import platform
+import re
 import socket
 import struct
 import sys
 from pathlib import Path
 
 MAX_MESSAGE_BYTES = 1024 * 1024
+
+# VELA Desktop's endpoint naming convention (see desktopVELA/src-tauri/src/ipc.rs
+# platform_endpoint()). Used to confine which endpoints this host will connect
+# to, so a rewritten ipc_auth.json can't redirect credential requests to an
+# arbitrary path.
+_UNIX_SOCK_NAME_RE = re.compile(r"^vela-desktop-\d+-[A-Za-z0-9_-]+\.sock$")
+_WINDOWS_PIPE_RE = re.compile(r"^\\\\\.\\pipe\\vela-desktop-\d+-[A-Za-z0-9_-]+$")
 
 
 def read_message():
@@ -70,13 +78,57 @@ def candidate_auth_paths():
         yield home / ".local" / "share" / "vela" / "vela" / "ipc_auth.json"
 
 
+def is_safe_auth_file(path):
+    """Refuse to trust an ipc_auth.json that isn't privately owned by the
+    current user. There is no secret shared out-of-band between the desktop
+    app and this host beyond this file, so this cannot fully stop another
+    process running as *this same* user from rewriting it — but it blocks
+    other local users, and a group/world-writable file, from redirecting
+    credential requests to an attacker-controlled endpoint."""
+    if platform.system().lower() == "windows":
+        # POSIX mode/owner bits aren't meaningful on Windows; the desktop app
+        # writes this file under the per-user AppData directory, which is
+        # ACL'd to the owning user by default.
+        return True
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    return st.st_uid == os.getuid() and not (st.st_mode & 0o077)
+
+
+def is_safe_endpoint(protocol, endpoint):
+    """Confine the endpoint to VELA Desktop's own naming convention, so a
+    rewritten auth file can't point this host at an arbitrary path/pipe."""
+    if protocol == "windows_named_pipe":
+        return bool(_WINDOWS_PIPE_RE.match(endpoint))
+    if protocol == "unix_socket":
+        return bool(_UNIX_SOCK_NAME_RE.match(os.path.basename(endpoint)))
+    return False
+
+
 def load_ipc_auth():
     for path in candidate_auth_paths():
         try:
             with path.open("r", encoding="utf-8") as handle:
+                if not is_safe_auth_file(path):
+                    print(
+                        f"Refusing IPC auth file {path}: not privately owned "
+                        "by the current user",
+                        file=sys.stderr,
+                    )
+                    continue
                 auth = json.load(handle)
-            if auth.get("capability") and auth.get("endpoint") and auth.get("protocol"):
-                return auth
+            if not (auth.get("capability") and auth.get("endpoint") and auth.get("protocol")):
+                continue
+            if not is_safe_endpoint(auth["protocol"], auth["endpoint"]):
+                print(
+                    f"Refusing IPC auth file {path}: endpoint does not match "
+                    "the expected VELA Desktop pattern",
+                    file=sys.stderr,
+                )
+                continue
+            return auth
         except FileNotFoundError:
             continue
         except Exception as error:

@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VELA</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after {
       margin: 0;
@@ -28,9 +25,12 @@
       --outline:           #8e9192;
       --outline-var:       #444748;
       --error:             #ffb4ab;
-      --font-head:         'Space Grotesk', sans-serif;
-      --font-body:         'Manrope', sans-serif;
-      --font-mono:         'JetBrains Mono', monospace;
+      /* No externally-loaded web fonts: fetching them would leak the user's
+         IP + a timestamp to Google every time the popup opens. System font
+         stacks only. */
+      --font-head:         -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-body:         -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono:         ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
     }
 
     body {
