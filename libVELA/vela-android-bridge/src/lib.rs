@@ -161,6 +161,24 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeVersion(
     jni_string(&mut env, "vela-android-bridge/0.1.0")
 }
 
+/// Compute the short out-of-band verification code for an enrollment code
+/// string (see `vela_crypto::verification`). Called after scanning/pasting
+/// an enrollment code, before importing it, so the user can confirm it
+/// matches what the enrolling device shows.
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEnrollmentVerificationCode(
+    mut env: JNIEnv,
+    _object: JObject,
+    code: JString,
+) -> jstring {
+    let code_str = match env.get_string(&code) {
+        Ok(value) => value.to_string_lossy().into_owned(),
+        Err(_) => String::new(),
+    };
+    let result = vela_crypto::verification::enrollment_verification_code(&code_str);
+    jni_string(&mut env, &result)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEncryptVaultJson(
     mut env: JNIEnv,
@@ -403,9 +421,14 @@ fn decrypt_vault_chunk_json(request_json: &str) -> anyhow_like::Result<DecryptVa
 }
 
 fn generate_server_identity() -> anyhow_like::Result<GenerateIdentityResponse> {
-    let mut hybrid_ek = vec![0u8; 1600];
-    getrandom::getrandom(&mut hybrid_ek)
-        .map_err(|e| std::io::Error::other(format!("OS random source unavailable: {e}")))?;
+    // `hybrid_ek` must be a real KEM public key, not filler bytes — it is
+    // signed and transmitted to the server as this device's identity. The
+    // matching secret key is intentionally not persisted: nothing in the
+    // current protocol encapsulates under hybrid_ek (the RMS capsule uses a
+    // symmetric transfer_key instead), so a public key with no stored
+    // private counterpart is inert, not insecure.
+    let (hybrid_ek_pk, _unused_hybrid_ek_sk) = kem::generate_keypair();
+    let hybrid_ek = hybrid_ek_pk.to_bytes();
 
     let (signing_vk, signing_sk) = signing::generate_keypair()?;
     let hybrid_vk = signing_vk.to_bytes().to_vec();

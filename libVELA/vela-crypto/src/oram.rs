@@ -199,7 +199,9 @@ impl PathOram {
         });
 
         // If this is a write (or a read-then-write), push updated block back.
-        let new_leaf = self.position_map[target];
+        let new_leaf = *self.position_map.get(target).ok_or_else(|| {
+            VelaError::OramError(format!("chunk {:?} not found in position map", target))
+        })?;
         let new_data = write_data.or_else(|| existing_data.clone());
         if let Some(data) = new_data {
             self.stash.push(OramBlock::Real { id: *target, data });
@@ -211,41 +213,66 @@ impl PathOram {
         Ok((existing_data, write_path))
     }
 
-    /// Greedily evict stash blocks into a path. Evicts **all** blocks whose
-    /// assigned leaf falls within each level's range (not capped at
-    /// `BUCKET_SIZE`) to prevent unbounded stash growth. Each bucket is
-    /// padded to at least `BUCKET_SIZE` with dummy blocks for security.
+    /// Greedily evict stash blocks into the write-back path using the Path ORAM
+    /// greedy algorithm: each real block is placed at the **deepest** level
+    /// whose subtree (on the path root→`leaf`) also contains the block's
+    /// assigned leaf — i.e. the level of the lowest common ancestor. This keeps
+    /// per-access bandwidth at O(BUCKET_SIZE · log N) instead of dumping every
+    /// block into the root bucket. Each bucket is capped at `BUCKET_SIZE`;
+    /// overflow stays in the stash (standard Path ORAM behavior — the stash is
+    /// re-read into on the next access). Buckets are padded with dummies so all
+    /// buckets are a constant size.
     fn evict(&mut self, leaf: LeafIdx) -> OramPath {
         let levels = (self.height + 1) as usize;
         let mut path: OramPath = vec![Vec::new(); levels];
 
-        for level in 0..levels {
-            let level_leaf_range = self.level_leaf_range(leaf, level as u32);
-
-            // Evict ALL real blocks matching this level.
-            let mut i = 0;
-            while i < self.stash.len() {
-                let block_leaf = match &self.stash[i] {
-                    OramBlock::Real { id, .. } => self.position_map.get(id).copied(),
-                    OramBlock::Dummy => None,
-                };
-                if let Some(bl) = block_leaf {
-                    if level_leaf_range.contains(&bl) {
-                        let block = self.stash.remove(i);
-                        path[level].push(block);
-                        continue;
-                    }
+        // Move the stash into an owned Vec first so we can borrow `self`
+        // (position_map / deepest_shared_level) while deciding placement.
+        let stash = std::mem::take(&mut self.stash);
+        let mut remaining: Vec<OramBlock> = Vec::with_capacity(stash.len());
+        for block in stash {
+            // Decide the destination level using only the block's id, without
+            // holding a borrow on `block` (so it can be moved into the bucket).
+            let dest_level: Option<usize> = block.chunk_id().and_then(|id| {
+                self.position_map
+                    .get(id)
+                    .copied()
+                    .and_then(|bl| self.deepest_shared_level(leaf, bl))
+            });
+            match dest_level {
+                Some(level) if path[level].len() < BUCKET_SIZE => {
+                    path[level].push(block);
                 }
-                i += 1;
+                _ => {
+                    // Bucket at the deepest shared level is full, or the block
+                    // has no leaf mapping: keep it in the stash for next time.
+                    remaining.push(block);
+                }
             }
+        }
+        self.stash = remaining;
 
-            // Pad to BUCKET_SIZE for security (constant-size roots for each level).
+        // Pad every bucket to BUCKET_SIZE with dummies for constant-size buckets.
+        for level in 0..levels {
             while path[level].len() < BUCKET_SIZE {
                 path[level].push(OramBlock::Dummy);
             }
         }
 
         path
+    }
+
+    /// Deepest level `L` (0=root .. `height`=leaf) whose subtree on the path to
+    /// `leaf` also contains `other`. This is the level of the lowest common
+    /// ancestor of `leaf` and `other`. Always returns at least `0` for any
+    /// `other < num_leaves`, since level 0 (the root) spans every leaf.
+    fn deepest_shared_level(&self, leaf: LeafIdx, other: LeafIdx) -> Option<usize> {
+        for level in (0..=self.height).rev() {
+            if self.level_leaf_range(leaf, level).contains(&other) {
+                return Some(level as usize);
+            }
+        }
+        None
     }
 
     /// Compute the leaf range covered at tree `level` when targeting `leaf`.
@@ -395,5 +422,65 @@ mod tests {
         let id = ChunkId::random();
         assert_eq!(id.0[6] & 0xf0, 0x40, "version nibble must be 4");
         assert_eq!(id.0[8] & 0xc0, 0x80, "variant bits must be 10xx xxxx");
+    }
+
+    #[test]
+    fn path_oram_eviction_distributes_blocks_across_levels() {
+        // Regression for the "every block lands in the root bucket" bug. With a
+        // tall tree and many stash blocks whose assigned leaves differ from the
+        // accessed leaf, real blocks must spread across multiple levels, not
+        // all pile into path[0].
+        let mut oram = PathOram::new(256);
+        let levels = (oram.height() + 1) as usize;
+
+        // Seed the stash directly with many real blocks at diverse leaves.
+        for i in 0..40u64 {
+            let id = ChunkId::random();
+            let leaf = i % oram.num_leaves();
+            oram.position_map.insert(id, leaf);
+            oram.stash.push(OramBlock::Real {
+                id,
+                data: vec![0u8; 4],
+            });
+        }
+
+        // Evict along the path to leaf 0.
+        let write_path = oram.evict(0);
+
+        assert_eq!(write_path.len(), levels);
+        for bucket in &write_path {
+            assert_eq!(bucket.len(), BUCKET_SIZE);
+        }
+        let root_real = write_path[0].iter().filter(|b| b.is_real()).count();
+        let total_real: usize = write_path.iter().flatten().filter(|b| b.is_real()).count();
+        assert!(
+            total_real > BUCKET_SIZE,
+            "expected more than BUCKET_SIZE real blocks to be placed, got {total_real}"
+        );
+        assert!(
+            root_real <= BUCKET_SIZE,
+            "root bucket must be capped at BUCKET_SIZE, held {root_real} real blocks"
+        );
+        let levels_with_real = write_path
+            .iter()
+            .skip(1)
+            .filter(|b| b.iter().any(|x| x.is_real()))
+            .count();
+        assert!(
+            levels_with_real >= 1,
+            "expected real blocks below the root, got {levels_with_real} non-root levels with real blocks"
+        );
+    }
+
+    #[test]
+    fn path_oram_access_unknown_chunk_errors_not_panics() {
+        let mut oram = PathOram::new(16);
+        let unknown = ChunkId::random();
+        let levels = (oram.height() + 1) as usize;
+        let fake_path: OramPath = vec![vec![OramBlock::Dummy; BUCKET_SIZE]; levels];
+        // Accessing a chunk that was never registered must return an error,
+        // not panic (panics across FFI would abort the host process).
+        let result = oram.access(fake_path, &unknown, None);
+        assert!(result.is_err());
     }
 }

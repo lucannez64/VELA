@@ -241,11 +241,12 @@ impl HybridSigningKey {
     ///
     /// Consumes `self` because `fips204`'s `SerDes::into_bytes` takes ownership.
     pub fn into_bytes(self) -> Vec<u8> {
-        // HybridSigningKey implements Drop, so we can't destructure with a move directly.
-        // Wrap in ManuallyDrop to prevent the destructor from running, then read fields out.
+        // HybridSigningKey implements Drop (ZeroizeOnDrop), so we can't
+        // destructure by moving the fields out directly. Wrap in ManuallyDrop
+        // to prevent that destructor from running, then read the fields out.
         let this = std::mem::ManuallyDrop::new(self);
-        // SAFETY: `this` will not be dropped (ManuallyDrop), so reading the fields here
-        // gives us owned values without a double-free.
+        // SAFETY: `this` is ManuallyDrop and will not be dropped, so reading the
+        // fields gives owned values without a double-free.
         let ml_dsa = unsafe { std::ptr::read(&this.ml_dsa) };
         let ed25519 = unsafe { std::ptr::read(&this.ed25519) };
         let ml_dsa_bytes = <MlDsaSk as SerDes>::into_bytes(ml_dsa);
@@ -253,6 +254,21 @@ impl HybridSigningKey {
         let mut out = Vec::with_capacity(ml_dsa_bytes.as_ref().len() + 32);
         out.extend_from_slice(ml_dsa_bytes.as_ref());
         out.extend_from_slice(&ed_bytes);
+        // ManuallyDrop suppressed Drop, so the moved-from key material still
+        // sits in `this`. Wipe it explicitly so no secret lingers in memory
+        // (the whole point of ZeroizeOnDrop on this type).
+        unsafe {
+            std::ptr::write_bytes(
+                &this.ml_dsa as *const MlDsaSk as *mut u8,
+                0,
+                std::mem::size_of::<MlDsaSk>(),
+            );
+            std::ptr::write_bytes(
+                &this.ed25519 as *const Ed25519Sk as *mut u8,
+                0,
+                std::mem::size_of::<Ed25519Sk>(),
+            );
+        }
         out
     }
 
