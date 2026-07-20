@@ -11,6 +11,10 @@ extern "C" {
 
 char *vela_ffi_version(void);
 void vela_ffi_free_string(char *ptr);
+/* Short out-of-band verification code for a device enrollment code string
+ * (see vela_crypto::verification). Not JSON in/out like the rest of this
+ * ABI: takes and returns a plain string. */
+char *vela_ffi_enrollment_verification_code(const char *code);
 char *vela_ffi_password_strength_json(const char *request_json);
 char *vela_ffi_encrypt_vault_json(const char *request_json);
 char *vela_ffi_decrypt_vault_json(const char *request_json);
