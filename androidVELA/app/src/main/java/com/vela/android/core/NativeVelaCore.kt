@@ -65,6 +65,15 @@ object NativeVelaCore {
         }
     }
 
+    /// Short out-of-band verification code for an enrollment code string.
+    /// Compute this right after scanning/pasting an enrollment code and show
+    /// it to the user to confirm against the enrolling device's screen
+    /// *before* calling into the enrollment flow — neither device can
+    /// otherwise establish trust in who actually produced the code.
+    fun enrollmentVerificationCode(code: String): String? {
+        return callNative { nativeEnrollmentVerificationCode(code) }
+    }
+
     fun generateServerIdentityJson(): String? {
         return callNative {
             val response = JSONObject(nativeGenerateServerIdentityJson())
@@ -158,6 +167,7 @@ object NativeVelaCore {
     }
 
     private external fun nativeVersion(): String
+    private external fun nativeEnrollmentVerificationCode(code: String): String
     private external fun nativeEncryptVaultJson(requestJson: String): String
     private external fun nativeDecryptVaultJson(requestJson: String): String
     private external fun nativeEncryptVaultChunkJson(requestJson: String): String

@@ -60,16 +60,16 @@ class VelaAutofillService : AutofillService() {
             val domain = fields.firstNotNullOfOrNull { it.webDomain }
                 ?: structure.activityComponent?.packageName
             val candidates = VelaRepositories.vault.findAutofillLogins(domain, structure.activityComponent?.packageName)
-            Log.d(TAG, "onFillRequest: domain=$domain candidates=${candidates.size}")
-            candidates.firstOrNull()?.let {
-                Log.d(TAG, "onFillRequest: first candidate name=${it.name} url=${it.url} user=${it.username.isNotBlank()} pass=${it.password.isNotBlank()}")
-            }
+            // NOTE: never log `domain` or candidate names/urls/usernames here —
+            // logcat is readable via ADB / READ_LOGS and leaks which sites the
+            // user has credentials for.
+            Log.d(TAG, "onFillRequest: candidates=${candidates.size}")
 
             val responseBuilder = FillResponse.Builder()
                 .setSaveInfo(buildSaveInfo(fillable))
             var added = 0
             candidates.take(MAX_DATASETS).forEachIndexed { index, login ->
-                Log.d(TAG, "onFillRequest: building dataset $index for ${login.name}")
+                Log.d(TAG, "onFillRequest: building dataset $index")
                 val dataset = buildLoginDataset(fillable, login)
                 if (dataset != null) {
                     responseBuilder.addDataset(dataset)

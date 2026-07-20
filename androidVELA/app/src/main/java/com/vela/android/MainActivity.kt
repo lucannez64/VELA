@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
 import com.vela.android.core.VelaRepositories
 import com.vela.android.core.SharedCore
 import com.vela.android.ui.navigation.VelaNavHost
@@ -116,19 +117,22 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                     onSyncNow = {
-                        CoroutineScope(Dispatchers.IO).launch {
+                        // lifecycleScope (not a bare CoroutineScope): ties this
+                        // coroutine to the Activity so it's cancelled instead of
+                        // running detached if the user navigates away mid-sync.
+                        lifecycleScope.launch(Dispatchers.IO) {
                             VelaRepositories.sync.syncNow()
                             VelaRepositories.audit.record("vault_sync")
                         }
                     },
                     onResolveConflictUseLocal = {
-                        CoroutineScope(Dispatchers.IO).launch {
+                        lifecycleScope.launch(Dispatchers.IO) {
                             VelaRepositories.sync.resolveConflictUseLocal()
                             VelaRepositories.audit.record("sync_conflict_resolved", "kept Android vault")
                         }
                     },
                     onResolveConflictUseRemote = {
-                        CoroutineScope(Dispatchers.IO).launch {
+                        lifecycleScope.launch(Dispatchers.IO) {
                             VelaRepositories.sync.resolveConflictUseRemote()
                             VelaRepositories.audit.record("sync_conflict_resolved", "used server vault")
                         }
@@ -142,10 +146,15 @@ class MainActivity : FragmentActivity() {
                     },
                     onNavigateToEnroll = {},
                     onEnrollDevice = { serverUrl, enrollmentCode ->
-                        val rms = VelaRepositories.sync.enrollWithCode(serverUrl, enrollmentCode)
-                        VelaRepositories.security.adoptRms(rms)
-                        VelaRepositories.sync.syncNow()
-                        startBackgroundSync()
+                        // Was invoked directly on the caller's (UI) thread —
+                        // enrollWithCode does blocking network I/O, so this
+                        // froze the UI for the duration of enrollment + sync.
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            val rms = VelaRepositories.sync.enrollWithCode(serverUrl, enrollmentCode)
+                            VelaRepositories.security.adoptRms(rms)
+                            VelaRepositories.sync.syncNow()
+                            startBackgroundSync()
+                        }
                     },
                     onProtectEnrolledBiometric = ::protectEnrolledBiometric,
                     onProtectEnrolledPassword = ::protectEnrolledPassword,
@@ -161,7 +170,7 @@ class MainActivity : FragmentActivity() {
     private fun onVaultUnlocked() {
         val syncSettings = VelaRepositories.syncSettings.settings.value
         if (syncSettings.syncOnStartup && syncSettings.serverUrl.isNotBlank()) {
-            CoroutineScope(Dispatchers.IO).launch {
+            lifecycleScope.launch(Dispatchers.IO) {
                 VelaRepositories.sync.syncNow()
                 VelaRepositories.audit.record("vault_sync", "sync on startup")
             }
@@ -249,7 +258,10 @@ class MainActivity : FragmentActivity() {
                 try {
                     VelaRepositories.security.finishBiometricVaultCreation(authenticatedCipher, generated)
                     VelaRepositories.vault.loadFromUnlockedSession()
-                    startBackgroundSync()
+                    // Was calling startBackgroundSync() directly, unlike every
+                    // sibling unlock/protect flow — skipped the sync-on-startup
+                    // check onVaultUnlocked() also does.
+                    onVaultUnlocked()
                 } finally {
                     generated.fill(0)
                     pendingCreateRms = null

@@ -325,7 +325,8 @@ private val VaultItem.lastModified: String
 private data class TotpConfig(
     val secret: String?,
     val digits: Int = 6,
-    val period: Long = 30
+    val period: Long = 30,
+    val algorithm: String = "HmacSHA1"
 )
 
 private fun generateTotpCode(config: TotpConfig): String? {
@@ -336,8 +337,8 @@ private fun generateTotpCode(config: TotpConfig): String? {
     for (i in 7 downTo 0) {
         data[i] = ((counter shr ((7 - i) * 8)) and 0xff).toByte()
     }
-    val mac = Mac.getInstance("HmacSHA1")
-    mac.init(SecretKeySpec(key, "HmacSHA1"))
+    val mac = Mac.getInstance(config.algorithm)
+    mac.init(SecretKeySpec(key, config.algorithm))
     val hash = mac.doFinal(data)
     val offset = hash.last().toInt() and 0x0f
     val binary = ((hash[offset].toInt() and 0x7f) shl 24) or
@@ -364,10 +365,12 @@ private fun parseTotpConfig(input: String): TotpConfig {
                 }
             }
             .toMap()
+        val algMap = mapOf("SHA1" to "HmacSHA1", "SHA256" to "HmacSHA256", "SHA512" to "HmacSHA512")
         TotpConfig(
             secret = params["secret"],
             digits = params["digits"]?.toIntOrNull()?.coerceIn(6, 8) ?: 6,
-            period = params["period"]?.toLongOrNull()?.coerceIn(5, 120) ?: 30
+            period = params["period"]?.toLongOrNull()?.coerceIn(5, 120) ?: 30,
+            algorithm = algMap[params["algorithm"]?.uppercase()] ?: "HmacSHA1"
         )
     }.getOrDefault(TotpConfig(secret = null))
 }

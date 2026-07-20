@@ -15,7 +15,9 @@ data class ServerIdentity(
 )
 
 class ServerIdentityStore(context: Context) {
-    private val prefs = context.getSharedPreferences("vela_server_identity", Context.MODE_PRIVATE)
+    // The long-term server signing key (hybrid_sk) lets any holder impersonate
+    // this device to the server, so it must not sit in plaintext SharedPreferences.
+    private val prefs = EncryptedPrefs.open(context, "vela_server_identity")
 
     fun load(): ServerIdentity? {
         val json = prefs.getString(KEY_IDENTITY_JSON, null) ?: return null
