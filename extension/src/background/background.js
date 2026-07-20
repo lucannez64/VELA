@@ -70,11 +70,21 @@ function parseOtpauthUri(uri) {
     if (!secret) return null;
     const alg = (parsed.searchParams.get("algorithm") || "SHA1").toUpperCase();
     const algMap = { SHA1: "SHA-1", SHA256: "SHA-256", SHA512: "SHA-512" };
+    // Clamp to sane ranges: an unbounded `digits` feeds Math.pow(10, digits)
+    // and String.padStart(digits, ...) below, so a malicious/corrupt
+    // otpauth:// URI (from imported/synced/shared vault data, processed
+    // automatically with no user interaction) could allocate a
+    // hundreds-of-megabytes string. An unbounded/zero `period` divides by
+    // zero in generateTOTP's time-step calculation.
+    const rawDigits = parseInt(parsed.searchParams.get("digits") || "6", 10);
+    const rawPeriod = parseInt(parsed.searchParams.get("period") || "30", 10);
+    const digits = Number.isFinite(rawDigits) ? Math.min(Math.max(rawDigits, 6), 10) : 6;
+    const period = Number.isFinite(rawPeriod) ? Math.min(Math.max(rawPeriod, 5), 300) : 30;
     return {
       secret,
       algorithm: algMap[alg] || "SHA-1",
-      digits: parseInt(parsed.searchParams.get("digits") || "6", 10),
-      period: parseInt(parsed.searchParams.get("period") || "30", 10)
+      digits,
+      period
     };
   } catch (e) {
     return null;
@@ -196,7 +206,7 @@ function handleExtensionMessage(message, sender, sendResponse) {
       checkDesktopConnection(sendResponse);
       return true;
     case "saveCredentials":
-      handleSaveCredentials(data, sendResponse);
+      handleSaveCredentials(data, sender, sendResponse);
       break;
     case "openVault":
     case "openSettings":
@@ -270,7 +280,13 @@ async function handleGetLogins(data, sender, sendResponse) {
       sendResponse({ success: false, ignored: true, logins: [] });
       return;
     }
-    const response = await requestLogins(domain, true);
+    // Honor the caller's userInitiated flag (default passive). A passive
+    // request (page-load / form-detection dropdown) must NOT receive
+    // passwords — the desktop returns metadata-only until the user explicitly
+    // picks an entry, at which point the content script re-requests with
+    // userInitiated=true. Mirrors handleGetAvailableLogins.
+    const userInitiated = data.userInitiated === true;
+    const response = await requestLogins(domain, userInitiated);
 
     if (response && response.success && Array.isArray(response.logins)) {
       const logins = await Promise.all(
@@ -462,8 +478,20 @@ async function handleTriggerAutofillWithLogin(data, sender, sendResponse) {
   }
 }
 
-async function handleSaveCredentials(data, sendResponse) {
+async function handleSaveCredentials(data, sender, sendResponse) {
   try {
+    // Content-script (page-originated) saves must be authorized against the
+    // active tab URL, exactly like getLogins — otherwise a malicious page can
+    // pollute the vault or overwrite an entry's URL (phishing / credential
+    // confusion). Saves originating from the popup/extension UI (no
+    // sender.tab) are user-driven and need no origin check.
+    if (sender && sender.tab) {
+      const auth = await authorizeCredentialRequest(data, sender);
+      if (!auth.ok) {
+        sendResponse({ success: false, error: auth.error });
+        return;
+      }
+    }
     const response = await sendNativeMessage({ action: "saveCredentials", ...data });
     if (response && response.success) {
       sendResponse({ success: true });
@@ -476,7 +504,15 @@ async function handleSaveCredentials(data, sendResponse) {
 }
 
 function checkDesktopConnection(sendResponse) {
-  if (desktopConnection && desktopConnection.disconnected === false) {
+  // Trust a recent successful ping for a few seconds (avoids a native
+  // round-trip on rapid successive calls), but never cache "connected"
+  // indefinitely — the desktop may have been closed since the last check.
+  if (
+    desktopConnection &&
+    desktopConnection.disconnected === false &&
+    desktopConnection.checkedAt &&
+    Date.now() - desktopConnection.checkedAt < 5000
+  ) {
     sendResponse({ connected: true });
     return true;
   }
@@ -493,7 +529,7 @@ function checkDesktopConnection(sendResponse) {
 
     if (connected) {
       resultReceived = true;
-      desktopConnection = { disconnected: false };
+      desktopConnection = { disconnected: false, checkedAt: Date.now() };
       sendResponse({ connected: true });
     }
   };

@@ -53,21 +53,9 @@
     "tabs",
     "nativeMessaging",
     "contextMenus",
-    "webNavigation",
     "notifications"
   ],
   "host_permissions": [],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "src/content/content-script.js"
-      ],
-      "matches": [
-        "https://*/*",
-        "http://*/*"
-      ]
-    }
-  ],
   "commands": {
     "_execute_action": {
       "suggested_key": {
@@ -79,7 +67,7 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'"
   },
   "browser_specific_settings": {
     "gecko": {

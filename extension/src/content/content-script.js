@@ -702,9 +702,13 @@
     element.blur();
   }
 
-  async function getLoginsForPage(url) {
+  // Defaults to userInitiated=true: every current caller (copy password,
+  // fill-on-submit, the legacy autofill bridge) needs the actual password,
+  // not just metadata. The passive dropdown path uses velaRequestLogins()
+  // instead, which threads its own explicit userInitiated flag.
+  async function getLoginsForPage(url, userInitiated = true) {
     try {
-      const response = await sendExtensionMessage("getLogins", { url });
+      const response = await sendExtensionMessage("getLogins", { url, userInitiated });
       if (response && response.success && response.logins) return response.logins;
     } catch (e) {}
     return [];
