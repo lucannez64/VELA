@@ -41,6 +41,9 @@ function AppContent() {
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, settings, setSettings } = useApp();
   const syncingRef = useRef(false);
+  const sessionActiveRef = useRef(false);
+  sessionActiveRef.current = !!session?.active;
+  const lastActivityRef = useRef(Date.now());
 
   const loadItems = useCallback(async () => {
     try {
@@ -133,10 +136,11 @@ function AppContent() {
       setSession(prev => prev ? { ...prev, active: false, lock_state: 'locked' } : null);
       setItems([]);
       setSelectedItem(null);
+      setQuickSearchOpen(false);
     });
 
     const unlistenQuickSearch = listen('open-quick-search', () => {
-      setQuickSearchOpen(true);
+      if (sessionActiveRef.current) setQuickSearchOpen(true);
     });
 
     const unlistenSync = listen('trigger-sync', () => {
@@ -189,18 +193,29 @@ function AppContent() {
   }, [items, selectedItem, setSelectedItem]);
 
   useEffect(() => {
+    const bumpActivity = () => { lastActivityRef.current = Date.now(); };
+    const events = ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'] as const;
+    events.forEach(e => window.addEventListener(e, bumpActivity, { passive: true }));
+    return () => events.forEach(e => window.removeEventListener(e, bumpActivity));
+  }, []);
+
+  useEffect(() => {
     if (!session?.active) return;
-    
+
+    lastActivityRef.current = Date.now();
+    const autoLockSecs = (settings?.auto_lock_minutes ?? 15) * 60;
     const interval = setInterval(() => {
+      if (autoLockSecs <= 0) return; // 0 = never auto-lock
       setSession(prev => {
         if (!prev || !prev.active) return prev;
-        const remaining = Math.max(0, prev.session_time_remaining_secs - 1);
+        const idleSecs = Math.floor((Date.now() - lastActivityRef.current) / 1000);
+        const remaining = Math.max(0, autoLockSecs - idleSecs);
         return { ...prev, session_time_remaining_secs: remaining };
       });
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [session?.active, setSession]);
+  }, [session?.active, settings?.auto_lock_minutes, setSession]);
 
   useEffect(() => {
     if (!session?.active) return;
@@ -216,6 +231,7 @@ function AppContent() {
     if (session?.session_time_remaining_secs === 0 && session?.active) {
       invoke('lock_session').then(() => {
         setSession(prev => prev ? { ...prev, active: false, lock_state: 'locked' } : null);
+        setQuickSearchOpen(false);
       });
     }
   }, [session?.session_time_remaining_secs, session?.active, setSession]);
@@ -271,7 +287,6 @@ function AppContent() {
         <BiometricGate onUnlock={async () => {
           await refreshSession();
         }} />
-        {quickSearchOpen && <QuickSearchOverlay onClose={() => setQuickSearchOpen(false)} />}
         {toast && <Toast {...toast} />}
       </div>
     );

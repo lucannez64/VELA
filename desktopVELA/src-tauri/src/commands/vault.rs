@@ -300,11 +300,20 @@ fn calculate_password_strength(password: &str) -> PasswordStrength {
     }
 }
 
+fn require_unlocked(state: &State<'_, Arc<AppState>>) -> Result<(), String> {
+    if state.is_unlocked() {
+        Ok(())
+    } else {
+        Err("Vault is locked".to_string())
+    }
+}
+
 #[command]
 pub async fn get_items(state: State<'_, Arc<AppState>>) -> Result<Vec<VaultItem>, String> {
+    require_unlocked(&state)?;
     let vault = state.vault.read();
     let items = vault.items.clone();
-    tracing::info!("get_items: {} items in vault", items.len());
+    tracing::debug!("get_items: {} items in vault", items.len());
     Ok(items)
 }
 
@@ -313,6 +322,7 @@ pub async fn get_item(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<Option<VaultItem>, String> {
+    require_unlocked(&state)?;
     let vault = state.vault.read();
     Ok(vault.get_item(&id).cloned())
 }
@@ -351,10 +361,7 @@ pub async fn add_item(
         },
     );
 
-    tracing::info!(
-        "Returning item: {:?}",
-        serde_json::to_string(&new_item).unwrap_or_default()
-    );
+    tracing::info!("Item added: id={}", new_item.id());
 
     emit_vault_items_changed(&app);
 
@@ -434,6 +441,7 @@ pub async fn search_items(
     state: State<'_, Arc<AppState>>,
     query: String,
 ) -> Result<Vec<VaultItem>, String> {
+    require_unlocked(&state)?;
     let vault = state.vault.read();
     Ok(vault.search(&query).into_iter().cloned().collect())
 }
@@ -505,6 +513,7 @@ pub async fn get_items_by_type(
     state: State<'_, Arc<AppState>>,
     item_type: String,
 ) -> Result<Vec<VaultItem>, String> {
+    require_unlocked(&state)?;
     let vault = state.vault.read();
     let itype = match item_type.to_lowercase().as_str() {
         "login" => ItemType::Login,
@@ -528,6 +537,7 @@ pub struct VaultHealth {
 
 #[command]
 pub async fn get_vault_health(state: State<'_, Arc<AppState>>) -> Result<VaultHealth, String> {
+    require_unlocked(&state)?;
     let vault = state.vault.read();
 
     let login_items: Vec<&VaultItem> = vault
@@ -606,6 +616,7 @@ struct BitwardenPasswordEntry {
 pub async fn export_vault_bitwarden_json(
     state: State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
+    require_unlocked(&state)?;
     let vault = state.vault.read();
     let store = state.store.load_device_id().map_err(|e| e.to_string())?;
 
@@ -718,15 +729,6 @@ pub async fn import_vault_bitwarden_json(
 
             let url = normalize_import_url(entry.url.as_deref());
 
-            tracing::info!(
-                "Importing: name={}, username={}, password_len={}, description={:?}, url={}",
-                name,
-                entry.username,
-                entry.password.len(),
-                entry.description,
-                url
-            );
-
             let item = VaultItem::Login {
                 meta: crate::vault::VaultMeta {
                     id: Uuid::new_v4().to_string(),
@@ -820,7 +822,7 @@ impl From<HibpBreach> for crate::vault::BreachEntry {
 
 #[command]
 pub async fn check_email_breach(email: String) -> Result<Vec<crate::vault::BreachEntry>, String> {
-    tracing::info!("Checking breaches for email: {}", email);
+    tracing::info!("Checking breaches for one account");
 
     let client = reqwest::Client::new();
     let api_key = std::env::var("HIBP_API_KEY").unwrap_or_default();
@@ -847,11 +849,11 @@ pub async fn check_email_breach(email: String) -> Result<Vec<crate::vault::Breac
                     .json()
                     .await
                     .map_err(|e| format!("Failed to parse breach data: {}", e))?;
-                tracing::info!("Found {} breaches for {}", breaches.len(), email);
+                tracing::info!("Found {} breaches", breaches.len());
                 Ok(breaches.into_iter().map(|b| b.into()).collect())
             }
             404 => {
-                tracing::info!("No breaches found for {}", email);
+                tracing::info!("No breaches found");
                 Ok(vec![])
             }
             429 => Err("Rate limited by HaveIBeenPwned. Please try again later.".to_string()),
@@ -866,6 +868,7 @@ pub async fn check_email_breach(email: String) -> Result<Vec<crate::vault::Breac
 
 #[command]
 pub async fn check_all_vault_emails(state: State<'_, Arc<AppState>>) -> Result<u32, String> {
+    require_unlocked(&state)?;
     let emails: Vec<String> = {
         let vault = state.vault.read();
         let mut seen = std::collections::HashSet::new();
@@ -893,8 +896,6 @@ pub async fn check_all_vault_emails(state: State<'_, Arc<AppState>>) -> Result<u
     let mut total_breaches = 0u32;
 
     for email in emails {
-        tracing::info!("Checking breaches for: {}", email);
-
         let mut request = client.get(&format!(
             "https://haveibeenpwned.com/api/v3/breachedaccount/{}?truncateResponse=false",
             urlencoding::encode(&email)
@@ -909,7 +910,6 @@ pub async fn check_all_vault_emails(state: State<'_, Arc<AppState>>) -> Result<u
             if response.status().as_u16() == 200 {
                 if let Ok(breaches) = response.json::<Vec<HibpBreach>>().await {
                     total_breaches += breaches.len() as u32;
-                    tracing::info!("Found {} breaches for {}", breaches.len(), email);
                 }
             }
         }
@@ -994,6 +994,7 @@ pub async fn check_password_breach(password: String) -> Result<PasswordBreachRes
 pub async fn check_all_vault_passwords(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<PasswordBreachResult>, String> {
+    require_unlocked(&state)?;
     let passwords: Vec<(String, String)> = {
         let vault = state.vault.read();
         let mut seen = std::collections::HashSet::new();

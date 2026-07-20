@@ -24,6 +24,7 @@ chacha20poly1305 = { version = "0.10.1" }
 
 # KDF
 blake3         = { version = "1", features = ["traits-preview"] }
+argon2         = { version = "0.5", default-features = false, features = ["alloc"] }
 
 # Hybrid signing (ML-DSA-87 + Ed25519)
 # fips204 chosen over ml-dsa (RustCrypto) due to RUSTSEC-2025-0144 in ml-dsa ≤0.0.4

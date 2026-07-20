@@ -145,10 +145,11 @@ async function ekFingerprint(ekB64: string): Promise<string> {
 }
 
 async function showLinkScreen() {
-  // QR = "{sessionId}#{base32 fingerprint of share_ek}" (≈50 chars, easily scannable).
-  // The approver fetches share_ek from the server then verifies it matches the fingerprint.
+  // QR = "{sessionId}#{base32 fingerprint of share_ek}#{link_nonce}" — the approver
+  // fetches share_ek from the server, verifies it matches the fingerprint, and echoes
+  // the link_nonce back in the grant so the server can bind approval to this browser.
   const fingerprint = await ekFingerprint(linkPayload.ephemeral_pk);
-  const linkCode = `${sessionId}#${fingerprint}`;
+  const linkCode = `${sessionId}#${fingerprint}#${linkPayload.link_nonce}`;
   const qrDataUrl = await QRCode.toDataURL(linkCode, { errorCorrectionLevel: 'M', margin: 1, width: 232 });
   const node = el(`<div>${brand}
     <h1>Open your vault here</h1>

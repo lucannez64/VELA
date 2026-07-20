@@ -9,6 +9,13 @@ type HmacSha1 = Hmac<Sha1>;
 
 const DEFAULT_PERIOD: u64 = 30;
 const DEFAULT_DIGITS: u32 = 6;
+// RFC 6238/4226 practical bounds: 6–8 digits, 15–120 s period. Values outside
+// these ranges are rejected rather than computed (10^digits overflows u32-era
+// assumptions and huge allocations/format widths are a DoS vector).
+const MIN_PERIOD: u64 = 15;
+const MAX_PERIOD: u64 = 120;
+const MIN_DIGITS: u32 = 6;
+const MAX_DIGITS: u32 = 8;
 
 #[derive(Serialize)]
 pub struct TotpCode {
@@ -22,6 +29,22 @@ struct TotpParams {
     secret: String,
     period: u64,
     digits: u32,
+}
+
+impl TotpParams {
+    fn validate(&self) -> Result<(), String> {
+        if self.digits < MIN_DIGITS || self.digits > MAX_DIGITS {
+            return Err(format!(
+                "TOTP digits must be between {MIN_DIGITS} and {MAX_DIGITS}"
+            ));
+        }
+        if self.period < MIN_PERIOD || self.period > MAX_PERIOD {
+            return Err(format!(
+                "TOTP period must be between {MIN_PERIOD} and {MAX_PERIOD} seconds"
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn parse_otpauth(input: &str) -> TotpParams {
@@ -54,6 +77,7 @@ fn parse_otpauth(input: &str) -> TotpParams {
 
 pub fn generate_totp_code(secret: &str) -> Option<String> {
     let params = parse_otpauth(secret);
+    params.validate().ok()?;
     let secret_bytes = base32_decode(&params.secret)?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
     let counter = now.as_secs() / params.period;
@@ -104,6 +128,7 @@ fn compute_hotp(secret: &[u8], counter: u64, digits: u32) -> String {
 #[command]
 pub async fn generate_totp(secret: String) -> Result<TotpCode, String> {
     let params = parse_otpauth(&secret);
+    params.validate()?;
     let secret_bytes =
         base32_decode(&params.secret).ok_or_else(|| "Invalid base32 secret".to_string())?;
 
@@ -129,6 +154,7 @@ pub async fn generate_totp(secret: String) -> Result<TotpCode, String> {
 #[command]
 pub async fn verify_totp(secret: String, code: String) -> Result<bool, String> {
     let params = parse_otpauth(&secret);
+    params.validate()?;
     let secret_bytes =
         base32_decode(&params.secret).ok_or_else(|| "Invalid base32 secret".to_string())?;
 

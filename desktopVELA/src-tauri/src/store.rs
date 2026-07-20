@@ -280,6 +280,12 @@ impl Store {
 
         let bytes = fs::read(&identity_path)?;
         let store: IdentityKeysStore = if bytes.first() == Some(&b'{') {
+            // Legacy plaintext identity file (private signing keys in the
+            // clear!). Load it, then immediately re-encrypt below — never
+            // silently keep using plaintext.
+            tracing::warn!(
+                "Identity keys file is plaintext; migrating to encrypted format now"
+            );
             serde_json::from_slice(&bytes)?
         } else {
             let key = Self::derive_identity_file_key(crypto);
@@ -303,7 +309,12 @@ fn write_secret_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
         restrict_directory(parent)?;
     }
-    fs::write(path, bytes)?;
+    // Atomic write: tmp file + rename, so a crash mid-write can never leave a
+    // truncated secret file behind.
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, bytes)?;
+    restrict_file(&tmp_path)?;
+    fs::rename(&tmp_path, path)?;
     restrict_file(path)?;
     Ok(())
 }

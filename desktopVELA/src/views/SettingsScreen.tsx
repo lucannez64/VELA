@@ -84,7 +84,7 @@ export default function SettingsScreen() {
 
   const handleDeleteVault = async () => {
     try {
-      await invoke('reset_vault');
+      await invoke('reset_vault', { confirm: deleteConfirmText });
       setSession(null);
       setItems([]);
       setSelectedItem(null);

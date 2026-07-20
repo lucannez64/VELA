@@ -6,7 +6,7 @@
 //! derivation directly and NEVER touches the OS keychain or the app data dir,
 //! so it's safe to run on a developer's real machine as well as in CI.
 
-use crate::biometric::derive_key_from_password;
+use crate::biometric::{open_rms_with_password, seal_rms_with_password};
 use crate::crypto::Crypto;
 use crate::vault::{ItemType, VaultItem, VaultMeta, VaultStore};
 use chrono::Utc;
@@ -119,22 +119,46 @@ fn search_update_delete_items() {
 
 #[test]
 fn master_password_unlock_roundtrip() {
-    // The master-password path derives a key from password+salt and AEAD-seals
-    // the RMS. Verify the round-trip and that a wrong password fails — without
-    // touching the OS keychain/files (safe on any dev machine).
+    // The master-password path seals the RMS under an Argon2id key derived
+    // from password+salt. Verify the round-trip and that a wrong password
+    // fails — without touching the OS keychain/files (safe on any dev machine).
     let rms = Crypto::generate_rms();
-    let salt = [7u8; 16];
 
-    let key = derive_key_from_password("correct horse battery staple", &salt);
-    let sealed = vela_crypto::aead::encrypt(&key, &rms).unwrap();
+    let sealed = seal_rms_with_password(&rms, "correct horse battery staple").unwrap();
 
-    let key_again = derive_key_from_password("correct horse battery staple", &salt);
-    let opened = vela_crypto::aead::decrypt(&key_again, &sealed).unwrap();
-    assert_eq!(&opened[..32], &rms, "correct password unlocks the RMS");
+    let opened = open_rms_with_password("correct horse battery staple", &sealed)
+        .expect("correct password unlocks the RMS");
+    assert_eq!(&opened.rms, &rms);
+    assert!(!opened.needs_migration, "current format needs no migration");
 
-    let wrong = derive_key_from_password("wrong password", &salt);
     assert!(
-        vela_crypto::aead::decrypt(&wrong, &sealed).is_err(),
+        open_rms_with_password("wrong password", &sealed).is_none(),
         "wrong password must not unlock the RMS"
     );
+}
+
+#[test]
+fn legacy_blake3_blob_opens_and_is_flagged_for_migration() {
+    // Pre-Argon2id blob layout: salt16 ‖ ciphertext under the legacy salted
+    // BLAKE3 KDF. It must still open (no data loss) and be flagged so the
+    // caller re-seals it with Argon2id.
+    let rms = Crypto::generate_rms();
+    let salt = [7u8; 16];
+    #[allow(deprecated)]
+    let key = crate::biometric::derive_key_from_password_legacy("hunter2", &salt);
+    let ciphertext = vela_crypto::aead::encrypt(&key, &rms).unwrap();
+    let mut blob = salt.to_vec();
+    blob.extend_from_slice(&ciphertext);
+
+    let opened = open_rms_with_password("hunter2", &blob).expect("legacy blob opens");
+    assert_eq!(&opened.rms, &rms, "legacy unwrap must be lossless");
+    assert!(opened.needs_migration, "legacy blob must be migrated");
+
+    assert!(open_rms_with_password("nope", &blob).is_none());
+
+    // The migrated blob round-trips in the new format.
+    let resealed = seal_rms_with_password(&opened.rms, "hunter2").unwrap();
+    let reopened = open_rms_with_password("hunter2", &resealed).unwrap();
+    assert_eq!(&reopened.rms, &rms);
+    assert!(!reopened.needs_migration);
 }

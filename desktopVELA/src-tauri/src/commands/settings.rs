@@ -263,7 +263,10 @@ pub async fn initiate_account_recovery(
         .initiate_recovery(&user_id)
         .await
         .map_err(|e| format!("Failed to initiate account recovery: {e}"))?;
-    Ok(response.public_key)
+    Ok(serde_json::json!({
+        "recovery_id": response.recovery_id,
+        "public_key": response.public_key,
+    }))
 }
 
 #[command]
@@ -271,15 +274,41 @@ pub async fn finish_account_recovery(
     state: State<'_, Arc<AppState>>,
     user_id: String,
     credential: serde_json::Value,
+    recovery_id: Option<String>,
 ) -> Result<String, String> {
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
     let response = client
         .recover_account(&RecoveryRecoverRequest {
             user_id,
+            recovery_id,
             credential,
         })
         .await
         .map_err(|e| format!("Failed to finish account recovery: {e}"))?;
     Ok(response.share)
+}
+
+#[command]
+pub async fn get_auto_lock_minutes(state: State<'_, Arc<AppState>>) -> Result<u32, String> {
+    let settings = state.store.load_settings().map_err(|e| e.to_string())?;
+    Ok(settings.auto_lock_minutes)
+}
+
+#[command]
+pub async fn set_auto_lock_minutes(
+    state: State<'_, Arc<AppState>>,
+    minutes: u32,
+) -> Result<(), String> {
+    if !(1..=24 * 60).contains(&minutes) {
+        return Err("auto_lock_minutes must be between 1 and 1440".to_string());
+    }
+    let mut settings = state.store.load_settings().unwrap_or_default();
+    settings.auto_lock_minutes = minutes;
+    state
+        .store
+        .save_settings(&settings)
+        .map_err(|e| e.to_string())?;
+    record_audit_event(&state, AuditAction::SettingsChanged);
+    Ok(())
 }

@@ -227,9 +227,13 @@ fn merge_server_vaults(
             let local_updated = local_item.updated_at();
             let server_updated = server_item.updated_at();
 
+            // Conflict = the server has a newer version AND the local copy was
+            // last modified by THIS device (an unsynced local edit). If the
+            // local copy was last touched by another device, the server's newer
+            // version is just that device's edit propagating — no conflict.
             if server_updated > local_updated {
                 let local_modified = local_item.last_modified_device();
-                if local_modified.is_some() && local_modified != Some(device_id) {
+                if local_modified.is_some() && local_modified == Some(device_id) {
                     conflicts.push(ConflictItem {
                         item_id: id.clone(),
                         local_version: local_item.clone(),
@@ -240,6 +244,9 @@ fn merge_server_vaults(
             }
         }
     }
+
+    let conflicted_ids: std::collections::HashSet<String> =
+        conflicts.iter().map(|c| c.item_id.clone()).collect();
 
     // ── 3. Merge items, filtering out tombstoned IDs ───────────────────────
     let mut final_items: HashMap<String, crate::vault::VaultItem> = local
@@ -264,7 +271,9 @@ fn merge_server_vaults(
             continue; // deleted item stays deleted
         }
         if let Some(existing) = final_items.get(&id) {
-            if server_item.updated_at() > existing.updated_at() {
+            // Never silently overwrite a conflicted local edit: it stays local
+            // until the user resolves it in the ConflictResolution UI.
+            if server_item.updated_at() > existing.updated_at() && !conflicted_ids.contains(&id) {
                 final_items.insert(id, server_item);
             }
         } else {
@@ -564,7 +573,9 @@ async fn sync_audit_chunk(
                         *token = t;
                     }
                     if let Ok(server_plaintext) = decrypt(&key, &ciphertext) {
-                        let _ = audit::replace_audit_from_plaintext(state, &server_plaintext);
+                        // Merge server events into the local log (union by
+                        // event id) — never replace local history.
+                        let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
                     }
                 }
                 Err(e) => tracing::warn!("Failed to pull audit chunk: {}", e),
@@ -618,6 +629,13 @@ pub async fn trigger_sync(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SyncStatus, String> {
+    // Serialize sync runs: local writes and merges must not interleave.
+    let _sync_guard = state.sync_mutex.lock().await;
+
+    // Capture the session generation now; after every await below we prove the
+    // vault was not locked (and crypto not swapped) in between.
+    let generation = state.session_generation();
+
     let session_active = {
         let session = state.session.read();
         session.active
@@ -664,9 +682,11 @@ pub async fn trigger_sync(
             }
         },
     };
+    state.ensure_unlocked_since(generation)?;
 
     // Backfill a share keypair for identities created before sharing existed.
     ensure_share_key(&state, &client, &token).await;
+    state.ensure_unlocked_since(generation)?;
 
     let manifest = match client.get_sync_manifest(&token).await {
         Ok((m, new_tok)) => {
@@ -689,6 +709,7 @@ pub async fn trigger_sync(
             });
         }
     };
+    state.ensure_unlocked_since(generation)?;
 
     let mut merged_conflicts: Vec<ConflictItem> = Vec::new();
     let mut max_server_lamport = 0;
@@ -696,20 +717,24 @@ pub async fn trigger_sync(
     if let Some((server_vault, server_lamport)) =
         download_vault_from_manifest(&state, &client, &mut token, &manifest).await?
     {
+        state.ensure_unlocked_since(generation)?;
         max_server_lamport = max_server_lamport.max(server_lamport);
-        let mut local_vault = {
-            let vault = state.vault.read();
-            vault.clone()
-        };
 
-        let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id);
+        // Merge + write-back atomically with respect to local edits: the vault
+        // write guard is held across the whole section (no awaits inside), so
+        // a concurrent add/update/delete either lands before the clone (and is
+        // merged) or after the write-back (and survives).
+        let conflicts = {
+            let mut vault_guard = state.vault.write();
+            let mut local_vault = vault_guard.clone();
+            let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id);
+            *vault_guard = local_vault;
+            conflicts
+        };
         merged_conflicts.extend(conflicts);
 
-        {
-            let mut vault = state.vault.write();
-            *vault = local_vault;
-        }
-
+        // Persist only while holding proof the vault never locked in between.
+        state.ensure_unlocked_since(generation)?;
         {
             let crypto_guard = state.crypto.read();
             if let Some(crypto) = crypto_guard.as_ref() {
@@ -752,31 +777,48 @@ pub async fn trigger_sync(
         plaintext.len()
     );
 
-    let uploaded_chunks = match upload_vault_chunks(
-        &state,
-        &client,
-        &mut token,
-        &manifest,
-        &mut current_meta,
-        &plaintext,
-        max_server_lamport,
-    )
-    .await
-    {
-        Ok(count) => {
-            save_local_sync_meta(&state, &current_meta)?;
-            count
+    // Upload, then check for local edits that landed while the upload was in
+    // flight; if the vault changed, push the fresh snapshot once more so no
+    // local mutation is silently discarded.
+    let mut plaintext_to_upload = plaintext;
+    let mut uploaded_chunks = 0usize;
+    for attempt in 0..2 {
+        state.ensure_unlocked_since(generation)?;
+        match upload_vault_chunks(
+            &state,
+            &client,
+            &mut token,
+            &manifest,
+            &mut current_meta,
+            &plaintext_to_upload,
+            max_server_lamport,
+        )
+        .await
+        {
+            Ok(count) => {
+                uploaded_chunks = count;
+                save_local_sync_meta(&state, &current_meta)?;
+            }
+            Err(e) => {
+                tracing::error!("Sync: failed to upload vault chunks: {}", e);
+                return Ok(SyncStatus {
+                    syncing: false,
+                    last_synced: Some(Utc::now()),
+                    conflicts: merged_conflicts,
+                    error: Some(format!("Upload failed: {}", e)),
+                });
+            }
         }
-        Err(e) => {
-            tracing::error!("Sync: failed to upload vault chunks: {}", e);
-            return Ok(SyncStatus {
-                syncing: false,
-                last_synced: Some(Utc::now()),
-                conflicts: merged_conflicts,
-                error: Some(format!("Upload failed: {}", e)),
-            });
+
+        state.ensure_unlocked_since(generation)?;
+        let fresh_plaintext = serde_json::to_vec(&*state.vault.read())
+            .map_err(|e| format!("Failed to serialize vault: {}", e))?;
+        if fresh_plaintext == plaintext_to_upload || attempt == 1 {
+            break;
         }
-    };
+        tracing::info!("Sync: local edits landed during upload — pushing follow-up");
+        plaintext_to_upload = fresh_plaintext;
+    }
 
     save_conflicts(&state, &merged_conflicts)?;
     log_sync_audit(&state, uploaded_chunks);
@@ -841,9 +883,62 @@ pub async fn resolve_conflict(
     item_id: String,
     use_local: bool,
 ) -> Result<(), String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
+
+    // Read the stored conflict (if any) up-front: its server_version snapshot
+    // is the authoritative "server side" for resolution.
+    let conflicts_path = state.store.store_path().join("sync_conflicts.json");
+    let stored_conflicts: Vec<ConflictItem> = if conflicts_path.exists() {
+        std::fs::read_to_string(&conflicts_path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+    let stored_conflict = stored_conflicts
+        .iter()
+        .find(|c| c.item_id == item_id)
+        .cloned();
+
     if use_local {
+        // If the merged vault currently holds the server version, restore the
+        // stored local version so "keep local" always wins.
+        if let Some(conflict) = &stored_conflict {
+            let mut vault = state.vault.write();
+            if let Some(local_item) = vault.items.iter_mut().find(|i| i.id() == item_id) {
+                if local_item.updated_at() != conflict.local_version.updated_at() {
+                    *local_item = conflict.local_version.clone().with_updated_at(Utc::now());
+                }
+            }
+            drop(vault);
+            let crypto_guard = state.crypto.read();
+            if let Some(crypto) = crypto_guard.as_ref() {
+                let _ = state.store.save_vault(&state.vault.read(), crypto);
+            }
+        }
         tracing::info!(
             "Conflict resolved for item {}: keeping local version",
+            item_id
+        );
+    } else if let Some(conflict) = stored_conflict {
+        // Resolve from the stored snapshot — immune to any intermediate syncs.
+        let mut vault = state.vault.write();
+        let resolved = conflict.server_version.clone().with_updated_at(Utc::now());
+        if let Some(local_item) = vault.items.iter_mut().find(|i| i.id() == item_id) {
+            *local_item = resolved;
+        } else {
+            vault.items.push(resolved);
+        }
+        drop(vault);
+        let crypto_guard = state.crypto.read();
+        if let Some(crypto) = crypto_guard.as_ref() {
+            let _ = state.store.save_vault(&state.vault.read(), crypto);
+        }
+        tracing::info!(
+            "Conflict resolved for item {}: using server version",
             item_id
         );
     } else {
@@ -926,4 +1021,98 @@ pub async fn set_server_url(state: State<'_, Arc<AppState>>, url: String) -> Res
         let _ = state.store.save_settings(&settings);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vault::{VaultMeta, VaultStore};
+
+    fn login(id: &str, updated_at: DateTime<Utc>, last_modified_device: Option<&str>) -> VaultItem {
+        VaultItem::Login {
+            meta: VaultMeta {
+                id: id.to_string(),
+                name: format!("item-{id}"),
+                notes: None,
+                created_at: updated_at,
+                updated_at,
+                last_modified_device: last_modified_device.map(|s| s.to_string()),
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
+            url: "https://example.com".to_string(),
+            username: "user".to_string(),
+            pass: "pw".to_string(),
+            totp: None,
+        }
+    }
+
+    fn store_with(items: Vec<VaultItem>) -> VaultStore {
+        let mut store = VaultStore::new();
+        store.items = items;
+        store
+    }
+
+    /// Unsynced local edit (modified by THIS device) + newer server version
+    /// must produce a conflict and must NOT silently overwrite the local item.
+    #[test]
+    fn local_unsynced_edit_produces_conflict_not_overwrite() {
+        let t_old = Utc::now() - chrono::Duration::hours(2);
+        let t_new = Utc::now() - chrono::Duration::hours(1);
+
+        let mut local = store_with(vec![login("a", t_old, Some("this-device"))]);
+        let server = store_with(vec![login("a", t_new, Some("other-device"))]);
+
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+
+        assert_eq!(conflicts.len(), 1, "unsynced local edit must conflict");
+        assert_eq!(conflicts[0].item_id, "a");
+        let kept = local
+            .items
+            .iter()
+            .find(|i| i.id() == "a")
+            .expect("item kept");
+        assert_eq!(
+            kept.updated_at(),
+            t_old,
+            "conflicted local edit must not be overwritten by the server version"
+        );
+    }
+
+    /// Server-newer item last modified by ANOTHER device is ordinary
+    /// replication: no conflict, server version wins.
+    #[test]
+    fn remote_newer_from_other_device_merges_without_conflict() {
+        let t_old = Utc::now() - chrono::Duration::hours(2);
+        let t_new = Utc::now() - chrono::Duration::hours(1);
+
+        let mut local = store_with(vec![login("a", t_old, Some("other-device"))]);
+        let server = store_with(vec![login("a", t_new, Some("other-device"))]);
+
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+
+        assert!(conflicts.is_empty(), "remote edit must not conflict");
+        let kept = local
+            .items
+            .iter()
+            .find(|i| i.id() == "a")
+            .expect("item kept");
+        assert_eq!(kept.updated_at(), t_new, "newer server version must win");
+    }
+
+    /// Local-newer items are kept as-is with no conflict.
+    #[test]
+    fn local_newer_is_kept_without_conflict() {
+        let t_old = Utc::now() - chrono::Duration::hours(2);
+        let t_new = Utc::now() - chrono::Duration::hours(1);
+
+        let mut local = store_with(vec![login("a", t_new, Some("this-device"))]);
+        let server = store_with(vec![login("a", t_old, Some("other-device"))]);
+
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+
+        assert!(conflicts.is_empty());
+        assert_eq!(local.items.iter().find(|i| i.id() == "a").unwrap().updated_at(), t_new);
+    }
 }

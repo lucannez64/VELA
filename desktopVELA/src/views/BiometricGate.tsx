@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import ConfirmResetModal from '../components/ConfirmResetModal';
 
 const UNLOCK_TIMEOUT_MS = 15000;
 const MAX_ATTEMPTS = 5;
@@ -28,6 +29,7 @@ export default function BiometricGate({ onUnlock }: Props) {
   const [password, setPassword] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState(true);
   const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
+  const [showResetModal, setShowResetModal] = useState(false);
 
   useEffect(() => {
     checkBiometricAvailability();
@@ -218,21 +220,19 @@ export default function BiometricGate({ onUnlock }: Props) {
             Securely encrypted with Post-Quantum AES-256
           </p>
           <button
-            onClick={async () => {
-              if (confirm('This will PERMANENTLY DELETE all vault data and credentials. Are you sure?')) {
-                try {
-                  await invoke('reset_vault');
-                  window.location.reload();
-                } catch (e) {
-                  alert('Reset failed: ' + String(e) + '\n\nPlease close the app and try again.');
-                }
-              }
-            }}
+            onClick={() => setShowResetModal(true)}
             className="text-xs text-on-surface-variant/40 hover:text-red-400/60 underline transition-colors"
           >
             Can't access your vault? Reset
           </button>
         </footer>
+
+        {showResetModal && (
+          <ConfirmResetModal
+            onReset={() => window.location.reload()}
+            onCancel={() => setShowResetModal(false)}
+          />
+        )}
       </main>
     );
   }
@@ -309,21 +309,19 @@ export default function BiometricGate({ onUnlock }: Props) {
         </p>
 
         <button
-          onClick={async () => {
-            if (confirm('This will PERMANENTLY DELETE all vault data and credentials. Are you sure?')) {
-              try {
-                await invoke('reset_vault');
-                window.location.reload();
-              } catch (e) {
-                alert('Reset failed: ' + String(e) + '\n\nPlease close the app and try again.');
-              }
-            }
-          }}
+          onClick={() => setShowResetModal(true)}
           className="text-xs text-on-surface-variant/40 hover:text-red-400/60 underline transition-colors mt-2"
         >
           Can't access your vault? Reset
         </button>
       </footer>
+
+      {showResetModal && (
+        <ConfirmResetModal
+          onReset={() => window.location.reload()}
+          onCancel={() => setShowResetModal(false)}
+        />
+      )}
 
       <div className="absolute top-0 left-0 w-32 h-32 opacity-20 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-full border-t border-l border-accent-violet/40 rounded-tl-3xl"></div>

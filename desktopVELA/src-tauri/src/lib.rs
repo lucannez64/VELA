@@ -14,7 +14,7 @@ mod vault_lifecycle_test;
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -44,11 +44,47 @@ pub struct AppState {
     pub secret_key: token::SecretKey,
     pub ipc_capability: String,
     pub extension_connected: Arc<AtomicBool>,
+    /// Serializes sync runs so local edits and merges cannot interleave.
+    pub sync_mutex: tokio::sync::Mutex<()>,
+    /// Bumped on every lock/unlock. Sync captures it and aborts if it changes
+    /// mid-flight (vault locked during sync).
+    pub session_generation: AtomicU64,
 }
 
 impl AppState {
     pub fn is_extension_connected(&self) -> bool {
         self.extension_connected.load(Ordering::Relaxed)
+    }
+
+    pub fn bump_session_generation(&self) {
+        self.session_generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn session_generation(&self) -> u64 {
+        self.session_generation.load(Ordering::SeqCst)
+    }
+
+    /// Proof that the vault is still unlocked: session active, unexpired, the
+    /// crypto context present, and no lock/unlock happened since `generation`.
+    pub fn ensure_unlocked_since(&self, generation: u64) -> Result<(), String> {
+        if self.session_generation() != generation {
+            return Err("Vault locked during sync — aborting".to_string());
+        }
+        let session = self.session.read();
+        if !session.active || session.is_expired() {
+            return Err("Vault locked during sync — aborting".to_string());
+        }
+        drop(session);
+        if self.crypto.read().is_none() {
+            return Err("Vault locked during sync — aborting".to_string());
+        }
+        Ok(())
+    }
+
+    /// True when the vault is currently unlocked and usable.
+    pub fn is_unlocked(&self) -> bool {
+        let session = self.session.read();
+        session.active && !session.is_expired() && self.crypto.read().is_some()
     }
 }
 
@@ -113,6 +149,50 @@ impl AppState {
     pub fn validate_session_token(&self, token: &str) -> Result<token::PasetoToken, String> {
         token::validate_local_token(token, &self.secret_key).map_err(|e| e.to_string())
     }
+
+    // ── Persisted master-password unlock throttle (finding: unthrottled
+    //    master-password guessing). Survives restarts; capped at 5 minutes;
+    //    reset on success. ────────────────────────────────────────────────
+
+    fn unlock_throttle_path(&self) -> std::path::PathBuf {
+        self.store.store_path().join("unlock_throttle.json")
+    }
+
+    fn load_unlock_throttle(&self) -> RateLimitEntry {
+        let path = self.unlock_throttle_path();
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_unlock_throttle(&self, entry: &RateLimitEntry) {
+        if let Ok(json) = serde_json::to_string(entry) {
+            let _ = std::fs::write(self.unlock_throttle_path(), json);
+        }
+    }
+
+    /// Err with a user-facing message when unlock attempts are throttled.
+    pub fn check_unlock_throttle(&self) -> Result<(), String> {
+        let entry = self.load_unlock_throttle();
+        if entry.is_blocked() {
+            return Err(format!(
+                "Too many failed attempts. Try again in {}s.",
+                entry.blocked_remaining_secs()
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn record_unlock_failure(&self) {
+        let mut entry = self.load_unlock_throttle();
+        entry.record_failure();
+        self.save_unlock_throttle(&entry);
+    }
+
+    pub fn record_unlock_success(&self) {
+        self.save_unlock_throttle(&RateLimitEntry::default());
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -148,6 +228,8 @@ impl Default for AppState {
             secret_key: token::SecretKey::generate(),
             ipc_capability: ipc::generate_capability(),
             extension_connected: Arc::new(AtomicBool::new(false)),
+            sync_mutex: tokio::sync::Mutex::new(()),
+            session_generation: AtomicU64::new(0),
         }
     }
 }

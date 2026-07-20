@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use vela_crypto::{
-    aead::{decrypt, encrypt},
-    kdf,
-};
+use vela_crypto::{aead::decrypt, kdf, password_kdf};
 
 static CACHED_RMS: Mutex<Option<[u8; 32]>> = Mutex::new(None);
 
@@ -525,7 +522,6 @@ pub mod linux_biometric {
 
 #[cfg(target_os = "linux")]
 pub mod linux_password {
-    use super::*;
     use crate::device::tpm;
 
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
@@ -582,7 +578,34 @@ pub fn authenticate() -> BiometricAuthResult {
     {
         linux_biometric::authenticate()
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        // macOS has no Touch ID integration yet; the honest capability is a
+        // Keychain read, which is gated by the OS keychain ACL prompt. The
+        // enrollment probe below reports exactly this capability.
+        match crate::device::tpm::retrieve_from_tpm() {
+            Ok(rms) => {
+                if let Ok(mut guard) = CACHED_RMS.lock() {
+                    *guard = Some(rms);
+                }
+                BiometricAuthResult {
+                    success: true,
+                    error_message: None,
+                    retry_count: None,
+                    uses_password: false,
+                }
+            }
+            Err(_) => BiometricAuthResult {
+                success: false,
+                error_message: Some(
+                    "No vault key in Keychain. Please use your master password.".to_string(),
+                ),
+                retry_count: None,
+                uses_password: false,
+            },
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         BiometricAuthResult {
             success: false,
@@ -666,13 +689,68 @@ pub fn clear_cached_rms() {
     }
 }
 
-pub fn derive_key_from_password(password: &str, salt: &[u8]) -> [u8; 32] {
+/// LEGACY key derivation (unsalted-then-salted BLAKE3). Retained ONLY to open
+/// password blobs written by older versions so they can be migrated to
+/// Argon2id. Do not use for new blobs.
+#[deprecated(note = "legacy BLAKE3 KDF kept only for reading pre-Argon2id blobs")]
+pub fn derive_key_from_password_legacy(password: &str, salt: &[u8]) -> [u8; 32] {
     let mut key_input = Vec::with_capacity(password.len() + salt.len());
     key_input.extend_from_slice(password.as_bytes());
     key_input.extend_from_slice(salt);
     kdf::derive(PASSWORD_KEY_CONTEXT, &key_input)
         .as_bytes()
         .clone()
+}
+
+/// Seal the RMS under the master password using the current Argon2id format.
+pub fn seal_rms_with_password(rms: &[u8; 32], password: &str) -> anyhow::Result<Vec<u8>> {
+    Ok(password_kdf::seal_with_password(password.as_bytes(), rms)?)
+}
+
+/// Outcome of opening a password-sealed RMS blob.
+pub struct OpenedRms {
+    pub rms: [u8; 32],
+    /// True when the blob used a legacy format and must be re-sealed with
+    /// [`seal_rms_with_password`] (lazy migration, no user action required).
+    pub needs_migration: bool,
+}
+
+/// Open a password-sealed RMS blob in any supported format.
+///
+/// Tries the current Argon2id format first, then the legacy salted-BLAKE3
+/// layout (`salt16 ‖ ciphertext`). Returns `None` on wrong password/corruption.
+pub fn open_rms_with_password(password: &str, blob: &[u8]) -> Option<OpenedRms> {
+    if password_kdf::is_current_format(blob) {
+        let plaintext = password_kdf::open_with_password(password.as_bytes(), blob).ok()?;
+        if plaintext.len() < 32 {
+            return None;
+        }
+        let mut rms = [0u8; 32];
+        rms.copy_from_slice(&plaintext[..32]);
+        return Some(OpenedRms {
+            rms,
+            needs_migration: false,
+        });
+    }
+
+    // Legacy: 16-byte salt ‖ XChaCha20-Poly1305 ciphertext, BLAKE3 KDF.
+    if blob.len() < 48 {
+        return None;
+    }
+    let salt = &blob[0..16];
+    let ciphertext = &blob[16..];
+    #[allow(deprecated)]
+    let key = derive_key_from_password_legacy(password, salt);
+    let decrypted = decrypt(&key, ciphertext).ok()?;
+    if decrypted.len() < 32 {
+        return None;
+    }
+    let mut rms = [0u8; 32];
+    rms.copy_from_slice(&decrypted[..32]);
+    Some(OpenedRms {
+        rms,
+        needs_migration: true,
+    })
 }
 
 #[cfg(windows)]
@@ -696,15 +774,7 @@ pub mod windows_password {
     }
 
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
-        let mut salt = [0u8; 16];
-        getrandom::getrandom(&mut salt).expect("OS random source unavailable");
-
-        let key = derive_key_from_password(password, &salt);
-        let ciphertext = encrypt(&key, rms)?;
-
-        let mut blob = Vec::with_capacity(16 + ciphertext.len());
-        blob.extend_from_slice(&salt);
-        blob.extend_from_slice(&ciphertext);
+        let blob = seal_rms_with_password(rms, password)?;
 
         unsafe {
             let mut target = to_wide_string_mut(PASSWORD_CREDENTIAL_NAME);
@@ -748,26 +818,17 @@ pub mod windows_password {
                     let blob_size = cred.CredentialBlobSize as usize;
                     let blob = std::slice::from_raw_parts(cred.CredentialBlob, blob_size);
 
-                    if blob_size >= 48 {
-                        let salt = &blob[0..16];
-                        let ciphertext = &blob[16..];
-
-                        let key = derive_key_from_password(password, salt);
-                        let Ok(decrypted) = decrypt(&key, ciphertext) else {
-                            CredFree(credential as *mut _);
-                            return None;
-                        };
-
-                        if decrypted.len() >= 32 {
-                            let mut rms = [0u8; 32];
-                            rms.copy_from_slice(&decrypted[..32]);
-                            CredFree(credential as *mut _);
-
-                            if let Ok(mut guard) = CACHED_RMS.lock() {
-                                *guard = Some(rms);
-                            }
-                            return Some(rms);
+                    if let Some(opened) = open_rms_with_password(password, blob) {
+                        CredFree(credential as *mut _);
+                        if opened.needs_migration {
+                            // Lazy migration: re-seal with Argon2id. Failure is
+                            // non-fatal — the legacy blob still opens.
+                            let _ = store_password_encrypted(&opened.rms, password);
                         }
+                        if let Ok(mut guard) = CACHED_RMS.lock() {
+                            *guard = Some(opened.rms);
+                        }
+                        return Some(opened.rms);
                     }
                 }
                 CredFree(credential as *mut _);
@@ -792,15 +853,7 @@ pub mod default_password {
     }
 
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
-        let mut salt = [0u8; 16];
-        getrandom::getrandom(&mut salt).expect("OS random source unavailable");
-
-        let key = derive_key_from_password(password, &salt);
-        let ciphertext = encrypt(&key, rms)?;
-
-        let mut blob = Vec::with_capacity(16 + ciphertext.len());
-        blob.extend_from_slice(&salt);
-        blob.extend_from_slice(&ciphertext);
+        let blob = seal_rms_with_password(rms, password)?;
 
         let path = password_file_path();
         std::fs::write(&path, &blob)?;
@@ -822,34 +875,18 @@ pub mod default_password {
             }
         };
 
-        if blob.len() < 48 {
-            return None;
+        let opened = open_rms_with_password(password, &blob)?;
+
+        if opened.needs_migration {
+            // Lazy migration: re-seal with Argon2id (non-fatal on failure).
+            let _ = store_password_encrypted(&opened.rms, password);
         }
 
-        let salt = &blob[0..16];
-        let ciphertext = &blob[16..];
-
-        let key = derive_key_from_password(password, salt);
-        let decrypted = match decrypt(&key, ciphertext) {
-            Ok(d) => d,
-            Err(_) => {
-                return None;
-            }
-        };
-
-        if decrypted.len() >= 32 {
-            let mut rms = [0u8; 32];
-            rms.copy_from_slice(&decrypted[..32]);
-
-            if let Ok(mut guard) = CACHED_RMS.lock() {
-                *guard = Some(rms);
-            }
-            tracing::info!("Password authentication successful");
-            return Some(rms);
+        if let Ok(mut guard) = CACHED_RMS.lock() {
+            *guard = Some(opened.rms);
         }
-
-        tracing::warn!("Decrypted data too short: {} bytes", decrypted.len());
-        None
+        tracing::info!("Password authentication successful");
+        Some(opened.rms)
     }
 }
 

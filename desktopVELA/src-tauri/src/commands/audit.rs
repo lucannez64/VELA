@@ -157,6 +157,29 @@ pub fn replace_audit_from_plaintext(state: &AppState, plaintext: &[u8]) -> Resul
     save_audit_log(state, &log)
 }
 
+/// Merge server-side audit events into the local log: union by event id,
+/// sorted by timestamp, local history is never discarded.
+pub fn merge_audit_from_plaintext(state: &AppState, plaintext: &[u8]) -> Result<(), String> {
+    let server_log: AuditLog = serde_json::from_slice(plaintext).map_err(|e| e.to_string())?;
+    let mut local_log = load_audit_log(state).unwrap_or_default();
+
+    let mut seen: std::collections::HashSet<String> =
+        local_log.entries.iter().map(|e| e.id.clone()).collect();
+    for entry in server_log.entries {
+        if seen.insert(entry.id.clone()) {
+            local_log.entries.push(entry);
+        }
+    }
+    local_log
+        .entries
+        .sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.id.cmp(&b.id)));
+    if local_log.entries.len() > 1000 {
+        local_log.entries = local_log.entries.split_off(local_log.entries.len() - 1000);
+    }
+
+    save_audit_log(state, &local_log)
+}
+
 #[tauri::command]
 pub async fn get_audit_log(state: State<'_, Arc<AppState>>) -> Result<Vec<AuditEntry>, String> {
     let log = load_audit_log(&state).unwrap_or_default();

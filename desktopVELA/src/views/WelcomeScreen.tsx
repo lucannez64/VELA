@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import ConfirmResetModal from '../components/ConfirmResetModal';
 
 interface Props {
   onCreateVault: () => void;
@@ -54,16 +55,9 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
     }
   };
 
-  const handleResetAndCreate = async () => {
-    if (confirm('This will delete ALL vault data and credentials. Are you sure?')) {
-      try {
-        await invoke('reset_vault');
-      } catch (e) {
-        console.error('Reset failed:', e);
-      }
-      handleCreateVault();
-    }
-  };
+  const [showResetModal, setShowResetModal] = useState(false);
+
+  const handleResetAndCreate = () => setShowResetModal(true);
 
   return (
     <main className="flex-1 flex items-center justify-center p-4 sm:p-6 relative overflow-y-auto">
@@ -80,6 +74,12 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
               onClick={handleResetAndCreate}
               title="Click to reset everything"
             >VELA</div>
+            {showResetModal && (
+              <ConfirmResetModal
+                onReset={() => { setShowResetModal(false); handleCreateVault(); }}
+                onCancel={() => setShowResetModal(false)}
+              />
+            )}
             <div className="space-y-4">
               <div className="flex items-center gap-3 text-secondary">
                 <span className="material-symbols-outlined text-sm">verified_user</span>

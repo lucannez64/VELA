@@ -15,6 +15,7 @@ pub mod error;
 pub mod kdf;
 pub mod kem;
 pub mod oram;
+pub mod password_kdf;
 pub mod shamir;
 pub mod signing;
 

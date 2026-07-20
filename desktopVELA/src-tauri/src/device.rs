@@ -260,20 +260,37 @@ pub mod tpm {
 
     fn protect_with_tpm(plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
         use base64::{engine::general_purpose::STANDARD, Engine};
+        use std::io::Write;
+        use std::process::Stdio;
 
         let b64_plaintext = STANDARD.encode(plaintext);
 
+        // The secret is piped via stdin — never placed on the command line,
+        // where it would be visible in `ps`/WMI process listings.
         let mut command = Command::new("powershell");
-        let output = super::hide_command_window(command.args([
+        let mut child = super::hide_command_window(command.args([
                 "-NoProfile",
                 "-Command",
-                &format!(
-                    "ConvertTo-SecureString -String '{}' -AsPlainText -Force | ConvertFrom-SecureString",
-                    b64_plaintext
-                ),
+                "$in = [Console]::In.ReadToEnd().Trim(); \
+                 ConvertTo-SecureString -String $in -AsPlainText -Force | ConvertFrom-SecureString",
             ]))
-            .output()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to invoke PowerShell for TPM protection: {}", e))?;
+
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Failed to open PowerShell stdin"))?
+            .write_all(b64_plaintext.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Failed to write secret to PowerShell stdin: {}", e))?;
+        drop(child.stdin.take());
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| anyhow::anyhow!("Failed to wait for PowerShell: {}", e))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -286,20 +303,38 @@ pub mod tpm {
 
     fn unprotect_with_tpm(protected: &[u8]) -> anyhow::Result<Vec<u8>> {
         use base64::{engine::general_purpose::STANDARD, Engine};
+        use std::io::Write;
+        use std::process::Stdio;
 
         let protected_str = String::from_utf8_lossy(protected).trim().to_string();
 
+        // The protected blob is piped via stdin, not the command line.
         let mut command = Command::new("powershell");
-        let output = super::hide_command_window(command.args([
+        let mut child = super::hide_command_window(command.args([
                 "-NoProfile",
                 "-Command",
-                &format!(
-                    "ConvertTo-SecureString '{}' | ForEach-Object {{ [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($_)) }}",
-                    protected_str
-                ),
+                "$in = [Console]::In.ReadToEnd().Trim(); \
+                 ConvertTo-SecureString $in | ForEach-Object { \
+                   [Runtime.InteropServices.Marshal]::PtrToStringAuto( \
+                     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($_)) }",
             ]))
-            .output()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to invoke PowerShell for TPM unprotection: {}", e))?;
+
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Failed to open PowerShell stdin"))?
+            .write_all(protected_str.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Failed to write to PowerShell stdin: {}", e))?;
+        drop(child.stdin.take());
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| anyhow::anyhow!("Failed to wait for PowerShell: {}", e))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -315,8 +350,12 @@ pub mod tpm {
 
 #[cfg(target_os = "macos")]
 pub mod tpm {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    use std::process::Command;
+    use security_framework::passwords::{
+        delete_generic_password, get_generic_password, set_generic_password,
+    };
+
+    const KEYCHAIN_SERVICE: &str = "VELA_RMS_Store";
+    const KEYCHAIN_ACCOUNT: &str = "vela-user";
 
     pub fn is_tpm_available() -> bool {
         is_secure_enclave_available()
@@ -327,21 +366,21 @@ pub mod tpm {
     }
 
     pub fn store_in_tpm(key: &[u8; 32]) -> anyhow::Result<()> {
-        store_in_secure_enclave(key, "VELA_RMS_Store")
+        store_in_secure_enclave(key)
             .map_err(|e| anyhow::anyhow!("Failed to store in Secure Enclave: {}", e))
     }
 
     pub fn retrieve_from_tpm() -> anyhow::Result<[u8; 32]> {
-        retrieve_from_secure_enclave("VELA_RMS_Store")
+        retrieve_from_secure_enclave()
             .map_err(|e| anyhow::anyhow!("Failed to retrieve from Secure Enclave: {}", e))
     }
 
     pub fn delete_tpm_key() -> anyhow::Result<()> {
-        delete_from_secure_enclave("VELA_RMS_Store")
+        delete_from_secure_enclave()
     }
 
     fn is_secure_enclave_available() -> bool {
-        let output = Command::new("sh")
+        let output = std::process::Command::new("sh")
             .args(["-c", "ioreg -l | grep -c 'AppleSecureEnclave'"])
             .output();
         match output {
@@ -357,77 +396,43 @@ pub mod tpm {
     }
 
     fn is_sec_key_available() -> bool {
-        let result = Command::new("sh")
-            .args(["-c", "security find-generic-password -s VELA_RMS_Store -w"])
-            .output();
-        matches!(result, Ok(o) if o.status.success())
+        get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).is_ok()
     }
 
-    fn store_in_secure_enclave(
-        key: &[u8; 32],
-        _service: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let key_b64 = STANDARD.encode(key);
-
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                &format!(
-                    "security add-generic-password -a {} -s VELA_RMS_Store -w {} -U",
-                    "vela-user", key_b64
-                ),
-            ])
-            .output()?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "Failed to store: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .into())
-        }
+    // The RMS is passed to the Security framework in memory — it never
+    // appears on a command line (unlike `security add-generic-password -w`).
+    fn store_in_secure_enclave(key: &[u8; 32]) -> Result<(), Box<dyn std::error::Error>> {
+        // Replace any existing item so behaviour matches the old `-U` update.
+        let _ = delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, key)?;
+        Ok(())
     }
 
-    fn retrieve_from_secure_enclave(
-        _service: &str,
-    ) -> Result<[u8; 32], Box<dyn std::error::Error>> {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                "security find-generic-password -a vela-user -s VELA_RMS_Store -w",
-            ])
-            .output()?;
+    fn retrieve_from_secure_enclave() -> Result<[u8; 32], Box<dyn std::error::Error>> {
+        let key = get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)?;
 
-        if !output.status.success() {
-            return Err(format!(
-                "Failed to retrieve: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .into());
+        if key.len() == 32 {
+            let mut result = [0u8; 32];
+            result.copy_from_slice(&key);
+            return Ok(result);
         }
 
-        let key_b64 = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let key = STANDARD.decode(&key_b64)?;
-
-        if key.len() != 32 {
+        // Legacy migration: older versions stored the RMS base64-encoded via
+        // `security add-generic-password -w`. Decode and re-store as raw bytes.
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let b64 = String::from_utf8(key.clone())?;
+        let decoded = STANDARD.decode(b64.trim())?;
+        if decoded.len() != 32 {
             return Err(format!("Invalid key length: {}", key.len()).into());
         }
-
         let mut result = [0u8; 32];
-        result.copy_from_slice(&key);
+        result.copy_from_slice(&decoded);
+        store_in_secure_enclave(&result)?;
         Ok(result)
     }
 
-    fn delete_from_secure_enclave(_service: &str) -> anyhow::Result<()> {
-        Command::new("sh")
-            .args([
-                "-c",
-                "security delete-generic-password -a vela-user -s VELA_RMS_Store",
-            ])
-            .output()
-            .ok();
+    fn delete_from_secure_enclave() -> anyhow::Result<()> {
+        let _ = delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
         Ok(())
     }
 }
@@ -447,6 +452,31 @@ pub mod tpm {
         let data_dir = project_dirs.data_dir().join("vela");
         std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
         data_dir
+    }
+
+    /// Private scratch directory (0700) for non-secret TPM context files.
+    fn get_private_dir() -> std::path::PathBuf {
+        let dir = get_data_dir().join("tpm-private");
+        std::fs::create_dir_all(&dir).expect("Failed to create TPM private directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+        dir
+    }
+
+    /// Overwrite a file with zeros before deleting it (best effort).
+    fn shred_and_remove(path: &std::path::Path) {
+        use std::io::Write;
+        if let Ok(meta) = std::fs::metadata(path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(path) {
+                let zeros = vec![0u8; meta.len() as usize];
+                let _ = f.write_all(&zeros);
+                let _ = f.flush();
+            }
+        }
+        let _ = std::fs::remove_file(path);
     }
 
     fn get_sealed_blob_path() -> PathBuf {
@@ -490,7 +520,7 @@ pub mod tpm {
     }
 
     fn create_primary_key() -> anyhow::Result<PathBuf> {
-        let context_path = get_tpm_context_path();
+        let context_path = get_private_dir().join(TPM_CONTEXT_FILE);
         let output = Command::new("tpm2_createprimary")
             .args([
                 "-c",
@@ -518,6 +548,9 @@ pub mod tpm {
     }
 
     pub fn store_in_tpm(key: &[u8; 32]) -> anyhow::Result<()> {
+        use std::io::Write;
+        use std::process::Stdio;
+
         if !is_tpm_available() {
             anyhow::bail!("TPM 2.0 not available");
         }
@@ -525,40 +558,56 @@ pub mod tpm {
         let context_path = create_primary_key()?;
         let sealed_path = get_sealed_blob_path();
 
-        let temp_input = get_data_dir().join("tpm_input.tmp");
-        std::fs::write(&temp_input, key)?;
-
-        let output = Command::new("tpm2_create")
+        // The plaintext key is piped to tpm2_create via stdin (`-i -`) — no
+        // plaintext RMS ever touches the filesystem.
+        let mut child = Command::new("tpm2_create")
             .args([
                 "-C",
                 context_path.to_str().unwrap(),
                 "-i",
-                temp_input.to_str().unwrap(),
+                "-",
                 "-u",
                 sealed_path.with_extension("pub").to_str().unwrap(),
                 "-r",
                 sealed_path.with_extension("priv").to_str().unwrap(),
             ])
-            .output();
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to execute tpm2_create: {}", e))?;
 
-        let _ = std::fs::remove_file(&temp_input);
+        let stdin_result = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Failed to open tpm2_create stdin"))
+            .and_then(|stdin| {
+                stdin
+                    .write_all(key)
+                    .map_err(|e| anyhow::anyhow!("Failed to pipe key to tpm2_create: {}", e))
+            });
+        drop(child.stdin.take());
+        if let Err(e) = stdin_result {
+            let _ = child.kill();
+            return Err(e);
+        }
 
-        match output {
-            Ok(o) if o.status.success() => {
-                std::fs::write(&sealed_path, b"sealed")?;
-                Ok(())
-            }
-            Ok(o) => {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                anyhow::bail!("Failed to seal data to TPM: {}", stderr);
-            }
-            Err(e) => {
-                anyhow::bail!("Failed to execute tpm2_create: {}", e);
-            }
+        let output = child
+            .wait_with_output()
+            .map_err(|e| anyhow::anyhow!("Failed to wait for tpm2_create: {}", e))?;
+
+        if output.status.success() {
+            std::fs::write(&sealed_path, b"sealed")?;
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to seal data to TPM: {}", stderr);
         }
     }
 
     pub fn retrieve_from_tpm() -> anyhow::Result<[u8; 32]> {
+        use std::process::Stdio;
+
         if !is_tpm_available() {
             anyhow::bail!("TPM 2.0 not available");
         }
@@ -572,6 +621,7 @@ pub mod tpm {
         }
 
         let context_path = create_primary_key()?;
+        let loaded_ctx = get_private_dir().join("loaded_key.ctx");
 
         let load_output = Command::new("tpm2_load")
             .args([
@@ -582,7 +632,7 @@ pub mod tpm {
                 "-r",
                 priv_path.to_str().unwrap(),
                 "-c",
-                get_data_dir().join("loaded_key.ctx").to_str().unwrap(),
+                loaded_ctx.to_str().unwrap(),
             ])
             .output();
 
@@ -597,23 +647,19 @@ pub mod tpm {
             _ => {}
         }
 
+        // The unsealed key is captured from stdout (`-o -`) — no plaintext
+        // RMS temp file is ever written.
         let unseal_output = Command::new("tpm2_unseal")
-            .args([
-                "-c",
-                get_data_dir().join("loaded_key.ctx").to_str().unwrap(),
-                "-o",
-                get_data_dir().join("tpm_output.tmp").to_str().unwrap(),
-            ])
+            .args(["-c", loaded_ctx.to_str().unwrap(), "-o", "-"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .output();
 
-        let loaded_ctx = get_data_dir().join("loaded_key.ctx");
-        let _ = std::fs::remove_file(&loaded_ctx);
+        shred_and_remove(&loaded_ctx);
 
         match unseal_output {
             Ok(o) if o.status.success() => {
-                let output_path = get_data_dir().join("tpm_output.tmp");
-                let data = std::fs::read(&output_path)?;
-                let _ = std::fs::remove_file(&output_path);
+                let data = o.stdout;
 
                 if data.len() != 32 {
                     anyhow::bail!("TPM unsealed key is not 32 bytes");
@@ -638,12 +684,29 @@ pub mod tpm {
         let sealed_path = get_sealed_blob_path();
         let pub_path = sealed_path.with_extension("pub");
         let priv_path = sealed_path.with_extension("priv");
-        let context_path = get_tpm_context_path();
-        let loaded_ctx = get_data_dir().join("loaded_key.ctx");
+        let context_path = get_private_dir().join(TPM_CONTEXT_FILE);
+        let loaded_ctx = get_private_dir().join("loaded_key.ctx");
+        // Legacy locations from older versions.
+        let legacy_context = get_tpm_context_path();
+        let legacy_loaded_ctx = get_data_dir().join("loaded_key.ctx");
+        let legacy_temps = [
+            get_data_dir().join("tpm_input.tmp"),
+            get_data_dir().join("tpm_output.tmp"),
+        ];
 
         for path in [sealed_path, pub_path, priv_path, context_path, loaded_ctx] {
             if path.exists() {
                 std::fs::remove_file(&path)?;
+            }
+        }
+        for path in [legacy_context, legacy_loaded_ctx] {
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        for path in legacy_temps {
+            if path.exists() {
+                shred_and_remove(&path);
             }
         }
 
@@ -675,45 +738,50 @@ pub mod tpm {
             get_data_dir().join("rms_software.enc")
         }
 
+        fn get_fallback_backup_path() -> PathBuf {
+            get_data_dir().join("rms_software.enc.bak")
+        }
+
         pub fn is_fallback_available() -> bool {
             get_fallback_key_path().exists()
         }
 
-        pub fn store_with_password(key: &[u8; 32], password: &str) -> anyhow::Result<()> {
-            use vela_crypto::{aead::encrypt, kdf};
-
-            let mut salt = [0u8; 16];
-            getrandom::getrandom(&mut salt).map_err(|e| anyhow::anyhow!("getrandom failed: {}", e))?;
-
-            let key_material = kdf::derive("vela fallback key v1", password.as_bytes());
-            let derived_key = kdf::derive("vela fallback encryption v1", key_material.as_bytes());
-            let ciphertext = encrypt(derived_key.as_bytes(), key)?;
-
-            let mut blob = Vec::with_capacity(16 + ciphertext.len());
-            blob.extend_from_slice(&salt);
-            blob.extend_from_slice(&ciphertext);
+        /// Atomically write `blob` to the fallback path (tmp file + rename),
+        /// then verify by reading it back. 0600 permissions throughout.
+        fn write_blob_atomic(blob: &[u8]) -> anyhow::Result<()> {
+            use std::os::unix::fs::PermissionsExt;
 
             let path = get_fallback_key_path();
-            std::fs::write(&path, &blob)?;
+            let tmp_path = get_data_dir().join("rms_software.enc.tmp");
 
-            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(&tmp_path, blob)?;
+            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+            std::fs::rename(&tmp_path, &path)?;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
 
-            tracing::info!("Key stored with software encryption");
+            let verified = std::fs::read(&path)?;
+            if verified != blob {
+                anyhow::bail!("Fallback key file verification failed after write");
+            }
             Ok(())
         }
 
-        pub fn retrieve_with_password(password: &str) -> anyhow::Result<[u8; 32]> {
-            use vela_crypto::{aead::decrypt, kdf};
+        pub fn store_with_password(key: &[u8; 32], password: &str) -> anyhow::Result<()> {
+            let blob = crate::biometric::seal_rms_with_password(key, password)?;
+            write_blob_atomic(&blob)?;
+            tracing::info!("Key stored with software encryption (Argon2id)");
+            Ok(())
+        }
 
-            let path = get_fallback_key_path();
-            let blob = std::fs::read(&path)?;
+        /// Legacy KDF (unsalted two-step BLAKE3). Retained ONLY to open
+        /// pre-Argon2id blobs so they can be migrated. The legacy file layout
+        /// is `salt16 ‖ ciphertext`, but the salt bytes were never used.
+        fn retrieve_legacy(password: &str, blob: &[u8]) -> anyhow::Result<[u8; 32]> {
+            use vela_crypto::{aead::decrypt, kdf};
 
             if blob.len() < 48 {
                 anyhow::bail!("Fallback key file too small");
             }
-
-            let salt = &blob[0..16];
             let ciphertext = &blob[16..];
 
             let key_material = kdf::derive("vela fallback key v1", password.as_bytes());
@@ -726,15 +794,68 @@ pub mod tpm {
 
             let mut result = [0u8; 32];
             result.copy_from_slice(&decrypted[..32]);
-
-            tracing::info!("Key retrieved from software encryption");
             Ok(result)
+        }
+
+        /// Re-seal a legacy blob with Argon2id, keeping a backup of the old
+        /// file until the new one is verified written. Best effort: failures
+        /// are logged, never fatal — the legacy file still opens.
+        fn migrate_legacy_blob(password: &str, rms: &[u8; 32], old_blob: &[u8]) {
+            let path = get_fallback_key_path();
+            let backup = get_fallback_backup_path();
+
+            if let Err(e) = std::fs::write(&backup, old_blob) {
+                tracing::warn!("RMS KDF migration: could not write backup: {}", e);
+                return;
+            }
+
+            match crate::biometric::seal_rms_with_password(rms, password)
+                .map_err(|e| e.into())
+                .and_then(|blob| write_blob_atomic(&blob))
+            {
+                Ok(()) => {
+                    // New file verified — the backup is no longer needed.
+                    let _ = std::fs::remove_file(&backup);
+                    tracing::info!("RMS software blob migrated to Argon2id KDF");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "RMS KDF migration failed (legacy blob kept, backup retained): {}",
+                        e
+                    );
+                }
+            }
+            let _ = path;
+        }
+
+        pub fn retrieve_with_password(password: &str) -> anyhow::Result<[u8; 32]> {
+            let path = get_fallback_key_path();
+            let blob = std::fs::read(&path)?;
+
+            // Current format: versioned Argon2id blob (salt embedded and used).
+            if vela_crypto::password_kdf::is_current_format(&blob) {
+                let opened = crate::biometric::open_rms_with_password(password, &blob)
+                    .ok_or_else(|| anyhow::anyhow!("Invalid password"))?;
+                tracing::info!("Key retrieved from software encryption (Argon2id)");
+                return Ok(opened.rms);
+            }
+
+            // Legacy format: unsalted BLAKE3 blob — open, then lazily migrate.
+            let rms = retrieve_legacy(password, &blob)?;
+            migrate_legacy_blob(password, &rms, &blob);
+
+            tracing::info!("Key retrieved from software encryption (legacy, migrated)");
+            Ok(rms)
         }
 
         pub fn delete_fallback() -> anyhow::Result<()> {
             let path = get_fallback_key_path();
             if path.exists() {
                 std::fs::remove_file(&path)?;
+            }
+            let backup = get_fallback_backup_path();
+            if backup.exists() {
+                std::fs::remove_file(&backup)?;
             }
             Ok(())
         }

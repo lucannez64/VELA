@@ -174,12 +174,18 @@ pub enum LockState {
     Conflict,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitEntry {
     pub attempts: u32,
     pub first_attempt: DateTime<Utc>,
     pub last_attempt: DateTime<Utc>,
     pub blocked_until: Option<DateTime<Utc>>,
+}
+
+impl Default for RateLimitEntry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RateLimitEntry {
@@ -193,12 +199,18 @@ impl RateLimitEntry {
         }
     }
 
+    /// Number of failed attempts tolerated before exponential backoff starts.
+    const FREE_ATTEMPTS: u32 = 5;
+    /// Hard cap on the backoff so the real user is never locked out long.
+    const MAX_BACKOFF_SECS: u64 = 300;
+
     pub fn record_failure(&mut self) {
         self.attempts += 1;
         self.last_attempt = Utc::now();
 
-        if self.attempts >= 3 {
-            let backoff_secs = 2u64.pow(self.attempts - 3).min(300);
+        if self.attempts > Self::FREE_ATTEMPTS {
+            let exponent = (self.attempts - Self::FREE_ATTEMPTS - 1).min(20);
+            let backoff_secs = (15u64 * 2u64.pow(exponent)).min(Self::MAX_BACKOFF_SECS);
             self.blocked_until =
                 Some(self.last_attempt + chrono::Duration::seconds(backoff_secs as i64));
         }
@@ -214,6 +226,15 @@ impl RateLimitEntry {
             Utc::now() < blocked_until
         } else {
             false
+        }
+    }
+
+    /// Seconds until the block lifts (0 when not blocked).
+    pub fn blocked_remaining_secs(&self) -> u64 {
+        if let Some(blocked_until) = self.blocked_until {
+            (blocked_until - Utc::now()).num_seconds().max(0) as u64
+        } else {
+            0
         }
     }
 }

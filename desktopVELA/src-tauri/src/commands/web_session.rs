@@ -55,26 +55,34 @@ fn key_fingerprint(raw_key: &[u8]) -> String {
     base32_encode(&hash[..8])
 }
 
-/// Extract the session id (and optional key fingerprint) from the scanned/pasted code.
-/// Formats accepted:
-///   - `{session_id}#{fingerprint}`   ← current QR format
-///   - bare UUID                       ← old format (no fingerprint)
-///   - JSON `{"session_id": "..."}`    ← legacy format
-fn parse_session_id(input: &str) -> Result<(String, Option<String>), String> {
+/// Extract the session id (and optional key fingerprint / link nonce) from the
+/// scanned/pasted code. Formats accepted:
+///   - `{session_id}#{fingerprint}#{link_nonce}` ← current QR format
+///   - `{session_id}#{fingerprint}`              ← previous QR format
+///   - bare UUID                                  ← old format (no fingerprint)
+///   - JSON `{"session_id": "..."}`               ← legacy format
+/// Returns `(session_id, fingerprint?, link_nonce?)`.
+fn parse_session_id(input: &str) -> Result<(String, Option<String>, Option<String>), String> {
     let t = input.trim();
     if t.starts_with('{') {
         let qr: WebSessionQr =
             serde_json::from_str(t).map_err(|e| format!("Invalid web access code: {e}"))?;
-        return Ok((qr.session_id, None));
+        return Ok((qr.session_id, None, None));
     }
     if t.is_empty() {
         return Err("Empty web access code".into());
     }
-    if let Some((id, fp)) = t.split_once('#') {
-        Ok((id.to_string(), Some(fp.to_string())))
-    } else {
-        Ok((t.to_string(), None))
-    }
+    let mut parts = t.splitn(3, '#');
+    let id = parts.next().unwrap_or_default().to_string();
+    let fp = parts
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let link_nonce = parts
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    Ok((id, fp, link_nonce))
 }
 
 #[derive(Debug, Serialize)]
@@ -98,7 +106,7 @@ pub async fn grant_web_session(
         return Err("mode must be 'ro' or 'rw'".into());
     }
 
-    let (session_id, expected_fp) = parse_session_id(&qr_payload)?;
+    let (session_id, expected_fp, link_nonce) = parse_session_id(&qr_payload)?;
 
     let token = state
         .get_session_token()
@@ -160,7 +168,14 @@ pub async fn grant_web_session(
     let capsule_b64 = B64.encode(&capsule);
 
     let expires_at = client
-        .grant_web_session(&token, &session_id, &mode, &capsule_b64, ttl_secs)
+        .grant_web_session(
+            &token,
+            &session_id,
+            &mode,
+            &capsule_b64,
+            ttl_secs,
+            link_nonce.as_deref(),
+        )
         .await
         .map_err(|e| format!("Failed to grant web access: {e}"))?;
 

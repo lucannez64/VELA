@@ -188,20 +188,32 @@ pub fn validate_local_token(
 
 #[derive(Debug, Clone)]
 pub struct TokenStore {
-    revoked_tokens: std::collections::HashSet<String>,
+    /// Revoked JTIs mapped to the token's expiry (when known). Entries are
+    /// kept until the underlying token would have expired anyway, so live
+    /// revocations are never dropped early.
+    revoked_tokens: std::collections::HashMap<String, Option<DateTime<Utc>>>,
     tokens_by_device: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl TokenStore {
     pub fn new() -> Self {
         Self {
-            revoked_tokens: std::collections::HashSet::new(),
+            revoked_tokens: std::collections::HashMap::new(),
             tokens_by_device: std::collections::HashMap::new(),
         }
     }
 
     pub fn revoke_token(&mut self, jti: &str, device_id: &str) {
-        self.revoked_tokens.insert(jti.to_string());
+        self.revoke_token_with_expiry(jti, device_id, None);
+    }
+
+    pub fn revoke_token_with_expiry(
+        &mut self,
+        jti: &str,
+        device_id: &str,
+        expires_at: Option<DateTime<Utc>>,
+    ) {
+        self.revoked_tokens.insert(jti.to_string(), expires_at);
         if let Some(tokens) = self.tokens_by_device.get_mut(device_id) {
             tokens.retain(|t| t != jti);
         }
@@ -210,13 +222,13 @@ impl TokenStore {
     pub fn revoke_device_tokens(&mut self, device_id: &str) {
         if let Some(tokens) = self.tokens_by_device.remove(device_id) {
             for jti in tokens {
-                self.revoked_tokens.insert(jti);
+                self.revoked_tokens.entry(jti).or_insert(None);
             }
         }
     }
 
     pub fn is_token_revoked(&self, jti: &str) -> bool {
-        self.revoked_tokens.contains(jti)
+        self.revoked_tokens.contains_key(jti)
     }
 
     pub fn add_token(&mut self, device_id: &str, jti: String) {
@@ -226,8 +238,12 @@ impl TokenStore {
             .push(jti);
     }
 
+    /// Remove only revocations whose token would be expired by now. Live
+    /// revocations are retained.
     pub fn cleanup_expired(&mut self) {
-        self.revoked_tokens.retain(|_| false);
+        let now = Utc::now();
+        self.revoked_tokens
+            .retain(|_, expires_at| expires_at.map(|exp| exp > now).unwrap_or(true));
     }
 }
 

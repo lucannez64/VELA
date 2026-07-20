@@ -677,7 +677,9 @@ impl ApiClient {
     }
 
     /// Approve an ephemeral web session: deliver the sealed capsule (RO snapshot
-    /// or RW RMS) with the chosen mode and TTL. Returns the server-clamped expiry.
+    /// or RW RMS) with the chosen mode and TTL. `link_nonce` is echoed back from
+    /// the link code when present so the server can bind the grant to the browser
+    /// that started the session. Returns the server-clamped expiry.
     pub async fn grant_web_session(
         &self,
         token: &str,
@@ -685,22 +687,34 @@ impl ApiClient {
         mode: &str,
         capsule_b64: &str,
         ttl_secs: i64,
+        link_nonce: Option<&str>,
     ) -> Result<String> {
+        #[derive(Serialize)]
+        struct GrantBody<'a> {
+            mode: &'a str,
+            capsule: &'a str,
+            ttl_secs: i64,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            link_nonce: Option<&'a str>,
+        }
         let resp = self
             .send_request(false, |client| {
                 client
                     .post(format!("{}/web-session/{}/grant", self.base_url, session_id))
                     .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({
-                        "mode": mode,
-                        "capsule": capsule_b64,
-                        "ttl_secs": ttl_secs,
-                    }))
+                    .json(&GrantBody {
+                        mode,
+                        capsule: capsule_b64,
+                        ttl_secs,
+                        link_nonce,
+                    })
             })
             .await?;
 
         if !resp.status().is_success() {
-            anyhow::bail!("Grant web session failed: {}", resp.status());
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Grant web session failed: {} — {}", status, body);
         }
 
         #[derive(serde::Deserialize)]
@@ -1079,12 +1093,16 @@ pub struct LinkedShareItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryInitiateResponse {
+    #[serde(default)]
+    pub recovery_id: Option<String>,
     pub public_key: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryRecoverRequest {
     pub user_id: String,
+    #[serde(default)]
+    pub recovery_id: Option<String>,
     pub credential: serde_json::Value,
 }
 

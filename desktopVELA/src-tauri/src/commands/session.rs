@@ -34,6 +34,17 @@ fn server_url_configured(state: &Arc<AppState>) -> bool {
     !state.server_url.read().trim().is_empty()
 }
 
+/// Session lifetime comes from the persisted `auto_lock_minutes` setting
+/// (previously dead; the 15-minute hardcode is gone).
+fn auto_lock_duration_secs(state: &AppState) -> u64 {
+    let minutes = state
+        .store
+        .load_settings()
+        .map(|s| s.auto_lock_minutes)
+        .unwrap_or(15);
+    (minutes.clamp(1, 24 * 60) as u64) * 60
+}
+
 /// Returns `(token, user_id)` on success.
 async fn authenticate_with_server(
     state: &Arc<AppState>,
@@ -195,6 +206,7 @@ pub async fn lock_session(state: State<'_, Arc<AppState>>) -> Result<(), String>
     *vault = crate::vault::VaultStore::new();
 
     biometric::clear_cached_rms();
+    state.bump_session_generation();
 
     Ok(())
 }
@@ -205,6 +217,20 @@ pub async fn unlock_session(
     _device_id: String,
     _user_id: String,
 ) -> Result<SessionStatus, String> {
+    state.check_unlock_throttle()?;
+
+    // Fail-closed on expiry: when the previous session expired, do NOT silently
+    // re-unlock from the in-memory cached RMS — force a fresh read from the
+    // OS-backed credential store (TPM / Keychain / Credential Manager).
+    let was_expired = {
+        let session = state.session.read();
+        session.is_expired()
+    };
+    if was_expired {
+        biometric::clear_cached_rms();
+    }
+
+    let duration_secs = auto_lock_duration_secs(&state);
     let app_state = state.inner().clone();
     let app_state2 = app_state.clone();
 
@@ -243,7 +269,7 @@ pub async fn unlock_session(
 
         {
             let mut session = app_state2.session.write();
-            session.unlock(device_id.clone(), user_id.clone(), 15 * 60);
+            session.unlock(device_id.clone(), user_id.clone(), duration_secs);
         }
         {
             let mut crypto_state = app_state2.crypto.write();
@@ -261,6 +287,9 @@ pub async fn unlock_session(
     .await
     .map_err(|e| format!("Unlock task panicked: {}", e))??;
 
+    state.record_unlock_success();
+    state.bump_session_generation();
+
     authenticate_with_server_in_background(
         app_state,
         device_id.clone(),
@@ -270,7 +299,7 @@ pub async fn unlock_session(
 
     Ok(SessionStatus {
         active: true,
-        session_time_remaining_secs: 15 * 60,
+        session_time_remaining_secs: duration_secs,
         device_name: Some(device_name),
         device_id: Some(device_id),
         lock_state: LockState::Unlocked,
@@ -282,12 +311,17 @@ pub async fn unlock_session_with_password(
     state: State<'_, Arc<AppState>>,
     password: String,
 ) -> Result<SessionStatus, String> {
+    // Throttle master-password guessing (persisted across restarts).
+    state.check_unlock_throttle()?;
+
+    let duration_secs = auto_lock_duration_secs(&state);
     let app_state = state.inner().clone();
     let app_state2 = app_state.clone();
 
-    let (device_name, device_id) = tokio::task::spawn_blocking(move || {
-        let rms = biometric::authenticate_with_password(&password)
-            .ok_or_else(|| "Invalid password".to_string())?;
+    let unlock_result = tokio::task::spawn_blocking(move || {
+        let Some(rms) = biometric::authenticate_with_password(&password) else {
+            return Err("Invalid password".to_string());
+        };
 
         let crypto = Crypto::new(&rms);
 
@@ -309,7 +343,7 @@ pub async fn unlock_session_with_password(
 
         {
             let mut session = app_state2.session.write();
-            session.unlock(device_id.clone(), user_id.clone(), 15 * 60);
+            session.unlock(device_id.clone(), user_id.clone(), duration_secs);
         }
         {
             let mut crypto_state = app_state2.crypto.write();
@@ -325,7 +359,20 @@ pub async fn unlock_session_with_password(
         Ok::<_, String>((device_name, device_id))
     })
     .await
-    .map_err(|e| format!("Unlock task panicked: {}", e))??;
+    .map_err(|e| format!("Unlock task panicked: {}", e))?;
+
+    let (device_name, device_id) = match unlock_result {
+        Ok(ok) => {
+            state.record_unlock_success();
+            ok
+        }
+        Err(e) => {
+            state.record_unlock_failure();
+            return Err(e);
+        }
+    };
+
+    state.bump_session_generation();
 
     authenticate_with_server_in_background(
         app_state,
@@ -337,7 +384,7 @@ pub async fn unlock_session_with_password(
     tracing::info!("Session unlocked successfully");
     Ok(SessionStatus {
         active: true,
-        session_time_remaining_secs: 15 * 60,
+        session_time_remaining_secs: duration_secs,
         device_name: Some(device_name),
         device_id: Some(device_id),
         lock_state: LockState::Unlocked,
@@ -426,12 +473,13 @@ pub async fn create_vault(state: State<'_, Arc<AppState>>) -> Result<(), String>
     }
     {
         let mut session = state.session.write();
-        session.unlock(device_id, user_id, 15 * 60);
+        session.unlock(device_id, user_id, auto_lock_duration_secs(&state));
     }
     {
         let mut vault_state = state.vault.write();
         *vault_state = vault;
     }
+    state.bump_session_generation();
 
     record_audit_event(&state, AuditAction::VaultCreated);
 
@@ -529,12 +577,13 @@ pub async fn create_vault_with_password(
     }
     {
         let mut session = state.session.write();
-        session.unlock(device_id.clone(), user_id, 15 * 60);
+        session.unlock(device_id.clone(), user_id, auto_lock_duration_secs(&state));
     }
     {
         let mut vault_state = state.vault.write();
         *vault_state = vault;
     }
+    state.bump_session_generation();
 
     record_audit_event(&state, AuditAction::VaultCreated);
 
@@ -547,8 +596,77 @@ pub async fn check_vault_exists(state: State<'_, Arc<AppState>>) -> Result<bool,
     Ok(state.store.has_existing_vault())
 }
 
+/// Irreversibly wipe the local vault. Authentication ladder (strongest first):
+///
+/// 1. `password` — the current master password, verified by unwrapping the RMS
+///    exactly like unlock does.
+/// 2. `confirm == "DELETE"` **plus** a freshly verified server auth challenge —
+///    available whenever the vault is unlocked and a server is configured
+///    (proves possession of the device identity key).
+/// 3. `confirm == "DELETE"` alone — only when the vault is locked (the
+///    forgot-password recovery flow). A server challenge is cryptographically
+///    impossible there: the identity signing key is RMS-encrypted and the RMS
+///    is exactly what the user can no longer unwrap. Wiping local data is
+///    recoverable via re-enrollment, so a typed confirmation is the strongest
+///    check that does not break recovery.
 #[command]
-pub async fn reset_vault(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn reset_vault(
+    state: State<'_, Arc<AppState>>,
+    confirm: Option<String>,
+    password: Option<String>,
+) -> Result<(), String> {
+    let app_state = state.inner().clone();
+    let mut authorized = false;
+
+    // Path 1: master-password proof.
+    if let Some(password) = password {
+        let verified = tokio::task::spawn_blocking(move || {
+            biometric::authenticate_with_password(&password).is_some()
+        })
+        .await
+        .map_err(|e| format!("Password verification task panicked: {}", e))?;
+        if !verified {
+            return Err("Invalid master password — vault reset refused".to_string());
+        }
+        authorized = true;
+    }
+
+    // Path 2/3: typed confirmation.
+    if !authorized {
+        if confirm.as_deref() != Some("DELETE") {
+            return Err(
+                "Reset requires the master password or typing DELETE to confirm".to_string(),
+            );
+        }
+
+        // When the vault is unlocked and a server is configured, additionally
+        // require a freshly verified server auth challenge — an unlocked UI
+        // alone is not sufficient proof for destruction.
+        if state.is_unlocked() && server_url_configured(&app_state) {
+            let (identity_keys, device_id) = {
+                let crypto_guard = state.crypto.read();
+                let keys = crypto_guard
+                    .as_ref()
+                    .and_then(|crypto| state.store.load_identity_keys(crypto).ok().flatten())
+                    .ok_or_else(|| {
+                        "Cannot verify device identity for reset; provide the master password"
+                            .to_string()
+                    })?;
+                let device_id = state
+                    .store
+                    .load_device_id()
+                    .map_err(|e| format!("Failed to load device id: {}", e))?;
+                (keys, device_id)
+            };
+            let device_name = get_device_name();
+            authenticate_with_server(&app_state, &device_id, &device_name, &identity_keys.hybrid_sk)
+                .await
+                .map_err(|e| format!("Server re-authentication for reset failed: {}", e))?;
+        }
+        // Locked vault (forgot-password flow): typed DELETE is the strongest
+        // available proof — see the doc comment above.
+    }
+
     biometric::delete_stored_rms().map_err(|e| format!("Failed to delete credentials: {}", e))?;
 
     let vault_path = state.store.store_path().join("vault.enc");
@@ -566,6 +684,21 @@ pub async fn reset_vault(state: State<'_, Arc<AppState>>) -> Result<(), String> 
     if vault_path.exists() || rms_path.exists() {
         return Err("Vault files still exist after deletion".to_string());
     }
+
+    {
+        let mut session = state.session.write();
+        session.lock();
+    }
+    {
+        let mut crypto = state.crypto.write();
+        *crypto = None;
+    }
+    {
+        let mut vault = state.vault.write();
+        *vault = crate::vault::VaultStore::new();
+    }
+    biometric::clear_cached_rms();
+    state.bump_session_generation();
 
     Ok(())
 }

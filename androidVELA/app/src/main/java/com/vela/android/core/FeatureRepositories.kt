@@ -202,9 +202,10 @@ class SharingRepository(
     /// See EPHEMERAL_WEB_ACCESS_DESIGN.md §14 for the wire formats.
     fun grantWebAccess(qrJson: String, mode: String, ttlSecs: Long): String {
         require(mode == "ro" || mode == "rw") { "mode must be 'ro' or 'rw'" }
-        // The QR/code now carries only the session id (and optional #fingerprint); fetch the
-        // browser's ephemeral key from the server (keeps the QR small enough to scan).
-        val (sessionId, expectedFp) = parseSessionId(qrJson)
+        // The QR/code carries the session id plus optional #fingerprint and
+        // #link_nonce segments; fetch the browser's ephemeral key from the server
+        // (keeps the QR small enough to scan).
+        val (sessionId, expectedFp, linkNonce) = parseSessionId(qrJson)
 
         val expiresAt = sync.withAuthenticatedClient { client, token ->
             val (ephemeralPk, webVk) = client.getWebSessionKeys(token, sessionId)
@@ -236,21 +237,24 @@ class SharingRepository(
 
             val capsuleB64 = NativeVelaCore.sealShare(ephemeralPk, envelope.toString())
                 ?: error("Native VELA bridge is required for web access")
-            client.grantWebSession(token, sessionId, mode, capsuleB64, ttlSecs)
+            client.grantWebSession(token, sessionId, mode, capsuleB64, ttlSecs, linkNonce)
         }
         val label = if (mode == "rw") "read-write" else "read-only"
         VelaRepositories.audit.record("web_session_granted", "$label · ${ttlSecs / 60} min")
         return expiresAt
     }
 
-    /// The scanned/pasted code is `{id}#{fingerprint}`, a bare id, or (older) JSON.
-    /// Returns `Pair(sessionId, expectedFingerprint?)`.
-    private fun parseSessionId(input: String): Pair<String, String?> {
+    /// The scanned/pasted code is `{id}#{fingerprint}#{link_nonce}`, `{id}#{fingerprint}`,
+    /// a bare id, or (older) JSON. Returns `Triple(sessionId, fingerprint?, linkNonce?)`.
+    private fun parseSessionId(input: String): Triple<String, String?, String?> {
         val t = input.trim()
-        if (t.startsWith("{")) return Pair(JSONObject(t).getString("session_id"), null)
-        val hash = t.indexOf('#')
-        return if (hash >= 0) Pair(t.substring(0, hash), t.substring(hash + 1).ifEmpty { null })
-        else Pair(t, null)
+        if (t.startsWith("{")) return Triple(JSONObject(t).getString("session_id"), null, null)
+        val parts = t.split('#', limit = 3)
+        return Triple(
+            parts[0],
+            parts.getOrNull(1)?.ifEmpty { null },
+            parts.getOrNull(2)?.ifEmpty { null },
+        )
     }
 
     private fun base32Encode(bytes: ByteArray): String {
