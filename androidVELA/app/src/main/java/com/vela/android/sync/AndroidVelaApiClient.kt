@@ -576,7 +576,21 @@ class CronetHttp3Transport(context: Context, baseUrl: String) : VelaHttpTranspor
                 info: UrlResponseInfo,
                 newLocationUrl: String
             ) {
-                request.followRedirect()
+                // Only follow same-host redirects. Cronet re-attaches this
+                // request's original headers — including the Authorization
+                // Bearer token — when following a redirect; a cross-host
+                // redirect (from a compromised/misconfigured server, or a
+                // MITM on a non-pinned hop) would hand the token to whatever
+                // host the redirect points at. VELA's API never legitimately
+                // redirects cross-host, so treat one as a failure instead.
+                val originalHost = runCatching { java.net.URI(url).host }.getOrNull()
+                val redirectHost = runCatching { java.net.URI(newLocationUrl).host }.getOrNull()
+                if (originalHost != null && originalHost.equals(redirectHost, ignoreCase = true)) {
+                    request.followRedirect()
+                } else {
+                    failure.set(IOException("Refusing cross-host redirect from $originalHost to $redirectHost"))
+                    request.cancel()
+                }
             }
 
             override fun onResponseStarted(request: UrlRequest, info: UrlResponseInfo) {
@@ -610,6 +624,17 @@ class CronetHttp3Transport(context: Context, baseUrl: String) : VelaHttpTranspor
 
             override fun onFailed(request: UrlRequest, info: UrlResponseInfo?, error: CronetException) {
                 failure.set(IOException(error.message ?: "Cronet request failed", error))
+                latch.countDown()
+            }
+
+            override fun onCanceled(request: UrlRequest, info: UrlResponseInfo?) {
+                // onCanceled has a no-op default in Cronet's API (unlike the
+                // abstract onFailed) — without this override, request.cancel()
+                // above (cross-host redirect refusal) would never count down
+                // the latch and hang the caller forever.
+                if (failure.get() == null) {
+                    failure.set(IOException("Request was canceled"))
+                }
                 latch.countDown()
             }
         }

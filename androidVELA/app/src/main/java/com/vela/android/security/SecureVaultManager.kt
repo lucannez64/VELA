@@ -43,6 +43,13 @@ class SecureVaultManager(context: Context) {
         }
     }
 
+    /// Adopt an RMS recovered during enrollment. The vault is usable
+    /// immediately (unlocked = true) but `provider = null` intentionally:
+    /// the imported RMS has no local biometric/password protection configured
+    /// yet — that happens next via `onProtectEnrolledBiometric`/
+    /// `onProtectEnrolledPassword`. Not currently read by any caller, but if
+    /// UI ever branches on `session.provider`, treat null-while-unlocked as
+    /// "protect this device now", not as a bug.
     fun adoptRms(importedRms: ByteArray) {
         rms?.fill(0)
         rms = importedRms.copyOf()

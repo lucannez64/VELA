@@ -17,7 +17,9 @@ data class SyncSettings(
 )
 
 class SyncSettingsStore(context: Context) {
-    private val prefs = context.getSharedPreferences("vela_sync", Context.MODE_PRIVATE)
+    // Holds the rotating server Bearer token, so it must not sit in plaintext
+    // SharedPreferences.
+    private val prefs = EncryptedPrefs.open(context, "vela_sync")
     private val _settings = MutableStateFlow(read())
     val settings: StateFlow<SyncSettings> = _settings
 

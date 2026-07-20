@@ -14,13 +14,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DevicesOther
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,12 +35,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.MainActivity
+import com.vela.android.core.NativeVelaCore
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
@@ -61,6 +67,16 @@ fun EnrollDeviceScreen(
     var scannedParts by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
     var scannedTotal by remember { mutableStateOf<Int?>(null) }
     var scanMessage by remember { mutableStateOf<String?>(null) }
+
+    // Out-of-band verification code for the current enrollment code. Neither
+    // device can otherwise prove the code wasn't substituted (tampered QR,
+    // wrong code scanned, etc.), so the user must confirm it matches what's
+    // shown on the enrolling device before "Enroll" is enabled. Keyed by
+    // enrollmentCode so editing/rescanning always requires re-confirmation.
+    val verificationCode = remember(enrollmentCode) {
+        enrollmentCode.takeIf { it.isNotBlank() }?.let { NativeVelaCore.enrollmentVerificationCode(it) }
+    }
+    var codeConfirmed by remember(enrollmentCode) { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -252,6 +268,58 @@ fun EnrollDeviceScreen(
                     icon = Icons.Filled.QrCodeScanner
                 )
 
+                verificationCode?.let { code ->
+                    Spacer(Modifier.height(16.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(VelaColors.WarningAmberBg)
+                            .padding(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.VerifiedUser, null,
+                                modifier = Modifier.size(16.dp),
+                                tint = VelaColors.WarningAmber
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Verify this code", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VelaColors.WarningAmber)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Compare against the verification code shown on your other device's " +
+                                "\"Enrollment Code\" dialog. If it doesn't match, stop.",
+                            fontSize = 11.sp,
+                            color = VelaColors.TextSecondary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            code,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            letterSpacing = 2.sp,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Checkbox(
+                                checked = codeConfirmed,
+                                onCheckedChange = { codeConfirmed = it },
+                                colors = CheckboxDefaults.colors(checkedColor = VelaColors.Violet)
+                            )
+                            Text(
+                                "It matches the code on my other device",
+                                fontSize = 12.sp,
+                                color = VelaColors.TextSecondary
+                            )
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(24.dp))
 
                 VelaButton(
@@ -262,7 +330,7 @@ fun EnrollDeviceScreen(
                         }
                     },
                     style = VelaButtonStyle.Gradient,
-                    enabled = enrollmentCode.isNotBlank() && !isEnrolling,
+                    enabled = enrollmentCode.isNotBlank() && !isEnrolling && codeConfirmed,
                     icon = Icons.Filled.DevicesOther
                 )
 

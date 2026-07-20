@@ -11,10 +11,8 @@ import com.vela.android.security.SecureVaultManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
@@ -89,7 +87,15 @@ class VaultSyncManager(
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
     }
 
-    fun syncNow(): SyncState {
+    // suspend, not a runBlocking-wrapped plain fun: the previous version
+    // called runBlocking(Dispatchers.IO) from inside a function that's
+    // itself always invoked from a coroutine already running on
+    // Dispatchers.IO (see MainActivity), which blocks one of that shared,
+    // size-limited dispatcher's threads for the whole sync — under load,
+    // enough of these nested blocking calls can exhaust the pool. Making
+    // this a genuine suspend fun lets it cooperate with the dispatcher
+    // instead of blocking a thread out of it.
+    suspend fun syncNow(): SyncState {
         if (security.session.value.unlocked.not()) {
             return publish(error = "Unlock VELA before syncing")
         }
@@ -102,7 +108,7 @@ class VaultSyncManager(
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null, conflict = null)
         return try {
-            runBlocking(Dispatchers.IO) { syncUnlocked(settings, rms) }
+            syncUnlocked(settings, rms)
         } catch (e: Exception) {
             publish(error = e.message ?: "Sync failed")
         } finally {
@@ -110,7 +116,7 @@ class VaultSyncManager(
         }
     }
 
-    fun resolveConflictUseRemote(): SyncState {
+    suspend fun resolveConflictUseRemote(): SyncState {
         if (security.session.value.unlocked.not()) {
             return publish(error = "Unlock VELA before resolving conflict")
         }
@@ -121,22 +127,20 @@ class VaultSyncManager(
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null)
         return try {
-            runBlocking(Dispatchers.IO) {
-                val client = AndroidVelaApiClient(settings.serverUrl, context)
-                var token = authenticatedToken(client, settings.bearerToken)
-                val manifestResult = getManifestWithTokenRetry(client, token, settings)
-                val manifest = manifestResult.manifest
-                token = manifestResult.token
-                val manifestToken = manifestResult.newToken
-                manifestToken?.let { token = it }
-                val downloadChunkIds = recognizedVaultChunkIds(manifest)
-                if (downloadChunkIds.isEmpty()) {
-                    publish(error = "Server has no recognized vault data chunk")
-                } else {
-                    val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
-                    vault.replaceAll(remoteResult.vault)
-                    markSynced(remoteResult.token, remoteResult.version, remoteResult.lamportClock, null)
-                }
+            val client = AndroidVelaApiClient(settings.serverUrl, context)
+            var token = authenticatedToken(client, settings.bearerToken)
+            val manifestResult = getManifestWithTokenRetry(client, token, settings)
+            val manifest = manifestResult.manifest
+            token = manifestResult.token
+            val manifestToken = manifestResult.newToken
+            manifestToken?.let { token = it }
+            val downloadChunkIds = recognizedVaultChunkIds(manifest)
+            if (downloadChunkIds.isEmpty()) {
+                publish(error = "Server has no recognized vault data chunk")
+            } else {
+                val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
+                vault.replaceAll(remoteResult.vault)
+                markSynced(remoteResult.token, remoteResult.version, remoteResult.lamportClock, null)
             }
         } catch (e: Exception) {
             publish(error = e.message ?: "Conflict resolution failed")
@@ -145,7 +149,7 @@ class VaultSyncManager(
         }
     }
 
-    fun resolveConflictUseLocal(): SyncState {
+    suspend fun resolveConflictUseLocal(): SyncState {
         if (security.session.value.unlocked.not()) {
             return publish(error = "Unlock VELA before resolving conflict")
         }
@@ -156,25 +160,23 @@ class VaultSyncManager(
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null)
         return try {
-            runBlocking(Dispatchers.IO) {
-                val client = AndroidVelaApiClient(settings.serverUrl, context)
-                var token = authenticatedToken(client, settings.bearerToken)
-                val manifestResult = getManifestWithTokenRetry(client, token, settings)
-                val manifest = manifestResult.manifest
-                token = manifestResult.token
-                val manifestToken = manifestResult.newToken
-                manifestToken?.let { token = it }
-                val remote = manifest.chunks.firstOrNull { it.chunkId == VAULT_DATA_CHUNK_ID }
-                val nextLamport = maxOf(settings.lamportClock, remote?.lamportClock ?: 0) + 1
-                val uploaded = uploadVaultChunks(
-                    client = client,
-                    startToken = token,
-                    rms = rms,
-                    manifest = manifest,
-                    baseLamport = nextLamport
-                )
-                markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
-            }
+            val client = AndroidVelaApiClient(settings.serverUrl, context)
+            var token = authenticatedToken(client, settings.bearerToken)
+            val manifestResult = getManifestWithTokenRetry(client, token, settings)
+            val manifest = manifestResult.manifest
+            token = manifestResult.token
+            val manifestToken = manifestResult.newToken
+            manifestToken?.let { token = it }
+            val remote = manifest.chunks.firstOrNull { it.chunkId == VAULT_DATA_CHUNK_ID }
+            val nextLamport = maxOf(settings.lamportClock, remote?.lamportClock ?: 0) + 1
+            val uploaded = uploadVaultChunks(
+                client = client,
+                startToken = token,
+                rms = rms,
+                manifest = manifest,
+                baseLamport = nextLamport
+            )
+            markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
         } catch (e: Exception) {
             publish(error = e.message ?: "Conflict resolution failed")
         } finally {
