@@ -79,6 +79,21 @@ function wipe() {
 // Clear the RW session blob on every navigation/close — prevents the Argon2-wrapped
 // RMS from lingering in sessionStorage on shared machines.
 window.addEventListener('beforeunload', () => { clearRwStore(); wipe(); });
+// beforeunload is unreliable on mobile browsers — it frequently does not
+// fire when the user backgrounds the tab/app or force-quits, so on mobile
+// the wipe above often never runs. visibilitychange fires reliably when the
+// page is hidden and is the standard mitigation for this. A full reload
+// (already used elsewhere in this file to reset state) clears both the
+// in-memory secrets and any already-rendered decrypted content in the DOM
+// in one step. Given this file's own threat model is shared/public
+// machines, locking on backgrounding is the intended posture here, matching
+// how the other VELA clients auto-lock when backgrounded.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && (authed || rmsB64)) {
+    clearRwStore();
+    location.reload();
+  }
+});
 
 // ── DOM helpers ─────────────────────────────────────────────────────────────────
 function el(html: string): HTMLElement {
@@ -439,12 +454,25 @@ async function onGranted(res: PollResponse) {
 
 async function pollLoop() {
   polling = true;
+  let consecutiveErrors = 0;
   while (polling) {
     let res: PollResponse;
     try {
       res = await pollSession(sessionId);
+      consecutiveErrors = 0;
     } catch {
-      await sleep(2500);
+      // A dead/recovering server was retried at a fixed 2.5s forever, with
+      // no cap — one client is a nuisance, many stuck clients retrying a
+      // recovering server in lockstep is a thundering herd, and the user
+      // never learns anything is wrong. Back off exponentially (capped at
+      // 30s) and give up with a message after sustained failure.
+      consecutiveErrors++;
+      if (consecutiveErrors >= 8) {
+        polling = false;
+        return showError('Lost connection to the server. Check your connection and try again.');
+      }
+      const backoffMs = Math.min(2500 * Math.pow(2, consecutiveErrors - 1), 30000);
+      await sleep(backoffMs);
       continue;
     }
     if (res.status === 'pending') {
