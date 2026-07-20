@@ -17,6 +17,12 @@ const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
 const VAULT_CHUNK_PREFIX: &str = "vault-data-";
 const VAULT_CHUNK_PLAINTEXT_SIZE: usize = CHUNK_SIZE - 4096;
 
+/// Encrypted conflict store (ciphertext of `Vec<ConflictItem>` under the vault
+/// key, same envelope as `audit.enc` / `shares.enc`).
+const CONFLICTS_FILE: &str = "sync_conflicts.enc";
+/// Pre-encryption plaintext conflict store; read once for migration, then removed.
+const LEGACY_CONFLICTS_FILE: &str = "sync_conflicts.json";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncStatus {
     pub syncing: bool,
@@ -353,16 +359,70 @@ fn split_plaintext_chunks(plaintext: &[u8]) -> Vec<Vec<u8>> {
 }
 
 fn save_conflicts(state: &AppState, conflicts: &[ConflictItem]) -> Result<(), String> {
-    let conflicts_path = state.store.store_path().join("sync_conflicts.json");
+    let dir = state.store.store_path();
+    let enc_path = dir.join(CONFLICTS_FILE);
+    let legacy_path = dir.join(LEGACY_CONFLICTS_FILE);
+
     if conflicts.is_empty() {
-        if conflicts_path.exists() {
-            let _ = std::fs::remove_file(conflicts_path);
-        }
+        let _ = std::fs::remove_file(&enc_path);
+        let _ = std::fs::remove_file(&legacy_path);
         return Ok(());
     }
 
-    let json = serde_json::to_string(conflicts).map_err(|e| e.to_string())?;
-    std::fs::write(conflicts_path, json).map_err(|e| e.to_string())
+    // Conflict items contain full VaultItems (passwords, card CVV/PIN, identity
+    // SSN, secure-note content), so they must never be persisted as plaintext.
+    // Seal them under the vault key via the same envelope used for audit.enc.
+    let crypto_guard = state.crypto.read();
+    let crypto = crypto_guard
+        .as_ref()
+        .ok_or("Cannot save conflicts: vault is locked")?;
+
+    let plaintext = serde_json::to_vec(conflicts).map_err(|e| e.to_string())?;
+    let ciphertext = crypto
+        .encrypt_vault(&plaintext)
+        .map_err(|e| e.to_string())?;
+
+    crate::store::write_secret_file(&enc_path, &ciphertext).map_err(|e| e.to_string())?;
+
+    // Remove any pre-encryption plaintext file left by older versions so no
+    // secrets linger on disk after the first encrypted save.
+    let _ = std::fs::remove_file(&legacy_path);
+
+    Ok(())
+}
+
+/// Load persisted conflicts, decrypting the current `.enc` store. Falls back to
+/// the legacy plaintext file once (transparent migration), and returns an empty
+/// list when the vault is locked — encrypted conflicts cannot be surfaced (or
+/// resolved) while locked.
+fn load_conflicts(state: &AppState) -> Vec<ConflictItem> {
+    let dir = state.store.store_path();
+    let enc_path = dir.join(CONFLICTS_FILE);
+    let legacy_path = dir.join(LEGACY_CONFLICTS_FILE);
+
+    if enc_path.exists() {
+        let crypto_guard = state.crypto.read();
+        if let Some(crypto) = crypto_guard.as_ref() {
+            if let Ok(ciphertext) = std::fs::read(&enc_path) {
+                if let Ok(plaintext) = crypto.decrypt_vault(&ciphertext) {
+                    if let Ok(conflicts) = serde_json::from_slice::<Vec<ConflictItem>>(&plaintext) {
+                        return conflicts;
+                    }
+                }
+            }
+        }
+        // Locked or corrupt: cannot surface encrypted conflict data.
+        return vec![];
+    }
+
+    if legacy_path.exists() {
+        return std::fs::read_to_string(&legacy_path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+    }
+
+    vec![]
 }
 
 async fn download_vault_from_manifest(
@@ -858,15 +918,7 @@ pub async fn get_sync_status(state: State<'_, Arc<AppState>>) -> Result<SyncStat
         None
     };
 
-    let conflicts_path = state.store.store_path().join("sync_conflicts.json");
-    let conflicts: Vec<ConflictItem> = if conflicts_path.exists() {
-        std::fs::read_to_string(&conflicts_path)
-            .ok()
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
+    let conflicts: Vec<ConflictItem> = load_conflicts(&state);
 
     Ok(SyncStatus {
         syncing: false,
@@ -889,15 +941,7 @@ pub async fn resolve_conflict(
 
     // Read the stored conflict (if any) up-front: its server_version snapshot
     // is the authoritative "server side" for resolution.
-    let conflicts_path = state.store.store_path().join("sync_conflicts.json");
-    let stored_conflicts: Vec<ConflictItem> = if conflicts_path.exists() {
-        std::fs::read_to_string(&conflicts_path)
-            .ok()
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
+    let stored_conflicts: Vec<ConflictItem> = load_conflicts(&state);
     let stored_conflict = stored_conflicts
         .iter()
         .find(|c| c.item_id == item_id)
@@ -986,23 +1030,10 @@ pub async fn resolve_conflict(
         );
     }
 
-    let conflicts_path = state.store.store_path().join("sync_conflicts.json");
-    let mut conflicts: Vec<ConflictItem> = if conflicts_path.exists() {
-        std::fs::read_to_string(&conflicts_path)
-            .ok()
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
+    let mut conflicts: Vec<ConflictItem> = load_conflicts(&state);
     conflicts.retain(|conflict| conflict.item_id.as_str() != item_id);
 
-    if !conflicts.is_empty() {
-        let json = serde_json::to_string(&conflicts).map_err(|e| e.to_string())?;
-        std::fs::write(&conflicts_path, json).map_err(|e| e.to_string())?;
-    } else if conflicts_path.exists() {
-        let _ = std::fs::remove_file(&conflicts_path);
-    }
+    save_conflicts(&state, &conflicts)?;
 
     crate::commands::vault::emit_vault_items_changed(&app);
 
@@ -1011,7 +1042,7 @@ pub async fn resolve_conflict(
 
 #[tauri::command]
 pub async fn set_server_url(state: State<'_, Arc<AppState>>, url: String) -> Result<(), String> {
-    let url = normalize_server_url(&url);
+    let url = crate::validate_server_url(&url)?;
     {
         let mut server_url = state.server_url.write();
         *server_url = url.clone();

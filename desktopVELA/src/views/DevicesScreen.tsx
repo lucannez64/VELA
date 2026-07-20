@@ -38,6 +38,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   const [webSessions, setWebSessions] = useState<WebSession[]>([]);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
   const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState<string | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
   const [qrImages, setQrImages] = useState<string[]>([]);
   const [qrIndex, setQrIndex] = useState(0);
@@ -117,10 +118,12 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   const handleEnrollDevice = async () => {
     setEnrolling(true);
     setEnrollmentCode(null);
+    setVerificationCode(null);
     setCodeCopied(false);
     try {
       const code = await invoke<string>('generate_enrollment_code');
       setEnrollmentCode(code);
+      invoke<string>('enrollment_verification_code', { code }).then(setVerificationCode);
       const chunks = createEnrollmentQrChunks(code);
       setQrImages(await Promise.all(chunks.map(chunk => QRCode.toDataURL(chunk, {
         errorCorrectionLevel: 'L',
@@ -315,7 +318,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
       </div>
 
       {enrollmentCode && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setEnrollmentCode(null)}>
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => { setEnrollmentCode(null); setVerificationCode(null); }}>
           <div
             className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-outline-variant/20"
             onClick={e => e.stopPropagation()}
@@ -329,6 +332,21 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
               The code is valid for one use and contains sensitive key material — do not share it over unencrypted channels.
               Closing this dialog keeps the device pending until it is used or cancelled from the Devices list.
             </p>
+            {verificationCode && (
+              <div className="mb-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="material-symbols-outlined text-amber-400 text-lg">verified_user</span>
+                  <span className="font-label text-sm font-bold text-amber-300">Verify on the new device</span>
+                </div>
+                <p className="text-on-surface-variant text-xs mb-2">
+                  After scanning, the new device will show its own verification code. Confirm it matches the one below before approving —
+                  if it doesn't match, someone may have tampered with the code. Never approve a mismatch.
+                </p>
+                <div className="font-mono text-xl font-bold tracking-widest text-on-surface text-center py-1">
+                  {verificationCode}
+                </div>
+              </div>
+            )}
             {qrImages.length > 0 && (
               <div className="mb-4 p-4 bg-white rounded-xl flex flex-col items-center">
                 <img src={qrImages[qrIndex]} alt={`Enrollment QR ${qrIndex + 1} of ${qrImages.length}`} className="w-full max-w-[280px] h-auto" />
@@ -367,7 +385,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                 {codeCopied ? 'Copied!' : 'Copy code'}
               </button>
               <button
-                onClick={() => setEnrollmentCode(null)}
+                onClick={() => { setEnrollmentCode(null); setVerificationCode(null); }}
                 className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
               >
                 Done

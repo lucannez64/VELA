@@ -143,7 +143,7 @@ pub async fn update_settings(
 ) -> Result<(), String> {
     let previous_settings = state.store.load_settings().unwrap_or_default();
     let mut settings = settings;
-    settings.server_url = normalize_server_url(&settings.server_url);
+    settings.server_url = crate::validate_server_url(&settings.server_url)?;
     settings.quick_search_shortcut =
         normalize_quick_search_shortcut(&settings.quick_search_shortcut);
 

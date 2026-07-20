@@ -468,12 +468,16 @@ impl ApiClient {
     }
 
     pub async fn fetch_enrollment_package(&self, token: &str) -> Result<String> {
+        // Send the real token via a header, not the URL: URLs commonly end up
+        // in access/proxy/CDN logs by default, while custom headers typically
+        // don't. The path keeps a placeholder for route compatibility — the
+        // server prefers the header when present (see get_enrollment_package).
+        let token = token.to_string();
         let resp = self
-            .send_request(true, |client| {
-                client.get(format!(
-                    "{}/device/enrollment-package/{}",
-                    self.base_url, token
-                ))
+            .send_request(true, move |client| {
+                client
+                    .get(format!("{}/device/enrollment-package/_", self.base_url))
+                    .header("X-Enrollment-Token", &token)
             })
             .await?;
 

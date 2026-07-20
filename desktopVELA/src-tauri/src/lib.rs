@@ -32,6 +32,38 @@ pub fn normalize_server_url(url: &str) -> String {
     }
 }
 
+/// Validate a user-supplied server URL. Allows empty (offline mode), `https://`
+/// anywhere, and plain `http://` only for loopback (`localhost` / `127.0.0.1`
+/// / `::1`). Prevents a compromised renderer from redirecting sync traffic
+/// (which carries encrypted chunks + a Bearer token) to a plaintext endpoint.
+pub fn validate_server_url(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let parsed = url::Url::parse(trimmed).map_err(|e| format!("Invalid server URL: {e}"))?;
+    match parsed.scheme() {
+        "https" => Ok(trimmed.to_string()),
+        "http" => {
+            let host = parsed.host_str().unwrap_or("");
+            let is_loopback = host == "localhost"
+                || host == "127.0.0.1"
+                || host == "::1"
+                || host == "[::1]";
+            if !is_loopback {
+                return Err(
+                    "Insecure server URL: plain HTTP is only allowed for localhost / 127.0.0.1"
+                        .to_string(),
+                );
+            }
+            Ok(trimmed.to_string())
+        }
+        other => Err(format!(
+            "Unsupported server URL scheme '{other}'; use https:// (or http://localhost)"
+        )),
+    }
+}
+
 pub struct AppState {
     pub session: RwLock<session::Session>,
     pub vault: RwLock<vault::VaultStore>,

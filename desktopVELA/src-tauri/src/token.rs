@@ -160,12 +160,24 @@ pub fn validate_local_token(
         .unwrap_or_default()
         .to_string();
     let user_id = payload["user_id"].as_str().unwrap_or_default().to_string();
-    let iat = DateTime::parse_from_rfc3339(payload["iat"].as_str().unwrap_or_default())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now());
-    let exp = DateTime::parse_from_rfc3339(payload["exp"].as_str().unwrap_or_default())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now());
+    // A malformed/missing timestamp must reject the token, not silently
+    // treat it as freshly issued — that would reset `age_secs()` to ~0 and
+    // let a token past MAX_TOKEN_AGE_SECS (or already expired) keep passing
+    // validation instead of being rejected.
+    let iat = payload["iat"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("token missing iat claim"))
+        .and_then(|s| {
+            DateTime::parse_from_rfc3339(s).map_err(|e| anyhow::anyhow!("invalid iat claim: {e}"))
+        })
+        .map(|dt| dt.with_timezone(&Utc))?;
+    let exp = payload["exp"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("token missing exp claim"))
+        .and_then(|s| {
+            DateTime::parse_from_rfc3339(s).map_err(|e| anyhow::anyhow!("invalid exp claim: {e}"))
+        })
+        .map(|dt| dt.with_timezone(&Utc))?;
 
     let token = PasetoToken {
         jti,

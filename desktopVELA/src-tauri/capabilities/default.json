@@ -12,7 +12,6 @@
     "dialog:allow-save",
     "notification:default",
     "clipboard-manager:allow-write-text",
-    "clipboard-manager:allow-read-text",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister"
   ]

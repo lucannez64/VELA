@@ -48,8 +48,13 @@ pub async fn enroll() -> Result<BiometricEnrollmentStatus, String> {
 }
 
 #[command]
-pub async fn setup_password_recovery(password: String, rms: Vec<u8>) -> Result<(), String> {
-    let rms_array: [u8; 32] = rms.try_into().map_err(|_| "RMS must be 32 bytes")?;
+pub async fn setup_password_recovery(password: String) -> Result<(), String> {
+    // Source the RMS from the trusted in-memory cache (populated after a real
+    // unlock / biometric auth), never from a renderer-supplied argument. A
+    // compromised renderer must not be able to seal an attacker-chosen RMS
+    // under the user's password.
+    let rms_array = crate::biometric::get_cached_rms()
+        .ok_or_else(|| "Vault must be unlocked to set up password recovery".to_string())?;
     tokio::task::spawn_blocking(move || {
         store_password_encrypted(&rms_array, &password)
             .map_err(|e| format!("Failed to store password recovery: {}", e))

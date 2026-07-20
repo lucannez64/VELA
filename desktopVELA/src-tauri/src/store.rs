@@ -304,7 +304,7 @@ impl Store {
     }
 }
 
-fn write_secret_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn write_secret_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
         restrict_directory(parent)?;

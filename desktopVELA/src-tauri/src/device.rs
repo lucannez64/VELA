@@ -650,7 +650,23 @@ pub mod tpm {
         // shred it immediately. We CANNOT use `-o -` here: tpm2_unseal's `-o`
         // flag treats `-` as a literal filename, not stdout — using it silently
         // drops the key and locks the user out.
+        //
+        // Residual risk: if this process is killed (SIGKILL, crash, power
+        // loss) in the narrow window between tpm2_unseal writing the file and
+        // shred_and_remove running below, the raw RMS is left in plaintext on
+        // disk until the next run. A FIFO (named pipe) would avoid ever
+        // touching disk at all, but tpm2_unseal's blocking-open semantics on
+        // a FIFO are easy to get wrong (a writer that never opens — e.g. a
+        // TPM auth failure before tpm2_unseal reaches its output step — would
+        // hang our read forever), and this path can't be exercised without
+        // real TPM hardware to verify against. So instead: clean up any stale
+        // leftover from a previous crashed run before we start (bounding
+        // exposure to "until the next unlock attempt" rather than
+        // indefinitely), and pin the temp file to 0600 explicitly.
         let unseal_out = get_private_dir().join("unsealed.tmp");
+        if unseal_out.exists() {
+            shred_and_remove(&unseal_out);
+        }
         let unseal_output = Command::new("tpm2_unseal")
             .args([
                 "-c",
@@ -659,6 +675,11 @@ pub mod tpm {
                 unseal_out.to_str().unwrap(),
             ])
             .output();
+        #[cfg(unix)]
+        if unseal_out.exists() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&unseal_out, std::fs::Permissions::from_mode(0o600));
+        }
 
         let data = match unseal_output {
             Ok(o) if o.status.success() => {
