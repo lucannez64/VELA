@@ -91,6 +91,12 @@ impl Store {
                 Ok(iv) => iv,
                 Err(_) => continue,
             };
+            // Set-metadata keys (`set:meta:{key}`) live in the default tree by
+            // design — del_set/smembers read them from here. Migrating them
+            // into the ttl tree would detach expiry checks from the set trees.
+            if k.starts_with(b"set:meta:") {
+                continue;
+            }
             if v.len() < 8 {
                 let _ = persist.insert(&k, v);
                 let _ = db.remove(&k);
@@ -400,6 +406,30 @@ impl Store {
                     removed += 1;
                 }
             }
+        }
+
+        // Sweep expired set trees: their `set:meta:{key}` expiry markers live
+        // in the default tree, so collect expired set keys first (del_set
+        // writes back into the default tree, so we must not mutate while
+        // iterating).
+        let mut expired_sets: Vec<String> = Vec::new();
+        for item in self.db.iter() {
+            let (k, v) =
+                item.map_err(|e| AppError::Internal(format!("sled cleanup iterate error: {e}")))?;
+            if !k.starts_with(b"set:meta:") || v.len() < 8 {
+                continue;
+            }
+            let mut exp_bytes = [0u8; 8];
+            exp_bytes.copy_from_slice(&v[..8]);
+            if now >= u64::from_le_bytes(exp_bytes) {
+                if let Ok(meta_key) = String::from_utf8(k.to_vec()) {
+                    expired_sets.push(meta_key["set:meta:".len()..].to_string());
+                }
+            }
+        }
+        for set_key in expired_sets {
+            self.del_set(&set_key)?;
+            removed += 1;
         }
 
         Ok(removed)

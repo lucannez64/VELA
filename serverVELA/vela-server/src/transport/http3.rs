@@ -46,6 +46,7 @@ async fn handle_connection(
     app: Router,
     max_body_bytes: usize,
 ) -> anyhow::Result<()> {
+    let remote = connection.remote_address();
     let mut h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(connection)).await?;
 
     loop {
@@ -53,7 +54,9 @@ async fn handle_connection(
             Ok(Some(resolver)) => {
                 let app = app.clone();
                 tokio::spawn(async move {
-                    if let Err(error) = handle_request(resolver, app, max_body_bytes).await {
+                    if let Err(error) =
+                        handle_request(resolver, app, max_body_bytes, remote).await
+                    {
                         tracing::debug!(error = %error, "HTTP/3 request failed");
                     }
                 });
@@ -70,6 +73,7 @@ async fn handle_request(
     resolver: RequestResolver<h3_quinn::Connection, Bytes>,
     app: Router,
     max_body_bytes: usize,
+    remote: SocketAddr,
 ) -> anyhow::Result<()> {
     let (request, mut stream) = resolver.resolve_request().await?;
     let (parts, _) = request.into_parts();
@@ -90,6 +94,11 @@ async fn handle_request(
     }
 
     let mut axum_request = Request::from_parts(parts, Body::from(body.freeze()));
+    // Attach the QUIC peer so rate limiters key on the real client address,
+    // same as the TCP listeners' ConnectInfo.
+    axum_request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(remote));
     // Mark this as genuine native HTTPS via a trusted, in-process extension —
     // not a forwarded header, which `request_was_https` deliberately distrusts
     // from a direct (non-proxy) client. Without this the HTTPS-enforcement

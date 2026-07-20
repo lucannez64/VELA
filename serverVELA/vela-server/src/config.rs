@@ -97,14 +97,18 @@ impl Config {
             );
         }
 
-        if production && webauthn_rp_origin.starts_with("http://") {
-            anyhow::ensure!(
-                allow_insecure_lan,
-                "WEBAUTHN_RP_ORIGIN must use https in production unless ALLOW_INSECURE_LAN=true"
+        // Misconfiguration must never lock the operator out of their own server
+        // (e.g. a Coolify redeploy where WEBAUTHN_RP_ORIGIN was never set):
+        // degrade passkey recovery with a loud warning instead of refusing to start.
+        if production && webauthn_rp_origin.starts_with("http://") && !allow_insecure_lan {
+            tracing::warn!(
+                origin = %webauthn_rp_origin,
+                "WEBAUTHN_RP_ORIGIN uses cleartext http in production — passkey (WebAuthn) \
+                 recovery will not work until this is set to your https origin"
             );
         }
 
-        let (sk_bytes, pk_bytes) = load_paseto_key(production)?;
+        let (sk_bytes, pk_bytes) = load_paseto_key(&data_dir)?;
 
         let max_body_bytes = std::env::var("MAX_BODY_BYTES")
             .ok()
@@ -194,40 +198,95 @@ fn env_optional(name: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-fn load_paseto_key(production: bool) -> Result<(Vec<u8>, Vec<u8>)> {
+/// Load the PASETO keypair, in priority order:
+/// 1. `PASETO_SECRET_KEY` env var (explicit operator configuration), or
+/// 2. a key persisted at `{data_dir}/paseto.key` from a previous run, or
+/// 3. a freshly generated keypair, persisted to that path (0600) so sessions
+///    survive restarts with zero operator action.
+///
+/// Only if persisting fails (e.g. read-only filesystem) does the server fall
+/// back to an ephemeral in-memory key — never refusing to start, so a redeploy
+/// can never lock the operator out of an otherwise healthy server.
+fn load_paseto_key(data_dir: &str) -> Result<(Vec<u8>, Vec<u8>)> {
     use pasetors::keys::{AsymmetricKeyPair, Generate};
     use pasetors::version4::V4;
+
+    let parse_key = |raw: Vec<u8>, source: &str| -> Result<(Vec<u8>, Vec<u8>)> {
+        anyhow::ensure!(
+            raw.len() == 64,
+            "{source} must be 64 bytes (got {})",
+            raw.len()
+        );
+        let pk = raw[32..].to_vec();
+        Ok((raw, pk))
+    };
 
     if let Ok(b64) = std::env::var("PASETO_SECRET_KEY") {
         let raw = B64
             .decode(b64.trim())
             .context("PASETO_SECRET_KEY is not valid base64")?;
-        anyhow::ensure!(
-            raw.len() == 64,
-            "PASETO_SECRET_KEY must be 64 bytes (got {})",
-            raw.len()
-        );
-        let pk = raw[32..].to_vec();
-        return Ok((raw, pk));
+        return parse_key(raw, "PASETO_SECRET_KEY");
     }
 
-    anyhow::ensure!(
-        !production,
-        "PASETO_SECRET_KEY must be set when VELA_PRODUCTION=true or VELA_ENV=production"
-    );
-
-    tracing::warn!(
-        "PASETO_SECRET_KEY not set — generating an ephemeral keypair. \
-         Tokens will be invalidated on restart. \
-         Set PASETO_SECRET_KEY=<base64> to persist sessions across restarts."
-    );
+    let key_path = Path::new(data_dir).join("paseto.key");
+    match std::fs::read_to_string(&key_path) {
+        Ok(contents) => {
+            let raw = B64
+                .decode(contents.trim())
+                .context(format!("{} is not valid base64", key_path.display()))?;
+            return parse_key(raw, "paseto.key");
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            // Unreadable but present — do NOT silently rotate the key (that
+            // would invalidate every live session). Fail loudly instead.
+            anyhow::bail!("cannot read {}: {e}", key_path.display());
+        }
+    }
 
     let kp = AsymmetricKeyPair::<V4>::generate()
         .map_err(|e| anyhow::anyhow!("PASETO key generation failed: {e:?}"))?;
     let sk_bytes = kp.secret.as_bytes().to_vec();
     let pk_bytes = kp.public.as_bytes().to_vec();
 
+    match persist_paseto_key(&key_path, &sk_bytes) {
+        Ok(()) => tracing::info!(
+            path = %key_path.display(),
+            "generated and persisted PASETO keypair (sessions survive restarts)"
+        ),
+        Err(e) => tracing::warn!(
+            path = %key_path.display(),
+            error = %e,
+            "could not persist PASETO keypair — using an ephemeral key; \
+             tokens will be invalidated on restart"
+        ),
+    }
+
     Ok((sk_bytes, pk_bytes))
+}
+
+/// Write the PASETO secret key to `path` as base64 with owner-only permissions.
+fn persist_paseto_key(path: &Path, sk_bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
+    }
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        opts.mode(0o600);
+    }
+    let mut file = opts
+        .open(path)
+        .with_context(|| format!("cannot create {}", path.display()))?;
+    file.write_all(B64.encode(sk_bytes).as_bytes())?;
+    file.sync_all()?;
+    Ok(())
 }
 
 fn env_flag(name: &str) -> bool {

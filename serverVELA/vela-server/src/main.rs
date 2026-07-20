@@ -231,9 +231,16 @@ async fn serve() -> anyhow::Result<()> {
         });
     }
 
-    let app = routes::build(state.clone()).layer(tower_http::limit::RequestBodyLimitLayer::new(
-        config.max_body_bytes,
-    ));
+    let app = routes::build(state.clone())
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            config.max_body_bytes,
+        ))
+        // Bound how long a single request may occupy a handler (slow-request /
+        // slowloris-style protection). Generous so legit large vault uploads on
+        // slow links are unaffected.
+        .layer(tower_http::timeout::TimeoutLayer::new(
+            std::time::Duration::from_secs(120),
+        ));
 
     let clear_addr: SocketAddr = config.listen_addr.parse()?;
     let clear_app = app.clone();

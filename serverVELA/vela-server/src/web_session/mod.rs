@@ -42,7 +42,7 @@ const LINK_NONCE_LEN: usize = 32;
 
 const DEFAULT_TTL_SECS: i64 = 30 * 60; // 30 minutes
 const MIN_TTL_SECS: i64 = 60;
-const MAX_TTL_SECS: i64 = 24 * 60 * 60; // 24 hours
+pub(crate) const MAX_TTL_SECS: i64 = 24 * 60 * 60; // 24 hours
 /// A pending (never granted) session is reaped after this long.
 const PENDING_TTL_SECS: i64 = 5 * 60;
 /// RO snapshots seal the whole decrypted vault, so allow a generous ceiling.
@@ -62,6 +62,18 @@ fn decode_exact(b64: &str, len: usize, what: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Constant-time byte-slice equality (length leaks only via early length check).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 // ── POST /web-session/start ──────────────────────────────────────────────────────
@@ -137,6 +149,7 @@ pub struct PollResponse {
 struct SessionRow {
     user_id: Option<Uuid>,
     web_vk: Option<String>,
+    link_nonce: Option<String>,
     mode: Option<String>,
     status: String,
     capsule: Option<String>,
@@ -147,7 +160,7 @@ fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
     let rows = state
         .db
         .query(
-            "SELECT user_id, web_vk, mode, status, capsule, expires_at
+            "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at
              FROM web_sessions WHERE id = $1",
             stoolap::params![id.to_string()],
         )
@@ -165,17 +178,22 @@ fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
         .as_str()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
-    let mode = crate::db::row_val(&row, 2)?.as_str().map(|s| s.to_string());
-    let status = crate::db::row_val(&row, 3)?
+    let link_nonce = crate::db::row_val(&row, 2)?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let mode = crate::db::row_val(&row, 3)?.as_str().map(|s| s.to_string());
+    let status = crate::db::row_val(&row, 4)?
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| AppError::Internal("status missing".into()))?;
-    let capsule = crate::db::row_val(&row, 4)?.as_str().map(|s| s.to_string());
-    let expires_at = crate::db::row_val(&row, 5)?.as_timestamp();
+    let capsule = crate::db::row_val(&row, 5)?.as_str().map(|s| s.to_string());
+    let expires_at = crate::db::row_val(&row, 6)?.as_timestamp();
 
     Ok(SessionRow {
         user_id,
         web_vk,
+        link_nonce,
         mode,
         status,
         capsule,
@@ -301,6 +319,9 @@ pub struct GrantRequest {
     /// Capsule sealed to the session's ephemeral KEM key: the RO snapshot or the
     /// RW RMS (b64).
     pub capsule: String,
+    /// Anti-phishing binding: the 32-byte link nonce (b64) the browser showed in
+    /// the QR. Must match the nonce registered at `/web-session/start`.
+    pub link_nonce: String,
     /// Requested lifetime in seconds; defaults to 30 min, capped at 24 h.
     #[serde(default)]
     pub ttl_secs: Option<i64>,
@@ -338,6 +359,29 @@ pub async fn post_grant(
             "web session is not pending (already granted or revoked)".into(),
         ));
     }
+
+    // Anti-phishing binding: the QR the approver scanned must carry the same
+    // link nonce the browser registered at start. Compared in constant time;
+    // any failure yields the same error so an attacker cannot tell a missing
+    // session from a nonce mismatch.
+    let given_nonce = B64.decode(body.link_nonce.as_bytes()).map_err(|_| {
+        AppError::Unauthorized("link_nonce mismatch — scanned QR does not match this session".into())
+    })?;
+    let stored_nonce = existing
+        .link_nonce
+        .as_deref()
+        .and_then(|s| B64.decode(s.as_bytes()).ok())
+        .ok_or_else(|| {
+            AppError::Unauthorized(
+                "link_nonce mismatch — scanned QR does not match this session".into(),
+            )
+        })?;
+    if given_nonce.len() != LINK_NONCE_LEN || !ct_eq(&given_nonce, &stored_nonce) {
+        return Err(AppError::Unauthorized(
+            "link_nonce mismatch — scanned QR does not match this session".into(),
+        ));
+    }
+
     if mode == "rw" && existing.web_vk.is_none() {
         return Err(AppError::BadRequest(
             "rw grant requires the browser to have registered web_vk at start".into(),
@@ -512,7 +556,8 @@ pub async fn get_sessions_list(
             "SELECT id, mode, status, created_at, expires_at
              FROM web_sessions
              WHERE user_id = $1 AND status = 'granted'
-             ORDER BY created_at DESC",
+             ORDER BY created_at DESC
+             LIMIT 1000",
             stoolap::params![session.user_id.to_string()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;

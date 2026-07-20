@@ -172,6 +172,13 @@ pub async fn put_path(
     let now = Utc::now().to_rfc3339();
     let mut updated = Vec::with_capacity(body.buckets.len());
 
+    let incoming: u64 = body
+        .buckets
+        .iter()
+        .map(|b| b.ciphertext.len() as u64)
+        .sum();
+    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), incoming)?;
+
     for bucket in body.buckets {
         let ciphertext = B64
             .decode(&bucket.ciphertext)

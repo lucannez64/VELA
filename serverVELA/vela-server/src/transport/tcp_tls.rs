@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 
 use axum::Router;
 use hyper_util::{
@@ -9,6 +9,7 @@ use hyper_util::{
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
+use tower::Service as _;
 
 pub async fn serve(
     addr: SocketAddr,
@@ -19,10 +20,18 @@ pub async fn serve(
     let acceptor = TlsAcceptor::from(tls_config);
     tracing::info!(%addr, "TLS TCP listener active");
 
+    // Attach `ConnectInfo<SocketAddr>` per connection so rate limiters key on
+    // the real peer (same as the cleartext listener via axum::serve).
+    let mut make_service = app.into_make_service_with_connect_info::<SocketAddr>();
+
     loop {
         let (stream, peer) = listener.accept().await?;
         let acceptor = acceptor.clone();
-        let service = TowerToHyperService::new(app.clone());
+        let per_connection = match make_service.call(peer).await {
+            Ok(service) => service,
+            Err(error) => match Infallible::from(error) {},
+        };
+        let service = TowerToHyperService::new(per_connection);
 
         tokio::spawn(async move {
             let tls_stream = match acceptor.accept(stream).await {

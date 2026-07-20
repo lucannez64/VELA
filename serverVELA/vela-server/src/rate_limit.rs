@@ -150,11 +150,18 @@ pub fn record_verify_failure(store: &Store, device_id: &str) -> Result<()> {
 
     let _ = store.incr_expire(&fail_key, 1, WINDOW_SECS);
 
-    if streak >= 3 {
-        let exp = (streak - 3).min(8); // cap at 2^8 = 256 s, below 5 min = 300 s
+    // Cap the effective streak: an attacker who knows a device_id can keep
+    // failing proofs, but the backoff must never grow past the 300 s ceiling
+    // and must not log-spam. The per-IP verify limit (rl:verify:ip) bites the
+    // attacker long before this becomes a permanent device lockout.
+    let eff_streak = streak.min(10);
+    if eff_streak >= 3 {
+        let exp = (eff_streak - 3).min(8); // cap at 2^8 = 256 s, below 5 min = 300 s
         let delay_secs: u64 = (1u64 << exp).min(300);
         store.set_ex(&backoff_key, &[1u8], delay_secs)?;
-        tracing::warn!(device_id, streak, delay_secs, "auth verify backoff applied");
+        if streak < 12 {
+            tracing::warn!(device_id, streak, delay_secs, "auth verify backoff applied");
+        }
     }
     Ok(())
 }

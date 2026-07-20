@@ -522,11 +522,117 @@ async fn web_session_grant_requires_auth() {
                 .uri(format!("/web-session/{}/grant", Uuid::new_v4()))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::to_string(&json!({ "mode": "ro", "capsule": B64.encode(vec![0u8; 64]) })).unwrap(),
+                    serde_json::to_string(&json!({
+                        "mode": "ro",
+                        "capsule": B64.encode(vec![0u8; 64]),
+                        "link_nonce": B64.encode(vec![0u8; 32]),
+                    })).unwrap(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn web_session_grant_rejects_wrong_link_nonce() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+
+    let user_id = Uuid::new_v4();
+    let device_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    state
+        .db
+        .execute(
+            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
+            stoolap::params![user_id.to_string(), now.to_rfc3339()],
+        )
+        .unwrap();
+    state.db.execute(
+        "INSERT INTO devices
+         (id, user_id, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8, $9)",
+        stoolap::params![
+            device_id.to_string(),
+            user_id.to_string(),
+            B64.encode(vec![0u8; 1600]),
+            B64.encode(vec![0u8; 2624]),
+            Option::<String>::None,
+            Option::<String>::None,
+            Option::<String>::None,
+            Option::<String>::None,
+            now.to_rfc3339(),
+        ],
+    ).unwrap();
+    let token = issue_token(&state, user_id, device_id);
+
+    let link_nonce = B64.encode(vec![7u8; 32]);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/web-session/start")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "ephemeral_pk": B64.encode(vec![0u8; 1600]),
+                        "link_nonce": link_nonce,
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let session_id = v["session_id"].as_str().unwrap().to_string();
+
+    let grant = |nonce: String| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/web-session/{session_id}/grant"))
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(
+                serde_json::to_string(&json!({
+                    "mode": "ro",
+                    "capsule": B64.encode(vec![0u8; 64]),
+                    "link_nonce": nonce,
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+
+    // Wrong nonce → 401, session must remain pending.
+    let resp = app
+        .clone()
+        .oneshot(grant(B64.encode(vec![9u8; 32])))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/web-session/{session_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["status"], "pending");
+
+    // Correct nonce → grant succeeds.
+    let resp = app.oneshot(grant(link_nonce)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }

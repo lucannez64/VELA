@@ -74,6 +74,24 @@ impl FromRequestParts<AppState> for AuthSession {
         // ── 5. Per-JTI rate limit (300 req/min) ──────────────────────────────
         rate_limit::authenticated_by_jti(store, &claims.jti)?;
 
+        // ── 5b. User existence check ─────────────────────────────────────────
+        // Web-session RW tokens use session_id as device_id and carry no
+        // devices row, so device-revocation alone cannot kill them when the
+        // account is deleted. One indexed lookup per request closes that gap.
+        let user_exists = state
+            .db
+            .query(
+                "SELECT 1 FROM users WHERE id = $1",
+                stoolap::params![claims.user_id.to_string()],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .into_iter()
+            .next()
+            .is_some();
+        if !user_exists {
+            return Err(AppError::Unauthorized("account no longer exists".into()));
+        }
+
         // ── 6. Token renewal (if expiry is ≤5 min away) ──────────────────────
         let renewal_threshold = claims.exp - chrono::Duration::minutes(5);
         let new_token = if now >= renewal_threshold {

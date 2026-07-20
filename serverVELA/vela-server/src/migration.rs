@@ -114,7 +114,7 @@ pub fn export_bundle(options: ExportOptions) -> Result<()> {
     copy_dir_all(&sled_path, &data_root.join("sled"))?;
 
     let identity_env = build_identity_env(&env, options.include_secrets)?;
-    fs::write(payload_root.join("identity.env"), identity_env)?;
+    write_identity_env(&payload_root.join("identity.env"), &identity_env)?;
 
     let mut deployment_entries = Vec::new();
     if !options.include_deployment_config.is_empty() {
@@ -351,6 +351,25 @@ fn collect_checksums(root: &Path, dir: &Path, files: &mut BTreeMap<String, Strin
             files.insert(rel, hasher.finalize().to_hex().to_string());
         }
     }
+    Ok(())
+}
+
+/// Write identity.env with owner-only permissions: it may carry the PASETO
+/// secret, so it must never be created world/group-readable by umask.
+fn write_identity_env(path: &Path, contents: &str) -> Result<()> {
+    use std::io::Write;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    file.write_all(contents.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 use axum::{
     extract::{ConnectInfo, Request},
-    http::header::{HeaderName, AUTHORIZATION, CONTENT_TYPE},
+    http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE},
     middleware::{self, Next},
     response::Response,
     routing::{delete, get, post, put},
@@ -16,6 +16,7 @@ use crate::state::AppState;
 
 static IF_MATCH: HeaderName = HeaderName::from_static("if-match");
 static X_LAMPORT_CLOCK: HeaderName = HeaderName::from_static("x-lamport-clock");
+static X_NEW_TOKEN: HeaderName = HeaderName::from_static("x-new-token");
 
 #[derive(Clone, Copy, Debug)]
 pub struct NativeHttps;
@@ -33,6 +34,7 @@ pub fn build(state: AppState) -> Router {
             .allow_origin(Any)
             .allow_headers(allowed_headers.to_vec())
             .allow_methods(Any)
+            .expose_headers([X_NEW_TOKEN.clone()])
     } else {
         let origins: Vec<_> = state
             .config
@@ -49,6 +51,8 @@ pub fn build(state: AppState) -> Router {
                 axum::http::Method::PUT,
                 axum::http::Method::DELETE,
             ])
+            // Browsers must be able to read the renewed-token header cross-origin.
+            .expose_headers([X_NEW_TOKEN.clone()])
     };
 
     let mut router = Router::new()
@@ -163,7 +167,40 @@ pub fn build(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(state.clone(), enforce_https))
         .layer(cors)
+        // Outermost layer: every response (API JSON, SPA, errors) gets the
+        // security headers below.
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+/// Baseline security headers on every response. The CSP allows the built SPA
+/// (same-origin assets + wasm + data-URL images like the QR code) while denying
+/// framing, plugins and cross-origin script/style injection.
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        axum::http::header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
+             style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
+             connect-src 'self'; font-src 'self'; object-src 'none'; \
+             base-uri 'none'; frame-ancestors 'none'",
+        ),
+    );
+    response
 }
 
 /// Reject cleartext requests in production.
@@ -224,6 +261,13 @@ fn request_was_https(req: &Request, state: &AppState) -> bool {
             .get("x-forwarded-ssl")
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("on"))
+        // Cloudflare edge → cloudflared forwards CF-Visitor unchanged; accept it
+        // as proof of HTTPS so a Cloudflare Tunnel deployment can never 426 its
+        // own operator even if X-Forwarded-Proto is stripped somewhere.
+        || headers
+            .get("cf-visitor")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("\"scheme\":\"https\""))
 }
 
 fn request_from_trusted_proxy(req: &Request, state: &AppState) -> bool {
@@ -236,7 +280,7 @@ fn request_from_trusted_proxy(req: &Request, state: &AppState) -> bool {
 
 async fn health(
     axum::extract::State(state): axum::extract::State<AppState>,
-) -> axum::Json<serde_json::Value> {
+) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
     let mut db_ok = true;
     let mut sled_ok = true;
 
@@ -252,9 +296,16 @@ async fn health(
 
     let all_ok = db_ok && sled_ok;
 
-    axum::Json(serde_json::json!({
-        "status": if all_ok { "ok" } else { "degraded" },
-        "stoolap": if db_ok { "ok" } else { "error" },
-        "sled": if sled_ok { "ok" } else { "error" },
-    }))
+    (
+        if all_ok {
+            axum::http::StatusCode::OK
+        } else {
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        },
+        axum::Json(serde_json::json!({
+            "status": if all_ok { "ok" } else { "degraded" },
+            "stoolap": if db_ok { "ok" } else { "error" },
+            "sled": if sled_ok { "ok" } else { "error" },
+        })),
+    )
 }

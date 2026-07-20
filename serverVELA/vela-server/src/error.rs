@@ -29,6 +29,9 @@ pub enum AppError {
     #[error("rate limit exceeded: {0}")]
     RateLimited(String),
 
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -45,6 +48,9 @@ impl IntoResponse for AppError {
                 (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable", m.clone())
             }
             AppError::RateLimited(m) => (StatusCode::TOO_MANY_REQUESTS, "rate_limited", m.clone()),
+            AppError::PayloadTooLarge(m) => {
+                (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", m.clone())
+            }
             AppError::Internal(m) => {
                 // Never leak backend (stoolap/sled/serde) detail to clients — it
                 // can disclose schema, paths, or internal state. Log it instead.

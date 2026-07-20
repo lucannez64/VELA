@@ -19,6 +19,10 @@ const MAX_CAPSULE_BYTES: usize = 1024 * 1024;
 const DEFAULT_INBOX_LIMIT: i64 = 50;
 const MAX_INBOX_LIMIT: i64 = 200;
 const MAX_INBOX_ITEMS_PER_USER: i64 = 500;
+/// Max pending bytes one sender may push to a single recipient.
+const MAX_SENDER_TO_RECIPIENT_BYTES: i64 = 8 * 1024 * 1024;
+/// Max total pending bytes in a recipient's inbox.
+const MAX_RECIPIENT_INBOX_BYTES: i64 = 32 * 1024 * 1024;
 
 pub const INBOX_TTL_SECS: i64 = 30 * 24 * 60 * 60;
 
@@ -82,6 +86,51 @@ pub async fn post_send(
     if capsule_bytes.len() > MAX_CAPSULE_BYTES {
         return Err(AppError::BadRequest(format!(
             "capsule exceeds maximum size of {MAX_CAPSULE_BYTES} bytes"
+        )));
+    }
+
+    // Anti-flooding: cap pending bytes per (sender → recipient) pair and per
+    // recipient inbox, so a single sender cannot fill the victim's disk.
+    let sum_bytes = |sql: &str, p1: String, p2: Option<String>| -> Result<i64> {
+        let rows = match &p2 {
+            Some(p2) => state
+                .db
+                .query(sql, stoolap::params![p1, p2])
+                .map_err(|e| AppError::Internal(e.to_string()))?,
+            None => state
+                .db
+                .query(sql, stoolap::params![p1])
+                .map_err(|e| AppError::Internal(e.to_string()))?,
+        };
+        let row = rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::Internal("sum query failed".into()))?
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(crate::db::row_val(&row, 0)?.as_int64().unwrap_or(0))
+    };
+
+    let pair_bytes = sum_bytes(
+        "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+         WHERE recipient_user_id = $1 AND sender_user_id = $2",
+        body.recipient_user_id.to_string(),
+        Some(session.user_id.to_string()),
+    )?;
+    if pair_bytes + capsule_bytes.len() as i64 > MAX_SENDER_TO_RECIPIENT_BYTES {
+        return Err(AppError::PayloadTooLarge(format!(
+            "pending shares to this recipient exceed {MAX_SENDER_TO_RECIPIENT_BYTES} bytes"
+        )));
+    }
+
+    let total_bytes = sum_bytes(
+        "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+         WHERE recipient_user_id = $1",
+        body.recipient_user_id.to_string(),
+        None,
+    )?;
+    if total_bytes + capsule_bytes.len() as i64 > MAX_RECIPIENT_INBOX_BYTES {
+        return Err(AppError::PayloadTooLarge(format!(
+            "recipient inbox exceeds {MAX_RECIPIENT_INBOX_BYTES} bytes"
         )));
     }
 
@@ -319,7 +368,8 @@ pub async fn get_linked_items(
          FROM shared_items
          WHERE (sender_user_id = $1 OR recipient_user_id = $1)
            AND revoked = FALSE
-         ORDER BY updated_at DESC",
+         ORDER BY updated_at DESC
+         LIMIT 1000",
             stoolap::params![session.user_id.to_string()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;

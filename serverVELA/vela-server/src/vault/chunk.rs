@@ -85,6 +85,7 @@ pub async fn put_chunk(
         .ok_or_else(|| AppError::BadRequest("X-Lamport-Clock header is required".into()))?;
 
     let ciphertext = body.to_vec();
+    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), body.len() as u64)?;
     let now = Utc::now().to_rfc3339();
 
     if if_match == 0 {

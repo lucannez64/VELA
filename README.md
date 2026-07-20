@@ -20,7 +20,7 @@ Important defaults after the hardening pass:
 - Autofill secrets require an active desktop session plus biometric/user approval.
 - Server defaults to loopback: `127.0.0.1:8443`.
 - Android blocks cleartext globally except scoped local development hosts listed in `network_security_config.xml`.
-- Production server startup fails if `PASETO_SECRET_KEY` is missing.
+- If `PASETO_SECRET_KEY` is unset, the server generates and persists a keypair at `{DATA_DIR}/paseto.key` (0600), so sessions survive restarts with no manual step.
 - Production rejects wildcard CORS and enforces HTTPS for auth/recovery endpoints unless `ALLOW_INSECURE_LAN=true`.
 
 ## Repository Layout
@@ -111,23 +111,24 @@ server workspace:
 cd serverVELA && cargo build --release -p vela-server
 ```
 
-At runtime Nixpacks starts:
+At runtime Nixpacks starts (production-hardened defaults baked in; the
+Dockerfile image sets the same via `ENV`):
 
 ```text
-LISTEN_ADDR=0.0.0.0:${PORT:-8443} serverVELA/target/release/vela-server serve
+VELA_PRODUCTION=true TRUST_PROXY_HEADERS=true TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fd00::/8 LISTEN_ADDR=0.0.0.0:${PORT:-8443} serverVELA/target/release/vela-server serve
 ```
 
-Set these Coolify environment variables:
+Set these Coolify environment variables (domain-specific ones are required;
+the rest now have secure defaults):
 
 ```env
-VELA_PRODUCTION=true
 DATA_DIR=/app/data
-PASETO_SECRET_KEY=<base64-64-byte-key>
 WEBAUTHN_RP_ID=vault.example.com
 WEBAUTHN_RP_ORIGIN=https://vault.example.com
 WEBAUTHN_RP_NAME=VELA
 CORS_ORIGINS=https://vault.example.com
-TRUST_PROXY_HEADERS=true
+# Optional — auto-generated and persisted at $DATA_DIR/paseto.key if unset:
+PASETO_SECRET_KEY=<base64-64-byte-key>
 ```
 
 Add persistent storage for `/app/data`. If Coolify is terminating HTTPS in front

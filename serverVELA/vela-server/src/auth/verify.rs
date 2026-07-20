@@ -65,7 +65,7 @@ pub async fn post_verify(
     let row = rows
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Unauthorized("device not found or revoked".into()))?
+        .ok_or_else(|| AppError::Unauthorized("invalid device, challenge or signature".into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let device = crate::db::parse_device_row(&row)?;
 

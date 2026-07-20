@@ -13,6 +13,10 @@ use crate::{
 #[derive(Deserialize)]
 pub struct RecoverRequest {
     pub user_id: Uuid,
+    /// Attempt id returned by `/recovery/initiate`. Optional: when absent the
+    /// legacy per-user state key is used (old clients).
+    #[serde(default)]
+    pub recovery_id: Option<Uuid>,
     pub credential: PublicKeyCredential,
 }
 
@@ -37,7 +41,8 @@ pub async fn post_recover(
         .ok_or_else(|| {
             AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
         })?;
-    let auth_state = crate::recovery::initiate::take_auth_state(&state, body.user_id)?;
+    let auth_state =
+        crate::recovery::initiate::take_auth_state(&state, body.user_id, body.recovery_id)?;
 
     let auth_result = state
         .webauthn

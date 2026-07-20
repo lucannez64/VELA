@@ -40,7 +40,8 @@ pub async fn list_devices(
                 enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at
          FROM devices
          WHERE user_id = $1
-         ORDER BY created_at ASC",
+         ORDER BY created_at ASC
+         LIMIT 1000",
             stoolap::params![session.user_id.to_string()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
