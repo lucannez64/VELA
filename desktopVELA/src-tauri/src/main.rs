@@ -222,6 +222,7 @@ fn main() {
             commands::devices::revoke_device,
             commands::devices::generate_enrollment_code,
             commands::devices::import_enrollment_code,
+            commands::devices::enrollment_verification_code,
             commands::sharing::get_shares,
             commands::sharing::send_share,
             commands::sharing::accept_share,

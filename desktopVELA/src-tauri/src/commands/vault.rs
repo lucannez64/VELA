@@ -37,6 +37,60 @@ static FAVICON_CACHE: Lazy<Mutex<HashMap<String, (String, Instant)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 const FAVICON_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// SSRF guard: reject IPs that aren't globally routable (loopback, RFC 1918
+/// private ranges, link-local — which also covers the 169.254.169.254 cloud
+/// metadata endpoint, CGNAT, IPv6 unique-local/ULA, multicast, etc.).
+fn is_globally_routable_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                // CGNAT 100.64.0.0/10 — some cloud providers serve metadata here too.
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1])))
+        }
+        IpAddr::V6(v6) => {
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                // Unique-local addresses fc00::/7 (Ipv6Addr::is_unique_local()
+                // isn't stable yet, so check the prefix manually).
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // IPv4-mapped (::ffff:a.b.c.d) — recheck the embedded v4 address.
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| !is_globally_routable_ip(IpAddr::V4(v4))))
+        }
+    }
+}
+
+/// Resolve `host` and reject it (return false) if *any* resolved address is
+/// not globally routable, or if it fails to resolve at all. Applied both to
+/// the initial favicon host and to every redirect hop, since DNS can
+/// legitimately answer with a public IP at check time and still rebind (or
+/// redirect) to an internal one on the actual connection.
+fn is_safe_favicon_host(host: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    match (host, 443u16).to_socket_addrs() {
+        Ok(addrs) => {
+            let mut resolved_any = false;
+            for addr in addrs {
+                resolved_any = true;
+                if !is_globally_routable_ip(addr.ip()) {
+                    return false;
+                }
+            }
+            resolved_any
+        }
+        Err(_) => false,
+    }
+}
+
 fn detect_image_content_type(content_type: Option<&str>, bytes: &[u8]) -> Option<String> {
     // Reject obvious non-image responses (e.g. HTML pages served for missing icons).
     if let Some(ct) = content_type {
@@ -195,10 +249,26 @@ pub async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
         }
     }
 
+    // Reject the initial host up front (before opening any connection) if it
+    // resolves to a non-public address — closes the direct SSRF vector
+    // (`normalize_login_domain` only rejects literal IP *strings*, not
+    // hostnames that resolve to an internal/loopback/metadata address).
+    if !is_safe_favicon_host(&domain) {
+        return Ok(None);
+    }
+
     let client = reqwest::Client::builder()
         .user_agent("VELA Desktop/1.0")
         .timeout(Duration::from_secs(6))
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.error("too many redirects");
+            }
+            match attempt.url().host_str() {
+                Some(host) if is_safe_favicon_host(host) => attempt.follow(),
+                _ => attempt.error("redirect target is not a public host"),
+            }
+        }))
         .build()
         .map_err(|e| format!("Failed to create favicon client: {e}"))?;
 
@@ -333,6 +403,12 @@ pub async fn add_item(
     state: State<'_, Arc<AppState>>,
     item: VaultItem,
 ) -> Result<VaultItem, String> {
+    // Without this, a locked vault silently no-ops the persist step below
+    // (save_vault is a no-op with no crypto key) while still mutating the
+    // in-memory vault, recording an audit event, and returning success —
+    // the item is then lost on next unlock/reload with no error surfaced.
+    require_unlocked(&state)?;
+
     tracing::info!(
         "Adding item type: {:?}",
         match &item {
@@ -374,6 +450,10 @@ pub async fn update_item(
     state: State<'_, Arc<AppState>>,
     item: VaultItem,
 ) -> Result<VaultItem, String> {
+    // See add_item: without this, a locked vault silently drops the update
+    // (save_vault no-ops) while still returning success.
+    require_unlocked(&state)?;
+
     // Block edits on items received via share (shared=true, no share_recipient).
     {
         let vault = state.vault.read();
@@ -407,6 +487,10 @@ pub async fn delete_item(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<(), String> {
+    // See add_item: without this, a locked vault silently drops the delete
+    // (save_vault no-ops) while still returning success.
+    require_unlocked(&state)?;
+
     let item_type = {
         let vault = state.vault.read();
         if let Some(item) = vault.get_item(&id) {
@@ -648,13 +732,72 @@ pub async fn export_vault_bitwarden_json(
 }
 
 #[command]
-pub async fn save_vault_export_file(path: String, data: String) -> Result<(), String> {
-    let path = path.trim();
-    if path.is_empty() {
+pub async fn save_vault_export_file(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    data: String,
+) -> Result<(), String> {
+    require_unlocked(&state)?;
+    let validated = validate_export_path(&state, &path)?;
+    std::fs::write(validated, data).map_err(|e| format!("Failed to write export file: {}", e))
+}
+
+/// Strictly validate a user-chosen export path. The native save dialog always
+/// returns an absolute path under an existing directory with a `.json`
+/// extension; enforcing the same here prevents a compromised renderer from
+/// using this command as an arbitrary file-overwrite primitive (e.g. clobbering
+/// `~/.bashrc`, startup files, or the in-data-dir IPC auth file).
+fn validate_export_path(
+    state: &State<'_, Arc<AppState>>,
+    raw: &str,
+) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, PathBuf};
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return Err("Export path is empty".to_string());
     }
+    let path = PathBuf::from(trimmed);
 
-    std::fs::write(path, data).map_err(|e| format!("Failed to write export file: {}", e))
+    if !path.is_absolute() {
+        return Err("Export path must be absolute".to_string());
+    }
+    if path
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err("Export path must not contain parent-directory components".to_string());
+    }
+    let is_json = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+    if !is_json {
+        return Err("Export path must have a .json extension".to_string());
+    }
+
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => return Err("Export path has no parent directory".to_string()),
+    };
+    let canon_parent = std::fs::canonicalize(parent)
+        .map_err(|e| format!("Export directory is not accessible: {e}"))?;
+    if !canon_parent.is_dir() {
+        return Err("Export path parent is not a directory".to_string());
+    }
+
+    // Never allow writing inside the app's own data directory — that would let
+    // a compromised renderer overwrite vault.enc / ipc_auth.json / etc.
+    if let Some(store_canon) = std::fs::canonicalize(state.store.store_path()).ok() {
+        if canon_parent.starts_with(&store_canon) {
+            return Err("Cannot export into the application data directory".to_string());
+        }
+    }
+
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| "Export path has no file name".to_string())?;
+    Ok(canon_parent.join(file_name))
 }
 
 #[derive(Debug, Deserialize)]

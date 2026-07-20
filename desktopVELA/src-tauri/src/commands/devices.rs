@@ -376,6 +376,19 @@ pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result
     ))
 }
 
+/// Compute the short out-of-band verification code for an enrollment code
+/// string. The enrolling device displays this alongside the QR right after
+/// generating the code; the importing device computes it again from the
+/// scanned/pasted code and shows it for the user to confirm *before*
+/// `import_enrollment_code` runs. Neither device can otherwise establish
+/// trust in the transmitted code's origin — this lets the user's own
+/// comparison catch a substituted code. See `vela_crypto::verification` for
+/// the full threat model and its limits.
+#[tauri::command]
+pub fn enrollment_verification_code(code: String) -> String {
+    vela_crypto::verification::enrollment_verification_code(&code)
+}
+
 /// Try to download and decrypt a single vault chunk by chunk_id.
 /// Returns `Some(VaultStore)` on success, `None` if the chunk doesn't exist
 /// or cannot be decrypted.
@@ -607,12 +620,34 @@ pub async fn import_enrollment_code(
             "No '{}' chunk found, trying vault-data-* fallback from manifest",
             VAULT_MAIN_CHUNK_ID
         );
-        try_download_fallback_chunk(&crypto_obj, &client, &token)
-            .await
-            .unwrap_or_else(|| {
+        match try_download_fallback_chunk(&crypto_obj, &client, &token).await {
+            Some(v) => v,
+            None => {
+                // Distinguish "server has no vault yet" (first device on this
+                // account → legitimately start empty) from "server has a vault
+                // but we failed to fetch/decrypt it". In the latter case we
+                // must NOT start empty: saving an empty vault locally would
+                // upload it on the next sync and clobber the server (and every
+                // other device). Fail-closed instead.
+                let (manifest, _) = client
+                    .get_sync_manifest(&token)
+                    .await
+                    .map_err(|e| format!("Failed to verify server vault state: {e}"))?;
+                let server_has_vault = manifest
+                    .chunks
+                    .iter()
+                    .any(|c| c.chunk_id == VAULT_MAIN_CHUNK_ID || c.chunk_id.starts_with(VAULT_DATA_PREFIX));
+                if server_has_vault {
+                    return Err(
+                        "Server has a vault but it could not be downloaded or decrypted. \
+                         Enrollment aborted to avoid overwriting it — please retry."
+                            .to_string(),
+                    );
+                }
                 tracing::info!("No vault chunk found on server, starting empty");
                 crate::vault::VaultStore::new()
-            })
+            }
+        }
     };
 
     state
@@ -653,6 +688,14 @@ pub async fn revoke_device(
         return Err("Revocation must be confirmed".to_string());
     }
 
+    let this_device_id = state.store.load_device_id().unwrap_or_default();
+    if !this_device_id.is_empty() && request.device_id == this_device_id {
+        return Err(
+            "Cannot revoke this device from itself. Use \"Reset vault\" on this device instead."
+                .to_string(),
+        );
+    }
+
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
     let token = state.get_session_token().ok_or("Not authenticated")?;
@@ -665,7 +708,6 @@ pub async fn revoke_device(
         state.session.write().set_server_token(t);
     }
 
-    let this_device_id = state.store.load_device_id().unwrap_or_default();
     record_audit_event(
         &state,
         AuditAction::DeviceRevoked {

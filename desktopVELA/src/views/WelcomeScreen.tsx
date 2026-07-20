@@ -16,10 +16,30 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
   const [importPasswordVisible, setImportPasswordVisible] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
+  const [importVerificationCode, setImportVerificationCode] = useState('');
+  const [codeConfirmed, setCodeConfirmed] = useState(false);
 
   useEffect(() => {
     checkBiometric();
   }, []);
+
+  // Recompute the out-of-band verification code whenever the pasted/scanned
+  // enrollment code changes, and require re-confirmation for the new value —
+  // the whole point is that the user compares THIS code against what's shown
+  // on their other device before trusting it.
+  useEffect(() => {
+    setCodeConfirmed(false);
+    const trimmed = importCode.trim();
+    if (!trimmed) {
+      setImportVerificationCode('');
+      return;
+    }
+    let cancelled = false;
+    invoke<string>('enrollment_verification_code', { code: trimmed })
+      .then(code => { if (!cancelled) setImportVerificationCode(code); })
+      .catch(() => { if (!cancelled) setImportVerificationCode(''); });
+    return () => { cancelled = true; };
+  }, [importCode]);
 
   const checkBiometric = async () => {
     try {
@@ -42,6 +62,7 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
   const handleImport = async () => {
     if (!importCode.trim()) { setImportError('Please paste the enrollment code.'); return; }
     if (!importPassword) { setImportError('Please set a password to protect the vault on this device.'); return; }
+    if (!codeConfirmed) { setImportError('Confirm the verification code matches your other device first.'); return; }
     setImporting(true);
     setImportError('');
     try {
@@ -195,6 +216,31 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
                 />
               </div>
 
+              {importVerificationCode && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="material-symbols-outlined text-amber-400 text-lg">verified_user</span>
+                    <span className="font-label text-sm font-bold text-amber-300">Verify this code</span>
+                  </div>
+                  <p className="text-on-surface-variant text-xs mb-2">
+                    Compare this against the verification code shown on your other device's "Enrollment Code" dialog.
+                    If it doesn't match, stop — do not proceed, the code may have been tampered with.
+                  </p>
+                  <div className="font-mono text-xl font-bold tracking-widest text-on-surface text-center py-1 mb-2">
+                    {importVerificationCode}
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-on-surface cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={codeConfirmed}
+                      onChange={e => setCodeConfirmed(e.target.checked)}
+                      className="w-4 h-4 rounded border-outline-variant bg-surface-container text-primary accent-primary"
+                    />
+                    It matches the code on my other device
+                  </label>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-medium text-on-surface-variant mb-1">Vault password (this device)</label>
                 <div className="relative">
@@ -231,7 +277,7 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
               </button>
               <button
                 onClick={handleImport}
-                disabled={importing}
+                disabled={importing || !codeConfirmed}
                 className="flex-1 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 {importing ? 'Importing…' : 'Import & join'}

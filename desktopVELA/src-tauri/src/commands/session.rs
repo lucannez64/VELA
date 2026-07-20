@@ -176,16 +176,21 @@ fn authenticate_with_server_in_background(
 pub async fn get_session_status(state: State<'_, Arc<AppState>>) -> Result<SessionStatus, String> {
     let session = state.session.read();
     let remaining = session.remaining_time();
-    let lock_state = if !session.active {
-        LockState::Locked
-    } else if remaining == 0 {
-        LockState::Locked
-    } else {
+    // Unlock sets `session.active` and `state.crypto` under separate lock
+    // acquisitions (not atomically), so there's a narrow window where a
+    // concurrent status check could see active=true while crypto is still
+    // None. Mirror `AppState::is_unlocked()`'s check here so this command
+    // can't report "unlocked" before the vault is actually usable.
+    let crypto_ready = state.crypto.read().is_some();
+    let unlocked = session.active && remaining > 0 && crypto_ready;
+    let lock_state = if unlocked {
         LockState::Unlocked
+    } else {
+        LockState::Locked
     };
 
     Ok(SessionStatus {
-        active: session.active && remaining > 0,
+        active: unlocked,
         session_time_remaining_secs: remaining,
         device_name: Some(get_device_name()),
         device_id: session.device_id.clone(),
@@ -234,7 +239,7 @@ pub async fn unlock_session(
     let app_state = state.inner().clone();
     let app_state2 = app_state.clone();
 
-    let (device_name, device_id) = tokio::task::spawn_blocking(move || {
+    let unlock_result = tokio::task::spawn_blocking(move || {
         let rms = if let Some(rms) = biometric::get_cached_rms() {
             rms
         } else {
@@ -285,9 +290,22 @@ pub async fn unlock_session(
         Ok::<_, String>((device_name, device_id))
     })
     .await
-    .map_err(|e| format!("Unlock task panicked: {}", e))??;
+    .map_err(|e| format!("Unlock task panicked: {}", e))?;
 
-    state.record_unlock_success();
+    let (device_name, device_id) = match unlock_result {
+        Ok(ok) => {
+            state.record_unlock_success();
+            ok
+        }
+        Err(e) => {
+            // Mirror unlock_session_with_password: a failed biometric unlock
+            // must count toward the persisted exponential backoff, otherwise
+            // the throttle is bypassable via the biometric path.
+            state.record_unlock_failure();
+            return Err(e);
+        }
+    };
+
     state.bump_session_generation();
 
     authenticate_with_server_in_background(
@@ -669,20 +687,20 @@ pub async fn reset_vault(
 
     biometric::delete_stored_rms().map_err(|e| format!("Failed to delete credentials: {}", e))?;
 
-    let vault_path = state.store.store_path().join("vault.enc");
-    let rms_path = state.store.store_path().join("rms.enc");
-
-    if vault_path.exists() {
-        std::fs::remove_file(&vault_path)
-            .map_err(|e| format!("Failed to delete vault file: {}", e))?;
+    // Wipe the entire data directory. Reset must remove every persisted secret
+    // and metadata file — not just vault.enc/rms.enc — including sync_conflicts.*
+    // (which previously held plaintext secrets), identity_keys.enc, audit.enc,
+    // shares.enc, sync_meta.json, recovery_invites.json, unlock_throttle.json,
+    // device_id.json, ipc_auth.json, the platform RMS files (rms.tpm /
+    // rms_software.enc* / password_recovery.bin), and the tpm-private/ subdir.
+    // The Store lazily recreates this directory on the next save.
+    let store_dir = state.store.store_path().clone();
+    if store_dir.exists() {
+        std::fs::remove_dir_all(&store_dir)
+            .map_err(|e| format!("Failed to wipe data directory: {e}"))?;
     }
-
-    if rms_path.exists() {
-        std::fs::remove_file(&rms_path).map_err(|e| format!("Failed to delete RMS file: {}", e))?;
-    }
-
-    if vault_path.exists() || rms_path.exists() {
-        return Err("Vault files still exist after deletion".to_string());
+    if store_dir.exists() {
+        return Err("Data directory still exists after reset".to_string());
     }
 
     {

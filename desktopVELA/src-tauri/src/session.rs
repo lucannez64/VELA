@@ -72,23 +72,49 @@ impl Session {
     }
 
     pub fn refresh(&mut self) {
-        if self.active {
-            let now = Utc::now();
-            let new_expiry = now + chrono::Duration::seconds(SESSION_DURATION_SECS as i64);
+        if !self.active {
+            return;
+        }
+        let now = Utc::now();
 
-            if let Some(current_expiry) = self.expires_at {
-                let time_since_expiry = now.signed_duration_since(current_expiry);
-                if time_since_expiry.num_seconds() > -300 {
-                    self.expires_at = Some(new_expiry);
-                    self.session_time_remaining_secs = SESSION_DURATION_SECS;
-                    let new_token = Self::generate_session_token();
-                    self.session_token = Some(new_token);
-                    return;
-                }
-            }
+        let current_expiry = match self.expires_at {
+            Some(e) => e,
+            None => return,
+        };
 
-            self.expires_at = Some(new_expiry);
-            self.session_time_remaining_secs = SESSION_DURATION_SECS;
+        // Fail-closed: once the local session has expired, refresh must never
+        // silently resurrect it (e.g. a periodic background sync). The user
+        // must re-unlock.
+        if now >= current_expiry {
+            return;
+        }
+
+        // Absolute cap measured from the original unlock time, so repeated
+        // background refreshes cannot keep the session alive beyond
+        // MAX_SESSION_DURATION_SECS.
+        let started_at = self.started_at.unwrap_or(now);
+        let absolute_cap =
+            started_at + chrono::Duration::seconds(MAX_SESSION_DURATION_SECS as i64);
+        // If we are already at/over the absolute cap, do not extend further.
+        if now >= absolute_cap {
+            return;
+        }
+
+        let desired = now + chrono::Duration::seconds(SESSION_DURATION_SECS as i64);
+        let new_expiry = desired.min(absolute_cap);
+        // Never shrink the expiry, and never extend past the absolute cap.
+        if new_expiry <= current_expiry {
+            return;
+        }
+        self.expires_at = Some(new_expiry);
+        self.session_time_remaining_secs = (new_expiry - now).num_seconds().max(0) as u64;
+
+        // Rotate the local session token only when close to expiry (≤ 5 min
+        // left), to avoid churning a fresh token on every background sync.
+        let time_until_expiry = (current_expiry - now).num_seconds();
+        if time_until_expiry <= 300 {
+            let new_token = Self::generate_session_token();
+            self.session_token = Some(new_token);
         }
     }
 
