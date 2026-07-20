@@ -606,8 +606,6 @@ pub mod tpm {
     }
 
     pub fn retrieve_from_tpm() -> anyhow::Result<[u8; 32]> {
-        use std::process::Stdio;
-
         if !is_tpm_available() {
             anyhow::bail!("TPM 2.0 not available");
         }
@@ -639,6 +637,7 @@ pub mod tpm {
         match load_output {
             Ok(o) if !o.status.success() => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
+                shred_and_remove(&loaded_ctx);
                 anyhow::bail!("Failed to load TPM key: {}", stderr);
             }
             Err(e) => {
@@ -647,37 +646,47 @@ pub mod tpm {
             _ => {}
         }
 
-        // The unsealed key is captured from stdout (`-o -`) — no plaintext
-        // RMS temp file is ever written.
+        // Write the unsealed key to a temp file in the private (0700) dir, then
+        // shred it immediately. We CANNOT use `-o -` here: tpm2_unseal's `-o`
+        // flag treats `-` as a literal filename, not stdout — using it silently
+        // drops the key and locks the user out.
+        let unseal_out = get_private_dir().join("unsealed.tmp");
         let unseal_output = Command::new("tpm2_unseal")
-            .args(["-c", loaded_ctx.to_str().unwrap(), "-o", "-"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .args([
+                "-c",
+                loaded_ctx.to_str().unwrap(),
+                "-o",
+                unseal_out.to_str().unwrap(),
+            ])
             .output();
 
-        shred_and_remove(&loaded_ctx);
-
-        match unseal_output {
+        let data = match unseal_output {
             Ok(o) if o.status.success() => {
-                let data = o.stdout;
-
-                if data.len() != 32 {
-                    anyhow::bail!("TPM unsealed key is not 32 bytes");
-                }
-
-                let mut result = [0u8; 32];
-                result.copy_from_slice(&data);
-
-                Ok(result)
+                let data = std::fs::read(&unseal_out);
+                shred_and_remove(&unseal_out);
+                data.unwrap_or_default()
             }
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
+                shred_and_remove(&unseal_out);
+                shred_and_remove(&loaded_ctx);
                 anyhow::bail!("Failed to unseal TPM key: {}", stderr);
             }
             Err(e) => {
+                shred_and_remove(&unseal_out);
+                shred_and_remove(&loaded_ctx);
                 anyhow::bail!("Failed to execute tpm2_unseal: {}", e);
             }
+        };
+        shred_and_remove(&loaded_ctx);
+
+        if data.len() != 32 {
+            anyhow::bail!("TPM unsealed key is not 32 bytes (got {})", data.len());
         }
+
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&data);
+        Ok(result)
     }
 
     pub fn delete_tpm_key() -> anyhow::Result<()> {
@@ -773,28 +782,51 @@ pub mod tpm {
             Ok(())
         }
 
-        /// Legacy KDF (unsalted two-step BLAKE3). Retained ONLY to open
-        /// pre-Argon2id blobs so they can be migrated. The legacy file layout
-        /// is `salt16 ‖ ciphertext`, but the salt bytes were never used.
+        /// Legacy KDF variants retained ONLY to open pre-Argon2id blobs so they
+        /// can be migrated. The legacy file layout is `salt16 ‖ ciphertext`.
+        /// Two historical derivations are tried in turn:
+        ///   1. two-step unsalted BLAKE3 (older Linux fallback writer), and
+        ///   2. salted single-step BLAKE3 (the shared password helper).
         fn retrieve_legacy(password: &str, blob: &[u8]) -> anyhow::Result<[u8; 32]> {
             use vela_crypto::{aead::decrypt, kdf};
 
             if blob.len() < 48 {
                 anyhow::bail!("Fallback key file too small");
             }
+            let salt = &blob[0..16];
             let ciphertext = &blob[16..];
 
+            let try_extract = |decrypted: &[u8]| -> Option<[u8; 32]> {
+                if decrypted.len() >= 32 {
+                    let mut result = [0u8; 32];
+                    result.copy_from_slice(&decrypted[..32]);
+                    Some(result)
+                } else {
+                    None
+                }
+            };
+
+            // Variant 1: two-step unsalted BLAKE3.
             let key_material = kdf::derive("vela fallback key v1", password.as_bytes());
             let derived_key = kdf::derive("vela fallback encryption v1", key_material.as_bytes());
-            let decrypted = decrypt(derived_key.as_bytes(), ciphertext)?;
-
-            if decrypted.len() < 32 {
-                anyhow::bail!("Decrypted data too short");
+            if let Ok(decrypted) = decrypt(derived_key.as_bytes(), ciphertext) {
+                if let Some(rms) = try_extract(&decrypted) {
+                    return Ok(rms);
+                }
             }
 
-            let mut result = [0u8; 32];
-            result.copy_from_slice(&decrypted[..32]);
-            Ok(result)
+            // Variant 2: salted single-step BLAKE3 ("vela master password rms v1").
+            #[allow(deprecated)]
+            {
+                let key = crate::biometric::derive_key_from_password_legacy(password, salt);
+                if let Ok(decrypted) = decrypt(&key, ciphertext) {
+                    if let Some(rms) = try_extract(&decrypted) {
+                        return Ok(rms);
+                    }
+                }
+            }
+
+            anyhow::bail!("Could not unlock the software RMS blob with the supplied password");
         }
 
         /// Re-seal a legacy blob with Argon2id, keeping a backup of the old

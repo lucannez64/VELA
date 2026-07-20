@@ -533,7 +533,16 @@ pub mod linux_password {
 
     pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
         if tpm::is_tpm_key_available() {
-            return tpm::retrieve_from_tpm().ok();
+            match tpm::retrieve_from_tpm() {
+                Ok(rms) => return Some(rms),
+                Err(e) => {
+                    tracing::warn!(
+                        "TPM key present but unseal failed ({}); attempting \
+                         software fallback with the supplied password",
+                        e
+                    );
+                }
+            }
         }
 
         if tpm::fallback::is_fallback_available() {
