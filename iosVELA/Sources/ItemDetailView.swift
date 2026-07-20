@@ -169,7 +169,13 @@ private struct CopyButton: View {
 
     var body: some View {
         Button {
-            UIPasteboard.general.string = value
+            // Expire after 20s and keep local-only (no Handoff sync) so a
+            // copied password/CVV/TOTP does not persist on the system clipboard
+            // or sync to the user's other devices.
+            UIPasteboard.general.setItems(
+                [[UIPasteboard.typeAutomatic: value]],
+                options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(20)]
+            )
             copied = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
         } label: {

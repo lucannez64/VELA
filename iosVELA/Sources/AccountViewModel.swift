@@ -49,6 +49,11 @@ final class AccountViewModel: ObservableObject {
     }
 
     private func run(_ label: String, _ work: @escaping () async throws -> String) {
+        // Without this guard, a user-initiated action (e.g. tapping "Sync
+        // Now") firing at the same moment the periodic sync timer does would
+        // run both concurrently — two overlapping syncs racing on `vault`
+        // and issuing duplicate/conflicting server writes.
+        guard !busy else { return }
         busy = true
         status = "\(label)…"
         Task { @MainActor in

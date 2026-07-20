@@ -12,9 +12,22 @@ struct EnrollView: View {
     @State private var usePassword = false
     @State private var password = ""
     @State private var confirm = ""
+    @State private var codeConfirmed = false
+
+    /// Out-of-band verification code for the pasted/scanned enrollment code.
+    /// Neither device can otherwise prove the code wasn't substituted (a
+    /// tampered QR, or simply the wrong code), so the user must confirm this
+    /// matches what's shown on the enrolling device before joining.
+    private var verificationCode: String? {
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let value = VelaCoreFFI.enrollmentVerificationCode(trimmed)
+        return value.isEmpty ? nil : value
+    }
 
     private var canJoin: Bool {
         guard !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard codeConfirmed else { return false }
         if usePassword { return password.count >= 8 && password == confirm }
         return true
     }
@@ -34,6 +47,27 @@ struct EnrollView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("enrollCodeField")
+                        .onChange(of: code) { _ in codeConfirmed = false }
+                }
+                if let verificationCode = verificationCode {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("Verify this code", systemImage: "checkmark.shield")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.orange)
+                            Text("Compare against the verification code shown on your other device's \"Enrollment Code\" dialog. If it doesn't match, stop.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(verificationCode)
+                                .font(.system(.title3, design: .monospaced).bold())
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 4)
+                                .accessibilityIdentifier("enrollVerificationCode")
+                            Toggle("It matches the code on my other device", isOn: $codeConfirmed)
+                                .font(.caption)
+                                .accessibilityIdentifier("enrollCodeConfirmedToggle")
+                        }
+                    }
                 }
                 Section("Secure on this device") {
                     Toggle("Protect with password", isOn: $usePassword)

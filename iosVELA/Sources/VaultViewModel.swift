@@ -18,6 +18,12 @@ final class VaultViewModel: ObservableObject {
 
     private let repo: VaultRepository
     private var rms: Data?
+    private var backgroundedAt: Date?
+    /// Grace period the cached RMS survives in the background before the next
+    /// foreground requires re-authentication instead of a silent reload. Bounds
+    /// how long the master key sits in process memory while unattended, without
+    /// forcing Face ID on every brief app switch.
+    private static let backgroundLockTimeout: TimeInterval = 5 * 60
 
     /// Called after every successful `update(_:)` so the account layer can push
     /// updated share capsules to recipients. Wired in ContentView to avoid a
@@ -61,6 +67,7 @@ final class VaultViewModel: ObservableObject {
                 let r = try repo.loadRMS(context: context)
                 items = try repo.load(rms: r).items
                 rms = r
+                backgroundedAt = nil
                 lockState = .unlocked
                 AuditLog.shared.record("vault_unlocked", "biometric")
             } catch {
@@ -73,6 +80,7 @@ final class VaultViewModel: ObservableObject {
         let r = try repo.generateAndStoreRMS()
         rms = r
         items = []
+        backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: r)
         unlockMode = .biometric
         lockState = .unlocked
@@ -84,6 +92,7 @@ final class VaultViewModel: ObservableObject {
         let r = try repo.generatePasswordRMS(password: password)
         rms = r
         items = []
+        backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: r)
         unlockMode = .password
         lockState = .unlocked
@@ -91,12 +100,25 @@ final class VaultViewModel: ObservableObject {
     }
 
     /// Unlock a password-protected vault.
+    ///
+    /// KNOWN LIMITATION: `loadRMSWithPassword` runs a ~210k-iteration PBKDF2,
+    /// and this whole function executes on the MainActor (this class is
+    /// `@MainActor`), so unlock briefly blocks the UI thread. Moving it off
+    /// to a background Task would need `VaultRepository`/`RMSStore` to be
+    /// verified `Sendable` and re-verified against this project's actual
+    /// Swift concurrency-checking mode — there's no existing
+    /// `Task.detached`/background-actor precedent elsewhere in this codebase
+    /// to confirm the pattern compiles cleanly here, and no Swift toolchain
+    /// available to test it. Left as-is rather than risk an unverifiable
+    /// build break; a real fix should be written and tested where the
+    /// project can actually be built.
     func unlock(password: String) {
         errorMessage = nil
         do {
             let r = try repo.loadRMSWithPassword(password)
             items = try repo.load(rms: r).items
             rms = r
+            backgroundedAt = nil
             lockState = .unlocked
             AuditLog.shared.record("vault_unlocked", "password")
         } catch {
@@ -155,21 +177,31 @@ final class VaultViewModel: ObservableObject {
         }
         rms = newRMS
         items = []
+        backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: newRMS)
         unlockMode = mode
         lockState = .unlocked
     }
 
     /// Security model (matches Android on background): drop decrypted plaintext
-    /// from memory but keep the RMS session, so foregrounding reloads without re-auth.
+    /// from memory but keep the RMS session, so a brief foreground reloads
+    /// without re-auth. The session itself is time-bounded — see reloadFromSession.
     func clearMemory() {
         guard lockState == .unlocked else { return }
         items = []
+        backgroundedAt = Date()
     }
 
-    /// Reload decrypted items from the kept session (used on foreground).
+    /// Reload decrypted items from the kept session (used on foreground). If the
+    /// app was backgrounded longer than `backgroundLockTimeout`, the cached RMS
+    /// is dropped and the user must re-authenticate instead of silently reloading.
     func reloadFromSession() {
         guard lockState == .unlocked, let rms = rms else { return }
+        if let backgroundedAt = backgroundedAt, Date().timeIntervalSince(backgroundedAt) > Self.backgroundLockTimeout {
+            lock()
+            return
+        }
+        backgroundedAt = nil
         if let store = try? repo.load(rms: rms) { items = store.items }
     }
 
