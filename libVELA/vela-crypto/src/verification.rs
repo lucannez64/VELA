@@ -22,24 +22,48 @@
 //! This is *not* a substitute for the user's own attention: it only helps if
 //! they actually compare the two codes before confirming. It is a mitigation
 //! for automated/passive substitution, not a cryptographic proof of origin.
+//!
+//! ## Why 18 digits, not fewer
+//!
+//! Unlike Bluetooth Secure Simple Pairing or ZRTP, there is no interactive
+//! commit-then-reveal step here that forces an attacker to commit to their
+//! substitute locator *before* seeing the digest they need to match — the
+//! locator is a static string a device can compute against offline, as many
+//! times as it wants, before ever showing anything to a user. That means the
+//! attacker's cost to find a colliding substitute is a straight preimage
+//! search over the code space, not a birthday-bounded, time-boxed one. A
+//! 30-bit code (the previous size here) is only ~10^9 BLAKE3 evaluations —
+//! seconds on a single modern CPU, let alone a GPU. 18 decimal digits gives
+//! ~60 bits (10^18), which is far beyond what's recoverable by brute force
+//! in the time it takes a human to scan a QR code and tap "confirm", while
+//! still being renderable as a short, grouped, glanceable numeric string.
+const VERIFICATION_CODE_DIGITS: u32 = 18;
 
-/// Derive a 9-digit, human-comparable verification code from an enrollment
+/// Derive an 18-digit, human-comparable verification code from an enrollment
 /// code string. Both the generating device (right after creating the code)
 /// and the importing device (right after scanning/pasting it, *before*
 /// importing) call this on the exact same string and the user confirms the
 /// two rendered codes match.
 ///
-/// Uses BLAKE3 (already a workspace dependency) truncated to the low ~30
-/// bits of the digest. That range is chosen so the code stays short enough
-/// for a human to compare at a glance while making a live, automated
-/// collision search (an attacker producing a substitute locator that hashes
-/// to the same code) costly rather than free — see the module docs for the
-/// limits of what this can and can't prove.
+/// Uses BLAKE3 (already a workspace dependency), truncated to a 128-bit
+/// value (so the `% 10^18` reduction below has negligible modulo bias) and
+/// then reduced to 18 decimal digits — see the module docs for the
+/// reasoning behind that size and the limits of what this can and can't
+/// prove.
 pub fn enrollment_verification_code(code: &str) -> String {
     let digest = blake3::hash(code.trim().as_bytes());
     let bytes = digest.as_bytes();
-    let n = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % 1_000_000_000;
-    format!("{:03}-{:03}-{:03}", n / 1_000_000, (n / 1_000) % 1_000, n % 1_000)
+    let mut wide = [0u8; 16];
+    wide.copy_from_slice(&bytes[..16]);
+    let modulus = 10u128.pow(VERIFICATION_CODE_DIGITS);
+    let n = u128::from_be_bytes(wide) % modulus;
+    let digits = format!("{n:0width$}", width = VERIFICATION_CODE_DIGITS as usize);
+    digits
+        .as_bytes()
+        .chunks(3)
+        .map(|c| std::str::from_utf8(c).expect("ASCII digits"))
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 #[cfg(test)]
@@ -70,14 +94,21 @@ mod tests {
     }
 
     #[test]
-    fn format_is_three_groups_of_three_digits() {
+    fn format_is_six_groups_of_three_digits() {
         let code = enrollment_verification_code("anything");
         let parts: Vec<&str> = code.split('-').collect();
-        assert_eq!(parts.len(), 3, "expected 3 groups, got: {code}");
+        assert_eq!(parts.len(), 6, "expected 6 groups, got: {code}");
         for part in parts {
             assert_eq!(part.len(), 3, "expected 3-digit group, got: {part}");
             assert!(part.chars().all(|c| c.is_ascii_digit()));
         }
+    }
+
+    #[test]
+    fn code_has_eighteen_digits() {
+        let code = enrollment_verification_code("anything");
+        let digit_count = code.chars().filter(|c| c.is_ascii_digit()).count();
+        assert_eq!(digit_count, 18, "expected 18 digits, got: {code}");
     }
 
     #[test]
