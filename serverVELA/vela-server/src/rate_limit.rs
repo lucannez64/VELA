@@ -7,10 +7,20 @@
 //! | Endpoint               | Limit                                | Key pattern                         |
 //! |------------------------|--------------------------------------|-------------------------------------|
 //! | GET /auth/challenge    | 20 req/min per IP                    | `rl:challenge:ip:{ip}`              |
-//! | POST /auth/verify      | 5 failed proofs/min per device_id    | `rl:verify:fail:dev:{device_id}`    |
+//! | POST /auth/verify      | 5 failed proofs/min per (ip, device) | `rl:verify:fail:dev:{ip}:{device_id}` |
 //! | POST /auth/verify      | 10 attempts/min per IP               | `rl:verify:ip:{ip}`                 |
 //! | Authenticated routes   | 300 req/min per JTI                  | `rl:auth:jti:{jti}`                 |
 //!
+//! `device_id` in `POST /auth/verify` is unauthenticated request-body data —
+//! anyone can name any device UUID. The failure-streak/backoff counters below
+//! are therefore keyed on `(ip, device_id)`, not `device_id` alone: keying on
+//! `device_id` alone would let an attacker spread across many source IPs
+//! accumulate a single shared failure streak against a victim's device_id and
+//! push it into backoff, denying the legitimate device even though it never
+//! sent a bad request. Scoping by IP means each source can only ever throttle
+//! itself, never another IP's view of the same device — the per-IP limiter
+//! above (`rl:verify:ip:{ip}`) is what actually bounds a single attacker's
+//! request volume.
 //! ## JTI tracking for device revocation cascade (SPEC §6 Session Lifecycle)
 //!
 //! Every issued JTI is added to `device:jtis:{device_id}` (a sled set).
@@ -67,10 +77,11 @@ pub fn enroll_by_ip(store: &Store, ip: &str) -> Result<()> {
     check(store, &format!("rl:enroll:ip:{ip}"), 10, WINDOW_SECS)
 }
 
-/// 5 *failed* proofs/min per device_id for POST /auth/verify.
-/// Call this only on verification failure.
-pub fn verify_fail_by_device(store: &Store, device_id: &str) -> Result<()> {
-    let key = format!("rl:verify:fail:dev:{device_id}");
+/// 5 *failed* proofs/min per (ip, device_id) for POST /auth/verify.
+/// Call this only on verification failure. Scoped by IP — see module docs —
+/// so an attacker can't accumulate a device-wide streak from multiple IPs.
+pub fn verify_fail_by_device(store: &Store, ip: &str, device_id: &str) -> Result<()> {
+    let key = format!("rl:verify:fail:dev:{ip}:{device_id}");
     check(store, &key, 5, WINDOW_SECS)
 }
 
@@ -120,6 +131,19 @@ pub fn web_session_keys_by_user(store: &Store, user_id: &str) -> Result<()> {
     check(store, &format!("rl:websession:keys:user:{user_id}"), 60, WINDOW_SECS)
 }
 
+/// 20 WebAuthn recovery-key registrations/hour per user. Registration is rare
+/// in normal use (once per recovery-key setup) and finishing one runs a
+/// duplicate-credential lookup, so this bounds how often a single account can
+/// drive that regardless of the generic per-JTI request limiter.
+pub fn webauthn_register_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:webauthn:register:user:{user_id}"),
+        20,
+        HOUR_SECS,
+    )
+}
+
 /// 10 RW token attempts/min per session (throttle ephemeral-key proof guessing).
 pub fn web_session_token_by_session(store: &Store, session_id: &str) -> Result<()> {
     check(
@@ -135,9 +159,13 @@ pub fn web_session_token_by_session(store: &Store, session_id: &str) -> Result<(
 /// On consecutive failures (≥3) the spec mandates exponential backoff
 /// (1s, 2s, 4s, … capped at 5 min).
 ///
-/// Returns `Err(AppError::RateLimited)` if the device is still in a backoff window.
-pub fn check_verify_backoff(store: &Store, device_id: &str) -> Result<()> {
-    let backoff_key = format!("rl:verify:backoff:{device_id}");
+/// Keyed on `(ip, device_id)` — see module docs — so backoff triggered from
+/// one IP never blocks the same device_id's requests from a different IP.
+///
+/// Returns `Err(AppError::RateLimited)` if this (ip, device) pair is still in
+/// a backoff window.
+pub fn check_verify_backoff(store: &Store, ip: &str, device_id: &str) -> Result<()> {
+    let backoff_key = format!("rl:verify:backoff:{ip}:{device_id}");
     let ttl = store.ttl(&backoff_key)?;
     if ttl > 0 {
         return Err(AppError::RateLimited(format!(
@@ -148,35 +176,45 @@ pub fn check_verify_backoff(store: &Store, device_id: &str) -> Result<()> {
 }
 
 /// Record a failed authentication attempt and set/extend the backoff window.
-pub fn record_verify_failure(store: &Store, device_id: &str) -> Result<()> {
-    let fail_key = format!("rl:verify:fail:dev:{device_id}");
-    let backoff_key = format!("rl:verify:backoff:{device_id}");
-    let streak_key = format!("rl:verify:streak:{device_id}");
+///
+/// This only tracks the exponential-backoff streak. The fixed-window
+/// `rl:verify:fail:dev:{ip}:{device_id}` counter is a separate mechanism —
+/// callers must invoke `verify_fail_by_device` themselves to apply it,
+/// otherwise it gets incremented twice per failure and the documented
+/// "5 failed proofs/min" limit silently trips after 3.
+pub fn record_verify_failure(store: &Store, ip: &str, device_id: &str) -> Result<()> {
+    let backoff_key = format!("rl:verify:backoff:{ip}:{device_id}");
+    let streak_key = format!("rl:verify:streak:{ip}:{device_id}");
 
     let streak = store.incr_expire(&streak_key, 1, 300)?;
-
-    let _ = store.incr_expire(&fail_key, 1, WINDOW_SECS);
 
     // Cap the effective streak: an attacker who knows a device_id can keep
     // failing proofs, but the backoff must never grow past the 300 s ceiling
     // and must not log-spam. The per-IP verify limit (rl:verify:ip) bites the
-    // attacker long before this becomes a permanent device lockout.
+    // attacker long before this becomes a lockout, and scoping by IP means it
+    // only ever locks out its own source, never the device from other IPs.
     let eff_streak = streak.min(10);
     if eff_streak >= 3 {
         let exp = (eff_streak - 3).min(8); // cap at 2^8 = 256 s, below 5 min = 300 s
         let delay_secs: u64 = (1u64 << exp).min(300);
         store.set_ex(&backoff_key, &[1u8], delay_secs)?;
         if streak < 12 {
-            tracing::warn!(device_id, streak, delay_secs, "auth verify backoff applied");
+            tracing::warn!(
+                ip,
+                device_id,
+                streak,
+                delay_secs,
+                "auth verify backoff applied"
+            );
         }
     }
     Ok(())
 }
 
 /// Reset consecutive-failure streak after successful authentication.
-pub fn reset_verify_streak(store: &Store, device_id: &str) -> Result<()> {
-    let streak_key = format!("rl:verify:streak:{device_id}");
-    let backoff_key = format!("rl:verify:backoff:{device_id}");
+pub fn reset_verify_streak(store: &Store, ip: &str, device_id: &str) -> Result<()> {
+    let streak_key = format!("rl:verify:streak:{ip}:{device_id}");
+    let backoff_key = format!("rl:verify:backoff:{ip}:{device_id}");
     let _ = store.del(&streak_key)?;
     let _ = store.del(&backoff_key)?;
     Ok(())
@@ -217,4 +255,56 @@ pub fn revoke_all_device_jtis(store: &Store, device_id: &str) -> Result<()> {
 
     let _ = store.del_set(&format!("device:jtis:{device_id}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression test: `record_verify_failure` and `verify_fail_by_device` are
+    // called back-to-back on every failed /auth/verify attempt (see
+    // auth/verify.rs). They must not both increment the same
+    // `rl:verify:fail:dev:{device_id}` counter, or the documented "5 failed
+    // proofs/min" limit silently trips after 3.
+    #[test]
+    fn single_failure_increments_fail_counter_once() {
+        let store = Store::open_temp().unwrap();
+        let ip = "203.0.113.1";
+        let device_id = "test-device";
+
+        record_verify_failure(&store, ip, device_id).unwrap();
+        verify_fail_by_device(&store, ip, device_id).unwrap();
+
+        let fail_key = format!("rl:verify:fail:dev:{ip}:{device_id}");
+        // delta=0 rewrites the same count without incrementing, so this is a
+        // read of the counter as left by the two calls above.
+        let count = store.incr_expire(&fail_key, 0, WINDOW_SECS).unwrap();
+        assert_eq!(
+            count, 1,
+            "one real failure should increment the fail counter once, not twice"
+        );
+    }
+
+    // Regression test: device_id in POST /auth/verify is unauthenticated
+    // request data, so anyone can name a victim's device. Backoff must be
+    // scoped by (ip, device_id) — an attacker hammering invalid proofs
+    // against a known device_id from attacker-controlled IPs must not be
+    // able to lock out that same device_id's requests from a different
+    // (the legitimate owner's) IP.
+    #[test]
+    fn backoff_from_one_ip_does_not_lock_out_device_from_another_ip() {
+        let store = Store::open_temp().unwrap();
+        let device_id = "victim-device";
+        let attacker_ip = "198.51.100.7";
+        let victim_ip = "203.0.113.42";
+
+        for _ in 0..6 {
+            record_verify_failure(&store, attacker_ip, device_id).unwrap();
+        }
+        // The attacker's own (ip, device) pair is now in backoff.
+        assert!(check_verify_backoff(&store, attacker_ip, device_id).is_err());
+
+        // The legitimate device, verifying from its own IP, must be unaffected.
+        assert!(check_verify_backoff(&store, victim_ip, device_id).is_ok());
+    }
 }

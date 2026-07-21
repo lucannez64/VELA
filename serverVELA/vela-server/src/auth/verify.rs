@@ -39,7 +39,7 @@ pub async fn post_verify(
     let device_id_str = body.device_id.to_string();
 
     rate_limit::verify_by_ip(&state.store, &ip)?;
-    rate_limit::check_verify_backoff(&state.store, &device_id_str)?;
+    rate_limit::check_verify_backoff(&state.store, &ip, &device_id_str)?;
 
     let challenge_key = format!("challenge:{}", body.challenge);
     let consumed = state.store.get_del(&challenge_key)?;
@@ -84,18 +84,20 @@ pub async fn post_verify(
         // attempt skip counting toward it. Log loudly so it's alertable;
         // `verify_fail_by_device` below still applies its own (weaker,
         // fixed-window) limit as a fallback regardless of this outcome.
-        if let Err(record_err) = rate_limit::record_verify_failure(&state.store, &device_id_str) {
+        if let Err(record_err) =
+            rate_limit::record_verify_failure(&state.store, &ip, &device_id_str)
+        {
             tracing::error!(
                 device_id = %device_id_str,
                 error = %record_err,
                 "failed to record verify failure — exponential backoff not updated"
             );
         }
-        rate_limit::verify_fail_by_device(&state.store, &device_id_str)?;
+        rate_limit::verify_fail_by_device(&state.store, &ip, &device_id_str)?;
         return Err(e);
     }
 
-    rate_limit::reset_verify_streak(&state.store, &device_id_str)?;
+    rate_limit::reset_verify_streak(&state.store, &ip, &device_id_str)?;
     let now = chrono::Utc::now().to_rfc3339();
     let requested_name = body
         .device_name

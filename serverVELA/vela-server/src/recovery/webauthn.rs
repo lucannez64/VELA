@@ -1,4 +1,5 @@
 use axum::{extract::State, http::HeaderMap, Json};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webauthn_rs::prelude::{
@@ -9,8 +10,13 @@ use webauthn_rs::prelude::{
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
+    rate_limit,
     state::AppState,
 };
+
+fn cred_id_b64(passkey: &Passkey) -> String {
+    B64.encode(passkey.cred_id().as_slice())
+}
 
 const REGISTER_STATE_TTL_SECS: u64 = 300;
 
@@ -76,6 +82,12 @@ pub async fn post_register_finish(
     session: AuthSession,
     Json(credential): Json<RegisterPublicKeyCredential>,
 ) -> Result<(HeaderMap, Json<RegisterFinishResponse>)> {
+    // Registration ceremonies are rare in normal use (one per recovery-key
+    // setup); this bounds how often any single account can drive the
+    // duplicate-credential lookup below, independent of the generic
+    // per-JTI request limiter.
+    rate_limit::webauthn_register_by_user(&state.store, &session.user_id.to_string())?;
+
     let reg_state = take_register_state(&state, session.user_id)?;
     let passkey = state
         .webauthn
@@ -86,11 +98,12 @@ pub async fn post_register_finish(
 
     let passkey_json = serde_json::to_string(&passkey)
         .map_err(|e| AppError::Internal(format!("failed to serialize passkey: {e}")))?;
+    let cred_id = cred_id_b64(&passkey);
     state
         .db
         .execute(
-            "UPDATE users SET recovery_webauthn_credential = $1 WHERE id = $2",
-            stoolap::params![passkey_json, session.user_id.to_string()],
+            "UPDATE users SET recovery_webauthn_credential = $1, recovery_webauthn_cred_id = $2 WHERE id = $3",
+            stoolap::params![passkey_json, cred_id, session.user_id.to_string()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -136,13 +149,63 @@ pub(crate) fn update_recovery_passkey(
 ) -> Result<()> {
     let passkey_json = serde_json::to_string(passkey)
         .map_err(|e| AppError::Internal(format!("failed to serialize passkey: {e}")))?;
+    let cred_id = cred_id_b64(passkey);
     state
         .db
         .execute(
-            "UPDATE users SET recovery_webauthn_credential = $1 WHERE id = $2",
-            stoolap::params![passkey_json, user_id.to_string()],
+            "UPDATE users SET recovery_webauthn_credential = $1, recovery_webauthn_cred_id = $2 WHERE id = $3",
+            stoolap::params![passkey_json, cred_id, user_id.to_string()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(())
+}
+
+/// One-time startup backfill: populate `recovery_webauthn_cred_id` for rows
+/// that only have the legacy `recovery_webauthn_credential` JSON blob (i.e.
+/// registered before the indexed column existed), so the duplicate-credential
+/// check below covers them too instead of silently skipping pre-migration
+/// passkeys. Cheap after the first run since the WHERE clause then matches
+/// nothing.
+pub(crate) fn backfill_webauthn_cred_ids(db: &stoolap::Database) -> anyhow::Result<()> {
+    let rows = db.query(
+        "SELECT id, recovery_webauthn_credential FROM users
+         WHERE recovery_webauthn_credential IS NOT NULL AND recovery_webauthn_cred_id IS NULL",
+        (),
+    )?;
+
+    for row in rows {
+        let row = row?;
+        let id = crate::db::row_val(&row, 0)?
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("expected user id"))?
+            .to_string();
+        let passkey_json = crate::db::row_val(&row, 1)?
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("expected passkey JSON"))?
+            .to_string();
+        let passkey: Passkey = match serde_json::from_str(&passkey_json) {
+            Ok(pk) => pk,
+            Err(e) => {
+                tracing::warn!(
+                    user_id = %id,
+                    error = %e,
+                    "skipping unparseable legacy WebAuthn credential during backfill"
+                );
+                continue;
+            }
+        };
+        let cred_id = cred_id_b64(&passkey);
+        if let Err(e) = db.execute(
+            "UPDATE users SET recovery_webauthn_cred_id = $1 WHERE id = $2",
+            stoolap::params![cred_id, id.clone()],
+        ) {
+            tracing::warn!(
+                user_id = %id,
+                error = %e,
+                "failed to backfill recovery_webauthn_cred_id"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -176,13 +239,12 @@ fn assert_credential_not_registered_elsewhere(
     user_id: Uuid,
     passkey: &Passkey,
 ) -> Result<()> {
+    let cred_id = cred_id_b64(passkey);
     let rows = state
         .db
         .query(
-            "SELECT id, recovery_webauthn_credential
-         FROM users
-         WHERE recovery_webauthn_credential IS NOT NULL",
-            (),
+            "SELECT id FROM users WHERE recovery_webauthn_cred_id = $1",
+            stoolap::params![cred_id],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -192,16 +254,7 @@ fn assert_credential_not_registered_elsewhere(
             .as_str()
             .ok_or_else(|| AppError::Internal("expected user id".into()))?
             .to_string();
-        if id == user_id.to_string() {
-            continue;
-        }
-        let existing_json = crate::db::row_val(&row, 1)?
-            .as_str()
-            .ok_or_else(|| AppError::Internal("expected passkey JSON".into()))?
-            .to_string();
-        let existing: Passkey = serde_json::from_str(&existing_json)
-            .map_err(|e| AppError::Internal(format!("invalid stored WebAuthn credential: {e}")))?;
-        if existing.cred_id() == passkey.cred_id() {
+        if id != user_id.to_string() {
             return Err(AppError::Conflict(
                 "WebAuthn credential is already registered to another account".into(),
             ));

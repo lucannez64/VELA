@@ -130,6 +130,18 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         (),
     );
     let _ = db.execute("ALTER TABLE users ADD COLUMN share_ek TEXT", ());
+    let _ = db.execute(
+        "ALTER TABLE users ADD COLUMN recovery_webauthn_cred_id TEXT",
+        (),
+    );
+    // Indexed alongside the credential JSON so cross-account duplicate-passkey
+    // checks are a point lookup instead of a full table scan + per-row
+    // deserialize. NULLs (no passkey registered) don't collide under UNIQUE.
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_webauthn_cred_id
+         ON users(recovery_webauthn_cred_id)",
+        (),
+    )?;
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id)",
         (),
@@ -461,4 +473,55 @@ pub fn parse_shared_item_row(row: &ResultRow) -> Result<SharedItemRow, AppError>
 
 pub fn row_val(row: &ResultRow, idx: usize) -> Result<Value, AppError> {
     val(row, idx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webauthn_cred_id_unique_index_rejects_cross_account_duplicates() {
+        let db = open_and_init("memory://").unwrap();
+        let now = Utc::now().to_rfc3339();
+        let user_a = Uuid::new_v4().to_string();
+        let user_b = Uuid::new_v4().to_string();
+        let user_c = Uuid::new_v4().to_string();
+        for id in [&user_a, &user_b, &user_c] {
+            db.execute(
+                "INSERT INTO users (id, created_at) VALUES ($1, $2)",
+                stoolap::params![id.clone(), now.clone()],
+            )
+            .unwrap();
+        }
+
+        db.execute(
+            "UPDATE users SET recovery_webauthn_cred_id = $1 WHERE id = $2",
+            stoolap::params!["cred-abc".to_string(), user_a.clone()],
+        )
+        .unwrap();
+
+        // Same cred_id for a different user must be rejected by the unique index.
+        let err = db
+            .execute(
+                "UPDATE users SET recovery_webauthn_cred_id = $1 WHERE id = $2",
+                stoolap::params!["cred-abc".to_string(), user_b.clone()],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("unique")
+                || err.to_string().to_lowercase().contains("duplicate"),
+            "expected a unique-constraint error, got: {err}"
+        );
+
+        // user_b and user_c both still have a NULL recovery_webauthn_cred_id —
+        // NULLs must not collide under the unique index.
+        let rows = db
+            .query(
+                "SELECT id FROM users WHERE recovery_webauthn_cred_id IS NULL",
+                (),
+            )
+            .unwrap();
+        let null_count = rows.into_iter().filter(|r| r.is_ok()).count();
+        assert_eq!(null_count, 2);
+    }
 }

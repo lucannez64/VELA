@@ -44,6 +44,10 @@ impl AppStateInner {
             .build()
             .map_err(|e| anyhow::anyhow!("failed to build WebAuthn verifier: {e:?}"))?;
 
+        if let Err(e) = crate::recovery::webauthn::backfill_webauthn_cred_ids(&db) {
+            tracing::warn!(error = %e, "WebAuthn cred_id backfill failed; continuing startup");
+        }
+
         Ok(Self {
             db,
             store,
