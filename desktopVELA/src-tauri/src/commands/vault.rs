@@ -848,11 +848,8 @@ pub async fn import_vault_bitwarden_json(
         return Err(format!("Unsupported export version: {}", import.version));
     }
 
-    {
-        let crypto = state.crypto.read();
-        if crypto.is_none() {
-            return Err("Session not unlocked. Please unlock the vault first.".to_string());
-        }
+    if !state.is_unlocked() {
+        return Err("Session not unlocked. Please unlock the vault first.".to_string());
     }
 
     let now = Utc::now();

@@ -26,6 +26,9 @@ export default function ItemDetail({ item, onEdit }: Props) {
 
   useEffect(() => {
     setShowPassword(false);
+    setShowCardNumber(false);
+    setShowCVV(false);
+    setShowCardPin(false);
   }, [item.id]);
 
   useEffect(() => {

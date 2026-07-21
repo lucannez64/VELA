@@ -167,5 +167,10 @@ pub async fn verify_totp(secret: String, code: String) -> Result<bool, String> {
     let expected = compute_hotp(&secret_bytes, counter, params.digits);
     let code_trimmed = code.trim();
 
-    Ok(expected == code_trimmed)
+    // Constant-time comparison so the code can't be narrowed down byte-by-byte
+    // via response timing, matching the capability check in ipc.rs.
+    use subtle::ConstantTimeEq;
+    Ok(bool::from(
+        expected.as_bytes().ct_eq(code_trimmed.as_bytes()),
+    ))
 }

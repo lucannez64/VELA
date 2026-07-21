@@ -171,6 +171,21 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
     return formatDate(dateStr);
   };
 
+  // For timestamps that are always in the future (e.g. a grant's expiry),
+  // unlike formatLastActive above which assumes a past timestamp.
+  const formatTimeUntil = (dateStr: string) => {
+    const diff = new Date(dateStr).getTime() - Date.now();
+    if (diff <= 0) return 'Expired';
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    if (hours < 1) {
+      const minutes = Math.max(1, Math.floor(diff / (1000 * 60)));
+      return `in ${minutes} minute${minutes > 1 ? 's' : ''}`;
+    }
+    if (hours < 24) return `in ${hours} hour${hours > 1 ? 's' : ''}`;
+    const days = Math.floor(hours / 24);
+    return `in ${days} day${days > 1 ? 's' : ''}`;
+  };
+
   const getDeviceIcon = (type: string) => {
     return type === 'desktop' ? 'laptop_mac' : 'smartphone';
   };
@@ -300,7 +315,7 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                     </div>
                     <p className="text-sm text-on-surface-variant">
                       Started {formatDate(ws.created_at)}
-                      {ws.expires_at && ` · Expires ${formatLastActive(ws.expires_at)}`}
+                      {ws.expires_at && ` · Expires ${formatTimeUntil(ws.expires_at)}`}
                     </p>
                   </div>
                 </div>

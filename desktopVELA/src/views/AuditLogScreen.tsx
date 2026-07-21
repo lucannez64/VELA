@@ -158,14 +158,6 @@ export default function AuditLogScreen() {
               </div>
             ))}
           </div>
-
-          {entries.length >= 10 && (
-            <div className="mt-8 text-center">
-              <button className="px-6 py-3 bg-surface-container hover:bg-surface-container-high rounded-xl text-on-surface font-medium transition-colors">
-                Load more
-              </button>
-            </div>
-          )}
         </>
       )}
     </div>

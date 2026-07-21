@@ -2,6 +2,7 @@ pub mod audit;
 pub mod biometric;
 pub mod devices;
 pub mod ipc;
+pub mod recovery;
 pub mod session;
 pub mod settings;
 pub mod sharing;

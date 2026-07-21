@@ -84,6 +84,14 @@ export default function ConflictResolution({ conflicts, onResolved, onClose }: P
     if (local.password !== server.password) changed.push('Password');
     if (local.totp !== server.totp) changed.push('TOTP');
     if (local.notes !== server.notes) changed.push('Notes');
+    if (local.url !== server.url) changed.push('URL');
+    if (local.email !== server.email) changed.push('Email');
+    if (local.card_number !== server.card_number) changed.push('Card number');
+    if (local.card_exp !== server.card_exp) changed.push('Expiration');
+    if (local.card_cvv !== server.card_cvv) changed.push('CVV');
+    if (local.card_pin !== server.card_pin) changed.push('PIN');
+    if (local.cardholder_name !== server.cardholder_name) changed.push('Cardholder name');
+    if (local.secure_note_content !== server.secure_note_content) changed.push('Note content');
 
     return changed;
   };

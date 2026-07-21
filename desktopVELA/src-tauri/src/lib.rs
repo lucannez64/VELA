@@ -4,6 +4,7 @@ pub mod commands;
 pub mod crypto;
 pub mod device;
 pub mod ipc;
+pub mod rclone;
 pub mod session;
 pub mod store;
 pub mod token;
@@ -173,8 +174,16 @@ impl AppState {
         }
     }
 
+    /// The cached server auth token, or `None` if the session is inactive,
+    /// expired, or never authenticated. Callers must not bypass this by
+    /// reading `session.get_server_token()` directly — a token surviving
+    /// past auto-lock would let locked-vault commands keep hitting the
+    /// server as if still unlocked.
     pub fn get_session_token(&self) -> Option<String> {
         let session = self.session.read();
+        if !session.active || session.is_expired() {
+            return None;
+        }
         session.get_server_token().map(|s| s.to_string())
     }
 

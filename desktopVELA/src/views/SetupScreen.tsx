@@ -26,6 +26,12 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
   const [biometricError, setBiometricError] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
   const [isSettingUpSecurityKey, setIsSettingUpSecurityKey] = useState(false);
+  const [showCloudBackupPicker, setShowCloudBackupPicker] = useState(false);
+  const [cloudRemotes, setCloudRemotes] = useState<string[] | null>(null);
+  const [selectedRemote, setSelectedRemote] = useState('');
+  const [cloudBackupError, setCloudBackupError] = useState('');
+  const [isLoadingRemotes, setIsLoadingRemotes] = useState(false);
+  const [isSettingUpCloudBackup, setIsSettingUpCloudBackup] = useState(false);
 
   useEffect(() => {
     checkBiometricAvailability();
@@ -112,6 +118,49 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
   };
 
   const completedSteps = Object.values(recoverySteps).filter(Boolean).length;
+
+  const handleOpenCloudBackupPicker = async () => {
+    setCloudBackupError('');
+    setShowCloudBackupPicker(true);
+    setIsLoadingRemotes(true);
+    try {
+      const remotes = await invoke<string[]>('list_cloud_backup_remotes');
+      setCloudRemotes(remotes);
+      if (remotes.length > 0) setSelectedRemote(remotes[0]);
+    } catch (e) {
+      setCloudRemotes([]);
+      setCloudBackupError(
+        e instanceof Error ? e.message : 'Could not list rclone remotes'
+      );
+    } finally {
+      setIsLoadingRemotes(false);
+    }
+  };
+
+  const handleConfirmCloudBackup = async () => {
+    if (!selectedRemote) return;
+    setIsSettingUpCloudBackup(true);
+    setCloudBackupError('');
+    try {
+      await invoke('setup_cloud_backup_recovery', { remote: selectedRemote });
+      setRecoverySteps(prev => ({ ...prev, cloudBackup: true }));
+      setShowCloudBackupPicker(false);
+    } catch (e) {
+      setCloudBackupError(e instanceof Error ? e.message : 'Cloud backup upload failed');
+    } finally {
+      setIsSettingUpCloudBackup(false);
+    }
+  };
+
+  const handleFinishRecoverySetup = async () => {
+    try {
+      await invoke('finalize_recovery_setup');
+    } catch (e) {
+      // Best-effort cleanup of the local pending-shares cache — the shares
+      // that were actually delivered are unaffected either way.
+    }
+    onStepChange('complete');
+  };
 
   const handleSecurityKeySetup = async () => {
     if (!navigator.credentials?.create) {
@@ -445,14 +494,14 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
                   <div>
                     <div className="font-body font-medium text-on-surface">Cloud backup</div>
                     <div className="text-sm text-on-surface-variant">
-                      {recoverySteps.cloudBackup ? 'Saved to device' : 'Store a recovery share'}
+                      {recoverySteps.cloudBackup ? `Uploaded to ${selectedRemote}` : 'Upload a recovery share via rclone'}
                     </div>
                   </div>
                 </div>
-                {!recoverySteps.cloudBackup && (
+                {!recoverySteps.cloudBackup && !showCloudBackupPicker && (
                   <div className="flex gap-2">
-                    <button 
-                      onClick={() => setRecoverySteps(prev => ({ ...prev, cloudBackup: true }))}
+                    <button
+                      onClick={handleOpenCloudBackupPicker}
                       className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
                     >
                       Enable
@@ -460,6 +509,62 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
                   </div>
                 )}
               </div>
+
+              {!recoverySteps.cloudBackup && showCloudBackupPicker && (
+                <div className="mt-4 pt-4 border-t border-outline-variant/20 space-y-3">
+                  {isLoadingRemotes ? (
+                    <p className="text-sm text-on-surface-variant">Looking for configured rclone remotes...</p>
+                  ) : cloudRemotes && cloudRemotes.length > 0 ? (
+                    <>
+                      <label className="block text-xs font-label uppercase tracking-widest text-outline">
+                        Choose a remote
+                      </label>
+                      <select
+                        value={selectedRemote}
+                        onChange={e => setSelectedRemote(e.target.value)}
+                        className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface outline-none focus:ring-2 focus:ring-primary/40"
+                      >
+                        {cloudRemotes.map(remote => (
+                          <option key={remote} value={remote}>{remote}</option>
+                        ))}
+                      </select>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setShowCloudBackupPicker(false)}
+                          className="flex-1 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleConfirmCloudBackup}
+                          disabled={isSettingUpCloudBackup}
+                          className="flex-1 py-2 bg-primary text-on-primary rounded-lg text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {isSettingUpCloudBackup ? 'Uploading...' : 'Upload share'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-on-surface-variant">
+                        No configured rclone remotes found. Install{' '}
+                        <span className="font-mono text-on-surface">rclone</span> and run{' '}
+                        <span className="font-mono text-on-surface">rclone config</span> to add one
+                        (Google Drive, S3, iCloud via WebDAV, etc.), then come back here.
+                      </p>
+                      <button
+                        onClick={() => setShowCloudBackupPicker(false)}
+                        className="w-full py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
+                      >
+                        Close
+                      </button>
+                    </>
+                  )}
+                  {cloudBackupError && (
+                    <p className="text-sm text-error">{cloudBackupError}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className={`p-6 rounded-xl border ${recoverySteps.securityKey ? 'border-primary bg-primary/5' : 'border-outline-variant bg-surface-container'}`}>
@@ -506,23 +611,21 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
                   </div>
                   <div>
                     <div className="font-body font-medium text-on-surface">Trusted contact</div>
-                    <div className="text-sm text-on-surface-variant">Optional but recommended</div>
+                    <div className="text-sm text-on-surface-variant">
+                      {recoverySteps.trustedContact ? 'Share sent' : 'Optional but recommended'}
+                    </div>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => setRecoverySteps(prev => ({ ...prev, trustedContact: true }))}
-                    className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
-                  >
-                    Skip
-                  </button>
-                  <button 
-                    onClick={() => setShowTrustedContact(true)}
-                    className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
-                  >
-                    Invite
-                  </button>
-                </div>
+                {!recoverySteps.trustedContact && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowTrustedContact(true)}
+                      className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright rounded-lg text-sm transition-colors"
+                    >
+                      Get my share
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -533,15 +636,15 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
               <span>{completedSteps >= 2 ? '2/2 complete' : `${completedSteps}/2 required`}</span>
             </div>
             <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-primary rounded-full transition-all"
-                style={{ width: `${Math.max(completedSteps, 2) / 2 * 100}%` }}
+                style={{ width: `${Math.min(completedSteps, 2) / 2 * 100}%` }}
               />
             </div>
           </div>
 
           <button
-            onClick={() => onStepChange('complete')}
+            onClick={handleFinishRecoverySetup}
             disabled={completedSteps < 2}
             className="w-full py-4 px-6 bg-gradient-to-r from-primary to-primary-dim text-on-primary font-bold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >

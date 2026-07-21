@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, ReactNode, Dispatch, SetStateAction } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, useRef, ReactNode, Dispatch, SetStateAction } from 'react';
 import type { ThemeSetting } from '../themes';
 
 export interface SessionStatus {
@@ -243,7 +243,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 3000);
   }, []);
 
-  const value: AppContextType = {
+  const value: AppContextType = useMemo(() => ({
     session,
     setSession,
     isSetupComplete,
@@ -264,7 +264,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setClipboardTimer,
     pendingShareItemId,
     setPendingShareItemId,
-  };
+  }), [
+    session,
+    isSetupComplete,
+    currentView,
+    selectedItem,
+    quickSearchOpen,
+    toast,
+    showToast,
+    items,
+    settings,
+    clipboardTimer,
+    pendingShareItemId,
+  ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

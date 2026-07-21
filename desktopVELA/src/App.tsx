@@ -20,6 +20,7 @@ import SessionExpiredOverlay from './components/SessionExpiredOverlay';
 import Toast from './components/Toast';
 import AddItemModal from './components/AddItemModal';
 import ConflictResolution from './components/ConflictResolution';
+import { useClipboard } from './hooks/useClipboard';
 
 type SetupStep = 'welcome' | 'biometric' | 'password' | 'recovery' | 'complete';
 
@@ -40,6 +41,7 @@ function AppContent() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, settings, setSettings } = useApp();
+  const { clearClipboard } = useClipboard();
   const syncingRef = useRef(false);
   const sessionActiveRef = useRef(false);
   sessionActiveRef.current = !!session?.active;
@@ -79,6 +81,9 @@ function AppContent() {
 
   const doSyncRef = useRef(doSync);
   doSyncRef.current = doSync;
+
+  const clearClipboardRef = useRef(clearClipboard);
+  clearClipboardRef.current = clearClipboard;
 
   const refreshSession = async () => {
     try {
@@ -137,6 +142,7 @@ function AppContent() {
       setItems([]);
       setSelectedItem(null);
       setQuickSearchOpen(false);
+      clearClipboardRef.current();
     });
 
     const unlistenQuickSearch = listen('open-quick-search', () => {

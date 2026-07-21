@@ -137,6 +137,12 @@ impl Store {
         let ciphertext = fs::read(rms_path)?;
         let plaintext = decrypt(&derived_key, &ciphertext)?;
 
+        if plaintext.len() != 32 {
+            anyhow::bail!(
+                "Corrupt RMS file: expected 32 bytes, got {}",
+                plaintext.len()
+            );
+        }
         let mut rms = [0u8; 32];
         rms.copy_from_slice(&plaintext[..32]);
         Ok(Some(rms))

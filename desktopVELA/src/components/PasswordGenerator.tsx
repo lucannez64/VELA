@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface Props {
@@ -28,23 +28,30 @@ export default function PasswordGenerator({ onSelect, onClose }: Props) {
     pronounceable: false,
   });
 
+  // Guards against an older options set (e.g. mid slider-drag) resolving
+  // after a newer one and overwriting the displayed password with a value
+  // that no longer matches the selected settings.
+  const latestRequestId = useRef(0);
+
   useEffect(() => {
-    generatePassword();
+    latestRequestId.current += 1;
+    generatePassword(options, latestRequestId.current);
   }, [options]);
 
-  const generatePassword = async () => {
+  const generatePassword = async (opts: typeof options, requestId: number) => {
     try {
-      const result = await invoke<PasswordResult>('generate_password', { 
+      const result = await invoke<PasswordResult>('generate_password', {
         options: {
-          length: options.length,
-          uppercase: options.uppercase,
-          lowercase: options.lowercase,
-          numbers: options.numbers,
-          symbols: options.symbols,
-          easy_to_type: options.easyToType,
-          pronounceable: options.pronounceable,
+          length: opts.length,
+          uppercase: opts.uppercase,
+          lowercase: opts.lowercase,
+          numbers: opts.numbers,
+          symbols: opts.symbols,
+          easy_to_type: opts.easyToType,
+          pronounceable: opts.pronounceable,
         }
       });
+      if (requestId !== latestRequestId.current) return;
       setPassword(result.password);
       setStrength(result.strength);
     } catch (e) {
@@ -70,8 +77,11 @@ export default function PasswordGenerator({ onSelect, onClose }: Props) {
         <div className="flex-1 px-4 py-3 bg-surface-container-highest rounded-lg font-mono text-lg text-primary truncate">
           {password}
         </div>
-        <button 
-          onClick={generatePassword}
+        <button
+          onClick={() => {
+            latestRequestId.current += 1;
+            generatePassword(options, latestRequestId.current);
+          }}
           className="p-2 hover:bg-surface-container-high rounded-lg text-on-surface-variant hover:text-primary transition-colors"
           title="Regenerate"
         >

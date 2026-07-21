@@ -219,8 +219,8 @@ const ENROLLMENT_CODE_V2_PREFIX: &str = "VELA-ENROLL:v2:";
 /// scanned or typed on the new device directly).
 #[tauri::command]
 pub async fn generate_enrollment_code(state: State<'_, Arc<AppState>>) -> Result<String, String> {
-    // ── gate: session must be active ─────────────────────────────────────────
-    if !state.session.read().active {
+    // ── gate: session must be active and not expired ─────────────────────────
+    if !state.is_unlocked() {
         return Err("Vault is locked. Please unlock before enrolling a new device.".to_string());
     }
 

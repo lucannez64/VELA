@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem } from '../context/AppContext';
 
@@ -11,6 +11,9 @@ export default function QuickSearchOverlay({ onClose }: QuickSearchOverlayProps)
   const [results, setResults] = useState<VaultItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const { setSelectedItem, setCurrentView } = useApp();
+  // Guards against an older, slower query's response overwriting a newer,
+  // faster one's results — requests can resolve out of order.
+  const latestRequestId = useRef(0);
 
   const handleSelect = useCallback((item: VaultItem) => {
     onClose();
@@ -39,16 +42,21 @@ export default function QuickSearchOverlay({ onClose }: QuickSearchOverlayProps)
   }, [results, selectedIndex, handleSelect, onClose]);
 
   useEffect(() => {
-    if (query.length > 0) {
-      searchItems();
-    } else {
+    latestRequestId.current += 1;
+    const requestId = latestRequestId.current;
+
+    if (query.length === 0) {
       setResults([]);
+      return;
     }
+
+    searchItems(query, requestId);
   }, [query]);
 
-  const searchItems = async () => {
+  const searchItems = async (searchQuery: string, requestId: number) => {
     try {
-      const items = await invoke<VaultItem[]>('search_items', { query });
+      const items = await invoke<VaultItem[]>('search_items', { query: searchQuery });
+      if (requestId !== latestRequestId.current) return; // a newer query already superseded this one
       setResults(items.slice(0, 8));
       setSelectedIndex(0);
     } catch (e) {

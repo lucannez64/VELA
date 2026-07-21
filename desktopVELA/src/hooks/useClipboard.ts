@@ -1,51 +1,54 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useApp } from '../context/AppContext';
 
+// The pending-clear timer lives in AppContext (not a local ref) so that a
+// clearClipboard() call from a different component instance — e.g. the lock
+// button — can cancel the timer a copy started from ItemDetail. A local ref
+// would only ever be visible to the hook instance that created it.
 export function useClipboard() {
-  const { showToast, settings, setClipboardTimer } = useApp();
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { showToast, settings, clipboardTimer, setClipboardTimer } = useApp();
 
   const copyToClipboard = useCallback(async (text: string, label: string = 'Value') => {
     try {
       await writeText(text);
-      
+
       const clearDelay = (settings?.clipboard_clear_seconds ?? 30) * 1000;
-      
+
       showToast(`${label} copied (clears in ${clearDelay / 1000}s)`, 'success');
 
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
+      if (clipboardTimer) {
+        clearTimeout(clipboardTimer);
       }
 
-      timerRef.current = setTimeout(async () => {
+      const timer = setTimeout(async () => {
         try {
           await writeText('');
           showToast('Clipboard cleared', 'info');
         } catch (e) {
           console.error('Failed to clear clipboard:', e);
         }
-        timerRef.current = null;
+        setClipboardTimer(null);
       }, clearDelay);
 
-      setClipboardTimer(timerRef.current);
+      setClipboardTimer(timer);
     } catch (e) {
       console.error('Failed to copy to clipboard:', e);
       showToast('Failed to copy', 'error');
     }
-  }, [settings, showToast, setClipboardTimer]);
+  }, [settings, showToast, clipboardTimer, setClipboardTimer]);
 
   const clearClipboard = useCallback(async () => {
     try {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
+      if (clipboardTimer) {
+        clearTimeout(clipboardTimer);
+        setClipboardTimer(null);
       }
       await writeText('');
     } catch (e) {
       console.error('Failed to clear clipboard:', e);
     }
-  }, []);
+  }, [clipboardTimer, setClipboardTimer]);
 
   return { copyToClipboard, clearClipboard };
 }

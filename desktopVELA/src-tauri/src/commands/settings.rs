@@ -249,6 +249,18 @@ pub async fn finish_recovery_webauthn_registration(
         state.session.write().set_server_token(t);
     }
 
+    if response.registered {
+        // The recovery passkey is now registered server-side — immediately
+        // hand it the share it's meant to gate (Share 2 of the 2-of-3
+        // split; see SPEC.md §4.3 and commands/recovery.rs). Registering the
+        // credential without ever storing a share behind it would leave
+        // "security key recovery" enabled in the UI but functionally inert.
+        let current_token = state
+            .get_session_token()
+            .ok_or_else(|| "No session token available".to_string())?;
+        crate::commands::recovery::deliver_security_key_share(&state, &current_token).await?;
+    }
+
     Ok(response.registered)
 }
 

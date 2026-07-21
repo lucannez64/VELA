@@ -7,7 +7,7 @@ use crate::session::{LockState, SessionStatus};
 use crate::AppState;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use std::sync::Arc;
-use tauri::{async_runtime, command, State};
+use tauri::{async_runtime, command, AppHandle, Emitter, State};
 
 fn get_device_info() -> (String, String) {
     let device_id = DeviceInfo::generate_device_id();
@@ -199,7 +199,7 @@ pub async fn get_session_status(state: State<'_, Arc<AppState>>) -> Result<Sessi
 }
 
 #[command]
-pub async fn lock_session(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn lock_session(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     record_audit_event(&state, AuditAction::VaultLocked);
     let mut session = state.session.write();
     session.lock();
@@ -212,6 +212,13 @@ pub async fn lock_session(state: State<'_, Arc<AppState>>) -> Result<(), String>
 
     biometric::clear_cached_rms();
     state.bump_session_generation();
+
+    // Emit the same event the tray "Lock Now" path emits, so every caller of
+    // this command — the UI lock buttons and the idle-timeout effect, not
+    // just the tray — triggers one consistent frontend cleanup (clipboard,
+    // in-memory items/selectedItem) instead of each call site reimplementing
+    // its own subset.
+    let _ = app.emit("session-locked", ());
 
     Ok(())
 }

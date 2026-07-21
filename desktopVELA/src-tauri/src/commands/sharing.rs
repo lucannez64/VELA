@@ -316,6 +316,9 @@ pub(crate) async fn refresh_linked_shares_inner(state: &AppState) -> Result<(), 
 
 #[tauri::command]
 pub async fn get_shares(state: State<'_, Arc<AppState>>) -> Result<Vec<Share>, String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
     let _ = refresh_linked_shares_inner(&state).await;
     let mut store = load_share_store(&state).unwrap_or_default();
 
@@ -390,6 +393,9 @@ pub async fn send_share(
     state: State<'_, Arc<AppState>>,
     request: SendShareRequest,
 ) -> Result<Share, String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
     let token = state
         .get_session_token()
         .ok_or("Not authenticated — please unlock your vault and try again.")?;
@@ -501,6 +507,9 @@ pub async fn accept_share(
     state: State<'_, Arc<AppState>>,
     share_id: String,
 ) -> Result<(), String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
     let mut store = load_share_store(&state).ok_or("Failed to load share store")?;
     let mut received_item_id: Option<String> = None;
 
@@ -586,6 +595,9 @@ pub async fn decline_share(
     state: State<'_, Arc<AppState>>,
     share_id: String,
 ) -> Result<(), String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
     let mut store = load_share_store(&state).ok_or("Failed to load share store")?;
 
     // Delete from server inbox and remove from local store entirely.
@@ -613,6 +625,9 @@ pub async fn delete_share(
     state: State<'_, Arc<AppState>>,
     share_id: String,
 ) -> Result<(), String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
     let mut store = load_share_store(&state).ok_or("Failed to load share store")?;
 
     let is_received = store.received_shares.iter().any(|s| s.id == share_id);
