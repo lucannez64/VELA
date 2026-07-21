@@ -24,7 +24,7 @@ struct ContentView: View {
                 case .unlocked:
                     VaultListView(vm: vm, accountVM: accountVM)
                 case .locked:
-                    UnlockView(vm: vm)
+                    UnlockView(vm: vm, accountVM: accountVM)
                 case .noVault:
                     WelcomeView(vm: vm, accountVM: accountVM)
                 }

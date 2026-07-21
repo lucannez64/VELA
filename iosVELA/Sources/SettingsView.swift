@@ -69,7 +69,7 @@ struct SettingsView: View {
                     labeled("Core", VelaCoreFFI.version())
                     if let userID = accountVM.userID {
                         Button {
-                            UIPasteboard.general.string = userID
+                            Clipboard.copySecurely(userID)
                         } label: {
                             HStack {
                                 Text("User ID").foregroundStyle(.primary)

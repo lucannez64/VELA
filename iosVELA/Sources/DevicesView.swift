@@ -46,6 +46,7 @@ struct DevicesView: View {
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             vm.refresh()
         }
+        .disabled(vm.busy)
     }
 
     private func row(_ device: VelaClient.DeviceInfo) -> some View {

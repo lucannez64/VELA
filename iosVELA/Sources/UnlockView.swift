@@ -4,7 +4,9 @@ import SwiftUI
 /// "Unlock" runs Face ID / Touch ID (Phase 2) and decrypts the vault.
 struct UnlockView: View {
     @ObservedObject var vm: VaultViewModel
+    @ObservedObject var accountVM: AccountViewModel
     @State private var password = ""
+    @State private var confirmReset = false
 
     var body: some View {
         ZStack {
@@ -29,8 +31,31 @@ struct UnlockView: View {
                 } else {
                     biometricButton
                 }
+                resetDeviceButton
             }
         }
+        .alert("Reset this device?", isPresented: $confirmReset) {
+            Button("Reset", role: .destructive) {
+                vm.wipe()
+                accountVM.signOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will erase local vault data on this device. You'll need to re-enroll from another device or your recovery method.")
+        }
+    }
+
+    /// Reachable without unlocking, e.g. if the biometric Keychain item was
+    /// permanently invalidated (biometrics reset/changed) and unlock() can
+    /// never succeed again. Reuses the same reset logic as SettingsView's
+    /// "Reset local security" — gated behind an explicit confirmation since
+    /// it's destructive.
+    private var resetDeviceButton: some View {
+        Button("Reset this device", role: .destructive) { confirmReset = true }
+            .font(.footnote)
+            .foregroundStyle(.white.opacity(0.6))
+            .padding(.bottom, 24)
+            .accessibilityIdentifier("unlockResetButton")
     }
 
     private var biometricButton: some View {

@@ -53,6 +53,9 @@ final class DevicesViewModel: ObservableObject {
     }
 
     private func run(_ label: String, _ work: @escaping () async throws -> String) {
+        // Without this guard, a double-tap (e.g. "Revoke" fired twice, or a
+        // refresh racing a revoke) would run both concurrently.
+        guard !busy else { return }
         busy = true
         status = "\(label)…"
         Task { @MainActor in

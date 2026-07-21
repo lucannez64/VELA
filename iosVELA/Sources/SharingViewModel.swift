@@ -96,6 +96,9 @@ final class SharingViewModel: ObservableObject {
     }
 
     private func run(_ label: String, _ work: @escaping () async throws -> String) {
+        // Without this guard, a double-tap (e.g. "Accept"/"Revoke" fired
+        // twice) would run both concurrently.
+        guard !busy else { return }
         busy = true
         status = "\(label)…"
         Task { @MainActor in

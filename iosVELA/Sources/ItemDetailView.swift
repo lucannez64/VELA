@@ -162,6 +162,19 @@ struct ItemDetailView: View {
     }
 }
 
+/// Copies a value to the clipboard with an expiration and no Handoff sync, so
+/// a copied secret does not persist on the system clipboard or sync to the
+/// user's other devices. Shared by `CopyButton` here and the user ID copy in
+/// SettingsView.
+enum Clipboard {
+    static func copySecurely(_ value: String) {
+        UIPasteboard.general.setItems(
+            [[UIPasteboard.typeAutomatic: value]],
+            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(20)]
+        )
+    }
+}
+
 /// Copies a value to the clipboard with brief feedback.
 private struct CopyButton: View {
     let value: String
@@ -169,13 +182,7 @@ private struct CopyButton: View {
 
     var body: some View {
         Button {
-            // Expire after 20s and keep local-only (no Handoff sync) so a
-            // copied password/CVV/TOTP does not persist on the system clipboard
-            // or sync to the user's other devices.
-            UIPasteboard.general.setItems(
-                [[UIPasteboard.typeAutomatic: value]],
-                options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(20)]
-            )
+            Clipboard.copySecurely(value)
             copied = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
         } label: {

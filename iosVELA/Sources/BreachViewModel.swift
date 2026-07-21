@@ -49,6 +49,9 @@ final class BreachViewModel: ObservableObject {
     }
 
     private func run(_ label: String, _ work: @escaping () async throws -> String) {
+        // Without this guard, a double-tap would run overlapping checks
+        // concurrently.
+        guard !busy else { return }
         busy = true
         status = "\(label)…"
         Task { @MainActor in

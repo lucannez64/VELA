@@ -64,5 +64,6 @@ struct SharingView: View {
             }
         }
         .onAppear { vm.refresh() }
+        .disabled(vm.busy)
     }
 }
