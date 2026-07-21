@@ -5,6 +5,7 @@ struct WelcomeView: View {
     @ObservedObject var accountVM: AccountViewModel
     @State private var showingPassword = false
     @State private var showingEnroll = false
+    @State private var showingRecover = false
 
     var body: some View {
         ZStack {
@@ -53,6 +54,11 @@ struct WelcomeView: View {
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
                     .accessibilityIdentifier("joinWithCodeButton")
+
+                Button("Recover my account") { showingRecover = true }
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .accessibilityIdentifier("recoverAccountLink")
                     .padding(.bottom, 40)
             }
         }
@@ -61,6 +67,9 @@ struct WelcomeView: View {
         }
         .sheet(isPresented: $showingEnroll) {
             EnrollView(vault: vm, account: accountVM)
+        }
+        .sheet(isPresented: $showingRecover) {
+            RecoverAccountView(vault: vm, account: accountVM)
         }
     }
 }

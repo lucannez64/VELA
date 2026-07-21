@@ -146,6 +146,10 @@ pub fn build(state: AppState) -> Router {
             "/recovery/recover",
             post(crate::recovery::recover::post_recover),
         )
+        .route(
+            "/recovery/enroll-device",
+            post(crate::recovery::enroll_device::post_enroll_device),
+        )
         .route("/health", get(health));
 
     // Serve the ephemeral web vault SPA same-origin when WEB_DIR is configured.

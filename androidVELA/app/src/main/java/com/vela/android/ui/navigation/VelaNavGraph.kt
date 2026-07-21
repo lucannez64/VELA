@@ -41,6 +41,8 @@ import com.vela.android.ui.screens.BreachMonitorScreen
 import com.vela.android.ui.screens.DevicesScreen
 import com.vela.android.ui.screens.EnrollDeviceScreen
 import com.vela.android.ui.screens.ItemDetailScreen
+import com.vela.android.ui.screens.RecoverAccountScreen
+import com.vela.android.ui.screens.RecoverySetupScreen
 import com.vela.android.ui.screens.SettingsScreen
 import com.vela.android.ui.screens.SharingScreen
 import com.vela.android.ui.screens.UnlockScreen
@@ -61,6 +63,8 @@ object VelaRoutes {
     const val EDIT_ITEM = "edit_item/{itemId}"
     const val SETTINGS = "settings"
     const val ENROLL = "enroll"
+    const val RECOVER = "recover"
+    const val RECOVERY_SETUP = "recovery_setup"
     const val DEVICES = "devices"
     const val WEB_ACCESS = "web_access"
     const val SHARING = "sharing"
@@ -110,6 +114,8 @@ fun VelaNavHost(
     onUpdateAutoLockMinutes: (Int) -> Unit,
     onNavigateToEnroll: () -> Unit,
     onEnrollDevice: (String, String) -> Unit,
+    onNavigateToRecover: () -> Unit,
+    onRecoverAccount: (String, String, String, String) -> Unit,
     onProtectEnrolledBiometric: () -> Unit,
     onProtectEnrolledPassword: (String) -> Unit,
     serverUrl: String,
@@ -142,7 +148,7 @@ fun VelaNavHost(
             VelaRoutes.AUDIT_LOG,
             VelaRoutes.BREACH_MONITOR
         )
-        val isEnrollRoute = currentRoute == VelaRoutes.ENROLL
+        val isEnrollRoute = currentRoute == VelaRoutes.ENROLL || currentRoute == VelaRoutes.RECOVER
 
         val shouldRedirect = when (authRoute) {
             VelaRoutes.WELCOME -> currentRoute != VelaRoutes.WELCOME && !isEnrollRoute
@@ -227,6 +233,10 @@ fun VelaNavHost(
                     onNavigateToEnroll = {
                         onNavigateToEnroll()
                         navController.navigate(VelaRoutes.ENROLL)
+                    },
+                    onNavigateToRecover = {
+                        onNavigateToRecover()
+                        navController.navigate(VelaRoutes.RECOVER)
                     }
                 )
             }
@@ -257,6 +267,46 @@ fun VelaNavHost(
                             } finally {
                                 withContext(Dispatchers.Main) {
                                     enrolling = false
+                                }
+                            }
+                        }
+                    },
+                    onProtectBiometric = {
+                        onProtectEnrolledBiometric()
+                    },
+                    onProtectPassword = { password ->
+                        onProtectEnrolledPassword(password)
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(VelaRoutes.RECOVER) {
+                val scope = rememberCoroutineScope()
+                var recovering by remember { mutableStateOf(false) }
+                var recovered by remember { mutableStateOf(false) }
+                var error by remember { mutableStateOf<String?>(null) }
+
+                RecoverAccountScreen(
+                    errorMessage = error,
+                    isRecovering = recovering,
+                    isRecovered = recovered,
+                    onRecover = { url, userIdInput, share1B64, deviceName ->
+                        recovering = true
+                        error = null
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                onRecoverAccount(url, userIdInput, share1B64, deviceName)
+                                withContext(Dispatchers.Main) {
+                                    recovered = true
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    error = e.message ?: "Account recovery failed"
+                                }
+                            } finally {
+                                withContext(Dispatchers.Main) {
+                                    recovering = false
                                 }
                             }
                         }
@@ -351,6 +401,7 @@ fun VelaNavHost(
                     onOpenDevices = { navController.navigate(VelaRoutes.DEVICES) },
                     onOpenAuditLog = { navController.navigate(VelaRoutes.AUDIT_LOG) },
                     onOpenBreachMonitor = { navController.navigate(VelaRoutes.BREACH_MONITOR) },
+                    onOpenRecoverySetup = { navController.navigate(VelaRoutes.RECOVERY_SETUP) },
                     onUpdateSyncServer = onUpdateSyncServer,
                     onUpdateSyncPreferences = onUpdateSyncPreferences,
                     onSyncNow = onSyncNow,
@@ -362,6 +413,10 @@ fun VelaNavHost(
                     autoLockMinutes = autoLockMinutes,
                     onUpdateAutoLockMinutes = onUpdateAutoLockMinutes
                 )
+            }
+
+            composable(VelaRoutes.RECOVERY_SETUP) {
+                RecoverySetupScreen(onBack = { navController.popBackStack() })
             }
 
             composable(VelaRoutes.SHARING) {

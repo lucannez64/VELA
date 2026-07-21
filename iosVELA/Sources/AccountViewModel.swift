@@ -268,22 +268,92 @@ final class AccountViewModel: ObservableObject {
 
     var shareManifest = ShareManifest()
 
-    /// Split the RMS into recovery shares and store one on the server.
+    /// Split the RMS into recovery shares (SPEC.md §4.3), register a WebAuthn
+    /// recovery passkey (a physical security key, independent of this
+    /// device's own biometrics — see `WebAuthnCeremony`), deliver Share 2 to
+    /// the server gated behind that passkey, and back Share 1 up to iCloud
+    /// Key-Value Storage (see `CloudRecoveryBackup`). Share 3 (trusted
+    /// contact) is handed to the caller to distribute — there's no
+    /// automated channel for that one.
     func setupRecovery(threshold: Int = 2, total: Int = 3) {
         run("Setting up recovery") { [self] in
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
-            guard account != nil else { throw Failure("register first") }
+            guard let account = account else { throw Failure("register first") }
             guard let shares = VelaCoreFFI.splitRecovery(rmsBase64: rms.base64EncodedString(), threshold: threshold, n: total),
-                  let serverShare = shares.first else {
+                  shares.count == total else {
                 throw Failure("recovery split failed")
             }
             let client = client()
-            try await client.putRecoveryShare(serverShare)
+
+            let startResp = try await client.startRecoveryWebAuthnRegistration()
+            let creationOptions = WebAuthnCeremony.unwrapPublicKey(startResp)
+            let credentialJSON = try await WebAuthnCeremony().register(optionsJSON: creationOptions)
+            let registered = try await client.finishRecoveryWebAuthnRegistration(credentialJSON: credentialJSON)
+            guard registered else { throw Failure("recovery passkey registration was not confirmed by the server") }
+
+            // Share 2 is gated by the passkey we just registered.
+            try await client.putRecoveryShare(shares[1])
             await persistRenewedToken(from: client)
-            // The remaining shares are shown to the user to distribute to guardians.
-            recoveryShares = Array(shares.dropFirst())
+            CloudRecoveryBackup.upload(userID: account.userID, shareBase64: shares[0])
+            // Share 3 (trusted contact) is shown to the user to distribute —
+            // there is no automated channel for a trusted-contact handoff.
+            recoveryShares = [shares[2]]
             AuditLog.shared.record("recovery_setup", "\(threshold)-of-\(total)")
-            return "Recovery ready (\(threshold)-of-\(total)); \(recoveryShares.count) guardian share(s)"
+            return "Recovery ready (\(threshold)-of-\(total)); Share 1 backed up to iCloud"
+        }
+    }
+
+    /// Reconstruct the RMS on a brand-new device from Share 1 (pasted from
+    /// wherever the user stored it) + Share 2 (released by the server after
+    /// the WebAuthn assertion below), then register this device against the
+    /// existing account and pull the vault down — the download side of
+    /// `setupRecovery`, mirroring `joinWithCode`'s bootstrap sequence.
+    func restoreAccount(serverURL: String, userID: String, share1Base64: String,
+                         secure: VaultViewModel.UnlockMode, password: String?, deviceName: String) {
+        run("Recovering account") { [self] in
+            let base = URL(string: serverURL) ?? URL(string: defaultServer)!
+            let client = VelaClient(baseURL: base)
+
+            let initiateResp = try await client.initiateRecovery(userID: userID)
+            let requestOptions = WebAuthnCeremony.unwrapPublicKey(initiateResp.publicKeyJSON)
+            let credentialJSON = try await WebAuthnCeremony().assert(optionsJSON: requestOptions)
+            let recoverResp = try await client.recoverAccount(
+                userID: userID, recoveryID: initiateResp.recoveryID, credentialJSON: credentialJSON)
+
+            guard let rmsB64 = VelaCoreFFI.combineRecovery(sharesBase64: [share1Base64, recoverResp.shareBase64]),
+                  let rms = Data(base64Encoded: rmsB64) else {
+                throw Failure("couldn't reconstruct the vault key from the two shares")
+            }
+
+            guard let identity = VelaCoreFFI.generateIdentity() else { throw Failure("identity generation failed") }
+            let deviceID = try await client.enrollDeviceViaRecovery(
+                userID: userID, recoveryGrant: recoverResp.recoveryGrant,
+                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK, deviceName: deviceName)
+
+            let challenge = try await client.challenge()
+            guard let signature = VelaCoreFFI.createAuthSignature(
+                hybridSKBase64: identity.hybridSK, challengeBase64: challenge, deviceID: deviceID) else {
+                throw Failure("signing failed")
+            }
+            let verified = try await client.verify(deviceID: deviceID, challenge: challenge,
+                                                    signature: signature, deviceName: deviceName, deviceType: "ios")
+
+            try vault.adoptVault(rms: rms, mode: secure, password: password)
+
+            var state = AccountState(
+                serverURL: serverURL, userID: verified.user_id, deviceID: deviceID,
+                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK, hybridSK: identity.hybridSK,
+                token: await client.currentToken ?? verified.token)
+            state.shareEK = identity.shareEK
+            state.shareDK = identity.shareDK
+            try store.save(state)
+            account = state
+
+            let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localItems: vault.items)
+            await persistRenewedToken(from: client)
+            vault.applyMergedItems(merged)
+            AuditLog.shared.record("account_recovered", String(deviceID.prefix(8)))
+            return "Account recovered on device \(deviceID.prefix(8))…; \(merged.count) item(s)"
         }
     }
 

@@ -161,6 +161,38 @@ object NativeVelaCore {
         }
     }
 
+    /// Split the RMS into an [n]-share, [threshold]-of-[n] Shamir scheme
+    /// (SPEC.md §4.3: recovery uses a 2-of-3 split). Returns each share
+    /// base64-encoded, in order — the caller delivers each to its own
+    /// channel (cloud backup, server, trusted contact).
+    fun splitRecovery(rms: ByteArray, threshold: Int, n: Int): List<String>? {
+        return callNative {
+            val request = JSONObject()
+                .put("rms_b64", Base64.getEncoder().encodeToString(rms))
+                .put("threshold", threshold)
+                .put("n", n)
+                .toString()
+            val response = JSONObject(nativeSplitRecoveryJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            val shares = response.getJSONArray("shares_b64")
+            (0 until shares.length()).map { shares.getString(it) }
+        }
+    }
+
+    /// Reconstruct the RMS from any `threshold` of the base64 shares produced
+    /// by [splitRecovery] (e.g. Share 1 from cloud backup + Share 2 released
+    /// by the server after a WebAuthn-gated `/recovery/recover` call).
+    fun combineRecovery(sharesB64: List<String>): ByteArray? {
+        return callNative {
+            val request = JSONObject()
+                .put("shares_b64", org.json.JSONArray(sharesB64))
+                .toString()
+            val response = JSONObject(nativeCombineRecoveryJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            Base64.getDecoder().decode(response.getString("rms_b64"))
+        }
+    }
+
     private inline fun <T> callNative(block: () -> T): T? {
         if (!loaded) return null
         return runCatching(block).getOrElse { error("Native VELA bridge call failed: ${it.message}") }
@@ -179,4 +211,6 @@ object NativeVelaCore {
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
     private external fun nativeSealShareJson(requestJson: String): String
     private external fun nativeOpenShareJson(requestJson: String): String
+    private external fun nativeSplitRecoveryJson(requestJson: String): String
+    private external fun nativeCombineRecoveryJson(requestJson: String): String
 }

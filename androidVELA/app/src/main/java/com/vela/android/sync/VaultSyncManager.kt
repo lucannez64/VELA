@@ -8,6 +8,7 @@ import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultJson
 import com.vela.android.core.VaultStore
 import com.vela.android.security.SecureVaultManager
+import com.vela.android.security.WebAuthnCeremony
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -85,6 +86,104 @@ class VaultSyncManager(
         capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
         return NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
+    }
+
+    /// Split the RMS into recovery shares (SPEC.md §4.3), register a WebAuthn
+    /// recovery passkey via `performRegistration` (a physical security key,
+    /// independent of this device's own biometrics — see `WebAuthnCeremony`),
+    /// then deliver Share 2 to the server gated behind that passkey. Returns
+    /// Share 1 (cloud) and Share 3 (trusted contact) for the caller to
+    /// distribute. `performRegistration` is supplied by the caller so this
+    /// sync layer doesn't need an Activity context for the Credential Manager
+    /// UI — it receives the already-unwrapped creation options and returns
+    /// the attestation response JSON.
+    suspend fun setupRecovery(performRegistration: suspend (JSONObject) -> JSONObject): List<String> {
+        check(security.session.value.unlocked) { "Unlock VELA before setting up recovery" }
+        val rms = security.currentRmsCopy() ?: error("No unlocked vault key")
+        val shares = try {
+            NativeVelaCore.splitRecovery(rms, threshold = 2, n = 3)
+                ?: error("Native VELA bridge could not split recovery shares")
+        } finally {
+            rms.fill(0)
+        }
+        check(shares.size == 3) { "Unexpected share count from split" }
+
+        val settings = settingsStore.settings.value
+        require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
+        val client = AndroidVelaApiClient(settings.serverUrl, context)
+        var token = authenticatedToken(client, settings.bearerToken)
+        if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
+
+        val (startJson, tokenAfterStart) = client.startRecoveryWebAuthnRegistration(token)
+        tokenAfterStart?.let { token = it; settingsStore.updateBearerToken(it) }
+
+        val requestOptions = WebAuthnCeremony.unwrapPublicKey(startJson)
+        val credentialJson = performRegistration(requestOptions)
+
+        val (registered, tokenAfterFinish) = client.finishRecoveryWebAuthnRegistration(token, credentialJson)
+        tokenAfterFinish?.let { token = it; settingsStore.updateBearerToken(it) }
+        check(registered) { "Recovery passkey registration was not confirmed by the server" }
+
+        client.putRecoveryShare(token, shares[1])?.let { settingsStore.updateBearerToken(it) }
+
+        // Share 1 (cloud) and Share 3 (trusted contact) are handed back to
+        // the caller to distribute — there is no cloud-storage integration
+        // yet, so both are shown as plain text to copy/store manually.
+        return listOf(shares[0], shares[2])
+    }
+
+    /// Reconstruct the RMS on a brand-new device from Share 1 (pasted from
+    /// wherever the user stored it) + Share 2 (released by the server after
+    /// the WebAuthn assertion run by `performAssertion`), then register this
+    /// device against the existing account — mirrors `enrollWithCode`'s
+    /// bootstrap sequence, minus the RMS-capsule step since the RMS is
+    /// already in hand once the two shares are combined. Returns the
+    /// reconstructed RMS for the caller to adopt via
+    /// `SecureVaultManager.adoptRms` and protect locally.
+    suspend fun recoverAccount(
+        serverUrl: String,
+        userId: String,
+        share1B64: String,
+        deviceName: String?,
+        performAssertion: suspend (JSONObject) -> JSONObject
+    ): ByteArray {
+        val effectiveServerUrl = serverUrl.ifBlank { settingsStore.settings.value.serverUrl }
+        require(effectiveServerUrl.isNotBlank()) { "Recovery requires a server URL" }
+        updateServer(effectiveServerUrl, "")
+        val client = AndroidVelaApiClient(effectiveServerUrl, context)
+
+        val initiate = client.initiateRecovery(userId)
+        val requestOptions = WebAuthnCeremony.unwrapPublicKey(initiate.publicKeyJson)
+        val credentialJson = performAssertion(requestOptions)
+        val recovered = client.recoverAccount(userId, initiate.recoveryId, credentialJson)
+
+        val rms = NativeVelaCore.combineRecovery(listOf(share1B64, recovered.shareB64))
+            ?: error("Native VELA bridge could not reconstruct the vault key")
+
+        val identityJson = NativeVelaCore.generateServerIdentityJson()
+            ?: error("Native VELA bridge cannot generate device identity")
+        val identity = JSONObject(identityJson)
+        val hybridEk = identity.getString("hybrid_ek_b64")
+        val hybridVk = identity.getString("hybrid_vk_b64")
+        val hybridSk = identity.getString("hybrid_sk_b64")
+
+        val deviceId = client.enrollDeviceViaRecovery(userId, recovered.recoveryGrant, hybridEk, hybridVk, deviceName)
+
+        identityStore.save(
+            ServerIdentity(
+                userId = userId,
+                deviceId = deviceId,
+                hybridEkB64 = hybridEk,
+                hybridVkB64 = hybridVk,
+                hybridSkB64 = hybridSk,
+                shareEkB64 = identity.optString("share_ek_b64"),
+                shareDkB64 = identity.optString("share_dk_b64")
+            )
+        )
+
+        val token = authenticateOrRegister(client)
+        updateServer(effectiveServerUrl, token)
+        return rms
     }
 
     // suspend, not a runBlocking-wrapped plain fun: the previous version

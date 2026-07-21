@@ -6,7 +6,7 @@ use tauri::{command, AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 use uuid::Uuid;
 
-use crate::api::{ApiClient, RecoveryRecoverRequest};
+use crate::api::ApiClient;
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::{normalize_server_url, AppState};
 
@@ -279,26 +279,6 @@ pub async fn initiate_account_recovery(
         "recovery_id": response.recovery_id,
         "public_key": response.public_key,
     }))
-}
-
-#[command]
-pub async fn finish_account_recovery(
-    state: State<'_, Arc<AppState>>,
-    user_id: String,
-    credential: serde_json::Value,
-    recovery_id: Option<String>,
-) -> Result<String, String> {
-    let server_url = state.server_url.read().clone();
-    let client = ApiClient::with_url(server_url);
-    let response = client
-        .recover_account(&RecoveryRecoverRequest {
-            user_id,
-            recovery_id,
-            credential,
-        })
-        .await
-        .map_err(|e| format!("Failed to finish account recovery: {e}"))?;
-    Ok(response.share)
 }
 
 #[command]

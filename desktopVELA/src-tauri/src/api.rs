@@ -907,6 +907,33 @@ impl ApiClient {
         Ok(result)
     }
 
+    /// Registers a new device's identity key against an existing account
+    /// (SPEC.md §4.3) once its RMS has been reconstructed client-side from
+    /// Share 1 + Share 2. Authorization comes from the single-use
+    /// `recovery_grant` returned by `recover_account`, not an enrolling
+    /// device's signature — there is no other enrolled device to provide one.
+    pub async fn enroll_device_via_recovery(
+        &self,
+        request: &EnrollDeviceViaRecoveryRequest,
+    ) -> Result<EnrollDeviceViaRecoveryResponse> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/recovery/enroll-device", self.base_url))
+                    .json(request)
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Recovery device enrollment failed: {} — {}", status, body);
+        }
+
+        let result: EnrollDeviceViaRecoveryResponse = resp.json().await?;
+        Ok(result)
+    }
+
     pub async fn get_oram_path(
         &self,
         token: &str,
@@ -1113,6 +1140,22 @@ pub struct RecoveryRecoverRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryRecoverResponse {
     pub share: String,
+    pub recovery_grant: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollDeviceViaRecoveryRequest {
+    pub user_id: String,
+    pub recovery_grant: String,
+    pub hybrid_ek: String,
+    pub hybrid_vk: String,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollDeviceViaRecoveryResponse {
+    pub device_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

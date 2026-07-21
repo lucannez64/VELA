@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Person
@@ -64,6 +65,7 @@ fun SettingsScreen(
     onOpenDevices: () -> Unit,
     onOpenAuditLog: () -> Unit,
     onOpenBreachMonitor: () -> Unit,
+    onOpenRecoverySetup: () -> Unit,
     onUpdateSyncServer: (String, String) -> Unit,
     onUpdateSyncPreferences: (Boolean, Int) -> Unit,
     onSyncNow: () -> Unit,
@@ -213,6 +215,13 @@ fun SettingsScreen(
                 subtitle = "Check monitored emails and exposed passwords",
                 icon = Icons.Filled.Warning,
                 onClick = onOpenBreachMonitor
+            )
+            Spacer(Modifier.height(12.dp))
+            VelaListItem(
+                title = "Recovery setup",
+                subtitle = "Restore this vault if every device is lost",
+                icon = Icons.Filled.Key,
+                onClick = onOpenRecoverySetup
             )
         }
 

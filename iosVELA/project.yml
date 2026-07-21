@@ -32,6 +32,11 @@ targets:
           - group.com.vela.vault
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.vela.vault.shared
+        # iCloud Key-Value Storage for recovery Share 1 backup (SPEC.md §4.3,
+        # see Shared/CloudRecoveryBackup.swift) — the blob is a few dozen
+        # bytes, well under the 1 MB / 1024-key KVS limit, so no CloudKit
+        # container is needed.
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)$(CFBundleIdentifier)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vela.vault

@@ -12,8 +12,14 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
+use vela_crypto::shamir::Share;
 
-use crate::api::{ApiClient, RecoveryShareData};
+use crate::api::{
+    ApiClient, EnrollDeviceViaRecoveryRequest, RecoveryRecoverRequest, RecoveryShareData,
+    VerifyRequest,
+};
+use crate::commands::audit::{record_audit_event, AuditAction};
+use crate::crypto;
 use crate::AppState;
 
 const RECOVERY_SETUP_FILE: &str = "recovery_setup.enc";
@@ -160,6 +166,10 @@ pub async fn setup_cloud_backup_recovery(
             .clone()
             .ok_or("Recovery share was not generated")?
     };
+    let user_id = state
+        .store
+        .load_user_id()
+        .map_err(|e| format!("Failed to load account ID: {e}"))?;
 
     // Deliberately not further "encrypted" beyond this envelope: a lone
     // Shamir share (below the 2-of-3 threshold) is information-theoretically
@@ -167,9 +177,12 @@ pub async fn setup_cloud_backup_recovery(
     // key to stay confidential — and any such key would itself need to be
     // recoverable without the RMS it's meant to help reconstruct, which is
     // circular. This JSON wrapper exists for versioning/integrity, not
-    // confidentiality.
+    // confidentiality. `user_id` rides along so a recovering device can
+    // identify the account from Share 1 alone, without the user having to
+    // remember/re-enter their account ID.
     let envelope = serde_json::json!({
         "version": 1,
+        "user_id": user_id,
         "share_b64": B64.encode(&share1),
     });
     let payload = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
@@ -240,5 +253,189 @@ pub async fn finalize_recovery_setup(state: State<'_, Arc<AppState>>) -> Result<
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Recovery download (SPEC.md §4.3): reconstruct the RMS on a brand-new
+// device from Share 1 (cloud) + Share 2 (server, WebAuthn-gated), then
+// bootstrap this device the same way `import_enrollment_code` bootstraps a
+// peer-enrolled one. Unlike that flow, there is no other enrolled device to
+// authorize this one — authorization instead comes from the `recovery_grant`
+// minted by `/recovery/recover` after a successful WebAuthn assertion.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct CloudBackupEnvelope {
+    #[allow(dead_code)]
+    version: u8,
+    user_id: String,
+    share_b64: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CloudRecoveryShare {
+    pub user_id: String,
+    pub share_b64: String,
+}
+
+/// Download and parse the Share 1 envelope from a cloud remote. Runs before
+/// any vault exists on this device (no unlock check — there is nothing to
+/// unlock yet), so the caller can identify the account from the cloud file
+/// alone before starting the WebAuthn ceremony.
+#[tauri::command]
+pub async fn fetch_cloud_recovery_share(remote: String) -> Result<CloudRecoveryShare, String> {
+    let bytes = tokio::task::spawn_blocking(move || {
+        crate::rclone::download_bytes(&remote, CLOUD_BACKUP_REMOTE_PATH)
+    })
+    .await
+    .map_err(|e| format!("Download task panicked: {e}"))??;
+
+    let envelope: CloudBackupEnvelope =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid cloud backup file: {e}"))?;
+
+    Ok(CloudRecoveryShare {
+        user_id: envelope.user_id,
+        share_b64: envelope.share_b64,
+    })
+}
+
+/// Complete account recovery: combine Share 1 (from the cloud, already
+/// fetched via `fetch_cloud_recovery_share`) with Share 2 (released by
+/// `/recovery/recover` after the caller's WebAuthn assertion verified),
+/// reconstruct the RMS, register this device against the existing account,
+/// then download the vault and unlock the session — mirroring
+/// `import_enrollment_code`'s bootstrap sequence.
+#[tauri::command]
+pub async fn complete_account_recovery(
+    state: State<'_, Arc<AppState>>,
+    user_id: String,
+    share1_b64: String,
+    credential: serde_json::Value,
+    recovery_id: Option<String>,
+    password: String,
+    device_name: Option<String>,
+) -> Result<(), String> {
+    let share1_bytes = B64
+        .decode(&share1_b64)
+        .map_err(|_| "Invalid Share 1 encoding".to_string())?;
+    let share1 = Share::from_bytes(&share1_bytes).map_err(|e| format!("Invalid Share 1: {e}"))?;
+
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+
+    // ── WebAuthn-gated release of Share 2 ──────────────────────────────────
+    let recover_resp = client
+        .recover_account(&RecoveryRecoverRequest {
+            user_id: user_id.clone(),
+            recovery_id,
+            credential,
+        })
+        .await
+        .map_err(|e| format!("Account recovery failed: {e}"))?;
+
+    let share2_bytes = B64
+        .decode(&recover_resp.share)
+        .map_err(|_| "Invalid Share 2 encoding".to_string())?;
+    let share2 = Share::from_bytes(&share2_bytes).map_err(|e| format!("Invalid Share 2: {e}"))?;
+
+    // ── combine shares → RMS ────────────────────────────────────────────────
+    let rms = crate::crypto::Crypto::reconstruct_recovery(&[share1, share2])
+        .map_err(|e| format!("Failed to reconstruct vault key: {e}"))?;
+
+    // ── generate this device's identity keypair ─────────────────────────────
+    let new_identity = tokio::task::spawn_blocking(crypto::generate_identity_keypair)
+        .await
+        .map_err(|e| format!("Thread join error: {e}"))??;
+
+    // ── register this device against the existing account ──────────────────
+    let enroll_resp = client
+        .enroll_device_via_recovery(&EnrollDeviceViaRecoveryRequest {
+            user_id: user_id.clone(),
+            recovery_grant: recover_resp.recovery_grant,
+            hybrid_ek: B64.encode(&new_identity.hybrid_ek),
+            hybrid_vk: B64.encode(&new_identity.hybrid_vk),
+            device_name: device_name.or_else(|| Some("Recovered Device".to_string())),
+            device_type: Some("desktop".to_string()),
+        })
+        .await
+        .map_err(|e| format!("Failed to register this device: {e}"))?;
+    let device_id = enroll_resp.device_id;
+
+    state
+        .store
+        .save_device_id_with_user_id(&device_id, &user_id)
+        .map_err(|e| format!("Failed to save device ID: {e}"))?;
+
+    // ── authenticate as the newly registered device ─────────────────────────
+    let challenge_resp = client
+        .get_challenge()
+        .await
+        .map_err(|e| format!("Failed to get challenge: {e}"))?;
+    let challenge_bytes = B64
+        .decode(&challenge_resp.challenge)
+        .map_err(|_| "Invalid challenge encoding")?;
+
+    let sk_for_sig = new_identity.hybrid_sk.clone();
+    let device_id_for_sig = device_id.clone();
+    let signature = tokio::task::spawn_blocking(move || {
+        crypto::create_auth_signature(&sk_for_sig, &challenge_bytes, &device_id_for_sig)
+    })
+    .await
+    .map_err(|e| format!("Thread join error: {e}"))?
+    .map_err(|e| format!("Challenge signature failed: {e}"))?;
+
+    let verify_resp = client
+        .verify_signature(&VerifyRequest {
+            device_id: device_id.clone(),
+            challenge: challenge_resp.challenge,
+            signature,
+            device_name: Some(crate::commands::devices::get_device_name()),
+            device_type: Some("desktop".to_string()),
+        })
+        .await
+        .map_err(|e| format!("Server authentication failed: {e}"))?;
+    let token = verify_resp.token;
+
+    // ── store RMS, build Crypto, download vault ─────────────────────────────
+    crate::biometric::store_password_encrypted(&rms, &password)
+        .map_err(|e| format!("Failed to store vault key: {e}"))?;
+
+    let crypto_obj = crate::crypto::Crypto::new(&rms);
+    state
+        .store
+        .save_identity_keys(
+            &new_identity.hybrid_ek,
+            &new_identity.hybrid_vk,
+            &new_identity.hybrid_sk,
+            &crypto_obj,
+        )
+        .map_err(|e| format!("Failed to save identity keys: {e}"))?;
+
+    let vault =
+        crate::commands::devices::download_vault_after_enrollment(&crypto_obj, &client, &token)
+            .await?;
+    state
+        .store
+        .save_vault(&vault, &crypto_obj)
+        .map_err(|e| format!("Failed to save vault locally: {e}"))?;
+
+    // ── unlock session ───────────────────────────────────────────────────────
+    {
+        let mut session = state.session.write();
+        session.set_server_token(token);
+        session.unlock(device_id.clone(), user_id, 15 * 60);
+    }
+    {
+        let mut crypto_state = state.crypto.write();
+        *crypto_state = Some(crypto_obj);
+    }
+    {
+        let mut vault_state = state.vault.write();
+        *vault_state = vault;
+    }
+
+    record_audit_event(&state, AuditAction::VaultUnlocked);
+    tracing::info!(device_id = %device_id, "Account recovery complete");
     Ok(())
 }

@@ -86,9 +86,11 @@ struct AccountView: View {
         Section("Recovery") {
             Button("Set up recovery (2-of-3)") { vm.setupRecovery() }
                 .accessibilityIdentifier("recoveryButton")
-            ForEach(Array(vm.recoveryShares.enumerated()), id: \.offset) { index, share in
+            Text("Share 1 backs up to iCloud automatically and Share 2 is delivered to a security key you register — only Share 3 needs to be handed over yourself:")
+                .font(.caption2).foregroundStyle(.secondary)
+            ForEach(Array(vm.recoveryShares.enumerated()), id: \.offset) { _, share in
                 VStack(alignment: .leading) {
-                    Text("Guardian share \(index + 1)").font(.caption).foregroundStyle(.secondary)
+                    Text("Share 3 — trusted contact").font(.caption).foregroundStyle(.secondary)
                     Text(share).font(.caption.monospaced()).textSelection(.enabled).lineLimit(2)
                 }
             }

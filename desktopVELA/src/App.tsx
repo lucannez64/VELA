@@ -268,6 +268,10 @@ function AppContent() {
           setIsFirstLaunch(false);
           setSetupComplete(true);
           await refreshSession();
+        }} onAccountRecovered={async () => {
+          setIsFirstLaunch(false);
+          setSetupComplete(true);
+          await refreshSession();
         }} />
       </div>
     );

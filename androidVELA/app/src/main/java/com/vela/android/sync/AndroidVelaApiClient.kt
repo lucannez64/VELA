@@ -449,6 +449,83 @@ class AndroidVelaApiClient(
         response.requireSuccess("Revoke web session failed")
     }
 
+    // Recovery (SPEC.md §4.3)
+
+    fun putRecoveryShare(token: String, shareB64: String): String? {
+        val body = JSONObject().put("share", shareB64).toString().toByteArray(Charsets.UTF_8)
+        val response = request("PUT", "/recovery/share", token, body, contentType = "application/json")
+        response.requireSuccess("Store recovery share failed")
+        return response.newToken
+    }
+
+    fun startRecoveryWebAuthnRegistration(token: String): Pair<JSONObject, String?> {
+        val body = JSONObject().put("user_display_name", "VELA recovery key").toString().toByteArray(Charsets.UTF_8)
+        val response = request("POST", "/recovery/webauthn/register/start", token, body, contentType = "application/json")
+        response.requireSuccess("Start recovery passkey registration failed")
+        return JSONObject(response.body.toString(Charsets.UTF_8)) to response.newToken
+    }
+
+    fun finishRecoveryWebAuthnRegistration(token: String, credentialJson: JSONObject): Pair<Boolean, String?> {
+        val body = credentialJson.toString().toByteArray(Charsets.UTF_8)
+        val response = request("POST", "/recovery/webauthn/register/finish", token, body, contentType = "application/json")
+        response.requireSuccess("Finish recovery passkey registration failed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        return json.optBoolean("registered", false) to response.newToken
+    }
+
+    data class RecoveryInitiateResult(val recoveryId: String?, val publicKeyJson: JSONObject)
+
+    /// Starts the WebAuthn assertion ceremony for a user with a stored
+    /// recovery share and recovery passkey. Unauthenticated — there is no
+    /// session yet on a brand-new device.
+    fun initiateRecovery(userId: String): RecoveryInitiateResult {
+        val body = JSONObject().put("user_id", userId).toString().toByteArray(Charsets.UTF_8)
+        val response = request("POST", "/recovery/initiate", token = "", body = body, contentType = "application/json")
+        response.requireSuccess("Recovery initiation failed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        return RecoveryInitiateResult(
+            recoveryId = json.optString("recovery_id").takeIf { it.isNotBlank() },
+            publicKeyJson = json.getJSONObject("public_key")
+        )
+    }
+
+    data class RecoveryRecoverResult(val shareB64: String, val recoveryGrant: String)
+
+    /// Submits the WebAuthn assertion; the server releases Share 2 plus a
+    /// single-use grant redeemable at `enrollDeviceViaRecovery`.
+    fun recoverAccount(userId: String, recoveryId: String?, credentialJson: JSONObject): RecoveryRecoverResult {
+        val bodyObj = JSONObject().put("user_id", userId).put("credential", credentialJson)
+        if (recoveryId != null) bodyObj.put("recovery_id", recoveryId)
+        val response = request("POST", "/recovery/recover", token = "", body = bodyObj.toString().toByteArray(Charsets.UTF_8), contentType = "application/json")
+        response.requireSuccess("Account recovery failed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        return RecoveryRecoverResult(shareB64 = json.getString("share"), recoveryGrant = json.getString("recovery_grant"))
+    }
+
+    /// Registers this device's identity key against an existing account once
+    /// its RMS has been reconstructed from Share 1 + Share 2. There is no
+    /// other enrolled device to authorize this one (SPEC.md §4.2) — the
+    /// single-use `recoveryGrant` from `recoverAccount` stands in for that
+    /// signature.
+    fun enrollDeviceViaRecovery(
+        userId: String,
+        recoveryGrant: String,
+        hybridEkB64: String,
+        hybridVkB64: String,
+        deviceName: String? = null
+    ): String {
+        val bodyObj = JSONObject()
+            .put("user_id", userId)
+            .put("recovery_grant", recoveryGrant)
+            .put("hybrid_ek", hybridEkB64)
+            .put("hybrid_vk", hybridVkB64)
+            .put("device_type", "android")
+        if (deviceName != null) bodyObj.put("device_name", deviceName)
+        val response = request("POST", "/recovery/enroll-device", token = "", body = bodyObj.toString().toByteArray(Charsets.UTF_8), contentType = "application/json")
+        response.requireSuccess("Recovery device enrollment failed")
+        return JSONObject(response.body.toString(Charsets.UTF_8)).getString("device_id")
+    }
+
     private fun request(
         method: String,
         path: String,

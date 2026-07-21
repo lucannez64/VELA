@@ -411,6 +411,112 @@ async fn recovery_initiate_unknown_user_returns_404() {
 }
 
 #[tokio::test]
+async fn enroll_device_without_grant_returns_401() {
+    let app = app().await;
+
+    let body = serde_json::to_string(&json!({
+        "user_id": Uuid::new_v4(),
+        "recovery_grant": Uuid::new_v4(),
+        "hybrid_ek": B64.encode(vec![0u8; 1600]),
+        "hybrid_vk": B64.encode(vec![0u8; 2624]),
+    }))
+    .unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/recovery/enroll-device")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn enroll_device_redeems_grant_exactly_once() {
+    let state = helpers::test_state().await;
+
+    // Create the account this recovery grant is scoped to.
+    let register_req = Request::builder()
+        .method("POST")
+        .uri("/account/register")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "hybrid_ek": B64.encode(vec![0u8; 1600]),
+                "hybrid_vk": B64.encode(vec![0u8; 2624]),
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let register_resp = vela_server::routes::build(state.clone())
+        .oneshot(register_req)
+        .await
+        .unwrap();
+    assert_eq!(register_resp.status(), StatusCode::OK);
+    let register_body = axum::body::to_bytes(register_resp.into_body(), 1024)
+        .await
+        .unwrap();
+    let register_json: serde_json::Value = serde_json::from_slice(&register_body).unwrap();
+    let user_id = register_json["user_id"].as_str().unwrap().to_string();
+
+    // Seed a grant the same way `/recovery/recover` would after a successful
+    // WebAuthn assertion — this test exercises grant redemption directly
+    // rather than driving a full WebAuthn ceremony.
+    let grant = Uuid::new_v4();
+    state
+        .store
+        .set_ex(
+            &format!("recovery:enroll_grant:{user_id}:{grant}"),
+            b"1",
+            600,
+        )
+        .unwrap();
+
+    let enroll_body = serde_json::to_string(&json!({
+        "user_id": user_id,
+        "recovery_grant": grant,
+        "hybrid_ek": B64.encode(vec![1u8; 1600]),
+        "hybrid_vk": B64.encode(vec![1u8; 2624]),
+        "device_name": "Recovered Laptop",
+    }))
+    .unwrap();
+
+    let first_req = Request::builder()
+        .method("POST")
+        .uri("/recovery/enroll-device")
+        .header("content-type", "application/json")
+        .body(Body::from(enroll_body.clone()))
+        .unwrap();
+    let first_resp = vela_server::routes::build(state.clone())
+        .oneshot(first_req)
+        .await
+        .unwrap();
+    assert_eq!(first_resp.status(), StatusCode::OK);
+    let first_json: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(first_resp.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(first_json["device_id"].is_string());
+
+    // The same grant must not be redeemable twice.
+    let second_req = Request::builder()
+        .method("POST")
+        .uri("/recovery/enroll-device")
+        .header("content-type", "application/json")
+        .body(Body::from(enroll_body))
+        .unwrap();
+    let second_resp = vela_server::routes::build(state.clone())
+        .oneshot(second_req)
+        .await
+        .unwrap();
+    assert_eq!(second_resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn account_delete_without_token_returns_401() {
     let app = app().await;
 

@@ -100,3 +100,26 @@ pub fn upload_bytes(remote: &str, dest_path: &str, data: &[u8]) -> Result<(), St
     }
     Ok(())
 }
+
+/// Download the bytes previously written by `upload_bytes` from
+/// `<remote>:<dest_path>` via `rclone cat` (streamed to stdout, no temp file).
+/// Used by account recovery (SPEC.md §4.3) to pull Share 1 back down from
+/// the user's cloud remote on a brand-new device.
+pub fn download_bytes(remote: &str, dest_path: &str) -> Result<Vec<u8>, String> {
+    validate_remote_name(remote)?;
+    let target = format!("{remote}:{dest_path}");
+
+    let output = Command::new("rclone")
+        .arg("cat")
+        .arg(&target)
+        .output()
+        .map_err(|e| format!("Could not run rclone ({e}). Is it installed?"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "rclone download from '{remote}' failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output.stdout)
+}

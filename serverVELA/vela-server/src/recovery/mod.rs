@@ -1,3 +1,4 @@
+pub mod enroll_device;
 pub mod initiate;
 pub mod recover;
 pub mod webauthn;

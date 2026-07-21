@@ -310,6 +310,88 @@ actor VelaClient {
         _ = try await requestRaw("DELETE", "/recovery/share", body: nil)
     }
 
+    // MARK: - WebAuthn recovery credential (registration side)
+
+    func startRecoveryWebAuthnRegistration() async throws -> [String: Any] {
+        let bodyData = try JSONSerialization.data(withJSONObject: [String: Any]())
+        let (data, _) = try await requestRaw(
+            "POST", "/recovery/webauthn/register/start", body: bodyData,
+            headers: ["Content-Type": "application/json"], auth: true)
+        return try Self.jsonObject(data)
+    }
+
+    func finishRecoveryWebAuthnRegistration(credentialJSON: [String: Any]) async throws -> Bool {
+        let bodyData = try JSONSerialization.data(withJSONObject: credentialJSON)
+        let (data, _) = try await requestRaw(
+            "POST", "/recovery/webauthn/register/finish", body: bodyData,
+            headers: ["Content-Type": "application/json"], auth: true)
+        let obj = try Self.jsonObject(data)
+        return (obj["registered"] as? Bool) ?? false
+    }
+
+    // MARK: - Account recovery (download side, SPEC.md §4.3)
+
+    struct RecoveryInitiateResult {
+        let recoveryID: String?
+        let publicKeyJSON: [String: Any]
+    }
+
+    /// Starts the WebAuthn assertion ceremony for a user with a stored
+    /// recovery share and recovery passkey. Unauthenticated — there is no
+    /// session yet on a brand-new device.
+    func initiateRecovery(userID: String) async throws -> RecoveryInitiateResult {
+        let bodyData = try JSONSerialization.data(withJSONObject: ["user_id": userID])
+        let (data, _) = try await requestRaw(
+            "POST", "/recovery/initiate", body: bodyData,
+            headers: ["Content-Type": "application/json"], auth: false)
+        let obj = try Self.jsonObject(data)
+        let publicKey = (obj["public_key"] as? [String: Any]) ?? [:]
+        return RecoveryInitiateResult(recoveryID: obj["recovery_id"] as? String, publicKeyJSON: publicKey)
+    }
+
+    struct RecoveryRecoverResult {
+        let shareBase64: String
+        let recoveryGrant: String
+    }
+
+    /// Submits the WebAuthn assertion; the server releases Share 2 plus a
+    /// single-use grant redeemable at `enrollDeviceViaRecovery`.
+    func recoverAccount(userID: String, recoveryID: String?, credentialJSON: [String: Any]) async throws -> RecoveryRecoverResult {
+        var body: [String: Any] = ["user_id": userID, "credential": credentialJSON]
+        if let recoveryID = recoveryID { body["recovery_id"] = recoveryID }
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await requestRaw(
+            "POST", "/recovery/recover", body: bodyData,
+            headers: ["Content-Type": "application/json"], auth: false)
+        struct Resp: Decodable { let share: String; let recovery_grant: String }
+        let resp = try JSONDecoder().decode(Resp.self, from: data)
+        return RecoveryRecoverResult(shareBase64: resp.share, recoveryGrant: resp.recovery_grant)
+    }
+
+    /// Registers this device's identity key against an existing account once
+    /// its RMS has been reconstructed from Share 1 + Share 2. There is no
+    /// other enrolled device to authorize this one (SPEC.md §4.2) — the
+    /// single-use `recoveryGrant` from `recoverAccount` stands in for that
+    /// signature.
+    func enrollDeviceViaRecovery(userID: String, recoveryGrant: String, hybridEK: String, hybridVK: String,
+                                  deviceName: String?, deviceType: String = "ios") async throws -> String {
+        var body: [String: Any] = [
+            "user_id": userID, "recovery_grant": recoveryGrant,
+            "hybrid_ek": hybridEK, "hybrid_vk": hybridVK, "device_type": deviceType,
+        ]
+        if let deviceName = deviceName { body["device_name"] = deviceName }
+        struct Resp: Decodable { let device_id: String }
+        let resp: Resp = try await request("POST", "/recovery/enroll-device", json: body, auth: false)
+        return resp.device_id
+    }
+
+    private static func jsonObject(_ data: Data) throws -> [String: Any] {
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ServerError(status: 0, body: "invalid JSON response")
+        }
+        return obj
+    }
+
     // MARK: - Request plumbing
 
     private struct EmptyResponse: Decodable {

@@ -15,6 +15,7 @@ use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
 use vela_crypto::aead;
 use vela_crypto::kdf;
 use vela_crypto::kem;
+use vela_crypto::shamir;
 use vela_crypto::signing;
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
@@ -146,6 +147,29 @@ struct DecryptEnrollmentPackageRequest {
 #[derive(Debug, Serialize, Deserialize)]
 struct DecryptEnrollmentPackageResponse {
     plaintext: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SplitRecoveryRequest {
+    rms_b64: String,
+    threshold: u8,
+    n: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SplitRecoveryResponse {
+    /// One base64 Shamir share per `[x, y_0..y_31]` blob.
+    shares_b64: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CombineRecoveryRequest {
+    shares_b64: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CombineRecoveryResponse {
+    rms_b64: String,
 }
 
 #[no_mangle]
@@ -308,6 +332,37 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenShare
     request_json: JString,
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| open_share_json(request));
+    jni_string(&mut env, &response)
+}
+
+/// Split the RMS into an `n`-share, `threshold`-of-`n` Shamir scheme
+/// (SPEC.md §4.3: recovery uses a 2-of-3 split). Called once during recovery
+/// setup; the caller is responsible for delivering each share to its own
+/// channel (cloud backup, server, trusted contact).
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeSplitRecoveryJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        split_recovery_json(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+/// Reconstruct the RMS from any `threshold` of the shares produced by
+/// `nativeSplitRecoveryJson` (e.g. Share 1 from cloud backup + Share 2
+/// released by the server after a WebAuthn-gated `/recovery/recover` call).
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCombineRecoveryJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        combine_recovery_json(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -518,6 +573,31 @@ fn decrypt_enrollment_package_json(
     })
 }
 
+fn split_recovery_json(request_json: &str) -> anyhow_like::Result<SplitRecoveryResponse> {
+    let request: SplitRecoveryRequest = serde_json::from_str(request_json)?;
+    let rms = decode_rms(&request.rms_b64)?;
+    let shares = shamir::split(&rms, request.threshold, request.n)?;
+    Ok(SplitRecoveryResponse {
+        shares_b64: shares.iter().map(|s| B64.encode(s.to_bytes())).collect(),
+    })
+}
+
+fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecoveryResponse> {
+    let request: CombineRecoveryRequest = serde_json::from_str(request_json)?;
+    let shares: Vec<shamir::Share> = request
+        .shares_b64
+        .iter()
+        .map(|s| -> anyhow_like::Result<shamir::Share> {
+            let bytes = B64.decode(s.as_bytes())?;
+            Ok(shamir::Share::from_bytes(&bytes)?)
+        })
+        .collect::<anyhow_like::Result<_>>()?;
+    let secret = shamir::reconstruct(&shares, 32)?;
+    Ok(CombineRecoveryResponse {
+        rms_b64: B64.encode(secret),
+    })
+}
+
 fn create_auth_signature(
     hybrid_sk: &[u8],
     challenge: &[u8],
@@ -663,6 +743,45 @@ mod tests {
             .unwrap();
         let decrypted: DecryptVaultResponse = serde_json::from_str(&decrypted_json).unwrap();
         assert_eq!(decrypted.vault_json, vault_json);
+    }
+
+    #[test]
+    fn split_then_combine_recovery_reconstructs_rms() {
+        let rms = [9u8; 32];
+        let split_request = serde_json::json!({
+            "rms_b64": B64.encode(rms),
+            "threshold": 2,
+            "n": 3,
+        })
+        .to_string();
+        let split = split_recovery_json(&split_request).unwrap();
+        assert_eq!(split.shares_b64.len(), 3);
+
+        // Any 2 of the 3 shares must reconstruct the original RMS.
+        let combine_request = serde_json::json!({
+            "shares_b64": [split.shares_b64[0].clone(), split.shares_b64[2].clone()],
+        })
+        .to_string();
+        let combined = combine_recovery_json(&combine_request).unwrap();
+        assert_eq!(B64.decode(combined.rms_b64).unwrap(), rms.to_vec());
+    }
+
+    #[test]
+    fn combine_recovery_rejects_single_share() {
+        let rms = [3u8; 32];
+        let split_request = serde_json::json!({
+            "rms_b64": B64.encode(rms),
+            "threshold": 2,
+            "n": 3,
+        })
+        .to_string();
+        let split = split_recovery_json(&split_request).unwrap();
+
+        let combine_request = serde_json::json!({
+            "shares_b64": [split.shares_b64[0].clone()],
+        })
+        .to_string();
+        assert!(combine_recovery_json(&combine_request).is_err());
     }
 
     #[test]

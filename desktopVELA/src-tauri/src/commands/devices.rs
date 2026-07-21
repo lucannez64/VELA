@@ -13,8 +13,8 @@ use crate::crypto;
 use crate::AppState;
 use vela_crypto::aead::{decrypt, encrypt};
 
-const VAULT_MAIN_CHUNK_ID: &str = "vault-main";
-const VAULT_DATA_PREFIX: &str = "vault-data-";
+pub(crate) const VAULT_MAIN_CHUNK_ID: &str = "vault-main";
+pub(crate) const VAULT_DATA_PREFIX: &str = "vault-data-";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -60,7 +60,7 @@ struct ServerDeviceListResponse {
 const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
 const VAULT_CHUNK_PREFIX: &str = "vault-data-";
 
-fn get_device_name() -> String {
+pub(crate) fn get_device_name() -> String {
     #[cfg(windows)]
     {
         std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows PC".to_string())
@@ -389,6 +389,47 @@ pub fn enrollment_verification_code(code: String) -> String {
     vela_crypto::verification::enrollment_verification_code(&code)
 }
 
+/// Download the vault for a device that just obtained the RMS (via peer
+/// enrollment or, per SPEC.md §4.3, account recovery) but has no local vault
+/// yet. Tries the canonical chunk name, then an ORAM-style `vault-data-*`
+/// fallback from the manifest. If neither is present but the manifest still
+/// lists a vault chunk, fails closed rather than starting empty — saving an
+/// empty vault locally would upload it on next sync and clobber the server
+/// (and every other device) for an account that already has data.
+pub(crate) async fn download_vault_after_enrollment(
+    crypto_obj: &crate::crypto::Crypto,
+    client: &ApiClient,
+    token: &str,
+) -> Result<crate::vault::VaultStore, String> {
+    if let Some(v) = try_download_chunk(crypto_obj, client, token, VAULT_MAIN_CHUNK_ID).await {
+        return Ok(v);
+    }
+    tracing::info!(
+        "No '{}' chunk found, trying vault-data-* fallback from manifest",
+        VAULT_MAIN_CHUNK_ID
+    );
+    if let Some(v) = try_download_fallback_chunk(crypto_obj, client, token).await {
+        return Ok(v);
+    }
+    let (manifest, _) = client
+        .get_sync_manifest(token)
+        .await
+        .map_err(|e| format!("Failed to verify server vault state: {e}"))?;
+    let server_has_vault = manifest
+        .chunks
+        .iter()
+        .any(|c| c.chunk_id == VAULT_MAIN_CHUNK_ID || c.chunk_id.starts_with(VAULT_DATA_PREFIX));
+    if server_has_vault {
+        return Err(
+            "Server has a vault but it could not be downloaded or decrypted. \
+             Enrollment aborted to avoid overwriting it — please retry."
+                .to_string(),
+        );
+    }
+    tracing::info!("No vault chunk found on server, starting empty");
+    Ok(crate::vault::VaultStore::new())
+}
+
 /// Try to download and decrypt a single vault chunk by chunk_id.
 /// Returns `Some(VaultStore)` on success, `None` if the chunk doesn't exist
 /// or cannot be decrypted.
@@ -611,44 +652,7 @@ pub async fn import_enrollment_code(
 
     // Download the vault chunk from the server.  Try the canonical name first,
     // then fall back to an ORAM-style vault-data-* chunk from the manifest.
-    let vault = if let Some(v) =
-        try_download_chunk(&crypto_obj, &client, &token, VAULT_MAIN_CHUNK_ID).await
-    {
-        v
-    } else {
-        tracing::info!(
-            "No '{}' chunk found, trying vault-data-* fallback from manifest",
-            VAULT_MAIN_CHUNK_ID
-        );
-        match try_download_fallback_chunk(&crypto_obj, &client, &token).await {
-            Some(v) => v,
-            None => {
-                // Distinguish "server has no vault yet" (first device on this
-                // account → legitimately start empty) from "server has a vault
-                // but we failed to fetch/decrypt it". In the latter case we
-                // must NOT start empty: saving an empty vault locally would
-                // upload it on the next sync and clobber the server (and every
-                // other device). Fail-closed instead.
-                let (manifest, _) = client
-                    .get_sync_manifest(&token)
-                    .await
-                    .map_err(|e| format!("Failed to verify server vault state: {e}"))?;
-                let server_has_vault = manifest
-                    .chunks
-                    .iter()
-                    .any(|c| c.chunk_id == VAULT_MAIN_CHUNK_ID || c.chunk_id.starts_with(VAULT_DATA_PREFIX));
-                if server_has_vault {
-                    return Err(
-                        "Server has a vault but it could not be downloaded or decrypted. \
-                         Enrollment aborted to avoid overwriting it — please retry."
-                            .to_string(),
-                    );
-                }
-                tracing::info!("No vault chunk found on server, starting empty");
-                crate::vault::VaultStore::new()
-            }
-        }
-    };
+    let vault = download_vault_after_enrollment(&crypto_obj, &client, &token).await?;
 
     state
         .store

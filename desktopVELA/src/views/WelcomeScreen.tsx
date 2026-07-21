@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import ConfirmResetModal from '../components/ConfirmResetModal';
+import RecoverAccountModal from '../components/RecoverAccountModal';
 
 interface Props {
   onCreateVault: () => void;
   onAddExisting: () => void;
   onImportComplete?: () => void;
+  onAccountRecovered?: () => void;
 }
 
-export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportComplete }: Props) {
+export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportComplete, onAccountRecovered }: Props) {
   const [biometricAvailable, setBiometricAvailable] = useState<boolean | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importCode, setImportCode] = useState('');
@@ -77,6 +79,7 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
   };
 
   const [showResetModal, setShowResetModal] = useState(false);
+  const [showRecoverModal, setShowRecoverModal] = useState(false);
 
   const handleResetAndCreate = () => setShowResetModal(true);
 
@@ -165,6 +168,14 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
               >
                 <span className="font-headline font-medium text-on-surface tracking-wide">Join existing account</span>
                 <span className="material-symbols-outlined text-on-surface-variant">vpn_key</span>
+              </button>
+
+              <button
+                onClick={() => setShowRecoverModal(true)}
+                className="w-full flex items-center justify-between bg-surface-container-highest hover:bg-surface-bright py-4 px-6 rounded-xl transition-all active:scale-95 duration-200"
+              >
+                <span className="font-headline font-medium text-on-surface tracking-wide">Recover my account</span>
+                <span className="material-symbols-outlined text-on-surface-variant">restore</span>
               </button>
             </div>
 
@@ -285,6 +296,15 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
             </div>
           </div>
         </div>
+      )}
+      {showRecoverModal && (
+        <RecoverAccountModal
+          onClose={() => setShowRecoverModal(false)}
+          onComplete={() => {
+            setShowRecoverModal(false);
+            onAccountRecovered?.();
+          }}
+        />
       )}
     </main>
   );

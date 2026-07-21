@@ -162,3 +162,28 @@ fn legacy_blake3_blob_opens_and_is_flagged_for_migration() {
     assert_eq!(&reopened.rms, &rms);
     assert!(!reopened.needs_migration);
 }
+
+/// SPEC.md §4.3 recovery: any 2 of the 3 Shamir shares reconstruct the RMS.
+/// This exercises the exact pair used by account-recovery (Share 1 + Share 2,
+/// skipping Share 3, since the trusted-contact share is often unavailable).
+#[test]
+fn recovery_shares_any_two_of_three_reconstruct_rms() {
+    let rms = Crypto::generate_rms();
+    let crypto = Crypto::new(&rms);
+
+    let shares = crypto.split_recovery(2, 3).expect("split into 2-of-3");
+    assert_eq!(shares.len(), 3);
+
+    let reconstructed = Crypto::reconstruct_recovery(&[shares[0].clone(), shares[1].clone()])
+        .expect("share 1 + share 2 reconstruct the RMS");
+    assert_eq!(reconstructed, rms);
+
+    // Any other pair works too — not just the first two.
+    let reconstructed_other_pair =
+        Crypto::reconstruct_recovery(&[shares[0].clone(), shares[2].clone()])
+            .expect("share 1 + share 3 also reconstruct the RMS");
+    assert_eq!(reconstructed_other_pair, rms);
+
+    // A single share must not be enough.
+    assert!(Crypto::reconstruct_recovery(&[shares[0].clone()]).is_err());
+}

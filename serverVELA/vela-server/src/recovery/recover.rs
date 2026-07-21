@@ -10,6 +10,12 @@ use crate::{
     state::AppState,
 };
 
+/// How long a post-recovery device-enrollment grant stays redeemable. Short
+/// enough to bound the window where a stolen grant is useful, long enough to
+/// cover a slow "combine shares, generate a device keypair" step on a new
+/// device before it calls `/recovery/enroll-device`.
+const ENROLL_GRANT_TTL_SECS: u64 = 600;
+
 #[derive(Deserialize)]
 pub struct RecoverRequest {
     pub user_id: Uuid,
@@ -23,6 +29,11 @@ pub struct RecoverRequest {
 #[derive(Serialize)]
 pub struct RecoverResponse {
     pub share: String,
+    /// Single-use proof that this caller just passed WebAuthn-gated recovery
+    /// for `user_id`. Redeemable exactly once at `/recovery/enroll-device`
+    /// within `ENROLL_GRANT_TTL_SECS`, since a recovering device has no prior
+    /// enrolled device available to authorize it the normal way (§4.2).
+    pub recovery_grant: Uuid,
 }
 
 pub async fn post_recover(
@@ -83,9 +94,32 @@ pub async fn post_recover(
         })?;
     let share_bytes = crate::db::decode_b64(&share_b64)?;
 
+    let recovery_grant = Uuid::new_v4();
+    store_enroll_grant(&state, body.user_id, recovery_grant)?;
+
     tracing::info!(user_id = %body.user_id, "recovery share released after WebAuthn assertion");
 
     Ok(Json(RecoverResponse {
         share: B64.encode(&share_bytes),
+        recovery_grant,
     }))
+}
+
+fn store_enroll_grant(state: &AppState, user_id: Uuid, grant: Uuid) -> Result<()> {
+    state.store.set_ex(
+        &format!("recovery:enroll_grant:{user_id}:{grant}"),
+        b"1",
+        ENROLL_GRANT_TTL_SECS,
+    )
+}
+
+/// Consume a grant issued by `post_recover`. Returns an error if it's missing,
+/// expired, or already redeemed — grants are single-use.
+pub(crate) fn take_enroll_grant(state: &AppState, user_id: Uuid, grant: Uuid) -> Result<()> {
+    let key = format!("recovery:enroll_grant:{user_id}:{grant}");
+    state
+        .store
+        .get_del(&key)?
+        .ok_or_else(|| AppError::Unauthorized("recovery grant expired or already used".into()))?;
+    Ok(())
 }

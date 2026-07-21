@@ -1,6 +1,7 @@
 package com.vela.android
 
 import android.content.Intent
+import android.content.IntentSender
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -20,6 +21,7 @@ import com.vela.android.autofill.AutofillDatasetBuilder
 import com.vela.android.autofill.AutofillFieldSet
 import com.vela.android.core.VelaRepositories
 import com.vela.android.core.SharedCore
+import com.vela.android.security.WebAuthnCeremony
 import com.vela.android.ui.navigation.VelaNavHost
 import com.vela.android.ui.theme.VelaTheme
 import com.google.zxing.integration.android.IntentIntegrator
@@ -29,14 +31,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Arrays
 import javax.crypto.Cipher
+import kotlin.coroutines.resume
 
 class MainActivity : FragmentActivity() {
     private var pendingCreateRms: ByteArray? = null
     private var backgroundSyncJob: Job? = null
     private var onQrScanResult: ((String?) -> Unit)? = null
     private var pendingAutofillFill: AutofillFillRequest? = null
+    private var pendingDriveAuthContinuation: kotlin.coroutines.Continuation<Intent?>? = null
 
     private data class AutofillFillRequest(
         val fields: AutofillFieldSet,
@@ -173,6 +178,21 @@ class MainActivity : FragmentActivity() {
                             startBackgroundSync()
                         }
                     },
+                    onNavigateToRecover = {},
+                    onRecoverAccount = { serverUrl, userId, share1B64, deviceName ->
+                        // Runs on Dispatchers.IO like onEnrollDevice above;
+                        // WebAuthnCeremony's suspend functions manage their
+                        // own dispatch to show the Credential Manager UI.
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            val ceremony = WebAuthnCeremony(this@MainActivity)
+                            val rms = VelaRepositories.sync.recoverAccount(
+                                serverUrl, userId, share1B64, deviceName.ifBlank { null }
+                            ) { options -> ceremony.assert(options) }
+                            VelaRepositories.security.adoptRms(rms)
+                            VelaRepositories.sync.syncNow()
+                            startBackgroundSync()
+                        }
+                    },
                     onProtectEnrolledBiometric = ::protectEnrolledBiometric,
                     onProtectEnrolledPassword = ::protectEnrolledPassword,
                     serverUrl = syncSettings.serverUrl,
@@ -279,6 +299,12 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == DRIVE_AUTH_REQUEST_CODE) {
+            val continuation = pendingDriveAuthContinuation
+            pendingDriveAuthContinuation = null
+            continuation?.resume(if (resultCode == RESULT_OK) data else null)
+            return
+        }
         val result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
         if (result != null) {
             onQrScanResult?.invoke(result.contents?.trim())
@@ -288,6 +314,21 @@ class MainActivity : FragmentActivity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    /// Launches a Drive-authorization consent `IntentSender` (from
+    /// [com.vela.android.security.GoogleDriveRecoveryBackup.getAccessToken])
+    /// and suspends until [onActivityResult] delivers the outcome. Returns
+    /// null if the user cancelled or the consent screen failed to launch.
+    suspend fun awaitDriveConsent(intentSender: IntentSender): Intent? =
+        suspendCancellableCoroutine { continuation ->
+            pendingDriveAuthContinuation = continuation
+            try {
+                startIntentSenderForResult(intentSender, DRIVE_AUTH_REQUEST_CODE, null, 0, 0, 0)
+            } catch (e: IntentSender.SendIntentException) {
+                pendingDriveAuthContinuation = null
+                continuation.resume(null)
+            }
+        }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -296,6 +337,7 @@ class MainActivity : FragmentActivity() {
     }
 
     companion object {
+        private const val DRIVE_AUTH_REQUEST_CODE = 9821
         const val EXTRA_AUTOFILL_UNLOCK = "com.vela.android.extra.AUTOFILL_UNLOCK"
         const val EXTRA_AUTOFILL_USERNAME_IDS = "com.vela.android.extra.AUTOFILL_USERNAME_IDS"
         const val EXTRA_AUTOFILL_PASSWORD_IDS = "com.vela.android.extra.AUTOFILL_PASSWORD_IDS"

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Icon
@@ -48,7 +49,8 @@ import com.vela.android.ui.theme.VelaColors
 fun WelcomeScreen(
     onCreateBiometricVault: () -> Unit,
     onCreatePasswordVault: (String) -> Unit,
-    onNavigateToEnroll: () -> Unit
+    onNavigateToEnroll: () -> Unit,
+    onNavigateToRecover: () -> Unit
 ) {
     var password by remember { mutableStateOf("") }
     var showPasswordSetup by remember { mutableStateOf(false) }
@@ -151,6 +153,15 @@ fun WelcomeScreen(
                     onClick = onNavigateToEnroll,
                     style = VelaButtonStyle.TextOnly,
                     icon = Icons.Filled.Add
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                VelaButton(
+                    text = "Recover My Account",
+                    onClick = onNavigateToRecover,
+                    style = VelaButtonStyle.TextOnly,
+                    icon = Icons.Filled.Restore
                 )
             } else {
                 VelaTextField(

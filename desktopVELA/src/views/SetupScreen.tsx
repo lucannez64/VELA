@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import TrustedContactRecovery from '../components/TrustedContactRecovery';
+import { unwrapPublicKeyOptions, decodeCreationOptions, credentialToJSON } from '../lib/webauthn';
 
 type SetupStep = 'welcome' | 'biometric' | 'password' | 'recovery' | 'complete';
 
@@ -213,77 +214,6 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
         />
       </main>
   );
-}
-
-function unwrapPublicKeyOptions(response: any): PublicKeyCredentialCreationOptions {
-  return response?.publicKey ?? response?.public_key ?? response;
-}
-
-function decodeCreationOptions(options: PublicKeyCredentialCreationOptions): PublicKeyCredentialCreationOptions {
-  if (!options?.challenge || !options?.user?.id) {
-    throw new Error('Invalid WebAuthn creation options from server');
-  }
-
-  return {
-    ...options,
-    challenge: base64UrlToBuffer(options.challenge as unknown as string),
-    user: {
-      ...options.user,
-      id: base64UrlToBuffer(options.user.id as unknown as string),
-    },
-    excludeCredentials: options.excludeCredentials?.map(credential => ({
-      ...credential,
-      id: base64UrlToBuffer(credential.id as unknown as string),
-    })),
-  };
-}
-
-function credentialToJSON(credential: PublicKeyCredential): Record<string, unknown> {
-  return {
-    id: credential.id,
-    rawId: bufferToBase64Url(credential.rawId),
-    type: credential.type,
-    response: responseToJSON(credential.response),
-    clientExtensionResults: credential.getClientExtensionResults(),
-    authenticatorAttachment: credential.authenticatorAttachment,
-  };
-}
-
-function responseToJSON(response: AuthenticatorResponse): Record<string, string> {
-  if (response instanceof AuthenticatorAttestationResponse) {
-    return {
-      clientDataJSON: bufferToBase64Url(response.clientDataJSON),
-      attestationObject: bufferToBase64Url(response.attestationObject),
-    };
-  }
-
-  return {
-    clientDataJSON: bufferToBase64Url(response.clientDataJSON),
-    authenticatorData: bufferToBase64Url((response as AuthenticatorAssertionResponse).authenticatorData),
-    signature: bufferToBase64Url((response as AuthenticatorAssertionResponse).signature),
-    userHandle: (response as AuthenticatorAssertionResponse).userHandle
-      ? bufferToBase64Url((response as AuthenticatorAssertionResponse).userHandle as ArrayBuffer)
-      : '',
-  };
-}
-
-function base64UrlToBuffer(value: string): ArrayBuffer {
-  const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-function bufferToBase64Url(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
   if (step === 'welcome') {
