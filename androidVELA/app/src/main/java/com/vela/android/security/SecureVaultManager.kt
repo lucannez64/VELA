@@ -18,6 +18,11 @@ class SecureVaultManager(context: Context) {
     private val _session = MutableStateFlow(snapshot(null))
     val session: StateFlow<SecureSessionState> = _session
 
+    // Notified on every lock() (manual or auto-lock), so the current Activity
+    // can tear down Activity-scoped state (e.g. the background sync job) that
+    // this manager has no reference to.
+    var onLocked: (() -> Unit)? = null
+
     fun generateRms(): ByteArray = ByteArray(RMS_LEN).also { SecureRandom().nextBytes(it) }
 
     fun beginBiometricVaultCreation(): Cipher = biometricProtector.beginWrapCipher()
@@ -74,6 +79,7 @@ class SecureVaultManager(context: Context) {
         rms?.fill(0)
         rms = null
         _session.value = snapshot(null)
+        onLocked?.invoke()
     }
 
     fun resetLocalSecurity() {

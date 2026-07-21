@@ -2,6 +2,7 @@ package com.vela.android.autofill
 
 import android.app.PendingIntent
 import android.app.assist.AssistStructure
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.text.InputType
@@ -53,13 +54,14 @@ class VelaAutofillService : AutofillService() {
 
             if (!VelaRepositories.security.session.value.unlocked) {
                 Log.d(TAG, "onFillRequest: vault locked, showing unlock prompt")
-                callback.onSuccess(buildLockedResponse(fillable.allIds()))
+                val lockedDomain = fields.firstNotNullOfOrNull { it.webDomain } ?: structure.activityComponent?.packageName
+                callback.onSuccess(buildLockedResponse(fillable, lockedDomain, structure.activityComponent?.packageName))
                 return
             }
 
-            val domain = fields.firstNotNullOfOrNull { it.webDomain }
-                ?: structure.activityComponent?.packageName
-            val candidates = VelaRepositories.vault.findAutofillLogins(domain, structure.activityComponent?.packageName)
+            val packageName = structure.activityComponent?.packageName
+            val domain = fields.firstNotNullOfOrNull { it.webDomain } ?: packageName
+            val candidates = VelaRepositories.vault.findAutofillLogins(domain, packageName)
             // NOTE: never log `domain` or candidate names/urls/usernames here —
             // logcat is readable via ADB / READ_LOGS and leaks which sites the
             // user has credentials for.
@@ -70,7 +72,7 @@ class VelaAutofillService : AutofillService() {
             var added = 0
             candidates.take(MAX_DATASETS).forEachIndexed { index, login ->
                 Log.d(TAG, "onFillRequest: building dataset $index")
-                val dataset = buildLoginDataset(fillable, login)
+                val dataset = AutofillDatasetBuilder.buildLoginDataset(this, fillable, login)
                 if (dataset != null) {
                     responseBuilder.addDataset(dataset)
                     added++
@@ -133,7 +135,10 @@ class VelaAutofillService : AutofillService() {
                         password = password
                     )
                 )
-                Log.d(TAG, "Saved new Autofill login for $target")
+                // NOTE: never log `target` (domain/package) or the item name here —
+                // logcat is readable via ADB / READ_LOGS and leaks which sites the
+                // user has credentials for.
+                Log.d(TAG, "onSaveRequest: created new login")
             } else if (existing.password != password) {
                 VelaRepositories.vault.updateItem(
                     existing.copy(
@@ -144,9 +149,9 @@ class VelaAutofillService : AutofillService() {
                         )
                     )
                 )
-                Log.d(TAG, "Updated Autofill login for $target")
+                Log.d(TAG, "onSaveRequest: updated existing login")
             } else {
-                Log.d(TAG, "Autofill save ignored unchanged login for $target")
+                Log.d(TAG, "onSaveRequest: unchanged login, ignored")
             }
             callback.onSuccess()
         } catch (e: Exception) {
@@ -160,9 +165,89 @@ class VelaAutofillService : AutofillService() {
         private const val MAX_DATASETS = 5
     }
 
-    private fun buildLoginDataset(fields: AutofillFieldSet, login: VaultItem.Login): Dataset? {
+    private fun buildLockedResponse(fields: AutofillFieldSet, domain: String?, packageName: String?): FillResponse {
+        val intent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(MainActivity.EXTRA_AUTOFILL_UNLOCK, true)
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_USERNAME_IDS, ArrayList(fields.usernameFields))
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_PASSWORD_IDS, ArrayList(fields.passwordFields))
+            .putExtra(MainActivity.EXTRA_AUTOFILL_DOMAIN, domain)
+            .putExtra(MainActivity.EXTRA_AUTOFILL_PACKAGE, packageName)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            1001,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val presentation = AutofillDatasetBuilder.presentation(this, "Unlock VELA", "Open vault to fill passwords")
+        val builder = FillResponse.Builder()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            builder.setAuthentication(fields.allIds(), pendingIntent.intentSender, AutofillDatasetBuilder.presentations(presentation))
+        } else {
+            @Suppress("DEPRECATION")
+            builder.setAuthentication(fields.allIds(), pendingIntent.intentSender, presentation)
+        }
+        return builder.build()
+    }
+
+    private fun buildSaveInfo(fields: AutofillFieldSet): SaveInfo {
+        return SaveInfo.Builder(
+            SaveInfo.SAVE_DATA_TYPE_PASSWORD,
+            fields.allIds()
+        )
+            .setDescription("Save login in VELA")
+            .build()
+    }
+
+    private fun displayNameForTarget(target: String): String {
+        val host = target
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .substringBefore("/")
+            .removePrefix("www.")
+        return host.split(".", "-")
+            .filter { it.isNotBlank() && it !in setOf("com", "org", "net", "app") }
+            .joinToString(" ") { word -> word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() } }
+            .ifBlank { host.ifBlank { "Saved Login" } }
+    }
+}
+
+/**
+ * Builds Autofill datasets/responses from a resolved [VaultItem.Login]. Shared
+ * between [VelaAutofillService] (has the AssistStructure) and [MainActivity]
+ * (post-unlock: no AssistStructure, only the [AutofillFieldSet] and domain/
+ * package captured before the vault was locked) so both fill the same way.
+ */
+object AutofillDatasetBuilder {
+    private const val TAG = "AutofillDatasetBuilder"
+
+    fun buildFillResponse(
+        context: Context,
+        fields: AutofillFieldSet,
+        domain: String?,
+        packageName: String?,
+        maxDatasets: Int = 5
+    ): FillResponse? {
+        if (!fields.canFill) return null
+        val candidates = VelaRepositories.vault.findAutofillLogins(domain, packageName)
+        if (candidates.isEmpty()) return null
+
+        val builder = FillResponse.Builder()
+        var added = 0
+        candidates.take(maxDatasets).forEach { login ->
+            val dataset = buildLoginDataset(context, fields, login)
+            if (dataset != null) {
+                builder.addDataset(dataset)
+                added++
+            }
+        }
+        if (added == 0) return null
+        return builder.build()
+    }
+
+    fun buildLoginDataset(context: Context, fields: AutofillFieldSet, login: VaultItem.Login): Dataset? {
         return try {
-            val presentation = datasetPresentation(login.name, login.username)
+            val presentation = presentation(context, login.name, login.username)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 val presentations = presentations(presentation)
                 val dataset = Dataset.Builder(presentations)
@@ -181,62 +266,20 @@ class VelaAutofillService : AutofillService() {
                 legacyDataset(fields, login, presentation)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "buildLoginDataset failed for ${login.name}", e)
+            Log.e(TAG, "buildLoginDataset failed", e)
             null
         }
     }
 
-    private fun buildLockedResponse(ids: Array<AutofillId>): FillResponse {
-        val intent = Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .putExtra(MainActivity.EXTRA_AUTOFILL_UNLOCK, true)
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            1001,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val presentation = datasetPresentation("Unlock VELA", "Open vault to fill passwords")
-        val builder = FillResponse.Builder()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            builder.setAuthentication(ids, pendingIntent.intentSender, presentations(presentation))
-        } else {
-            @Suppress("DEPRECATION")
-            builder.setAuthentication(ids, pendingIntent.intentSender, presentation)
-        }
-        return builder.build()
-    }
-
-    private fun buildSaveInfo(fields: AutofillFieldSet): SaveInfo {
-        return SaveInfo.Builder(
-            SaveInfo.SAVE_DATA_TYPE_PASSWORD,
-            fields.allIds()
-        )
-            .setDescription("Save login in VELA")
-            .build()
-    }
-
-    private fun datasetPresentation(title: String, subtitle: String?): RemoteViews {
-        return RemoteViews(packageName, R.layout.autofill_dataset).apply {
+    fun presentation(context: Context, title: String, subtitle: String?): RemoteViews {
+        return RemoteViews(context.packageName, R.layout.autofill_dataset).apply {
             setTextViewText(R.id.title, title)
-            setTextViewText(R.id.subtitle, subtitle ?: getString(R.string.autofill_service_label))
+            setTextViewText(R.id.subtitle, subtitle ?: context.getString(R.string.autofill_service_label))
         }
-    }
-
-    private fun displayNameForTarget(target: String): String {
-        val host = target
-            .removePrefix("https://")
-            .removePrefix("http://")
-            .substringBefore("/")
-            .removePrefix("www.")
-        return host.split(".", "-")
-            .filter { it.isNotBlank() && it !in setOf("com", "org", "net", "app") }
-            .joinToString(" ") { word -> word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() } }
-            .ifBlank { host.ifBlank { "Saved Login" } }
     }
 
     @android.annotation.TargetApi(Build.VERSION_CODES.TIRAMISU)
-    private fun presentations(presentation: RemoteViews): Presentations {
+    fun presentations(presentation: RemoteViews): Presentations {
         return Presentations.Builder()
             .setMenuPresentation(presentation)
             .setDialogPresentation(presentation)

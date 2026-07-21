@@ -33,17 +33,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.ClipboardManager
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.core.VaultItem
+import com.vela.android.security.SecureClipboard
 import com.vela.android.ui.components.FaviconIcon
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
@@ -53,6 +53,7 @@ import com.vela.android.ui.components.VelaCardStyle
 import com.vela.android.ui.components.VelaTopBar
 import com.vela.android.ui.theme.MonoFont
 import com.vela.android.ui.theme.VelaColors
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -68,7 +69,8 @@ fun ItemDetailScreen(
     onDelete: () -> Unit,
     onShare: (() -> Unit)? = null
 ) {
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     if (item == null) return
@@ -150,8 +152,8 @@ fun ItemDetailScreen(
             Spacer(Modifier.height(20.dp))
 
             when (item) {
-                is VaultItem.Login -> LoginFields(item, clipboard)
-                is VaultItem.CreditCard -> CardFields(item, clipboard)
+                is VaultItem.Login -> LoginFields(item, context, scope)
+                is VaultItem.CreditCard -> CardFields(item, context, scope)
                 is VaultItem.SecureNote -> NoteFields(item)
                 else -> {}
             }
@@ -173,24 +175,24 @@ fun ItemDetailScreen(
 }
 
 @Composable
-private fun LoginFields(item: VaultItem.Login, clipboard: ClipboardManager) {
+private fun LoginFields(item: VaultItem.Login, context: android.content.Context, scope: CoroutineScope) {
     VelaCard {
-        DetailField("Username", item.username, clipboard)
-        DetailField("Password", item.password, clipboard, isMono = true, isSensitive = true)
-        DetailField("URL", item.url, clipboard)
-        TotpField(item.totp, clipboard)
-        DetailField("Notes", item.notes.takeIf { it?.isNotBlank() == true }, clipboard)
+        DetailField("Username", item.username, context, scope)
+        DetailField("Password", item.password, context, scope, isMono = true, isSensitive = true)
+        DetailField("URL", item.url, context, scope)
+        TotpField(item.totp, context, scope)
+        DetailField("Notes", item.notes.takeIf { it?.isNotBlank() == true }, context, scope)
     }
 }
 
 @Composable
-private fun CardFields(item: VaultItem.CreditCard, clipboard: ClipboardManager) {
+private fun CardFields(item: VaultItem.CreditCard, context: android.content.Context, scope: CoroutineScope) {
     VelaCard {
-        DetailField("Cardholder", item.cardholderName.ifBlank { null }, clipboard)
-        DetailField("Card Number", item.cardNumber.ifBlank { null }, clipboard, isMono = true, isSensitive = true)
-        DetailField("Expiration", item.expiration.ifBlank { null }, clipboard)
-        DetailField("CVV", item.cvv.ifBlank { null }, clipboard, isMono = true, isSensitive = true)
-        DetailField("PIN", item.pin?.takeIf { it.isNotBlank() }, clipboard, isMono = true, isSensitive = true)
+        DetailField("Cardholder", item.cardholderName.ifBlank { null }, context, scope)
+        DetailField("Card Number", item.cardNumber.ifBlank { null }, context, scope, isMono = true, isSensitive = true)
+        DetailField("Expiration", item.expiration.ifBlank { null }, context, scope)
+        DetailField("CVV", item.cvv.ifBlank { null }, context, scope, isMono = true, isSensitive = true)
+        DetailField("PIN", item.pin?.takeIf { it.isNotBlank() }, context, scope, isMono = true, isSensitive = true)
     }
 }
 
@@ -207,7 +209,7 @@ private fun NoteFields(item: VaultItem.SecureNote) {
 }
 
 @Composable
-private fun TotpField(totp: String?, clipboard: ClipboardManager) {
+private fun TotpField(totp: String?, context: android.content.Context, scope: CoroutineScope) {
     if (totp.isNullOrBlank()) return
 
     var code by remember(totp) { mutableStateOf<String?>(null) }
@@ -241,7 +243,7 @@ private fun TotpField(totp: String?, clipboard: ClipboardManager) {
                 }
             }
             if (code != null) {
-                IconButton(onClick = { clipboard.setText(AnnotatedString(code.orEmpty())) }) {
+                IconButton(onClick = { SecureClipboard.copy(context, scope, "TOTP", code.orEmpty()) }) {
                     Icon(Icons.Filled.ContentCopy, "Copy", modifier = Modifier.size(16.dp), tint = VelaColors.TextMuted)
                 }
             }
@@ -253,7 +255,8 @@ private fun TotpField(totp: String?, clipboard: ClipboardManager) {
 private fun DetailField(
     label: String,
     value: String?,
-    clipboard: ClipboardManager,
+    context: android.content.Context,
+    scope: CoroutineScope,
     isMono: Boolean = false,
     isSensitive: Boolean = false
 ) {
@@ -295,7 +298,7 @@ private fun DetailField(
                 }
             }
             IconButton(
-                onClick = { clipboard.setText(AnnotatedString(value ?: "")) },
+                onClick = { SecureClipboard.copy(context, scope, label, value) },
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(

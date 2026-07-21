@@ -106,6 +106,8 @@ fun VelaNavHost(
     onResolveConflictUseRemote: () -> Unit,
     onUpdateSyncServer: (String, String) -> Unit,
     onUpdateSyncPreferences: (Boolean, Int) -> Unit,
+    autoLockMinutes: Int,
+    onUpdateAutoLockMinutes: (Int) -> Unit,
     onNavigateToEnroll: () -> Unit,
     onEnrollDevice: (String, String) -> Unit,
     onProtectEnrolledBiometric: () -> Unit,
@@ -356,7 +358,9 @@ fun VelaNavHost(
                     onResolveConflictUseRemote = onResolveConflictUseRemote,
                     onOpenAutofillSettings = onOpenAutofillSettings,
                     onLock = onLock,
-                    onReset = onReset
+                    onReset = onReset,
+                    autoLockMinutes = autoLockMinutes,
+                    onUpdateAutoLockMinutes = onUpdateAutoLockMinutes
                 )
             }
 

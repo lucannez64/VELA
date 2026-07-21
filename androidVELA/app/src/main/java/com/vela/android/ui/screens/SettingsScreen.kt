@@ -71,7 +71,9 @@ fun SettingsScreen(
     onResolveConflictUseRemote: () -> Unit,
     onOpenAutofillSettings: () -> Unit,
     onLock: () -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
+    autoLockMinutes: Int,
+    onUpdateAutoLockMinutes: (Int) -> Unit
 ) {
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var syncOnStartup by remember(syncSettings.syncOnStartup) { mutableStateOf(syncSettings.syncOnStartup) }
@@ -112,6 +114,37 @@ fun SettingsScreen(
                 icon = Icons.Filled.DeleteForever,
                 onClick = onReset
             )
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Auto-lock",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VelaColors.TextPrimary
+                    )
+                    Text(
+                        "Lock the vault after this long backgrounded",
+                        fontSize = 12.sp,
+                        color = VelaColors.TextMuted
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    listOf(1, 5, 15, 30).forEach { minutes ->
+                        VelaButton(
+                            text = "${minutes}m",
+                            onClick = { onUpdateAutoLockMinutes(minutes) },
+                            style = if (autoLockMinutes == minutes) VelaButtonStyle.Primary else VelaButtonStyle.Surface,
+                            fullWidth = false
+                        )
+                        if (minutes != 30) Spacer(Modifier.width(6.dp))
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(24.dp))

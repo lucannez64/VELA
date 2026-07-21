@@ -2,9 +2,12 @@ package com.vela.android
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.WindowManager
+import android.view.autofill.AutofillId
+import android.view.autofill.AutofillManager
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -13,6 +16,8 @@ import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import com.vela.android.autofill.AutofillDatasetBuilder
+import com.vela.android.autofill.AutofillFieldSet
 import com.vela.android.core.VelaRepositories
 import com.vela.android.core.SharedCore
 import com.vela.android.ui.navigation.VelaNavHost
@@ -31,16 +36,26 @@ class MainActivity : FragmentActivity() {
     private var pendingCreateRms: ByteArray? = null
     private var backgroundSyncJob: Job? = null
     private var onQrScanResult: ((String?) -> Unit)? = null
+    private var pendingAutofillFill: AutofillFillRequest? = null
+
+    private data class AutofillFillRequest(
+        val fields: AutofillFieldSet,
+        val domain: String?,
+        val packageName: String?
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        VelaRepositories.security.onLocked = { cancelBackgroundSync() }
+        pendingAutofillFill = parseAutofillRequest(intent)
         setContent {
             VelaTheme {
                 val items by VelaRepositories.vault.items.collectAsState()
                 val secureSession by VelaRepositories.security.session.collectAsState()
                 val syncSettings by VelaRepositories.syncSettings.settings.collectAsState()
                 val syncState by VelaRepositories.sync.state.collectAsState()
+                val autoLockMinutes by VelaRepositories.autoLock.autoLockMinutes.collectAsState()
                 val coreStatus = SharedCore.status()
 
                 val isUnlocked = secureSession.unlocked
@@ -144,6 +159,8 @@ class MainActivity : FragmentActivity() {
                         VelaRepositories.syncSettings.updateSyncPreferences(syncOnStartup, backgroundSyncMinutes)
                         restartBackgroundSync()
                     },
+                    autoLockMinutes = autoLockMinutes,
+                    onUpdateAutoLockMinutes = { minutes -> VelaRepositories.autoLock.setAutoLockMinutes(minutes) },
                     onNavigateToEnroll = {},
                     onEnrollDevice = { serverUrl, enrollmentCode ->
                         // Was invoked directly on the caller's (UI) thread —
@@ -176,7 +193,56 @@ class MainActivity : FragmentActivity() {
             }
         }
         startBackgroundSync()
+        tryCompleteAutofillUnlock()
     }
+
+    /**
+     * Finishes the "unlock then fill" Autofill flow: if this Activity was
+     * launched from [com.vela.android.autofill.VelaAutofillService]'s locked
+     * response and the vault just became unlocked, hand the resolved
+     * FillResponse back to the Autofill framework instead of leaving the
+     * triggering field unfilled.
+     */
+    private fun tryCompleteAutofillUnlock() {
+        val request = pendingAutofillFill ?: return
+        if (!VelaRepositories.security.session.value.unlocked) return
+        pendingAutofillFill = null
+
+        val response = AutofillDatasetBuilder.buildFillResponse(
+            this,
+            request.fields,
+            request.domain,
+            request.packageName
+        )
+        val result = Intent()
+        if (response != null) {
+            result.putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, response)
+            setResult(RESULT_OK, result)
+        } else {
+            setResult(RESULT_CANCELED)
+        }
+        finish()
+    }
+
+    private fun parseAutofillRequest(intent: Intent?): AutofillFillRequest? {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_AUTOFILL_UNLOCK, false)) return null
+        val usernameIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_USERNAME_IDS).orEmpty()
+        val passwordIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_PASSWORD_IDS).orEmpty()
+        if (usernameIds.isEmpty() && passwordIds.isEmpty()) return null
+        return AutofillFillRequest(
+            fields = AutofillFieldSet(usernameIds, passwordIds),
+            domain = intent.getStringExtra(EXTRA_AUTOFILL_DOMAIN),
+            packageName = intent.getStringExtra(EXTRA_AUTOFILL_PACKAGE)
+        )
+    }
+
+    private inline fun <reified T : android.os.Parcelable> Intent.parcelableArrayListExtraCompat(name: String): ArrayList<T>? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableArrayListExtra(name, T::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableArrayListExtra(name)
+        }
 
     private fun startBackgroundSync() {
         cancelBackgroundSync()
@@ -222,8 +288,19 @@ class MainActivity : FragmentActivity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingAutofillFill = parseAutofillRequest(intent)
+        tryCompleteAutofillUnlock()
+    }
+
     companion object {
         const val EXTRA_AUTOFILL_UNLOCK = "com.vela.android.extra.AUTOFILL_UNLOCK"
+        const val EXTRA_AUTOFILL_USERNAME_IDS = "com.vela.android.extra.AUTOFILL_USERNAME_IDS"
+        const val EXTRA_AUTOFILL_PASSWORD_IDS = "com.vela.android.extra.AUTOFILL_PASSWORD_IDS"
+        const val EXTRA_AUTOFILL_DOMAIN = "com.vela.android.extra.AUTOFILL_DOMAIN"
+        const val EXTRA_AUTOFILL_PACKAGE = "com.vela.android.extra.AUTOFILL_PACKAGE"
     }
 
     fun launchQrScanner(prompt: String, onResult: (String?) -> Unit) {

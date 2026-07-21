@@ -1,13 +1,21 @@
 package com.vela.android.core
 
 import android.content.Context
+import android.util.Log
 import com.vela.android.security.EncryptedVaultStore
 import com.vela.android.security.SecureVaultManager
 import com.vela.android.sync.SyncSettingsStore
 import com.vela.android.sync.VaultSyncManager
+import androidx.lifecycle.ProcessLifecycleOwner
+import com.vela.android.security.AutoLockController
+import com.vela.android.security.AutoLockStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.net.URI
 import java.time.Instant
 import java.util.Locale
@@ -221,6 +229,15 @@ object VelaRepositories {
     lateinit var audit: AuditLogRepository
         private set
 
+    lateinit var autoLock: AutoLockStore
+        private set
+
+    // Tied to the process, not any one Activity, so callers (e.g. the share-push
+    // hook below) keep running if the launching Activity is torn down, but a
+    // failure in one launch can't take the whole process down like a bare
+    // Thread's default uncaught-exception handler would.
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     fun init(context: Context) {
         security = SecureVaultManager(context.applicationContext)
         vault = LocalVaultRepository(
@@ -232,7 +249,15 @@ object VelaRepositories {
         serverIdentity = com.vela.android.sync.ServerIdentityStore(context.applicationContext)
         sync = VaultSyncManager(context.applicationContext, syncSettings, serverIdentity, security, vault)
         sharing = SharingRepository(vault, security, sync, serverIdentity, context.applicationContext)
-        vault.onItemUpdated = { item -> Thread { sharing.pushShareUpdates(item) }.start() }
+        vault.onItemUpdated = { item ->
+            backgroundScope.launch {
+                runCatching { sharing.pushShareUpdates(item) }
+                    .onFailure { Log.e("VelaRepositories", "pushShareUpdates failed", it) }
+            }
+        }
         audit = AuditLogRepository(context.applicationContext)
+
+        autoLock = AutoLockStore(context.applicationContext)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(AutoLockController(security, autoLock))
     }
 }
