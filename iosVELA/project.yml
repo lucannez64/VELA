@@ -76,6 +76,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.vela.vault.autofill
         TARGETED_DEVICE_FAMILY: "1"
         OTHER_LDFLAGS: -framework Security
+        # Extension targets are APPLICATION_EXTENSION_API_ONLY, which makes
+        # UIApplication.shared (used by WebAuthnCeremony's presentation
+        # anchor lookup — never actually exercised from this extension) a
+        # compile error. This flag lets that one call site route around it.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: VELA_APP_EXTENSION
     dependencies:
       - framework: ../libVELA/vela-apple-bridge/VelaCore.xcframework
         embed: false

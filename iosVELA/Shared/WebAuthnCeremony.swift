@@ -168,13 +168,17 @@ extension WebAuthnCeremony: ASAuthorizationControllerDelegate {
 
 extension WebAuthnCeremony: ASAuthorizationControllerPresentationContextProviding {
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        #if canImport(UIKit)
+        #if canImport(UIKit) && !VELA_APP_EXTENSION
         let window = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
             .first { $0.isKeyWindow }
         return window ?? ASPresentationAnchor()
         #else
+        // Never actually reached: WebAuthnCeremony is only invoked from the
+        // main app's recovery screens, not the AutoFill extension — this
+        // branch exists purely so the file still compiles under the
+        // extension target's APPLICATION_EXTENSION_API_ONLY restriction.
         return ASPresentationAnchor()
         #endif
     }
