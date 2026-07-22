@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useApp, VaultItem } from '../context/AppContext';
 import { useClipboard } from '../hooks/useClipboard';
 import FaviconIcon from '../components/FaviconIcon';
@@ -20,31 +21,108 @@ interface VaultHealth {
 
 type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote';
 
+function getIcon(type: string) {
+  switch (type) {
+    case 'login': return 'key';
+    case 'creditCard': return 'credit_card';
+    case 'secureNote': return 'note';
+    default: return 'shield';
+  }
+}
+
+// A row is either a group header ("A", "B", ...) or a vault item. Flattening
+// both into one array lets a single virtualizer window the whole list —
+// otherwise every letter section and all ~200+ items mount into the DOM (and
+// each login row fires its own favicon IPC call) regardless of scroll
+// position.
+type Row = { kind: 'header'; letter: string } | { kind: 'item'; item: VaultItem };
+
+interface ItemRowProps {
+  item: VaultItem;
+  onSelect: (item: VaultItem) => void;
+  onCopy: (item: VaultItem) => void;
+  onOpenUrl: (url: string) => void;
+}
+
+const VaultItemRow = memo(function VaultItemRow({ item, onSelect, onCopy, onOpenUrl }: ItemRowProps) {
+  return (
+    <div
+      onClick={() => onSelect(item)}
+      className="group flex items-center justify-between gap-4 p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
+    >
+      <div className="flex items-center gap-4 min-w-0">
+        <FaviconIcon
+          url={item.url}
+          itemType={item.item_type}
+          icon={getIcon(item.item_type)}
+        />
+        <div className="min-w-0">
+          <h3 className="font-body font-bold text-on-surface truncate">{item.name}</h3>
+          <p className="font-mono text-xs text-on-surface-variant/60 truncate">
+            {item.username || item.url || (item.item_type === 'creditCard' ? `Ending in •••• ${item.card_number?.slice(-4)}` : '••••••••')}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3 sm:gap-6 shrink-0">
+        {item.shared && (
+          item.share_recipient
+            ? <div className="px-2 py-0.5 rounded bg-primary/10 text-[10px] text-primary font-label font-bold uppercase tracking-widest flex items-center gap-1">
+                <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>share</span>Shared
+              </div>
+            : <div className="px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest flex items-center gap-1">
+                <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>download</span>Received
+              </div>
+        )}
+        <span className="hidden md:block font-mono text-xs text-outline-variant tracking-tighter">
+          {item.item_type === 'creditCard' ? `EXP: ${item.card_exp}` : '••••••••••••'}
+        </span>
+        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => { e.stopPropagation(); onCopy(item); }}
+            className="p-2 hover:text-primary transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm">content_copy</span>
+          </button>
+          {item.url && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenUrl(item.url || ''); }}
+              className="p-2 hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">open_in_new</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, onAddItem }: Props) {
   const { setSelectedItem, showToast, setCurrentView } = useApp();
   const { copyToClipboard } = useClipboard();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
-  const [filteredItems, setFilteredItems] = useState<VaultItem[]>([]);
   const [vaultHealth, setVaultHealth] = useState<VaultHealth | null>(null);
+  const scrollParentRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const filteredItems = useMemo(() => {
     let result = propItems;
-    
+
     if (filter !== 'all') {
       result = result.filter(item => item.item_type === filter);
     }
-    
+
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      result = result.filter(item => 
+      result = result.filter(item =>
         item.name.toLowerCase().includes(query) ||
         item.username?.toLowerCase().includes(query) ||
         item.url?.toLowerCase().includes(query)
       );
     }
-    
-    setFilteredItems(result);
+
+    return result;
   }, [propItems, filter, searchQuery]);
 
   useEffect(() => {
@@ -59,29 +137,39 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     fetchHealth();
   }, [propItems]);
 
-  const groupedItems = filteredItems.reduce((acc, item) => {
-    const letter = (item.name.trim()[0] || '#').toUpperCase();
-    if (!acc[letter]) acc[letter] = [];
-    acc[letter].push(item);
-    return acc;
-  }, {} as Record<string, VaultItem[]>);
+  const rows = useMemo(() => {
+    const grouped = filteredItems.reduce((acc, item) => {
+      const letter = (item.name.trim()[0] || '#').toUpperCase();
+      if (!acc[letter]) acc[letter] = [];
+      acc[letter].push(item);
+      return acc;
+    }, {} as Record<string, VaultItem[]>);
 
-  const getIcon = (type: string) => {
-    switch (type) {
-      case 'login': return 'key';
-      case 'creditCard': return 'credit_card';
-      case 'secureNote': return 'note';
-      default: return 'shield';
+    const flat: Row[] = [];
+    for (const [letter, items] of Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b))) {
+      flat.push({ kind: 'header', letter });
+      for (const item of items) {
+        flat.push({ kind: 'item', item });
+      }
     }
-  };
+    return flat;
+  }, [filteredItems]);
 
-  const handleOpenUrl = (url: string) => {
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: (index) => (rows[index]?.kind === 'header' ? 48 : 84),
+    overscan: 10,
+    scrollMargin: listRef.current?.offsetTop ?? 0,
+  });
+
+  const handleOpenUrl = useCallback((url: string) => {
     if (url) {
       window.open(url, '_blank');
     }
-  };
+  }, []);
 
-  const handleCopy = (item: VaultItem) => {
+  const handleCopy = useCallback((item: VaultItem) => {
     if (item.password) {
       copyToClipboard(item.password, 'Password');
     } else if (item.card_number) {
@@ -91,7 +179,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     } else {
       showToast('Nothing to copy', 'info');
     }
-  };
+  }, [copyToClipboard, showToast]);
 
   const typeCounts = {
     all: propItems.length,
@@ -101,7 +189,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
   };
 
   return (
-    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+    <div ref={scrollParentRef} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-6 mb-8">
         <div className="relative w-full max-w-xl">
           <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline-variant">search</span>
@@ -113,7 +201,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
             type="text"
           />
         </div>
-        <button 
+        <button
           onClick={onAddItem}
           className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors"
         >
@@ -128,8 +216,8 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
             key={type}
             onClick={() => setFilter(type)}
             className={`group flex items-center gap-2 pb-4 font-label font-medium text-sm border-b-2 transition-colors ${
-              filter === type 
-                ? 'text-primary border-primary' 
+              filter === type
+                ? 'text-primary border-primary'
                 : 'text-on-surface-variant hover:text-on-surface border-transparent'
             }`}
           >
@@ -141,75 +229,47 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
         ))}
       </div>
 
-      <div className="space-y-8">
-        {Object.entries(groupedItems).sort().map(([letter, items]) => (
-          <section key={letter}>
-            <div className="flex items-center gap-4 mb-4">
-              <span className="font-headline text-2xl font-bold text-outline-variant/30">{letter}</span>
-              <div className="h-px flex-1 bg-outline-variant/10"></div>
-            </div>
-            <div className="grid grid-cols-1 gap-3">
-              {items.map(item => (
-                <div
-                  key={item.id}
-                  onClick={() => setSelectedItem(item)}
-                  className="group flex items-center justify-between gap-4 p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-4 min-w-0">
-                    <FaviconIcon
-                      url={item.url}
-                      itemType={item.item_type}
-                      icon={getIcon(item.item_type)}
-                    />
-                    <div className="min-w-0">
-                      <h3 className="font-body font-bold text-on-surface truncate">{item.name}</h3>
-                      <p className="font-mono text-xs text-on-surface-variant/60 truncate">
-                        {item.username || item.url || (item.item_type === 'creditCard' ? `Ending in •••• ${item.card_number?.slice(-4)}` : '••••••••')}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 sm:gap-6 shrink-0">
-                    {item.shared && (
-                      item.share_recipient
-                        ? <div className="px-2 py-0.5 rounded bg-primary/10 text-[10px] text-primary font-label font-bold uppercase tracking-widest flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>share</span>Shared
-                          </div>
-                        : <div className="px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>download</span>Received
-                          </div>
-                    )}
-                    <span className="hidden md:block font-mono text-xs text-outline-variant tracking-tighter">
-                      {item.item_type === 'creditCard' ? `EXP: ${item.card_exp}` : '••••••••••••'}
-                    </span>
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleCopy(item); }}
-                        className="p-2 hover:text-primary transition-colors"
-                      >
-                        <span className="material-symbols-outlined text-sm">content_copy</span>
-                      </button>
-                      {item.url && (
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); handleOpenUrl(item.url || ''); }}
-                          className="p-2 hover:text-primary transition-colors"
-                        >
-                          <span className="material-symbols-outlined text-sm">open_in_new</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
+      <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize() }}>
+        {rowVirtualizer.getVirtualItems().map(virtualRow => {
+          const row = rows[virtualRow.index];
+          return (
+            <div
+              key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={rowVirtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start - rowVirtualizer.options.scrollMargin}px)`,
+              }}
+            >
+              {row.kind === 'header' ? (
+                <div className="flex items-center gap-4 mb-4 pt-4">
+                  <span className="font-headline text-2xl font-bold text-outline-variant/30">{row.letter}</span>
+                  <div className="h-px flex-1 bg-outline-variant/10"></div>
                 </div>
-              ))}
+              ) : (
+                <div className="pb-3">
+                  <VaultItemRow
+                    item={row.item}
+                    onSelect={setSelectedItem}
+                    onCopy={handleCopy}
+                    onOpenUrl={handleOpenUrl}
+                  />
+                </div>
+              )}
             </div>
-          </section>
-        ))}
+          );
+        })}
       </div>
 
       {filteredItems.length === 0 && (
         <div className="text-center py-16">
           <span className="material-symbols-outlined text-6xl text-outline-variant mb-4 block">search_off</span>
           <p className="text-on-surface-variant mb-4">No items found</p>
-          <button 
+          <button
             onClick={onAddItem}
             className="px-6 py-3 bg-primary/10 text-primary rounded-xl font-medium hover:bg-primary/20 transition-colors"
           >
@@ -241,7 +301,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                 <span className="font-mono text-primary">{Math.round(vaultHealth?.health_score || 0)}%</span>
               </div>
               <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
-                <div 
+                <div
                   className={`h-full rounded-full ${
                     (vaultHealth?.health_score || 0) >= 90 ? 'bg-primary shadow-[0_0_12px_rgb(var(--color-primary))]' :
                     (vaultHealth?.health_score || 0) >= 70 ? 'bg-green-400' :
@@ -287,5 +347,3 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     </div>
   );
 }
-
-
