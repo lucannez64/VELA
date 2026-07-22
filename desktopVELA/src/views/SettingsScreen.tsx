@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useApp, Settings } from '../context/AppContext';
 import { THEMES, ThemeSetting } from '../themes';
+import RecoverySettings from '../components/RecoverySettings';
 
 export default function SettingsScreen() {
   const { showToast, setSession, setItems, setSelectedItem, settings: contextSettings, setSettings: setContextSettings } = useApp();
@@ -14,6 +15,7 @@ export default function SettingsScreen() {
   const [serverUrlDraft, setServerUrlDraft] = useState('');
   const [editingShortcut, setEditingShortcut] = useState(false);
   const [shortcutDraft, setShortcutDraft] = useState('');
+  const [shortcutBackend, setShortcutBackend] = useState<'plugin' | 'portal' | null>(null);
 
   const handleSyncNow = async () => {
     if (syncing) return;
@@ -38,6 +40,9 @@ export default function SettingsScreen() {
       setSettings(contextSettings);
     }
     loadSettings();
+    invoke<string>('get_shortcut_backend')
+      .then(backend => setShortcutBackend(backend === 'portal' ? 'portal' : 'plugin'))
+      .catch(() => setShortcutBackend('plugin'));
   }, []);
 
   const loadSettings = async () => {
@@ -263,8 +268,35 @@ export default function SettingsScreen() {
               ) : (
                 <p className="font-mono text-sm text-on-surface-variant">{settings.quick_search_shortcut}</p>
               )}
+              {shortcutBackend === 'portal' && (
+                <div className="mt-3 p-3 bg-surface-container-low rounded-lg border border-outline-variant/20">
+                  <div className="flex items-start gap-2">
+                    <span className="material-symbols-outlined text-primary text-lg">info</span>
+                    <div className="text-sm text-on-surface-variant space-y-1">
+                      <p>
+                        You're on Wayland: the shortcut is delivered through the desktop portal
+                        (GlobalShortcuts), and changes here apply after restarting VELA. KDE and
+                        GNOME will ask you to confirm the binding; on Hyprland the compositor owns
+                        the keybind — add this to your hyprland.conf:
+                      </p>
+                      <p className="font-mono text-xs text-on-surface bg-surface-container-highest rounded p-2 select-text">
+                        bind = CTRL ALT, V, global, com.vela.vault:quick-search
+                      </p>
+                      <p>
+                        Run <span className="font-mono text-on-surface">hyprctl globalshortcuts</span> while
+                        VELA is open to see the exact <span className="font-mono">appid:id</span> to use.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
+        </section>
+
+        <section>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Recovery</h2>
+          <RecoverySettings />
         </section>
 
         <section>

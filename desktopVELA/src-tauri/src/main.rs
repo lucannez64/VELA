@@ -114,6 +114,18 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
         })
         .unwrap_or_else(|_| commands::settings::DEFAULT_QUICK_SEARCH_SHORTCUT.to_string());
 
+    // On Wayland the X11-based global-shortcut plugin cannot grab keys; go
+    // through the XDG Desktop Portal GlobalShortcuts interface instead.
+    #[cfg(target_os = "linux")]
+    if vela_desktop::wayland_shortcut::is_wayland_session() {
+        let trigger = vela_desktop::wayland_shortcut::to_portal_trigger(&shortcut);
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            vela_desktop::wayland_shortcut::run(app_handle, trigger).await;
+        });
+        return Ok(());
+    }
+
     if let Err(e) = commands::settings::register_quick_search_shortcut(app, &shortcut) {
         let message = e.to_string();
         if message.contains("already registered") {
@@ -236,6 +248,7 @@ fn main() {
             commands::audit::clear_audit_log,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            commands::settings::get_shortcut_backend,
             commands::settings::get_auto_lock_minutes,
             commands::settings::set_auto_lock_minutes,
             commands::settings::send_recovery_invite,

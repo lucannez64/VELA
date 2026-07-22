@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=Utility;Security;
+Exec=vela-desktop
+StartupWMClass=vela-desktop
+Icon=vela-desktop
+Name=VELA
+Comment=Passwordless, zero-knowledge password vault
+Terminal=false
+Type=Application

@@ -38,6 +38,18 @@
         "icons/icon.png",
         "icons/icon.ico"
       ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/applications/com.vela.vault.desktop": "assets/com.vela.vault.desktop"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/applications/com.vela.vault.desktop": "assets/com.vela.vault.desktop"
+        }
+      }
+    },
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",

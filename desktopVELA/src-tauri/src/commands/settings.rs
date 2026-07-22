@@ -99,6 +99,29 @@ pub fn register_quick_search_shortcut(app: &AppHandle, shortcut: &str) -> Result
         .map_err(|e| format!("Failed to register quick search shortcut '{shortcut}': {e}"))
 }
 
+fn quick_search_uses_portal() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        crate::wayland_shortcut::is_wayland_session()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// How the quick-search shortcut is delivered on this system: `"portal"`
+/// (Wayland, via the XDG GlobalShortcuts portal — the compositor owns the
+/// actual keybind) or `"plugin"` (X11/Windows/macOS key grab).
+#[command]
+pub async fn get_shortcut_backend() -> Result<String, String> {
+    Ok(if quick_search_uses_portal() {
+        "portal".to_string()
+    } else {
+        "plugin".to_string()
+    })
+}
+
 fn reconfigure_quick_search_shortcut(
     app: &AppHandle,
     previous_shortcut: &str,
@@ -150,11 +173,21 @@ pub async fn update_settings(
     if normalize_quick_search_shortcut(&previous_settings.quick_search_shortcut)
         != settings.quick_search_shortcut
     {
-        reconfigure_quick_search_shortcut(
-            &app,
-            &previous_settings.quick_search_shortcut,
-            &settings.quick_search_shortcut,
-        )?;
+        if quick_search_uses_portal() {
+            // The portal binding was created at startup with the previous
+            // preferred trigger; the new one is picked up on next launch
+            // (Hyprland ignores it either way — the compositor keybind rules).
+            tracing::info!(
+                shortcut = %settings.quick_search_shortcut,
+                "Wayland session: quick search shortcut preference stored; applies at next launch"
+            );
+        } else {
+            reconfigure_quick_search_shortcut(
+                &app,
+                &previous_settings.quick_search_shortcut,
+                &settings.quick_search_shortcut,
+            )?;
+        }
     }
 
     *state.server_url.write() = settings.server_url.clone();

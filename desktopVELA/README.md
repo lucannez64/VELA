@@ -7,7 +7,7 @@ A passwordless, zero-knowledge vault desktop application built with Tauri and Re
 - **Biometric Authentication**: Windows Hello / Touch ID integration via TPM 2.0
 - **Zero-Knowledge Architecture**: Your vault data is encrypted end-to-end
 - **System Tray**: Runs in background with system tray presence
-- **Global Shortcuts**: Quick search overlay with `Ctrl+Shift+V`
+- **Global Shortcuts**: Quick search overlay with `Ctrl+Alt+V` (see [Global shortcut on Linux](#global-shortcut-on-linux) for Wayland)
 - **Session Management**: Auto-lock with configurable timeout
 - **Multi-Device Sync**: Secure vault synchronization across devices
 - **Secure Sharing**: Share vault items with other VELA users
@@ -95,6 +95,44 @@ desktopVELA/
 3. **Quick Search**: Global shortcut overlay for instant search
 4. **Auto-Lock**: Configurable idle timeout
 5. **Clipboard Clear**: Automatic clipboard clearing after 30s
+
+## Global shortcut on Linux
+
+On X11 the quick-search shortcut is a plain key grab via
+`tauri-plugin-global-shortcut` and works out of the box.
+
+On **Wayland** compositors don't allow apps to grab keys, so VELA binds the
+shortcut through the XDG Desktop Portal `GlobalShortcuts` interface instead
+(shortcut id `quick-search`, app id `com.vela.vault`).
+
+Portals identify callers by app id, and for non-sandboxed apps VELA has to
+register `com.vela.vault` itself via the host portal registry — which only
+succeeds when a `com.vela.vault.desktop` entry is installed. The deb/rpm
+bundles ship one (`src-tauri/assets/com.vela.vault.desktop`); if you
+installed another way (AUR, manual) and the startup log shows
+`Could not register 'com.vela.vault' with the desktop portal`, drop a copy
+into `~/.local/share/applications/com.vela.vault.desktop`.
+
+What happens after binding depends on your portal backend:
+
+- **KDE / GNOME**: a system dialog asks you to confirm the binding the first
+  time; the preferred trigger from Settings is offered as the default. Manage
+  it later in the system shortcut settings.
+- **Hyprland** (`xdg-desktop-portal-hyprland`): preferred triggers are
+  ignored — the compositor owns the keybind. Add to `hyprland.conf`:
+
+  ```ini
+  bind = CTRL ALT, V, global, com.vela.vault:quick-search
+  ```
+
+  Run `hyprctl globalshortcuts` while VELA is running to confirm the exact
+  `appid:id` pair registered with the portal.
+
+Changing the shortcut in **Settings → Security** updates the preferred
+trigger hint used at next launch; on Hyprland only the `bind` line matters.
+If your compositor's portal doesn't implement GlobalShortcuts at all, VELA
+logs an error at startup and the shortcut is unavailable — as a fallback you
+can bind a compositor key to focus/launch VELA.
 
 ## Security
 

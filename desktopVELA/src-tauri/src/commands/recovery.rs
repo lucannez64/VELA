@@ -46,6 +46,11 @@ pub struct RecoveryStatus {
     pub cloud_backup_delivered: bool,
     pub security_key_delivered: bool,
     pub trusted_contact_acknowledged: bool,
+    /// True while the split shares are still cached locally (setup started
+    /// but not yet finalized) — remaining methods can be completed against
+    /// the same split. Once finalized, starting any method again forces a
+    /// fresh split that invalidates every previously delivered share.
+    pub setup_in_progress: bool,
 }
 
 fn load_pending(state: &AppState) -> PendingRecoveryShares {
@@ -109,6 +114,12 @@ pub(crate) fn ensure_shares_split(state: &AppState) -> Result<(), String> {
     pending.share1 = Some(shares[0].to_bytes());
     pending.share2 = Some(shares[1].to_bytes());
     pending.share3 = Some(shares[2].to_bytes());
+    // A fresh split draws a new random polynomial, so shares delivered from
+    // an earlier split can no longer combine with these — every channel has
+    // to be redone against the new split.
+    pending.cloud_backup_delivered = false;
+    pending.security_key_delivered = false;
+    pending.trusted_contact_acknowledged = false;
     save_pending(state, &pending)
 }
 
@@ -237,23 +248,29 @@ pub async fn get_recovery_setup_status(
         cloud_backup_delivered: pending.cloud_backup_delivered,
         security_key_delivered: pending.security_key_delivered,
         trusted_contact_acknowledged: pending.trusted_contact_acknowledged,
+        setup_in_progress: pending.share1.is_some(),
     })
 }
 
-/// Wipe the locally cached shares once recovery setup is done (or abandoned).
-/// Safe regardless of how many channels were actually delivered: recovery
-/// only ever depended on 2 of the 3 shares reaching their destination, never
-/// on this local cache surviving.
+/// Wipe the locally cached shares once recovery setup is done (or abandoned),
+/// keeping the delivered flags so the Settings screen can keep reporting
+/// which methods are configured. Safe regardless of how many channels were
+/// actually delivered: recovery only ever depended on 2 of the 3 shares
+/// reaching their destination, never on this local cache surviving.
 #[tauri::command]
 pub async fn finalize_recovery_setup(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     if !state.is_unlocked() {
         return Err("Vault is locked".to_string());
     }
     let path = state.store.store_path().join(RECOVERY_SETUP_FILE);
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    if !path.exists() {
+        return Ok(());
     }
-    Ok(())
+    let mut pending = load_pending(&state);
+    pending.share1 = None;
+    pending.share2 = None;
+    pending.share3 = None;
+    save_pending(&state, &pending)
 }
 
 // ─────────────────────────────────────────────────────────────────────────

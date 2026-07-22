@@ -9,6 +9,8 @@ pub mod session;
 pub mod store;
 pub mod token;
 pub mod vault;
+#[cfg(target_os = "linux")]
+pub mod wayland_shortcut;
 
 #[cfg(test)]
 mod vault_lifecycle_test;
