@@ -54,7 +54,7 @@ fun VelaButton(
         VelaButtonStyle.Primary -> {
             Button(
                 onClick = onClick,
-                modifier = mod.height(52.dp),
+                modifier = mod.height(48.dp),
                 enabled = enabled,
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -73,7 +73,7 @@ fun VelaButton(
         VelaButtonStyle.Gradient -> {
             Box(
                 modifier = mod
-                    .height(56.dp)
+                    .height(48.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(
                         Brush.horizontalGradient(

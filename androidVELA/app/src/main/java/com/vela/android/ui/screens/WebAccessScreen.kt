@@ -1,9 +1,7 @@
 package com.vela.android.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,9 +26,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.MainActivity
 import com.vela.android.core.VelaRepositories
-import com.vela.android.ui.components.StatusBadge
+import com.vela.android.ui.components.SegmentedControl
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
+import com.vela.android.ui.components.VelaCard
+import com.vela.android.ui.components.VelaCardStyle
+import com.vela.android.ui.components.VelaTopBar
 import com.vela.android.ui.theme.VelaColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,10 +40,10 @@ import kotlinx.coroutines.withContext
 private data class TtlOption(val label: String, val secs: Long)
 
 private val TTL_OPTIONS = listOf(
-    TtlOption("30 min", 30 * 60),
-    TtlOption("1 hour", 60 * 60),
-    TtlOption("8 hours", 8 * 60 * 60),
-    TtlOption("24 hours", 24 * 60 * 60),
+    TtlOption("30m", 30 * 60),
+    TtlOption("1h", 60 * 60),
+    TtlOption("8h", 8 * 60 * 60),
+    TtlOption("24h", 24 * 60 * 60),
 )
 
 /**
@@ -64,150 +65,136 @@ fun WebAccessScreen(onBack: () -> Unit) {
     var status by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(VelaColors.SurfaceBase)
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp)
-    ) {
-        ScreenHeader("Web Access", onBack)
+    Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase)) {
+        VelaTopBar(title = "Web Access", onBack = onBack)
 
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Temporarily open this vault in a browser — no install, no permanent device. " +
-                "Access expires automatically and can be revoked any time.",
-            color = VelaColors.TextSecondary,
-            fontSize = 14.sp,
-        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(20.dp)
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Temporarily open this vault in a browser — no install, no permanent device. " +
+                    "Access expires automatically and can be revoked any time.",
+                color = VelaColors.TextSecondary,
+                fontSize = 14.sp,
+            )
 
-        Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
 
-        VelaButton(
-            text = if (qrJson == null) "Scan web access code" else "Code scanned ✓ — rescan",
-            onClick = {
-                if (activity == null) {
-                    error = "Unable to open the QR scanner"
-                } else {
-                    activity.launchQrScanner("Scan the code from the web page") { contents ->
-                        if (contents.isNullOrBlank()) {
-                            status = "Scan cancelled"
-                        } else {
-                            qrJson = contents.trim()
-                            status = "Code scanned"
-                            error = null
+            VelaButton(
+                text = if (qrJson == null) "Scan web access code" else "Code scanned ✓ — rescan",
+                onClick = {
+                    if (activity == null) {
+                        error = "Unable to open the QR scanner"
+                    } else {
+                        activity.launchQrScanner("Scan the code from the web page") { contents ->
+                            if (contents.isNullOrBlank()) {
+                                status = "Scan cancelled"
+                            } else {
+                                qrJson = contents.trim()
+                                status = "Code scanned"
+                                error = null
+                            }
                         }
                     }
-                }
-            },
-            style = VelaButtonStyle.Surface,
-            icon = Icons.Filled.QrCodeScanner,
-            enabled = !busy,
-        )
-
-        Spacer(Modifier.height(24.dp))
-
-        Text("Duration", color = VelaColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TTL_OPTIONS.forEach { opt ->
-                VelaButton(
-                    text = opt.label,
-                    onClick = { ttlSecs = opt.secs },
-                    style = if (ttlSecs == opt.secs) VelaButtonStyle.Gradient else VelaButtonStyle.Surface,
-                    fullWidth = false,
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        Spacer(Modifier.height(24.dp))
-
-        if (!showAdvanced) {
-            VelaButton(
-                text = "Advanced — I trust this device",
-                onClick = { showAdvanced = true },
-                style = VelaButtonStyle.TextOnly,
+                },
+                style = VelaButtonStyle.Surface,
+                icon = Icons.Filled.QrCodeScanner,
                 enabled = !busy,
             )
-        } else {
-            Text("Mode", color = VelaColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+            Spacer(Modifier.height(24.dp))
+
+            Text("Duration", color = VelaColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SegmentedControl(
+                options = TTL_OPTIONS.map { it.secs to it.label },
+                selected = ttlSecs,
+                onSelect = { ttlSecs = it }
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            if (!showAdvanced) {
                 VelaButton(
-                    text = "Read-only",
-                    onClick = { mode = "ro" },
-                    style = if (mode == "ro") VelaButtonStyle.Gradient else VelaButtonStyle.Surface,
-                    fullWidth = false,
+                    text = "Advanced — I trust this device",
+                    onClick = { showAdvanced = true },
+                    style = VelaButtonStyle.TextOnly,
                     enabled = !busy,
-                    modifier = Modifier.weight(1f),
                 )
-                VelaButton(
-                    text = "Read & write",
-                    onClick = { mode = "rw" },
-                    style = if (mode == "rw") VelaButtonStyle.Gradient else VelaButtonStyle.Surface,
-                    fullWidth = false,
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            if (mode == "rw") {
+            } else {
+                Text("Mode", color = VelaColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "Read & write sends this device's master key to the browser for the session. " +
-                        "Only use it on a device you trust.",
-                    color = VelaColors.ErrorRed,
-                    fontSize = 12.sp,
+                SegmentedControl(
+                    options = listOf("ro" to "Read-only", "rw" to "Read & write"),
+                    selected = mode,
+                    onSelect = { mode = it }
                 )
+                if (mode == "rw") {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Read & write sends this device's master key to the browser for the session. " +
+                            "Only use it on a device you trust.",
+                        color = VelaColors.ErrorRed,
+                        fontSize = 12.sp,
+                    )
+                }
             }
-        }
 
-        Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
 
-        error?.let {
-            StatusBadge(text = it, backgroundColor = VelaColors.ErrorRedBg, textColor = VelaColors.ErrorRed)
-            Spacer(Modifier.height(8.dp))
-        }
-        status?.let {
-            if (error == null) {
-                Text(it, color = VelaColors.TextMuted, fontSize = 12.sp)
+            error?.let {
+                VelaCard(style = VelaCardStyle.Error) {
+                    Text(it, color = VelaColors.ErrorRed, fontSize = 13.sp)
+                }
                 Spacer(Modifier.height(8.dp))
             }
-        }
+            status?.let {
+                if (error == null) {
+                    Text(it, color = VelaColors.TextMuted, fontSize = 12.sp)
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
 
-        VelaButton(
-            text = if (busy) "Approving…" else "Approve",
-            onClick = {
-                val code = qrJson
-                if (code == null) {
-                    error = "Scan the web access code first"
-                    return@VelaButton
-                }
-                busy = true
-                error = null
-                val chosenMode = mode
-                val chosenTtl = ttlSecs
-                scope.launch(Dispatchers.IO) {
-                    runCatching { VelaRepositories.sharing.grantWebAccess(code, chosenMode, chosenTtl) }
-                        .onSuccess {
-                            withContext(Dispatchers.Main) {
-                                busy = false
-                                status = "Web access granted"
-                                onBack()
+            VelaButton(
+                text = if (busy) "Approving…" else "Approve",
+                onClick = {
+                    val code = qrJson
+                    if (code == null) {
+                        error = "Scan the web access code first"
+                        return@VelaButton
+                    }
+                    busy = true
+                    error = null
+                    val chosenMode = mode
+                    val chosenTtl = ttlSecs
+                    scope.launch(Dispatchers.IO) {
+                        runCatching { VelaRepositories.sharing.grantWebAccess(code, chosenMode, chosenTtl) }
+                            .onSuccess {
+                                withContext(Dispatchers.Main) {
+                                    busy = false
+                                    status = "Web access granted"
+                                    onBack()
+                                }
                             }
-                        }
-                        .onFailure { e ->
-                            withContext(Dispatchers.Main) {
-                                busy = false
-                                error = e.message ?: "Could not grant web access"
+                            .onFailure { e ->
+                                withContext(Dispatchers.Main) {
+                                    busy = false
+                                    error = e.message ?: "Could not grant web access"
+                                }
                             }
-                        }
-                }
-            },
-            style = VelaButtonStyle.Gradient,
-            icon = Icons.Filled.Public,
-            enabled = !busy && qrJson != null,
-        )
+                    }
+                },
+                style = VelaButtonStyle.Gradient,
+                icon = Icons.Filled.Public,
+                enabled = !busy && qrJson != null,
+            )
+
+            Spacer(Modifier.height(24.dp))
+        }
     }
 }

@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -32,8 +30,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -59,23 +58,12 @@ fun WelcomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(VelaColors.SurfaceBase)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(VelaColors.Green.copy(alpha = 0.10f), Color.Transparent)
+                )
+            )
     ) {
-        // Ambient glow decorations
-        Box(
-            modifier = Modifier
-                .size(280.dp)
-                .offset(x = (-40).dp, y = (-40).dp)
-                .blur(100.dp)
-                .background(VelaColors.Green.copy(alpha = 0.06f), CircleShape)
-        )
-        Box(
-            modifier = Modifier
-                .size(240.dp)
-                .offset(x = 200.dp, y = 100.dp)
-                .blur(80.dp)
-                .background(VelaColors.Violet.copy(alpha = 0.05f), CircleShape)
-        )
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
