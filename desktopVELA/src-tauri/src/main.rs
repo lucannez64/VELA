@@ -1,5 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// This app's own Rust code (vault JSON, crypto buffers, favicon scraping,
+// reqwest/tokio) allocates through Rust's global allocator, separately from
+// GTK/WebKit's C-side allocations (which stay on glibc malloc, tuned by
+// MALLOC_ARENA_MAX below). glibc's allocator doesn't return freed memory to
+// the OS eagerly outside of narrow cases, so a heap that transiently grows
+// (e.g. parsing a big vault import) stays resident afterward. jemalloc
+// tracks "dirty" freed pages and actively madvise(DONTNEED)s them on a
+// background thread; tightening the decay windows below (default 10s) makes
+// it purge sooner, at the cost of slightly more purge-thread CPU.
+#[cfg(target_os = "linux")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(target_os = "linux")]
+#[allow(non_upper_case_globals)]
+#[export_name = "malloc_conf"]
+pub static malloc_conf: &[u8] = b"background_thread:true,narenas:2,dirty_decay_ms:2000,muzzy_decay_ms:2000\0";
+
 use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},

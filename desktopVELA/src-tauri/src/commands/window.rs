@@ -10,10 +10,17 @@ pub const QUICK_SEARCH_LABEL: &str = "quick-search";
 /// by being enabled. Also disables the back/forward page cache, which is
 /// dead weight for a single-page app that never navigates away from
 /// index.html.
+///
+/// Also switches the WebKitWebContext's cache model from the default
+/// WEB_BROWSER (sized for navigating many sites: large in-memory object
+/// caches for CSS/JS/images so switching back to a recent page is instant)
+/// to DOCUMENT_VIEWER, the model WebKit itself recommends for apps that
+/// render one document and never navigate away — it minimizes those same
+/// caches since there's nothing to switch back to.
 #[cfg(target_os = "linux")]
 pub fn trim_unused_webkit_subsystems<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     let _ = window.with_webview(|w| {
-        use webkit2gtk::{SettingsExt, WebViewExt};
+        use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
         let webview = w.inner();
         if let Some(settings) = WebViewExt::settings(&webview) {
             settings.set_enable_webgl(false);
@@ -26,6 +33,9 @@ pub fn trim_unused_webkit_subsystems<R: tauri::Runtime>(window: &tauri::WebviewW
             settings.set_enable_java(false);
             settings.set_enable_plugins(false);
             settings.set_enable_page_cache(false);
+        }
+        if let Some(context) = WebViewExt::context(&webview) {
+            context.set_cache_model(CacheModel::DocumentViewer);
         }
     });
 }
