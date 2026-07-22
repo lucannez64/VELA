@@ -121,7 +121,9 @@ fun VelaNavHost(
     serverUrl: String,
     syncSettings: SyncSettings,
     syncState: com.vela.android.sync.SyncState,
-    userId: String?
+    userId: String?,
+    themeSetting: String,
+    onThemeChange: (String) -> Unit
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -411,7 +413,9 @@ fun VelaNavHost(
                     onLock = onLock,
                     onReset = onReset,
                     autoLockMinutes = autoLockMinutes,
-                    onUpdateAutoLockMinutes = onUpdateAutoLockMinutes
+                    onUpdateAutoLockMinutes = onUpdateAutoLockMinutes,
+                    themeSetting = themeSetting,
+                    onThemeChange = onThemeChange
                 )
             }
 

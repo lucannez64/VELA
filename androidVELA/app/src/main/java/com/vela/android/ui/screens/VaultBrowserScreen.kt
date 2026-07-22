@@ -61,6 +61,7 @@ fun VaultBrowserScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf<String?>(null) }
+    var favoritesOnly by remember { mutableStateOf(false) }
 
     val filteredItems = items
         .asSequence()
@@ -70,9 +71,12 @@ fun VaultBrowserScreen(
                 (item is VaultItem.Login && item.url.contains(query, ignoreCase = true)) ||
                 (item is VaultItem.Login && item.username.contains(query, ignoreCase = true))
             val matchesType = selectedType == null || item.typeLabel == selectedType
-            matchesQuery && matchesType
+            val matchesFavorite = !favoritesOnly || item.favorite
+            matchesQuery && matchesType && matchesFavorite
         }
-        .sortedBy { it.name.lowercase() }
+        // Favorites pin to the top, then alphabetical — mirrors what users
+        // expect from the desktop list.
+        .sortedWith(compareByDescending<VaultItem> { it.favorite }.thenBy { it.name.lowercase() })
         .toList()
 
     Box(modifier = Modifier.fillMaxSize().background(VelaColors.SurfaceBase)) {
@@ -125,19 +129,22 @@ fun VaultBrowserScreen(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 types.forEach { (type, label) ->
                     val isSelected = selectedType == type
-                    Text(
-                        label,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(
-                                if (isSelected) VelaColors.Green.copy(alpha = 0.15f)
-                                else VelaColors.SurfaceHigh
-                            )
-                            .clickable { selectedType = type }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        color = if (isSelected) VelaColors.Green else VelaColors.TextSecondary,
-                        fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                    FilterChip(
+                        label = label,
+                        selected = isSelected,
+                        onClick = { selectedType = type; if (!isSelected) favoritesOnly = false }
+                    )
+                }
+            }
+            val favoriteCount = items.count { it.favorite }
+            if (favoriteCount > 0) {
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        label = "Favorites · $favoriteCount",
+                        selected = favoritesOnly,
+                        leading = Icons.Filled.Star,
+                        onClick = { favoritesOnly = !favoritesOnly }
                     )
                 }
             }
@@ -158,17 +165,17 @@ fun VaultBrowserScreen(
                         )
                         Spacer(Modifier.height(16.dp))
                         Text(
-                            if (query.isNotEmpty()) "No items matching \"$query\"" else "Vault is empty",
+                            when {
+                                query.isNotEmpty() -> "No items matching \"$query\""
+                                favoritesOnly -> "No favorites yet"
+                                else -> "Vault is empty"
+                            },
                             color = VelaColors.TextSecondary,
                             fontSize = 16.sp
                         )
-                        if (query.isEmpty()) {
+                        if (query.isEmpty() && !favoritesOnly) {
                             Spacer(Modifier.height(8.dp))
-                            Text(
-                                "Tap + to add your first item",
-                                color = VelaColors.TextMuted,
-                                fontSize = 14.sp
-                            )
+                            Text("Tap + to add your first item", color = VelaColors.TextMuted, fontSize = 14.sp)
                         }
                     }
                 }
@@ -295,3 +302,35 @@ private val VaultItem.typeLabel: String
         is VaultItem.BreachMonitor -> "breach"
         else -> "item"
     }
+
+@Composable
+private fun FilterChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    leading: androidx.compose.ui.graphics.vector.ImageVector? = null
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (selected) VelaColors.Green.copy(alpha = 0.15f) else VelaColors.SurfaceHigh)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (leading != null) {
+            Icon(
+                leading, null,
+                modifier = Modifier.size(14.dp),
+                tint = if (selected) VelaColors.Green else VelaColors.WarningAmber
+            )
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(
+            label,
+            color = if (selected) VelaColors.Green else VelaColors.TextSecondary,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+        )
+    }
+}

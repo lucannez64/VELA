@@ -14,7 +14,10 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.vela.android.autofill.AutofillDatasetBuilder
@@ -23,6 +26,7 @@ import com.vela.android.core.VelaRepositories
 import com.vela.android.core.SharedCore
 import com.vela.android.security.WebAuthnCeremony
 import com.vela.android.ui.navigation.VelaNavHost
+import com.vela.android.ui.theme.LocalVelaPalette
 import com.vela.android.ui.theme.VelaTheme
 import com.google.zxing.integration.android.IntentIntegrator
 import kotlinx.coroutines.CoroutineScope
@@ -55,7 +59,9 @@ class MainActivity : FragmentActivity() {
         VelaRepositories.security.onLocked = { cancelBackgroundSync() }
         pendingAutofillFill = parseAutofillRequest(intent)
         setContent {
-            VelaTheme {
+            val themeSetting by VelaRepositories.theme.theme.collectAsState()
+            VelaTheme(themeSetting) {
+                ApplyVelaSystemBars()
                 val items by VelaRepositories.vault.items.collectAsState()
                 val secureSession by VelaRepositories.security.session.collectAsState()
                 val syncSettings by VelaRepositories.syncSettings.settings.collectAsState()
@@ -198,9 +204,28 @@ class MainActivity : FragmentActivity() {
                     serverUrl = syncSettings.serverUrl,
                     syncSettings = syncSettings,
                     syncState = syncState,
-                    userId = VelaRepositories.serverIdentity.load()?.userId
+                    userId = VelaRepositories.serverIdentity.load()?.userId,
+                    themeSetting = themeSetting,
+                    onThemeChange = { VelaRepositories.theme.setTheme(it) }
                 )
             }
+        }
+    }
+
+    /**
+     * Keeps the status/navigation bars in sync with the active palette so the
+     * app chrome (FLAG_SECURE window) blends with whichever theme is selected,
+     * including toggling light/dark icon appearance for the Latte light theme.
+     */
+    @androidx.compose.runtime.Composable
+    private fun ApplyVelaSystemBars() {
+        val palette = LocalVelaPalette.current
+        SideEffect {
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            controller.isAppearanceLightStatusBars = !palette.isDark
+            controller.isAppearanceLightNavigationBars = !palette.isDark
+            window.statusBarColor = palette.SurfaceBase.toArgb()
+            window.navigationBarColor = palette.SurfaceBase.toArgb()
         }
     }
 

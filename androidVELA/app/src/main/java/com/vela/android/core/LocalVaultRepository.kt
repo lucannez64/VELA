@@ -232,6 +232,9 @@ object VelaRepositories {
     lateinit var autoLock: AutoLockStore
         private set
 
+    lateinit var theme: com.vela.android.ui.theme.ThemeStore
+        private set
+
     // Tied to the process, not any one Activity, so callers (e.g. the share-push
     // hook below) keep running if the launching Activity is torn down, but a
     // failure in one launch can't take the whole process down like a bare
@@ -258,6 +261,7 @@ object VelaRepositories {
         audit = AuditLogRepository(context.applicationContext)
 
         autoLock = AutoLockStore(context.applicationContext)
+        theme = com.vela.android.ui.theme.ThemeStore(context.applicationContext)
         ProcessLifecycleOwner.get().lifecycle.addObserver(AutoLockController(security, autoLock))
     }
 }
