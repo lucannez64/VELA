@@ -216,6 +216,19 @@ fn main() {
         .expect("Failed to create tokio async runtime");
     tauri::async_runtime::set(async_runtime.handle().clone());
 
+    // `tauri::async_runtime::set` only registers this runtime's Handle for
+    // Tauri's own future async dispatch; it doesn't enter it on this thread.
+    // `.manage(Arc::new(AppState::default()))` below runs synchronously,
+    // right here, before `.build()`/`.run()` ever hand control to that
+    // runtime — and AppState::default() constructs an ApiClient that builds
+    // a quinn/HTTP-3 client, which needs `Handle::try_current()` to succeed
+    // to bind its UDP socket to a reactor. Without an entered runtime that
+    // lookup fails with "no async runtime found", so the app silently falls
+    // back to HTTP/1.1-over-TCP for every request. Keeping this guard alive
+    // for the rest of main() makes the current thread a valid Tokio context
+    // for that synchronous setup (and everything after).
+    let _runtime_guard = async_runtime.enter();
+
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
