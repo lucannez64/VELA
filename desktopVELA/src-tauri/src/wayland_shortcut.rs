@@ -18,7 +18,7 @@
 use ashpd::desktop::global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut};
 use ashpd::desktop::CreateSessionOptions;
 use futures_util::StreamExt;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 use tracing::{error, info, warn};
 
 pub const QUICK_SEARCH_SHORTCUT_ID: &str = "quick-search";
@@ -114,67 +114,11 @@ async fn bind_and_listen(app: &AppHandle, preferred_trigger: &str) -> ashpd::Res
             continue;
         }
         info!("Portal global shortcut triggered: Quick search overlay");
-        let _ = tokio::task::spawn_blocking(hyprland_bring_to_active_workspace).await;
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.set_focus();
-            let _ = window.emit("open-quick-search", ());
-        }
+        // A dedicated popup window rather than the main one: a newly mapped
+        // window appears on the active workspace, so the popup opens where
+        // the user is instead of dragging the whole app there.
+        crate::commands::window::open_quick_search_window(app);
     }
     drop(session);
     Ok(())
-}
-
-/// Hyprland only: bring the VELA window to the active workspace before the
-/// overlay opens. Focusing a window on another workspace switches the user
-/// to that workspace — the opposite of a quick-search popup, which should
-/// appear over whatever they're doing. Wayland offers no protocol for this,
-/// so it goes through `hyprctl`; best-effort no-op on other compositors. If
-/// the window is hidden it isn't in the client list, and `show()` maps it
-/// on the active workspace anyway.
-fn hyprland_bring_to_active_workspace() {
-    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
-        return;
-    }
-    let Some(clients) = hyprctl_json(&["clients", "-j"]) else {
-        return;
-    };
-    let Some(client) = clients.as_array().and_then(|list| {
-        list.iter().find(|c| {
-            c["class"]
-                .as_str()
-                .is_some_and(|class| class.eq_ignore_ascii_case("vela-desktop"))
-        })
-    }) else {
-        return;
-    };
-    let Some(address) = client["address"].as_str() else {
-        return;
-    };
-
-    let window_workspace = client["workspace"]["id"].as_i64();
-    let active_workspace =
-        hyprctl_json(&["activeworkspace", "-j"]).and_then(|w| w["id"].as_i64());
-    if let (Some(active), Some(current)) = (active_workspace, window_workspace) {
-        if active != current {
-            let _ = std::process::Command::new("hyprctl")
-                .args([
-                    "dispatch",
-                    "movetoworkspacesilent",
-                    &format!("{active},address:{address}"),
-                ])
-                .output();
-        }
-    }
-    let _ = std::process::Command::new("hyprctl")
-        .args(["dispatch", "focuswindow", &format!("address:{address}")])
-        .output();
-}
-
-fn hyprctl_json(args: &[&str]) -> Option<serde_json::Value> {
-    let output = std::process::Command::new("hyprctl").args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    serde_json::from_slice(&output.stdout).ok()
 }

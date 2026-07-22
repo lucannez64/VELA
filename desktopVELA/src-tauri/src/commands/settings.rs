@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
-use tauri::{command, AppHandle, Emitter, Manager, State};
+use tauri::{command, AppHandle, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 use uuid::Uuid;
 
@@ -90,11 +90,7 @@ pub fn register_quick_search_shortcut(app: &AppHandle, shortcut: &str) -> Result
     app.global_shortcut()
         .on_shortcut(parsed, move |_app, _shortcut, _event| {
             tracing::info!("Global shortcut triggered: Quick search overlay");
-            if let Some(window) = app_handle.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.emit("open-quick-search", ());
-            }
+            crate::commands::window::open_quick_search_window(&app_handle);
         })
         .map_err(|e| format!("Failed to register quick search shortcut '{shortcut}': {e}"))
 }

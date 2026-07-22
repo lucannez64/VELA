@@ -268,6 +268,8 @@ fn main() {
             commands::window::maximize_window,
             commands::window::close_window,
             commands::window::toggle_always_on_top,
+            commands::window::hide_quick_search,
+            commands::window::quick_search_open_item,
             commands::totp::generate_totp,
             commands::totp::verify_totp,
         ])

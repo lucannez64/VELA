@@ -1,4 +1,79 @@
-use tauri::{command, AppHandle, Manager};
+use tauri::{command, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+
+pub const QUICK_SEARCH_LABEL: &str = "quick-search";
+
+/// Show the quick-search popup as its own small always-on-top window instead
+/// of surfacing the whole main window: a freshly mapped window appears on the
+/// compositor's active workspace, so the popup opens over whatever the user
+/// is doing while the main app stays wherever it lives. Hidden (unmapped) on
+/// Escape/blur so every reopen maps on the then-active workspace again.
+pub fn open_quick_search_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(QUICK_SEARCH_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("quick-search-shown", ());
+        return;
+    }
+
+    let built = WebviewWindowBuilder::new(
+        app,
+        QUICK_SEARCH_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title("VELA Quick Search")
+    .inner_size(640.0, 440.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .center()
+    .focused(true)
+    .build();
+
+    match built {
+        Ok(window) => {
+            let window_for_events = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::Focused(false) = event {
+                    let _ = window_for_events.hide();
+                }
+            });
+        }
+        Err(e) => tracing::error!("Failed to create quick search window: {e}"),
+    }
+}
+
+#[command]
+pub async fn hide_quick_search(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(QUICK_SEARCH_LABEL) {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Called from the quick-search popup when the user picks a result (or asks
+/// to open the app): hides the popup, surfaces the main window, and — when a
+/// vault item was selected — forwards it for the main window to display. The
+/// item payload is the frontend's own item shape, passed through untouched.
+#[command]
+pub async fn quick_search_open_item(
+    app: AppHandle,
+    item: Option<serde_json::Value>,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(QUICK_SEARCH_LABEL) {
+        let _ = window.hide();
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        main.show().map_err(|e| e.to_string())?;
+        let _ = main.set_focus();
+        if let Some(item) = item {
+            main.emit("open-item", item).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
 
 #[command]
 pub async fn minimize_window(app: AppHandle) -> Result<(), String> {

@@ -123,10 +123,16 @@ What happens after binding depends on your portal backend:
 
   ```ini
   bind = CTRL ALT, V, global, com.vela.vault:quick-search
+  windowrule = float, title:^(VELA Quick Search)$
   ```
 
-  Run `hyprctl globalshortcuts` while VELA is running to confirm the exact
-  `appid:id` pair registered with the portal.
+  The `windowrule` keeps the quick-search popup floating instead of being
+  tiled into the layout. Run `hyprctl globalshortcuts` while VELA is running
+  to confirm the exact `appid:id` pair registered with the portal.
+
+The shortcut opens a dedicated always-on-top popup window on the active
+workspace (the main window stays where it is); it hides on Escape or focus
+loss, and selecting a result focuses the main window on that item.
 
 Changing the shortcut in **Settings → Security** updates the preferred
 trigger hint used at next launch; on Hyprland only the `bind` line matters.

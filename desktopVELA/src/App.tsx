@@ -15,7 +15,6 @@ import SharingScreen from './views/SharingScreen';
 import AuditLogScreen from './views/AuditLogScreen';
 import BreachMonitorScreen from './views/BreachMonitorScreen';
 import SettingsScreen from './views/SettingsScreen';
-import QuickSearchOverlay from './components/QuickSearchOverlay';
 import SessionExpiredOverlay from './components/SessionExpiredOverlay';
 import Toast from './components/Toast';
 import AddItemModal from './components/AddItemModal';
@@ -37,10 +36,9 @@ function AppContent() {
   const [isFirstLaunch, setIsFirstLaunch] = useState(true);
   const [checkingVault, setCheckingVault] = useState(true);
   const [sessionChecked, setSessionChecked] = useState(false);
-  const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
-  const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, settings, setSettings } = useApp();
+  const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, setCurrentView, settings, setSettings } = useApp();
   const { clearClipboard } = useClipboard();
   const syncingRef = useRef(false);
   const sessionActiveRef = useRef(false);
@@ -141,12 +139,16 @@ function AppContent() {
       setSession(prev => prev ? { ...prev, active: false, lock_state: 'locked' } : null);
       setItems([]);
       setSelectedItem(null);
-      setQuickSearchOpen(false);
       clearClipboardRef.current();
     });
 
-    const unlistenQuickSearch = listen('open-quick-search', () => {
-      if (sessionActiveRef.current) setQuickSearchOpen(true);
+    // A result picked in the dedicated quick-search window (see
+    // commands/window.rs); the payload is the item as the popup received it
+    // from search_items.
+    const unlistenOpenItem = listen<VaultItem>('open-item', event => {
+      if (!sessionActiveRef.current) return;
+      setSelectedItem(event.payload);
+      setCurrentView('vault');
     });
 
     const unlistenSync = listen('trigger-sync', () => {
@@ -159,7 +161,7 @@ function AppContent() {
 
     return () => {
       unlistenSessionLocked.then(fn => fn());
-      unlistenQuickSearch.then(fn => fn());
+      unlistenOpenItem.then(fn => fn());
       unlistenSync.then(fn => fn());
       unlistenVaultItemsChanged.then(fn => fn());
     };
@@ -237,7 +239,6 @@ function AppContent() {
     if (session?.session_time_remaining_secs === 0 && session?.active) {
       invoke('lock_session').then(() => {
         setSession(prev => prev ? { ...prev, active: false, lock_state: 'locked' } : null);
-        setQuickSearchOpen(false);
       });
     }
   }, [session?.session_time_remaining_secs, session?.active, setSession]);
@@ -336,7 +337,6 @@ function AppContent() {
       {session.session_time_remaining_secs <= 60 && (
         <SessionExpiredOverlay onReauth={refreshSessionOnly} />
       )}
-      {quickSearchOpen && <QuickSearchOverlay onClose={() => setQuickSearchOpen(false)} />}
       {toast && <Toast {...toast} />}
       {showAddModal && (
         <AddItemModal 
