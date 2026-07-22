@@ -137,7 +137,10 @@ fun ItemDetailScreen(
                     item.name,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
-                    color = VelaColors.TextPrimary
+                    color = VelaColors.TextPrimary,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
             }
 

@@ -89,7 +89,7 @@ fun VaultBrowserScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         "Vault",
                         fontSize = 28.sp,

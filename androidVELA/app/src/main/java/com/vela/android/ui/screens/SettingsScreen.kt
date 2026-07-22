@@ -6,14 +6,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,6 +61,8 @@ import com.vela.android.ui.components.VelaCard
 import com.vela.android.ui.components.VelaCardStyle
 import com.vela.android.ui.components.VelaListItem
 import com.vela.android.ui.components.VelaTextField
+import com.vela.android.ui.components.SegmentedControl
+import com.vela.android.ui.components.VelaSwitch
 import com.vela.android.ui.theme.VelaColors
 import com.vela.android.ui.theme.VelaThemes
 
@@ -87,12 +93,19 @@ fun SettingsScreen(
     var syncOnStartup by remember(syncSettings.syncOnStartup) { mutableStateOf(syncSettings.syncOnStartup) }
     var backgroundSyncMinutes by remember(syncSettings.backgroundSyncMinutes) { mutableStateOf(syncSettings.backgroundSyncMinutes) }
 
-    LazyColumn(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(VelaColors.SurfaceBase),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 8.dp)
+        contentAlignment = Alignment.TopCenter
     ) {
+        LazyColumn(
+            modifier = Modifier
+                .widthIn(max = 720.dp)
+                .fillMaxHeight()
+                .imePadding(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
+        ) {
         item {
             Spacer(Modifier.height(16.dp))
             Text("Settings", fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -249,29 +262,19 @@ fun SettingsScreen(
                 )
 
                 Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Background sync", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
-                        Text("Periodically sync while vault is unlocked", fontSize = 12.sp, color = VelaColors.TextMuted)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        listOf(1, 5, 15, 30).forEach { minutes ->
-                            VelaButton(
-                                text = "${minutes}m",
-                                onClick = {
-                                    backgroundSyncMinutes = minutes
-                                    onUpdateSyncPreferences(syncOnStartup, backgroundSyncMinutes)
-                                },
-                                style = if (backgroundSyncMinutes == minutes) VelaButtonStyle.Primary else VelaButtonStyle.Surface,
-                                fullWidth = false
-                            )
-                            if (minutes != 30) Spacer(Modifier.width(6.dp))
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text("Background sync", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
+                    Spacer(Modifier.height(2.dp))
+                    Text("Periodically sync while vault is unlocked", fontSize = 12.sp, color = VelaColors.TextMuted)
+                    Spacer(Modifier.height(10.dp))
+                    SegmentedControl(
+                        options = listOf(1 to "1m", 5 to "5m", 15 to "15m", 30 to "30m"),
+                        selected = backgroundSyncMinutes,
+                        onSelect = {
+                            backgroundSyncMinutes = it
+                            onUpdateSyncPreferences(syncOnStartup, it)
                         }
-                    }
+                    )
                 }
 
                 if (syncState.lastSyncedAt != null) {
@@ -316,6 +319,7 @@ fun SettingsScreen(
                 }
             }
             Spacer(Modifier.height(40.dp))
+        }
         }
     }
 }
@@ -383,26 +387,16 @@ private fun SwatchPill(swatches: List<Long>) {
 
 @Composable
 private fun SegmentedAutoLock(autoLockMinutes: Int, onUpdateAutoLockMinutes: (Int) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("Auto-lock", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
-            Text("Lock the vault after this long backgrounded", fontSize = 12.sp, color = VelaColors.TextMuted)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            listOf(1, 5, 15, 30).forEach { minutes ->
-                VelaButton(
-                    text = "${minutes}m",
-                    onClick = { onUpdateAutoLockMinutes(minutes) },
-                    style = if (autoLockMinutes == minutes) VelaButtonStyle.Primary else VelaButtonStyle.Surface,
-                    fullWidth = false
-                )
-                if (minutes != 30) Spacer(Modifier.width(6.dp))
-            }
-        }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("Auto-lock", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
+        Spacer(Modifier.height(2.dp))
+        Text("Lock the vault after this long backgrounded", fontSize = 12.sp, color = VelaColors.TextMuted)
+        Spacer(Modifier.height(10.dp))
+        SegmentedControl(
+            options = listOf(1 to "1m", 5 to "5m", 15 to "15m", 30 to "30m"),
+            selected = autoLockMinutes,
+            onSelect = onUpdateAutoLockMinutes
+        )
     }
 }
 
@@ -415,18 +409,11 @@ private fun ToggleRow(title: String, subtitle: String, on: Boolean, onToggle: ()
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
+            Spacer(Modifier.height(2.dp))
             Text(subtitle, fontSize = 12.sp, color = VelaColors.TextMuted)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (on) "On" else "Off", fontSize = 13.sp, color = if (on) VelaColors.Green else VelaColors.TextMuted)
-            Spacer(Modifier.width(8.dp))
-            VelaButton(
-                text = if (on) "Disable" else "Enable",
-                onClick = onToggle,
-                style = if (on) VelaButtonStyle.Surface else VelaButtonStyle.Primary,
-                fullWidth = false
-            )
-        }
+        Spacer(Modifier.width(16.dp))
+        VelaSwitch(checked = on, onCheckedChange = { onToggle() })
     }
 }
 
