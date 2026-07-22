@@ -141,7 +141,25 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn apply_webkit_render_workarounds() {
+    // WebKitGTK's DMA-BUF Wayland renderer is known to silently fall back to
+    // full software (pixman/cairo) compositing on a number of GPU/driver/
+    // compositor combinations, turning cheap CSS animations into a
+    // continuous, expensive CPU rasterization loop. The legacy EGL
+    // compositor this disables is the long-established, broadly compatible
+    // path and is what most WebKitGTK-based Wayland apps ship by default.
+    // Respect an explicit override if the user (or a future packaging fix)
+    // already set this.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    apply_webkit_render_workarounds();
+
     setup_logging();
 
     info!("Starting VELA Desktop Application");

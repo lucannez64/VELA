@@ -207,6 +207,27 @@ function AppContent() {
     return () => events.forEach(e => window.removeEventListener(e, bumpActivity));
   }, []);
 
+  // Decorative `infinite` CSS animations (security-pulse, animate-pulse, ...) keep
+  // WebKit's compositor and the native GTK window repainting every frame even when
+  // VELA is unfocused or occluded, which on this software-rendered (non-GPU-composited)
+  // WebKitGTK path burns ~30% of a CPU core doing nothing useful. Freeze them whenever
+  // the window isn't the focused, visible one; resume is instant on refocus.
+  useEffect(() => {
+    const root = document.documentElement;
+    const update = () => {
+      root.classList.toggle('anim-paused', document.hidden || !document.hasFocus());
+    };
+    update();
+    window.addEventListener('focus', update);
+    window.addEventListener('blur', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      window.removeEventListener('focus', update);
+      window.removeEventListener('blur', update);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, []);
+
   useEffect(() => {
     if (!session?.active) return;
 

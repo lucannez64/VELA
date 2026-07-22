@@ -5,8 +5,10 @@ pub const QUICK_SEARCH_LABEL: &str = "quick-search";
 /// Show the quick-search popup as its own small always-on-top window instead
 /// of surfacing the whole main window: a freshly mapped window appears on the
 /// compositor's active workspace, so the popup opens over whatever the user
-/// is doing while the main app stays wherever it lives. Hidden (unmapped) on
-/// Escape/blur so every reopen maps on the then-active workspace again.
+/// is doing while the main app stays wherever it lives. Closed (not just
+/// hidden) on Escape/blur so every reopen maps on the then-active workspace
+/// again and the idle app isn't carrying a second full WebKit process (and
+/// its ~100+ MB) for a popup that's used for a few seconds at a time.
 pub fn open_quick_search_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(QUICK_SEARCH_LABEL) {
         let _ = window.show();
@@ -37,7 +39,7 @@ pub fn open_quick_search_window(app: &AppHandle) {
             let window_for_events = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::Focused(false) = event {
-                    let _ = window_for_events.hide();
+                    let _ = window_for_events.close();
                 }
             });
         }
@@ -48,7 +50,7 @@ pub fn open_quick_search_window(app: &AppHandle) {
 #[command]
 pub async fn hide_quick_search(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(QUICK_SEARCH_LABEL) {
-        window.hide().map_err(|e| e.to_string())?;
+        window.close().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -63,7 +65,7 @@ pub async fn quick_search_open_item(
     item: Option<serde_json::Value>,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(QUICK_SEARCH_LABEL) {
-        let _ = window.hide();
+        let _ = window.close();
     }
     if let Some(main) = app.get_webview_window("main") {
         main.show().map_err(|e| e.to_string())?;

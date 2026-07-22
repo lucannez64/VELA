@@ -402,3 +402,13 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Window is unfocused or occluded: freeze decorative infinite animations so the
+   compositor stops repainting every frame for no one to see. See App.tsx. */
+html.anim-paused .security-pulse,
+html.anim-paused .animate-pulse,
+html.anim-paused .animate-ping,
+html.anim-paused .animate-pulse-slow,
+html.anim-paused .animate-ping-slow {
+  animation-play-state: paused;
+}
