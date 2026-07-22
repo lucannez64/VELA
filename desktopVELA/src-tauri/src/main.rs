@@ -156,9 +156,27 @@ fn apply_webkit_render_workarounds() {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn apply_malloc_tuning() {
+    // glibc's allocator gives each thread that contends on the main arena its
+    // own private arena (up to 8x the core count by default), each reserved
+    // as a multi-ten-MB mmap that's mostly empty. A desktop app with dozens
+    // of mostly-idle threads (tokio workers, GTK/WebKit IPC, font/dbus
+    // helpers) ends up paying for dozens of fragmented arenas instead of one
+    // shared heap. Capping this is a standard glibc tuning knob for
+    // multi-threaded apps; it must be set before other threads start
+    // allocating, so this runs first in main().
+    if std::env::var_os("MALLOC_ARENA_MAX").is_none() {
+        std::env::set_var("MALLOC_ARENA_MAX", "2");
+    }
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
-    apply_webkit_render_workarounds();
+    {
+        apply_webkit_render_workarounds();
+        apply_malloc_tuning();
+    }
 
     setup_logging();
 
@@ -167,6 +185,18 @@ fn main() {
     std::panic::set_hook(Box::new(|panic_info| {
         error!("Application panic: {:?}", panic_info);
     }));
+
+    // Tauri defaults to a tokio runtime with one worker thread per core for
+    // its internal setup/plugin machinery. This app's async workload is
+    // light and bursty (IPC, occasional HTTP/biometric calls), not
+    // high-throughput, so that scales threads (and their glibc malloc
+    // arenas) far past what's ever used. A small fixed pool is enough.
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio async runtime");
+    tauri::async_runtime::set(async_runtime.handle().clone());
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -205,6 +235,8 @@ fn main() {
                         info!("Window lost focus");
                     }
                 });
+                #[cfg(target_os = "linux")]
+                commands::window::trim_unused_webkit_subsystems(&window);
                 let _ = window;
             }
 

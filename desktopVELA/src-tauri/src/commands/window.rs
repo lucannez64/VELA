@@ -2,6 +2,34 @@ use tauri::{command, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuild
 
 pub const QUICK_SEARCH_LABEL: &str = "quick-search";
 
+/// Disable WebKit subsystems VELA's UI never touches (no canvas/WebGL, no
+/// audio/video, no camera/mic, no WebRTC, no Java/NPAPI plugins). Wry enables
+/// WebGL and WebAudio by default for every webview regardless of whether the
+/// app uses them; each of these subsystems otherwise reserves memory (shader
+/// compiler contexts, media pipeline registries, ICE/DTLS stacks, ...) just
+/// by being enabled. Also disables the back/forward page cache, which is
+/// dead weight for a single-page app that never navigates away from
+/// index.html.
+#[cfg(target_os = "linux")]
+pub fn trim_unused_webkit_subsystems<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let _ = window.with_webview(|w| {
+        use webkit2gtk::{SettingsExt, WebViewExt};
+        let webview = w.inner();
+        if let Some(settings) = WebViewExt::settings(&webview) {
+            settings.set_enable_webgl(false);
+            settings.set_enable_webaudio(false);
+            settings.set_enable_media(false);
+            settings.set_enable_media_stream(false);
+            settings.set_enable_webrtc(false);
+            settings.set_enable_mediasource(false);
+            settings.set_enable_encrypted_media(false);
+            settings.set_enable_java(false);
+            settings.set_enable_plugins(false);
+            settings.set_enable_page_cache(false);
+        }
+    });
+}
+
 /// Show the quick-search popup as its own small always-on-top window instead
 /// of surfacing the whole main window: a freshly mapped window appears on the
 /// compositor's active workspace, so the popup opens over whatever the user
@@ -36,6 +64,8 @@ pub fn open_quick_search_window(app: &AppHandle) {
 
     match built {
         Ok(window) => {
+            #[cfg(target_os = "linux")]
+            trim_unused_webkit_subsystems(&window);
             let window_for_events = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::Focused(false) = event {
