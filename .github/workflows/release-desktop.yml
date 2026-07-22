@@ -241,6 +241,9 @@ jobs:
                       'keepassxc: alternative secret-storage backend')
           provides=('vela-desktop')
           conflicts=('vela-desktop')
+          # Prebuilt binary: upstream already stripped it — re-stripping is
+          # useless and the split -debug package would only contain junk.
+          options=('!strip' '!debug')
           source_x86_64=("VELA_\${pkgver}_amd64.deb::\${url}/releases/download/desktop-v\${pkgver}/VELA_\${pkgver}_amd64.deb")
           sha256sums_x86_64=('${{ steps.deb.outputs.sha256 }}')
 
