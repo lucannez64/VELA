@@ -28,6 +28,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use vela_desktop::ipc::server::IpcServer;
+use vela_desktop::tauri_host::TauriHost;
 use vela_desktop::{commands, AppState};
 
 fn setup_logging() {
@@ -137,9 +138,9 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
     #[cfg(target_os = "linux")]
     if vela_desktop::wayland_shortcut::is_wayland_session() {
         let trigger = vela_desktop::wayland_shortcut::to_portal_trigger(&shortcut);
-        let app_handle = app.clone();
+        let host: Arc<dyn vela_desktop::host::Host> = Arc::new(TauriHost(app.clone()));
         tauri::async_runtime::spawn(async move {
-            vela_desktop::wayland_shortcut::run(app_handle, trigger).await;
+            vela_desktop::wayland_shortcut::run(host, trigger).await;
         });
         return Ok(());
     }
@@ -246,7 +247,8 @@ fn main() {
 
             let state = app.state::<Arc<AppState>>();
             let ipc_server = IpcServer::new(state.ipc_capability.clone());
-            let app_handle = app.handle().clone();
+            let host: Arc<dyn vela_desktop::host::Host> =
+                Arc::new(TauriHost(app.handle().clone()));
 
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -254,7 +256,7 @@ fn main() {
                     .build()
                     .expect("Failed to create tokio runtime");
                 rt.block_on(async {
-                    ipc_server.start(app_handle).await;
+                    ipc_server.start(host).await;
                 });
             });
             info!("IPC server started");

@@ -1,0 +1,67 @@
+[package]
+name = "vela-desktop-core"
+version = "0.1.0"
+edition = "2021"
+
+# Toolkit-agnostic desktop backend: crypto, vault storage, sync/HTTP client,
+# device/biometric key handling, the local autofill IPC bridge, and the
+# Wayland global-shortcut portal client. No Tauri (or any other UI toolkit)
+# dependency — both `src-tauri` and the future `src-gpui` binary link this.
+# See /home/hirew/.claude/plans/mighty-wibbling-wave.md Step 1.
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+anyhow = "1.0"
+getrandom = "0.2"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "http3"], default-features = false }
+sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+zeroize = { version = "1", features = ["derive"] }
+vela-crypto = { path = "../../libVELA/vela-crypto" }
+directories = "5"
+data-encoding = "2"
+subtle = "2"
+url = "2"
+psl = "2.1.213"
+base64 = "0.22"
+hex = "0.4"
+scraper = "0.23"
+once_cell = "1.19"
+urlencoding = "2"
+ctap-hid-fido2 = "3.5"
+ciborium = "0.2"
+# Pinned to match serverVELA/Cargo.lock's webauthn-rs (which depends on this
+# exact version of its own wire-format companion crate) — using the same
+# crate for both sides means the JSON shapes match by construction instead
+# of by hand-transcription.
+webauthn-rs-proto = "=0.5.5"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
+    "Win32_System_Threading",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Authentication_Identity",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
+futures-util = "0.3.33"
+secret-service = { version = "5", features = ["rt-async-io-crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+[dev-dependencies]

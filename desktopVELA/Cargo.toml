@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["vela-desktop-core", "src-tauri", "src-gpui"]
+# vendor/gpui-ce is its own separate workspace (vendored gpui-ce fork, see
+# the [patch] section below) — excluded so Cargo doesn't try to fold its
+# packages into this workspace's own dependency-inheritance resolution.
+exclude = ["vendor/gpui-ce"]
+
+[workspace.package]
+edition = "2021"
+
+# Local fork of the pinned gpui-ce revision (vendor/gpui-ce, vendored from
+# the exact rev in Cargo.lock), carrying one fix not yet upstreamed:
+# `EditableTextState::replace_text_in_range`/`replace_and_mark_text_in_range`
+# (the real per-keystroke typing path) never called the crate's own
+# `scroll_to_caret()`, unlike `move_to`/`select_to` (arrow-key/click
+# navigation) which do — so typing text past a field's visible width never
+# scrolled to reveal the tail. All four crates from this git source must be
+# patched together (not just gpui_elements) since they're one cohesive
+# workspace with internal path deps — patching only one would produce two
+# incompatible copies of `gpui`'s types in the same binary.
+[patch."https://github.com/gpui-ce/gpui-ce"]
+gpui = { path = "vendor/gpui-ce/crates/gpui" }
+gpui_platform = { path = "vendor/gpui-ce/crates/gpui_platform" }
+gpui_tokio = { path = "vendor/gpui-ce/crates/gpui_tokio" }
+gpui_elements = { path = "vendor/gpui-ce/crates/gpui_elements" }
