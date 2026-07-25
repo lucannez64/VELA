@@ -9668,6 +9668,7 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "chrono",
+ "futures",
  "gpui",
  "gpui_elements",
  "gpui_platform",

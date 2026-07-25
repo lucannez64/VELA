@@ -259,13 +259,31 @@ impl SettingsScreen {
                     .await;
             this.update(cx, |this, cx| {
                 this.syncing = false;
+                // Same toast text/type mapping as the original's `doSync`
+                // (`App.tsx`): a reported `status.error` is an "info" toast
+                // (not fatal, e.g. "server unreachable, will retry"),
+                // conflicts are "error", a clean sync is "success".
+                use crate::toast::{show, ToastKind};
                 match result {
                     Ok(Ok(status)) => {
+                        if let Some(err) = &status.error {
+                            show(cx, err.clone(), ToastKind::Info);
+                        } else if !status.conflicts.is_empty() {
+                            show(cx, format!("{} conflict(s) detected", status.conflicts.len()), ToastKind::Error);
+                        } else {
+                            show(cx, "Vault synced", ToastKind::Success);
+                        }
                         this.sync_error = status.error.clone().map(Into::into);
                         this.sync_status = Some(status);
                     }
-                    Ok(Err(e)) => this.sync_error = Some(e.into()),
-                    Err(e) => this.sync_error = Some(format!("Task failed: {e}").into()),
+                    Ok(Err(e)) => {
+                        show(cx, format!("Sync failed: {e}"), ToastKind::Error);
+                        this.sync_error = Some(e.into());
+                    }
+                    Err(e) => {
+                        show(cx, format!("Sync failed: Task failed: {e}"), ToastKind::Error);
+                        this.sync_error = Some(format!("Task failed: {e}").into());
+                    }
                 }
                 cx.notify();
             })
@@ -466,12 +484,23 @@ impl SettingsScreen {
                         .unwrap_or(true);
                     this.settings = Some(new_settings.clone());
                     this.error = None;
+                    // Keep the clipboard helper's cached delay in step with
+                    // what was just persisted, so a changed
+                    // "clear clipboard after" takes effect on the very next
+                    // copy instead of only after a restart.
+                    crate::clipboard::set_clear_seconds(cx, new_settings.clipboard_clear_seconds);
                     if theme_changed {
                         cx.emit(SettingsScreenEvent::ThemeChanged(ThemeId::from_setting(&new_settings.theme)));
                     }
+                    // Every settings change goes through this one function
+                    // in the original too (`handleUpdateSettings`), which
+                    // toasts "Settings saved" on every single successful
+                    // save, not just from one dedicated Save button.
+                    crate::toast::show(cx, "Settings saved", crate::toast::ToastKind::Success);
                     cx.notify();
                 }
                 Err(e) => {
+                    crate::toast::show(cx, format!("Failed to save settings: {e}"), crate::toast::ToastKind::Error);
                     this.error = Some(e.into());
                     cx.notify();
                 }
@@ -483,12 +512,13 @@ impl SettingsScreen {
 
     fn sign_out(&mut self, cx: &mut Context<Self>) {
         vela_desktop_core::commands::session::lock_session(&self.app_state);
+        crate::toast::show(cx, "Signed out", crate::toast::ToastKind::Info);
         cx.emit(SettingsScreenEvent::SignedOut);
     }
 
-    fn copy_user_id(&self) {
+    fn copy_user_id(&self, cx: &mut Context<Self>) {
         if let Some(settings) = &self.settings {
-            crate::clipboard::copy("user ID", &settings.user_id);
+            crate::clipboard::copy(cx, "user ID", &settings.user_id);
         }
     }
 
@@ -1566,7 +1596,7 @@ fn account_section(
                         )
                         .child(action_button(palette, "copy-user-id", "Copy", window, cx).on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|this, _, _, _cx| this.copy_user_id()),
+                            cx.listener(|this, _, _, cx| this.copy_user_id(cx)),
                         )),
                 )
                 .child(

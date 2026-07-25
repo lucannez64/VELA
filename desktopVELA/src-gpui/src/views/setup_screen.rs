@@ -17,8 +17,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, prelude::*, px, Context, EventEmitter, IntoElement, MouseButton, Render, SharedString,
-    Window,
+    div, prelude::*, px, App, Context, EventEmitter, IntoElement, MouseButton, MouseDownEvent,
+    Render, SharedString, Window,
 };
 use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
 
@@ -56,6 +56,19 @@ pub struct SetupScreen {
     cloud_backup_done: bool,
     security_key_done: bool,
     trusted_contact_done: bool,
+    /// Security-key registration (the real WebAuthn/CTAP2 ceremony, shared
+    /// with Settings' Recovery section) needs a PIN, so it opens a modal
+    /// rather than acting straight from the row.
+    show_security_key_modal: bool,
+    security_key_pin_state: gpui::Entity<EditableTextState>,
+    registering_security_key: bool,
+    security_key_error: Option<SharedString>,
+    show_cloud_backup_modal: bool,
+    cloud_remotes: Option<Vec<SharedString>>,
+    selected_cloud_remote: Option<SharedString>,
+    loading_cloud_remotes: bool,
+    uploading_cloud_backup: bool,
+    cloud_backup_error: Option<SharedString>,
 }
 
 impl SetupScreen {
@@ -89,6 +102,16 @@ impl SetupScreen {
             cloud_backup_done: false,
             security_key_done: false,
             trusted_contact_done: false,
+            show_security_key_modal: false,
+            security_key_pin_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            registering_security_key: false,
+            security_key_error: None,
+            show_cloud_backup_modal: false,
+            cloud_remotes: None,
+            selected_cloud_remote: None,
+            loading_cloud_remotes: false,
+            uploading_cloud_backup: false,
+            cloud_backup_error: None,
         }
     }
 
@@ -97,6 +120,131 @@ impl SetupScreen {
             .iter()
             .filter(|b| **b)
             .count() as u32
+    }
+
+    fn open_security_key_modal(&mut self, cx: &mut Context<Self>) {
+        self.security_key_pin_state.update(cx, |s, cx| s.emplace("", cx));
+        self.security_key_error = None;
+        self.show_security_key_modal = true;
+        cx.notify();
+    }
+
+    fn close_security_key_modal(&mut self, cx: &mut Context<Self>) {
+        self.show_security_key_modal = false;
+        cx.notify();
+    }
+
+    fn register_security_key(&mut self, cx: &mut Context<Self>) {
+        let pin = self.security_key_pin_state.read(cx).as_str().to_string();
+        self.registering_security_key = true;
+        self.security_key_error = None;
+        cx.notify();
+
+        let app_state = self._app_state.clone();
+        cx.spawn(async move |this, cx| {
+            // Real network I/O plus blocking USB HID access to the key —
+            // gpui_tokio's bridge, not `background_spawn`.
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                vela_desktop_core::webauthn::register_security_key(&app_state, pin).await
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                this.registering_security_key = false;
+                match result {
+                    Ok(Ok(())) => {
+                        this.show_security_key_modal = false;
+                        this.security_key_done = true;
+                        crate::toast::show(
+                            cx,
+                            "Security key registered",
+                            crate::toast::ToastKind::Success,
+                        );
+                    }
+                    Ok(Err(e)) => this.security_key_error = Some(e.into()),
+                    Err(e) => this.security_key_error = Some(format!("Task failed: {e}").into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn open_cloud_backup_modal(&mut self, cx: &mut Context<Self>) {
+        self.cloud_backup_error = None;
+        self.cloud_remotes = None;
+        self.selected_cloud_remote = None;
+        self.loading_cloud_remotes = true;
+        self.show_cloud_backup_modal = true;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async {
+                    vela_desktop_core::recovery::list_cloud_backup_remotes().await
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.loading_cloud_remotes = false;
+                match result {
+                    Ok(remotes) => {
+                        let remotes: Vec<SharedString> =
+                            remotes.into_iter().map(SharedString::from).collect();
+                        this.selected_cloud_remote = remotes.first().cloned();
+                        this.cloud_remotes = Some(remotes);
+                    }
+                    Err(e) => this.cloud_backup_error = Some(e.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn close_cloud_backup_modal(&mut self, cx: &mut Context<Self>) {
+        self.show_cloud_backup_modal = false;
+        cx.notify();
+    }
+
+    fn upload_cloud_backup(&mut self, cx: &mut Context<Self>) {
+        let Some(remote) = self.selected_cloud_remote.clone() else { return };
+        self.uploading_cloud_backup = true;
+        self.cloud_backup_error = None;
+        cx.notify();
+
+        let app_state = self._app_state.clone();
+        cx.spawn(async move |this, cx| {
+            // `rclone` upload is blocking process I/O, but `ensure_shares_split`
+            // ahead of it touches the vault — both are fine off the reactor.
+            let result = cx
+                .background_spawn(async move {
+                    vela_desktop_core::recovery::setup_cloud_backup_recovery(
+                        &app_state,
+                        remote.to_string(),
+                    )
+                    .await
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.uploading_cloud_backup = false;
+                match result {
+                    Ok(()) => {
+                        this.show_cloud_backup_modal = false;
+                        this.cloud_backup_done = true;
+                        crate::toast::show(
+                            cx,
+                            "Recovery share uploaded",
+                            crate::toast::ToastKind::Success,
+                        );
+                    }
+                    Err(e) => this.cloud_backup_error = Some(e.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn submit_password(&mut self, cx: &mut Context<Self>) {
@@ -134,6 +282,7 @@ impl Render for SetupScreen {
         };
 
         div()
+            .relative()
             .size_full()
             .flex()
             .items_center()
@@ -142,7 +291,292 @@ impl Render for SetupScreen {
             .font_family(fonts::LABEL)
             .p_8()
             .child(div().w(px(480.)).child(content))
+            // Modals mount at the top level, not inside `recovery_step` —
+            // the same fix already applied across the other screens, so an
+            // `.absolute().inset_0()` backdrop resolves against the real
+            // viewport rather than a nested (possibly scrolling) container.
+            .when(self.show_security_key_modal, |el| {
+                el.child(security_key_modal(&palette, self, window, cx))
+            })
+            .when(self.show_cloud_backup_modal, |el| {
+                el.child(cloud_backup_modal(&palette, self, window, cx))
+            })
     }
+}
+
+/// PIN prompt for the real FIDO2 registration ceremony. Same shape and same
+/// backend call as Settings' Recovery section — the SetupScreen wizard and
+/// Settings are two entry points to one flow, so a key registered here counts
+/// toward the same 2-of-3 gate.
+fn security_key_modal(
+    palette: &Palette,
+    screen: &SetupScreen,
+    window: &mut Window,
+    cx: &mut Context<SetupScreen>,
+) -> impl IntoElement {
+    let registering = screen.registering_security_key;
+
+    modal_backdrop("setup-security-key", cx, |this, cx| this.close_security_key_modal(cx)).child(
+        modal_body(palette, "setup-security-key")
+            .child(modal_header(palette, "key", "Register security key"))
+            .child(
+                div().text_sm().text_color(palette.on_surface_variant).child(
+                    "Insert your FIDO2 security key and enter its PIN. VELA will register a \
+                     passkey and hand the server your recovery share, gated behind that key.",
+                ),
+            )
+            .child(
+                text_input("setup-security-key-pin")
+                    .state(screen.security_key_pin_state.downgrade())
+                    .placeholder("Security key PIN")
+                    .caret_blink_interval_500ms()
+                    .mask_char(Some('*'))
+                    .bg(palette.surface_bright)
+                    .text_color(palette.on_surface)
+                    .rounded_xl()
+                    .p_3()
+                    .w_full()
+                    .min_h_auto()
+                    .whitespace_nowrap()
+                    .overflow_x_scroll(),
+            )
+            .when_some(screen.security_key_error.clone(), |el, error| {
+                el.child(div().text_sm().text_color(palette.error).child(error))
+            })
+            .child(modal_primary_button(
+                palette,
+                "setup-security-key-submit",
+                if registering { "Waiting for security key…" } else { "Register" },
+                !registering,
+                cx.listener(|this, _, _, cx| this.register_security_key(cx)),
+            ))
+            .child(modal_cancel_button(
+                palette,
+                "setup-security-key-cancel",
+                window,
+                cx,
+                cx.listener(|this, _, _, cx| this.close_security_key_modal(cx)),
+            )),
+    )
+}
+
+/// Remote picker for uploading Share 1 (recovery method 1). Replaces what was
+/// previously a stub that flipped the row to "done" without uploading
+/// anything — which would have left the user believing they had a recovery
+/// share in the cloud that did not exist.
+fn cloud_backup_modal(
+    palette: &Palette,
+    screen: &SetupScreen,
+    window: &mut Window,
+    cx: &mut Context<SetupScreen>,
+) -> impl IntoElement {
+    let uploading = screen.uploading_cloud_backup;
+    let has_remote = screen.selected_cloud_remote.is_some();
+
+    let body = modal_body(palette, "setup-cloud-backup")
+        .child(modal_header(palette, "cloud_upload", "Cloud backup"))
+        .child(
+            div().text_sm().text_color(palette.on_surface_variant).child(
+                "Pick the rclone remote to upload recovery Share 1 to. You'll need this same \
+                 remote configured on any device you later recover onto.",
+            ),
+        )
+        .map(|el| {
+        if screen.loading_cloud_remotes {
+            return el.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .child("Checking configured rclone remotes…"),
+            );
+        }
+        match screen.cloud_remotes.as_ref() {
+            Some(remotes) if !remotes.is_empty() => el.child(
+                div()
+                    .id("setup-cloud-remotes")
+                    .max_h(px(180.))
+                    .overflow_y_scroll()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                    .bg(palette.surface_bright)
+                    .flex()
+                    .flex_col()
+                    .children(remotes.iter().enumerate().map(|(index, remote)| {
+                        let is_selected = screen.selected_cloud_remote.as_ref() == Some(remote);
+                        let remote_for_click = remote.clone();
+                        div()
+                            .id(("setup-cloud-remote", index))
+                            .px_4()
+                            .py_3()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .cursor_pointer()
+                            .when(is_selected, |el| {
+                                el.bg(gpui::Hsla { a: 0.1, ..palette.primary })
+                            })
+                            .child(icon(
+                                if is_selected {
+                                    "radio_button_checked"
+                                } else {
+                                    "radio_button_unchecked"
+                                },
+                                px(16.),
+                                if is_selected { palette.primary } else { palette.outline },
+                            ))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(palette.on_surface)
+                                    .child(remote.clone()),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.selected_cloud_remote = Some(remote_for_click.clone());
+                                    cx.notify();
+                                }),
+                            )
+                    })),
+            ),
+            _ => el.child(
+                div().text_sm().text_color(palette.on_surface_variant).child(
+                    "No configured rclone remotes found. Install rclone and configure a remote, \
+                     then come back here.",
+                ),
+            ),
+        }
+    })
+        .when_some(screen.cloud_backup_error.clone(), |el, error| {
+            el.child(div().text_sm().text_color(palette.error).child(error))
+        })
+        .child(modal_primary_button(
+            palette,
+            "setup-cloud-backup-submit",
+            if uploading { "Uploading…" } else { "Upload share" },
+            has_remote && !uploading,
+            cx.listener(|this, _, _, cx| this.upload_cloud_backup(cx)),
+        ))
+        .child(modal_cancel_button(
+            palette,
+            "setup-cloud-backup-cancel",
+            window,
+            cx,
+            cx.listener(|this, _, _, cx| this.close_cloud_backup_modal(cx)),
+        ));
+
+    modal_backdrop("setup-cloud-backup", cx, |this, cx| this.close_cloud_backup_modal(cx))
+        .child(body)
+}
+
+// ── Shared modal chrome for this screen's two recovery modals ──────────────
+
+fn modal_backdrop(
+    id: &'static str,
+    cx: &mut Context<SetupScreen>,
+    on_dismiss: impl Fn(&mut SetupScreen, &mut Context<SetupScreen>) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .absolute()
+        .inset_0()
+        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .flex()
+        .items_center()
+        .justify_center()
+        .p_4()
+        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_dismiss(this, cx)))
+}
+
+fn modal_body(palette: &Palette, id: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .w(px(440.))
+        .max_h(px(600.))
+        .overflow_y_scroll()
+        .p_8()
+        .rounded_2xl()
+        .bg(palette.surface_container)
+        .border_1()
+        .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+        .flex()
+        .flex_col()
+        .gap_4()
+        // Swallow clicks so they don't reach the backdrop's dismiss handler.
+        .on_mouse_down(MouseButton::Left, |_, _, _| {})
+}
+
+fn modal_header(palette: &Palette, icon_name: &'static str, title: &'static str) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(icon(icon_name, px(24.), palette.primary))
+        .child(
+            div()
+                .font_family(fonts::HEADLINE)
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_xl()
+                .text_color(palette.on_surface)
+                .child(title),
+        )
+}
+
+fn modal_primary_button(
+    palette: &Palette,
+    id: &'static str,
+    label: &'static str,
+    enabled: bool,
+    on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .w_full()
+        .py_3()
+        .rounded_xl()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(if enabled { palette.primary } else { gpui::Hsla { a: 0.5, ..palette.primary } })
+        .text_color(palette.on_primary)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .when(enabled, |el| el.cursor_pointer())
+        .child(label)
+        .when(enabled, |el| el.on_mouse_down(MouseButton::Left, on_click))
+}
+
+fn modal_cancel_button(
+    palette: &Palette,
+    id: &'static str,
+    window: &mut Window,
+    cx: &mut Context<SetupScreen>,
+    on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let hover = animation::hover_transition(id, window, cx);
+    let t = *hover.evaluate(window, cx);
+    let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
+
+    div()
+        .id(id)
+        .w_full()
+        .py_2()
+        .rounded_xl()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(bg)
+        .text_sm()
+        .text_color(palette.on_surface)
+        .cursor_pointer()
+        .child("Cancel")
+        .on_hover(move |is_hovered, _, cx| {
+            hover.update(cx, |v, cx| {
+                *v = *is_hovered as u8 as f32;
+                cx.notify();
+            });
+        })
+        .on_mouse_down(MouseButton::Left, on_click)
 }
 
 fn back_button(target: Step, cx: &mut Context<SetupScreen>) -> impl IntoElement {
@@ -414,11 +848,7 @@ fn recovery_step(
             "Upload a recovery share via rclone",
             screen.cloud_backup_done,
             cx,
-            |this, cx| {
-                tracing::info!("Cloud backup recovery — rclone upload not yet ported, stubbed");
-                this.cloud_backup_done = true;
-                cx.notify();
-            },
+            |this, cx| this.open_cloud_backup_modal(cx),
         ))
         .child(recovery_row(
             palette,
@@ -427,11 +857,7 @@ fn recovery_step(
             "Passkey recovery enabled",
             screen.security_key_done,
             cx,
-            |_this, _cx| {
-                tracing::info!(
-                    "Security key recovery needs native WebAuthn/CTAP2 — deliberately deferred (plan risk #1)"
-                );
-            },
+            |this, cx| this.open_security_key_modal(cx),
         ))
         .child(recovery_row(
             palette,

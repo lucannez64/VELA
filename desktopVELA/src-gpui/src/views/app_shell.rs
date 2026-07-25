@@ -111,6 +111,10 @@ impl AppShell {
             SidebarEvent::AddItem => this.add_item(cx),
             SidebarEvent::Lock => {
                 vela_desktop_core::commands::session::lock_session(&this.app_state);
+                // A copied secret must not outlive the unlocked session —
+                // same reason the original calls `clearClipboard()` here.
+                crate::clipboard::clear(cx);
+                crate::toast::show(cx, "Session locked", crate::toast::ToastKind::Info);
                 cx.emit(AppShellEvent::Locked);
             }
         });
@@ -145,6 +149,17 @@ impl AppShell {
         self.content = Content::Vault(browser);
         self._subscriptions.push(subscription);
         cx.notify();
+    }
+
+    /// Jump straight to an item's detail view, used by the quick-search popup
+    /// (`quick_search.rs`) — the equivalent of the Tauri build's `open-item`
+    /// event, which `App.tsx` listens for and turns into `setSelectedItem`.
+    pub fn open_item(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.nav != NavView::Vault {
+            self.sidebar.update(cx, |sidebar, cx| sidebar.set_active(NavView::Vault, cx));
+            self.nav = NavView::Vault;
+        }
+        self.show_item_detail(id, cx);
     }
 
     fn show_item_detail(&mut self, id: String, cx: &mut Context<Self>) {

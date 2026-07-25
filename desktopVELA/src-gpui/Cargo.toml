@@ -10,6 +10,9 @@ gpui_tokio = { git = "https://github.com/gpui-ce/gpui-ce" }
 gpui_elements = { git = "https://github.com/gpui-ce/gpui-ce" }
 vela-desktop-core = { path = "../vela-desktop-core" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# Only for `block_on`-ing the one-shot portal app-id registration in main()
+# before gpui starts — see that call site for why it must run there.
+futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 arboard = "3"
@@ -32,3 +35,37 @@ debug = true
 [profile.dev.package."*"]
 opt-level = 1
 debug = false
+
+# Installed as `vela-desktop`, NOT `vela-desktop-gpui`: the shipped
+# `com.vela.vault.desktop` entry has `Exec=vela-desktop` /
+# `StartupWMClass=vela-desktop` / `Icon=vela-desktop`, and the XDG portal
+# binds our global shortcut to app id `com.vela.vault` only when a matching
+# desktop entry names this binary (see `wayland_shortcut::register_app_id`).
+# Keeping the name identical to the Tauri build also means the AUR package,
+# icon lookup and any user WM rules need no changes when Linux switches to
+# this binary.
+[[bin]]
+name = "vela-desktop"
+path = "src/main.rs"
+
+[package.metadata.deb]
+name = "VELA"
+maintainer = "VELA"
+copyright = "VELA"
+extended-description = "Passwordless, zero-knowledge password vault."
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/vela-desktop", "usr/bin/vela-desktop", "755"],
+    ["../src-tauri/assets/com.vela.vault.desktop", "usr/share/applications/com.vela.vault.desktop", "644"],
+    ["../src-tauri/icons/icon.png", "usr/share/icons/hicolor/512x512/apps/vela-desktop.png", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "VELA"
+summary = "Passwordless, zero-knowledge password vault."
+assets = [
+    { source = "target/release/vela-desktop", dest = "/usr/bin/vela-desktop", mode = "755" },
+    { source = "../src-tauri/assets/com.vela.vault.desktop", dest = "/usr/share/applications/com.vela.vault.desktop", mode = "644" },
+    { source = "../src-tauri/icons/icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/vela-desktop.png", mode = "644" },
+]

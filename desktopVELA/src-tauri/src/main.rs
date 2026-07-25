@@ -139,7 +139,12 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
     if vela_desktop::wayland_shortcut::is_wayland_session() {
         let trigger = vela_desktop::wayland_shortcut::to_portal_trigger(&shortcut);
         let host: Arc<dyn vela_desktop::host::Host> = Arc::new(TauriHost(app.clone()));
+        let identifier = host.app_identifier();
         tauri::async_runtime::spawn(async move {
+            // Registration moved out of `run` so it can be ordered ahead of
+            // any other portal call in the process — see `register_app_id`'s
+            // doc comment for why that ordering is load-bearing.
+            vela_desktop::wayland_shortcut::register_app_id(&identifier).await;
             vela_desktop::wayland_shortcut::run(host, trigger).await;
         });
         return Ok(());

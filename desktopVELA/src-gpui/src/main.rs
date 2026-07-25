@@ -15,11 +15,14 @@ mod animation;
 mod clipboard;
 mod favicon_ui;
 mod fonts;
+mod host;
 mod icon;
 mod qr;
+mod quick_search;
 mod sidebar;
 mod theme;
 mod titlebar;
+mod toast;
 mod tray;
 mod views;
 
@@ -57,6 +60,27 @@ struct RootView {
 impl RootView {
     fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<toast::ToastGlobal>(|_, cx| cx.notify()).detach();
+        // The quick-search popup lives in its own window, so it can't reach
+        // this view through `cx.subscribe` (that needs both entities in one
+        // window's tree). It publishes the picked item as a global instead,
+        // and this is where the main window acts on it.
+        cx.observe_global::<quick_search::QuickSearchSelection>(|this, cx| {
+            let picked = cx.global::<quick_search::QuickSearchSelection>().0.clone();
+            let Some(item) = picked else { return };
+            // A pick against a locked vault carries no item — the popup's
+            // "press Enter to open VELA" path — and just raising the window
+            // (already done by the popup) is the whole action there.
+            if let Screen::App(app) = &this.screen {
+                let id = item.id().to_string();
+                app.update(cx, |app, cx| app.open_item(id, cx));
+                // The popup just closed itself; without this the main window
+                // stays behind whatever the user was actually looking at when
+                // they hit the shortcut.
+                cx.activate(true);
+            }
+        })
+        .detach();
         let title_bar = cx.new({
             let app_state = app_state.clone();
             move |cx| TitleBar::new(app_state, cx)
@@ -100,6 +124,18 @@ impl RootView {
         let subscription = cx.subscribe(&welcome, |this, _welcome, event, cx| match event {
             WelcomeEvent::CreateVault | WelcomeEvent::AddExistingDevice => {
                 this.show_setup(cx);
+            }
+            // Both of these end with the vault present *and* the session
+            // already unlocked, so they go straight to the shell — routing
+            // via BiometricGate would ask the user to unlock something that
+            // is already unlocked.
+            WelcomeEvent::ImportComplete => {
+                tracing::info!("Enrollment import complete — showing app shell");
+                this.show_app(cx);
+            }
+            WelcomeEvent::AccountRecovered => {
+                tracing::info!("Account recovery complete — showing app shell");
+                this.show_app(cx);
             }
         });
         self.screen = Screen::Welcome(welcome);
@@ -176,6 +212,7 @@ impl Render for RootView {
         };
 
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -193,6 +230,7 @@ impl Render for RootView {
                 // below the visible viewport.
                 div().flex_1().overflow_hidden().child(content),
             )
+            .children(toast::render(&palette, cx))
     }
 }
 
@@ -224,13 +262,43 @@ fn main() {
 
     let app_state = Arc::new(AppState::default());
 
+    // Claim our portal app id *before* gpui starts. This ordering is
+    // load-bearing, not cosmetic: `ashpd` caches one process-wide session-bus
+    // connection, xdg-desktop-portal binds an app id to that connection
+    // exactly once, and `gpui_linux`'s `xdg_desktop_portal.rs` opens
+    // `org.freedesktop.portal.Settings` (color-scheme/cursor-theme watcher)
+    // during platform init — i.e. before anything inside the `run(...)`
+    // closure executes. Registering from the shortcut task, as this used to,
+    // always lost that race and failed with "Connection already associated
+    // with an application ID", which then made the GlobalShortcuts session
+    // fail with "An app id is required".
+    //
+    // Blocking here is fine and deliberate: it's one short D-Bus round trip
+    // before any window exists. `futures::executor::block_on` (rather than
+    // the tokio runtime above) because ashpd is pinned to the `async-io`
+    // zbus backend workspace-wide, and async-io self-starts its own reactor
+    // thread on first use regardless of which executor polls it.
+    #[cfg(target_os = "linux")]
+    if vela_desktop_core::wayland_shortcut::is_wayland_session() {
+        futures::executor::block_on(vela_desktop_core::wayland_shortcut::register_app_id(
+            host::APP_IDENTIFIER,
+        ));
+    }
+
     // Real settings read (plain sync fs read, no unlock required) so the
     // window opens in the user's actually-saved theme from frame one,
     // rather than always starting on Vela and only picking up the real
     // theme once something happens to touch the global later.
-    let initial_theme = vela_desktop_core::commands::settings::get_settings(&app_state)
+    let initial_settings = vela_desktop_core::commands::settings::get_settings(&app_state).ok();
+    let initial_theme = initial_settings
+        .as_ref()
         .map(|s| ThemeId::from_setting(&s.theme))
         .unwrap_or(ThemeId::Vela);
+    let initial_clipboard_clear_seconds = initial_settings.as_ref().map(|s| s.clipboard_clear_seconds);
+    let quick_search_shortcut = initial_settings
+        .as_ref()
+        .map(|s| s.quick_search_shortcut.clone())
+        .unwrap_or_else(|| "Ctrl+Alt+V".to_string());
 
     // Only a cheap Handle is moved into the one-shot startup closure below —
     // `.run(...)` invokes it once and drops it right after, so moving the
@@ -247,6 +315,9 @@ fn main() {
         let tray_runtime_handle = runtime_handle.clone();
         gpui_tokio::init_from_handle(cx, runtime_handle);
         cx.set_global(ActiveTheme(initial_theme));
+        if let Some(seconds) = initial_clipboard_clear_seconds {
+            clipboard::set_clear_seconds(cx, seconds);
+        }
 
         cx.bind_keys(
             gpui_elements::editable_text::actions::default_bindings()
@@ -263,6 +334,8 @@ fn main() {
 
         let bounds = Bounds::centered(None, size(px(1024.), px(720.)), cx);
         let app_state_for_tray = app_state.clone();
+        let app_state_for_ipc = app_state.clone();
+        let app_state_for_quick_search = app_state.clone();
         let app_state = app_state.clone();
         let window_handle = cx
             .open_window(
@@ -308,20 +381,89 @@ fn main() {
         })
         .detach();
 
-        // Polls for tray commands (a plain `std::sync::mpsc::Receiver`, since
-        // ksni's `Tray` impl runs on its own background thread and can't
-        // reach gpui's window/App state directly — gpui-ce has no public
-        // cross-thread "run this on the main thread" primitive to bridge
-        // that gap safely, so this reuses the same poll-loop idiom already
-        // proven throughout this codebase, e.g. TitleBar's 1s session poll).
+        // Autofill IPC bridge (browser extension) + Wayland portal global
+        // shortcut. Both are written against `vela_desktop_core::host::Host`
+        // and run on their own threads, so they reach the UI through the same
+        // channel-plus-poll-loop hop the tray uses — see `host.rs`.
+        let (host_tx, host_rx) = std::sync::mpsc::channel::<host::HostCommand>();
+        let ipc_host: Arc<dyn vela_desktop_core::host::Host> =
+            Arc::new(host::GpuiHost::new(app_state_for_ipc.clone(), host_tx.clone()));
+        let ipc_capability = app_state_for_ipc.ipc_capability.clone();
+        std::thread::spawn(move || {
+            // Its own single-threaded runtime, exactly as `src-tauri/src/
+            // main.rs` does — this server owns a long-lived listener and
+            // shouldn't share the app's main worker pool.
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create IPC tokio runtime");
+            rt.block_on(async {
+                vela_desktop_core::ipc::server::IpcServer::new(ipc_capability)
+                    .start(ipc_host)
+                    .await;
+            });
+        });
+        tracing::info!("Autofill IPC server started");
+
+        if vela_desktop_core::wayland_shortcut::is_wayland_session() {
+            let trigger = vela_desktop_core::wayland_shortcut::to_portal_trigger(&quick_search_shortcut);
+            let shortcut_host: Arc<dyn vela_desktop_core::host::Host> =
+                Arc::new(host::GpuiHost::new(app_state_for_ipc.clone(), host_tx));
+            // `wayland_shortcut` talks to the XDG portal over zbus's
+            // *async-io* backend (the executor this whole workspace
+            // standardized on — see vela-desktop-core/Cargo.toml), so it
+            // must not be driven by the tokio runtime the IPC server uses.
+            // gpui's own foreground executor drives it fine, same as the
+            // ksni tray's `.spawn().await` above.
+            cx.spawn(async move |_cx| {
+                vela_desktop_core::wayland_shortcut::run(shortcut_host, trigger).await;
+            })
+            .detach();
+            tracing::info!("Wayland portal global shortcut registered");
+        } else {
+            tracing::info!(
+                "Not a Wayland session — global quick-search shortcut not registered \
+                 (the X11 plugin path the Tauri build uses isn't ported)"
+            );
+        }
+
+        // Polls for tray + host commands (plain `std::sync::mpsc::Receiver`s,
+        // since ksni's `Tray` impl and the IPC/portal threads all run on their
+        // own background threads and can't reach gpui's window/App state
+        // directly — gpui-ce has no public cross-thread "run this on the main
+        // thread" primitive to bridge that gap safely, so this reuses the same
+        // poll-loop idiom already proven throughout this codebase, e.g.
+        // TitleBar's 1s session poll).
         cx.spawn(async move |cx| loop {
             while let Ok(cmd) = tray_rx.try_recv() {
                 match cmd {
                     tray::TrayCommand::Activate => {
                         window_handle.update(cx, |_, window, _| window.activate_window()).ok();
                     }
+                    tray::TrayCommand::SyncFinished { message, kind } => {
+                        cx.update(|cx| toast::show(cx, message, kind));
+                    }
+                    tray::TrayCommand::Locked => {
+                        cx.update(|cx| {
+                            clipboard::clear(cx);
+                            toast::show(cx, "Session locked", toast::ToastKind::Info);
+                        });
+                    }
                     tray::TrayCommand::Quit => {
                         cx.update(|cx| cx.quit());
+                    }
+                }
+            }
+            while let Ok(cmd) = host_rx.try_recv() {
+                match cmd {
+                    host::HostCommand::FocusMainWindow => {
+                        window_handle.update(cx, |_, window, _| window.activate_window()).ok();
+                    }
+                    host::HostCommand::OpenQuickSearch => {
+                        cx.update(|cx| quick_search::toggle(cx, app_state_for_quick_search.clone()));
+                    }
+                    host::HostCommand::VaultItemsChanged => {
+                        cx.update(host::notify_vault_items_changed);
                     }
                 }
             }

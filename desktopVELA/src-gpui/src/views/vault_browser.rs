@@ -135,26 +135,16 @@ impl VaultBrowser {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
         let search_state = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
 
-        cx.spawn({
-            let app_state = app_state.clone();
-            async move |this, cx| {
-                let (items, health) = cx
-                    .background_spawn(async move {
-                        (get_items(&app_state), get_vault_health(&app_state))
-                    })
-                    .await;
-                this.update(cx, |this, cx| {
-                    match items {
-                        Ok(items) => this.items = items,
-                        Err(e) => this.error = Some(e.into()),
-                    }
-                    this.health = health.ok();
-                    cx.notify();
-                })
-                .ok();
-            }
+        // Reload whenever items changed underneath us — an autofill save from
+        // the browser extension is the main source (see `host.rs`), and the
+        // Tauri build refreshes on its `vault-items-changed` event for exactly
+        // the same reason.
+        cx.observe_global::<crate::host::VaultItemsVersion>(|this: &mut Self, cx| {
+            this.reload(cx);
         })
         .detach();
+
+        Self::spawn_reload(app_state.clone(), cx);
 
         Self {
             app_state,
@@ -168,6 +158,37 @@ impl VaultBrowser {
             list_state: ListState::new(0, ListAlignment::Top, px(400.)),
             favicon_cache: favicon_ui::new_cache(),
         }
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        Self::spawn_reload(self.app_state.clone(), cx);
+    }
+
+    /// Re-reads items + health from the already-unlocked vault. Both are
+    /// in-memory reads over decrypted state (no network), but `get_vault_health`
+    /// walks every item scoring passwords, so it stays on the background pool.
+    ///
+    /// Takes `app_state` rather than `&mut self` so `new` can kick off the
+    /// first load before a `Self` exists to borrow.
+    fn spawn_reload(app_state: Arc<AppState>, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let (items, health) = cx
+                .background_spawn(async move { (get_items(&app_state), get_vault_health(&app_state)) })
+                .await;
+            this.update(cx, |this, cx| {
+                match items {
+                    Ok(items) => {
+                        this.items = items;
+                        this.error = None;
+                    }
+                    Err(e) => this.error = Some(e.into()),
+                }
+                this.health = health.ok();
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn open_add_item_modal(&mut self, cx: &mut Context<Self>) {
@@ -633,8 +654,14 @@ fn item_row(
                                     // original's `e.stopPropagation()`.
                                     cx.stop_propagation();
                                     match &copy_value {
-                                        Some((label, value)) => crate::clipboard::copy(label, value),
-                                        None => tracing::info!("Nothing to copy for this item"),
+                                        Some((label, value)) => crate::clipboard::copy(cx, label, value),
+                                        // Matches the original's
+                                        // `showToast('Nothing to copy', 'info')`.
+                                        None => crate::toast::show(
+                                            cx,
+                                            "Nothing to copy",
+                                            crate::toast::ToastKind::Info,
+                                        ),
                                     }
                                 }),
                         )

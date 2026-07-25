@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, Context, EventEmitter, IntoElement, MouseButton, Render, SharedString,
+    div, prelude::*, px, App, Context, EventEmitter, IntoElement, MouseButton, Render, SharedString,
     Task, Window,
 };
 
@@ -192,8 +192,8 @@ impl ItemDetail {
         .detach();
     }
 
-    fn copy(&self, label: &str, value: &str) {
-        crate::clipboard::copy(label, value);
+    fn copy(&self, label: &str, value: &str, cx: &mut App) {
+        crate::clipboard::copy(cx, label, value);
     }
 }
 
@@ -840,7 +840,7 @@ fn field_card_inner(
                 })
                 .child(icon("content_copy", px(18.), palette.primary))
                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                    this.copy(label, &copy_value);
+                    this.copy(label, &copy_value, cx);
                     cx.notify();
                 })),
         );

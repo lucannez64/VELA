@@ -12,12 +12,13 @@
 //! confirmation and calls the real `reset_vault` (same backend call as
 //! Settings' Delete Vault).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, Context, EventEmitter, Focusable, IntoElement, MouseButton, Render,
-    SharedString, Task, Window,
+    div, img, prelude::*, px, Context, EventEmitter, Focusable, ImageSource, IntoElement,
+    MouseButton, ObjectFit, Render, SharedString, Task, Window,
 };
 use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
 
@@ -416,6 +417,155 @@ fn secure_session_badge(palette: &Palette, ping: f32) -> impl IntoElement {
         )
 }
 
+/// Exact reproduction of `.obsidian-gradient` (`index.css`):
+/// `radial-gradient(ellipse 90% 60% at 75% -10%, accent-violet/0.14, transparent),`
+/// `radial-gradient(ellipse 70% 55% at 15% 110%, primary/0.09, transparent),`
+/// `rgb(var(--color-surface))`.
+///
+/// Two earlier attempts tried to fake this with gpui primitives and both
+/// visibly failed a pixel-sampled comparison against the original: a
+/// full-bleed diagonal `linear_gradient` (wrong shape entirely — a band,
+/// not a cornered blob), then a "zero-size point + huge blurred `.shadow()`"
+/// trick that turned out to be a hard no-op (confirmed by reading
+/// `gpui_wgpu/src/shaders.wgsl`'s `fs_shadow`: its blur integrates over
+/// `[-half_size, +half_size]` on both axes, so a literal 0×0 source
+/// collapses that range to a point and the accumulated alpha is always
+/// `0.0`). A real, sized blurred ellipse fixed the no-op but still used
+/// gaussian-ish blur falloff (`erf`-based, see `blur_along_x`) — a
+/// fundamentally different curve from CSS radial-gradient's *linear* alpha
+/// ramp from center to edge, so no amount of size/blur tuning could ever
+/// match exactly.
+///
+/// gpui-ce has no radial-gradient primitive at all (confirmed via source
+/// search of `color.rs`), but it can render an arbitrary image
+/// (`favicon_ui.rs` already does, for favicons). So instead of
+/// approximating with a primitive that draws the wrong curve, this computes
+/// the CSS radial-gradient formula directly — same ellipse-normalized
+/// distance, same linear `alpha = stop0 * (1 - d)` ramp, same top-to-bottom
+/// layer compositing CSS itself does for multiple backgrounds (first-listed
+/// gradient is topmost, `background-color` is the base) — into a small
+/// RGBA bitmap, then displays it via `ObjectFit::Fill` so it stretches to
+/// the container's actual size. Because the gradient math is itself
+/// evaluated in the same 0..1-of-box-size units CSS uses, stretching a
+/// bitmap computed this way to fill any box reproduces the CSS output
+/// exactly (up to the bitmap's raster resolution, chosen high enough here
+/// that it's imperceptible on a smooth gradient with no hard edges).
+///
+/// Cached per distinct `(surface, accent_violet, primary)` triple (there
+/// are only 4 themes, so at most 4 entries ever exist) so the ~10fps pulse
+/// ticker driving this view's re-renders doesn't re-rasterize + re-encode a
+/// PNG every frame — only regenerated the first time a given theme's colors
+/// are seen.
+fn obsidian_gradient_overlay(palette: &Palette) -> impl IntoElement {
+    let image = cached_obsidian_gradient_image(palette);
+    div().absolute().inset_0().child(
+        img(ImageSource::Image(image))
+            .size_full()
+            .object_fit(ObjectFit::Fill),
+    )
+}
+
+fn cached_obsidian_gradient_image(palette: &Palette) -> Arc<gpui::Image> {
+    static CACHE: OnceLock<Mutex<HashMap<(u32, u32, u32), Arc<gpui::Image>>>> = OnceLock::new();
+    let key = (
+        hsla_bits(palette.surface),
+        hsla_bits(palette.accent_violet),
+        hsla_bits(palette.primary),
+    );
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("gradient image cache poisoned");
+    if let Some(image) = guard.get(&key) {
+        return image.clone();
+    }
+    let image = Arc::new(render_obsidian_gradient_image(palette));
+    guard.insert(key, image.clone());
+    image
+}
+
+/// Cheap identity for cache-keying a color by its bit pattern (colors here
+/// only ever come from a small, fixed set of theme palettes, so exact
+/// float equality via bits is fine — no arithmetic is done on the key).
+fn hsla_bits(color: gpui::Hsla) -> u32 {
+    color.h.to_bits() ^ color.s.to_bits() ^ color.l.to_bits() ^ color.a.to_bits()
+}
+
+fn render_obsidian_gradient_image(palette: &Palette) -> gpui::Image {
+    // High enough that the smooth gradient shows no banding once stretched
+    // to a real window size, low enough to compute + encode in well under
+    // a millisecond.
+    const WIDTH: u32 = 512;
+    const HEIGHT: u32 = 360;
+
+    let base = hsla_to_rgb_f32(palette.surface);
+    let violet = hsla_to_rgb_f32(palette.accent_violet);
+    let primary = hsla_to_rgb_f32(palette.primary);
+
+    let mut buffer = image::RgbaImage::new(WIDTH, HEIGHT);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let u = (x as f32 + 0.5) / WIDTH as f32;
+            let v = (y as f32 + 0.5) / HEIGHT as f32;
+            // Painted bottom-to-top, same as CSS's multiple-background
+            // layering (first-listed gradient ends up on top).
+            let mut rgb = base;
+            rgb = composite_radial_wash(rgb, primary, u, v, 0.15, 1.10, 0.70, 0.55, 0.09);
+            rgb = composite_radial_wash(rgb, violet, u, v, 0.75, -0.10, 0.90, 0.60, 0.14);
+            buffer.put_pixel(
+                x,
+                y,
+                image::Rgba([
+                    (rgb.0 * 255.0).round() as u8,
+                    (rgb.1 * 255.0).round() as u8,
+                    (rgb.2 * 255.0).round() as u8,
+                    255,
+                ]),
+            );
+        }
+    }
+
+    let mut png_bytes = Vec::new();
+    buffer
+        .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .expect("encoding a freshly-built in-memory RgbaImage to PNG cannot fail");
+    gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes)
+}
+
+/// One CSS `radial-gradient(ellipse rx% ry% at cx% cy%, color/max_alpha, transparent)`
+/// stop, composited "over" the color computed so far — `d` is the
+/// ellipse-normalized distance from center (0 at center, 1 at the ellipse's
+/// edge), and CSS's linear color-stop interpolation makes alpha ramp
+/// linearly from `max_alpha` at `d=0` to `0` at `d=1` while the RGB stays
+/// fixed (a "transparent" stop is the same color at alpha 0, not black).
+fn composite_radial_wash(
+    under: (f32, f32, f32),
+    color: (f32, f32, f32),
+    u: f32,
+    v: f32,
+    cx: f32,
+    cy: f32,
+    rx: f32,
+    ry: f32,
+    max_alpha: f32,
+) -> (f32, f32, f32) {
+    let dx = (u - cx) / rx;
+    let dy = (v - cy) / ry;
+    let d = (dx * dx + dy * dy).sqrt();
+    if d >= 1.0 {
+        return under;
+    }
+    let alpha = max_alpha * (1.0 - d);
+    (
+        color.0 * alpha + under.0 * (1.0 - alpha),
+        color.1 * alpha + under.1 * (1.0 - alpha),
+        color.2 * alpha + under.2 * (1.0 - alpha),
+    )
+}
+
+fn hsla_to_rgb_f32(color: gpui::Hsla) -> (f32, f32, f32) {
+    let rgba: gpui::Rgba = color.into();
+    (rgba.r, rgba.g, rgba.b)
+}
+
 fn reset_link(palette: &Palette, cx: &mut Context<BiometricGate>) -> impl IntoElement {
     div()
         .id("reset-vault-link")
@@ -459,6 +609,7 @@ fn biometric_view(
         .bg(palette.surface)
         .py_12()
         .gap_8()
+        .child(obsidian_gradient_overlay(palette))
         .child(corner_bracket(palette, Corner::TopLeft))
         .child(corner_bracket(palette, Corner::BottomRight))
         .child(secure_session_badge(palette, ping))
@@ -503,6 +654,11 @@ fn biometric_view(
                                 palette.accent_violet,
                                 border_t,
                             );
+                            // `.biometric-glow` (`index.css`): a static
+                            // `box-shadow: 0 0 60px -15px accent-violet/0.3`
+                            // soft halo — no per-element approximation
+                            // needed, gpui's real `.shadow()` primitive maps
+                            // 1:1 onto CSS box-shadow's offset/blur/spread.
                             let mut circle = div()
                                 .id("biometric-button")
                                 .relative()
@@ -512,6 +668,13 @@ fn biometric_view(
                                 .bg(palette.surface_container_high)
                                 .border_1()
                                 .border_color(border_color)
+                                .shadow(vec![gpui::BoxShadow {
+                                    color: gpui::Hsla { a: 0.3, ..palette.accent_violet },
+                                    offset: gpui::point(px(0.), px(0.)),
+                                    blur_radius: px(60.),
+                                    spread_radius: px(-15.),
+                                    inset: false,
+                                }])
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -640,6 +803,7 @@ fn password_view(
     };
 
     div()
+        .relative()
         .size_full()
         .flex()
         .flex_col()
@@ -647,6 +811,7 @@ fn password_view(
         .justify_center()
         .bg(palette.surface)
         .gap_6()
+        .child(obsidian_gradient_overlay(palette))
         .child(header(palette))
         .child(icon("password", px(56.), palette.accent_violet))
         .child(

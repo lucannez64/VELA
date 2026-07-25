@@ -54,6 +54,7 @@ pub struct TitleBar {
     session: Option<SessionStatus>,
     always_on_top: bool,
     _poll_task: Task<()>,
+    _pulse_task: Task<()>,
 }
 
 impl TitleBar {
@@ -85,6 +86,12 @@ impl TitleBar {
                             if was_active && !status.active {
                                 tracing::info!("Session auto-locked (idle timeout) — showing BiometricGate");
                                 vela_desktop_core::commands::session::lock_session(&this.app_state);
+                                crate::clipboard::clear(cx);
+                                crate::toast::show(
+                                    cx,
+                                    "Session locked (idle timeout)",
+                                    crate::toast::ToastKind::Info,
+                                );
                                 cx.emit(TitleBarEvent::Locked);
                             }
                             this.session = Some(status);
@@ -104,11 +111,14 @@ impl TitleBar {
             session: None,
             always_on_top: false,
             _poll_task: poll_task,
+            _pulse_task: animation::spawn_pulse_ticker(cx),
         }
     }
 
     fn handle_lock(&mut self, cx: &mut Context<Self>) {
         vela_desktop_core::commands::session::lock_session(&self.app_state);
+        crate::clipboard::clear(cx);
+        crate::toast::show(cx, "Session locked", crate::toast::ToastKind::Info);
         cx.emit(TitleBarEvent::Locked);
         cx.notify();
     }
@@ -182,6 +192,10 @@ impl Render for TitleBar {
                             .text_color(palette.primary),
                     )
                     .child(
+                        // `.security-pulse` (`index.css`: 4s pulse, slower
+                        // than plain `animate-pulse`'s 2s) wraps the WHOLE
+                        // badge in the original — the dot itself carries no
+                        // animation class there.
                         div()
                             .flex()
                             .items_center()
@@ -191,14 +205,8 @@ impl Render for TitleBar {
                             .py_1()
                             .rounded_full()
                             .bg(gpui::Hsla { a: 0.1, ..palette.secondary })
-                            .child(
-                                div()
-                                    .w(px(8.))
-                                    .h(px(8.))
-                                    .rounded_full()
-                                    .bg(palette.primary)
-                                    .opacity(animation::pulse_alpha(2.0)),
-                            )
+                            .opacity(animation::pulse_alpha(4.0))
+                            .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(palette.primary))
                             .child(
                                 fonts::tracked_text("Zero-Knowledge Active", px(10.), 0.1)
                                     .font_family(fonts::LABEL)

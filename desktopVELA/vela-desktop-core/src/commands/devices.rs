@@ -9,11 +9,11 @@ use base64::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiClient, EnrollDeviceRequest, NewDevicePayload};
+use crate::api::{ApiClient, EnrollDeviceRequest, NewDevicePayload, VerifyRequest};
 use crate::audit::{record_audit_event, AuditAction};
 use crate::crypto;
 use crate::AppState;
-use vela_crypto::aead::encrypt;
+use vela_crypto::aead::{decrypt, encrypt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -312,4 +312,286 @@ pub fn create_enrollment_qr_chunks(code: &str) -> Vec<String> {
         .enumerate()
         .map(|(i, chunk)| format!("{QR_PREFIX}:{}/{total}:{chunk}", i + 1))
         .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enrollment import (joining an existing account from a peer device's code).
+// Moved verbatim from `src-tauri/src/commands/devices.rs` so both binaries can
+// run it; the Tauri copy stays where it is until the full file split happens.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const VAULT_MAIN_CHUNK_ID: &str = "vault-main";
+const VAULT_DATA_PREFIX: &str = "vault-data-";
+
+/// Try to download and decrypt a single vault chunk by chunk_id.
+/// Returns `Some(VaultStore)` on success, `None` if the chunk doesn't exist
+/// or cannot be decrypted.
+async fn try_download_chunk(
+    crypto: &crate::crypto::Crypto,
+    client: &ApiClient,
+    token: &str,
+    chunk_id: &str,
+) -> Option<crate::vault::VaultStore> {
+    let chunk_key_bytes: [u8; 32] = *crypto.chunk_key(chunk_id.as_bytes()).as_bytes();
+    match client.get_chunk(token, chunk_id).await {
+        Ok((ciphertext, _, _, _)) => match decrypt(&chunk_key_bytes, &ciphertext) {
+            Ok(plaintext) => match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
+                Ok(v) => {
+                    tracing::info!("Vault downloaded from chunk '{}'", chunk_id);
+                    Some(v)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse vault JSON from chunk '{}': {}", chunk_id, e);
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to decrypt chunk '{}': {}", chunk_id, e);
+                None
+            }
+        },
+        Err(e) => {
+            tracing::info!("Chunk '{}' not available: {}", chunk_id, e);
+            None
+        }
+    }
+}
+
+/// Try to download the vault via the manifest, looking for the first
+/// `vault-data-*` chunk.
+async fn try_download_fallback_chunk(
+    crypto: &crate::crypto::Crypto,
+    client: &ApiClient,
+    token: &str,
+) -> Option<crate::vault::VaultStore> {
+    let manifest = match client.get_sync_manifest(token).await {
+        Ok((m, _)) => m,
+        Err(e) => {
+            tracing::warn!("Failed to fetch manifest for fallback: {}", e);
+            return None;
+        }
+    };
+    let fallback_id = manifest
+        .chunks
+        .iter()
+        .find(|c| c.chunk_id.starts_with(VAULT_DATA_PREFIX))
+        .map(|c| c.chunk_id.clone());
+    match fallback_id {
+        Some(id) => try_download_chunk(crypto, client, token, &id).await,
+        None => None,
+    }
+}
+
+pub(crate) async fn download_vault_after_enrollment(
+    crypto_obj: &crate::crypto::Crypto,
+    client: &ApiClient,
+    token: &str,
+) -> Result<crate::vault::VaultStore, String> {
+    if let Some(v) = try_download_chunk(crypto_obj, client, token, VAULT_MAIN_CHUNK_ID).await {
+        return Ok(v);
+    }
+    tracing::info!(
+        "No '{}' chunk found, trying vault-data-* fallback from manifest",
+        VAULT_MAIN_CHUNK_ID
+    );
+    if let Some(v) = try_download_fallback_chunk(crypto_obj, client, token).await {
+        return Ok(v);
+    }
+    let (manifest, _) = client
+        .get_sync_manifest(token)
+        .await
+        .map_err(|e| format!("Failed to verify server vault state: {e}"))?;
+    let server_has_vault = manifest
+        .chunks
+        .iter()
+        .any(|c| c.chunk_id == VAULT_MAIN_CHUNK_ID || c.chunk_id.starts_with(VAULT_DATA_PREFIX));
+    if server_has_vault {
+        return Err(
+            "Server has a vault but it could not be downloaded or decrypted. \
+             Enrollment aborted to avoid overwriting it — please retry."
+                .to_string(),
+        );
+    }
+    tracing::info!("No vault chunk found on server, starting empty");
+    Ok(crate::vault::VaultStore::new())
+}
+
+async fn resolve_enrollment_code_json(state: &AppState, code: &str) -> Result<Vec<u8>, String> {
+    let trimmed = code.trim();
+    if let Some(encoded_locator) = trimmed.strip_prefix(ENROLLMENT_CODE_V2_PREFIX) {
+        let locator_json = B64URL
+            .decode(encoded_locator)
+            .map_err(|e| format!("Invalid enrollment locator (base64url error): {e}"))?;
+        let locator: EnrollmentPackageLocator = serde_json::from_slice(&locator_json)
+            .map_err(|e| format!("Invalid enrollment locator (JSON error): {e}"))?;
+        if locator.v != 2 {
+            return Err("Unsupported enrollment code version".to_string());
+        }
+
+        let package_key = B64URL
+            .decode(&locator.k)
+            .map_err(|_| "Invalid enrollment package key".to_string())?;
+        if package_key.len() != 32 {
+            return Err("Enrollment package key must be 32 bytes".to_string());
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&package_key);
+
+        let client = ApiClient::with_url(locator.u.clone());
+        let ciphertext_b64 = client
+            .fetch_enrollment_package(&locator.t)
+            .await
+            .map_err(|e| format!("Failed to fetch enrollment package: {e}"))?;
+        let ciphertext = B64URL
+            .decode(&ciphertext_b64)
+            .map_err(|_| "Invalid enrollment package ciphertext".to_string())?;
+        let plaintext = decrypt(&key, &ciphertext)
+            .map_err(|e| format!("Failed to decrypt enrollment package: {e}"))?;
+
+        *state.server_url.write() = locator.u;
+        return Ok(plaintext.to_vec());
+    }
+
+    B64.decode(
+        trimmed
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>(),
+    )
+    .map_err(|e| format!("Invalid enrollment code (base64 error): {e}"))
+}
+
+/// Import an enrollment code on a new device.
+///
+/// The new device:
+///   1. Decodes the invitation code.
+///   2. Persists the device ID and identity keys.
+///   3. Authenticates with the server challenge → gets a session token.
+///   4. Downloads and decrypts the RMS capsule from the server.
+///   5. Stores the RMS encrypted with the provided password.
+///   6. Downloads the vault and unlocks the session.
+pub async fn import_enrollment_code(
+    state: &AppState,
+    code: String,
+    password: String,
+) -> Result<(), String> {
+    // ── decode invitation code ────────────────────────────────────────────────
+    let json_bytes = resolve_enrollment_code_json(state, &code).await?;
+    let payload: EnrollmentCodePayload = serde_json::from_slice(&json_bytes)
+        .map_err(|e| format!("Invalid enrollment code (JSON error): {e}"))?;
+
+    // ── decode key material ───────────────────────────────────────────────────
+    let hybrid_ek = B64.decode(&payload.hybrid_ek).map_err(|_| "bad hybrid_ek")?;
+    let hybrid_vk = B64.decode(&payload.hybrid_vk).map_err(|_| "bad hybrid_vk")?;
+    let hybrid_sk = B64.decode(&payload.hybrid_sk).map_err(|_| "bad hybrid_sk")?;
+    let transfer_key_vec = B64
+        .decode(&payload.transfer_key)
+        .map_err(|_| "bad transfer_key")?;
+
+    if transfer_key_vec.len() != 32 {
+        return Err("transfer_key must be 32 bytes".to_string());
+    }
+    let mut transfer_key = [0u8; 32];
+    transfer_key.copy_from_slice(&transfer_key_vec);
+
+    // ── persist device ID ─────────────────────────────────────────────────────
+    state
+        .store
+        .save_device_id(&payload.device_id)
+        .map_err(|e| format!("Failed to save device ID: {e}"))?;
+
+    // ── set server URL ────────────────────────────────────────────────────────
+    if !payload.server_url.is_empty() {
+        *state.server_url.write() = payload.server_url.clone();
+    }
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+
+    // ── authenticate with server ──────────────────────────────────────────────
+    let challenge_resp = client
+        .get_challenge()
+        .await
+        .map_err(|e| format!("Failed to get challenge: {e}"))?;
+    let challenge_bytes = B64
+        .decode(&challenge_resp.challenge)
+        .map_err(|_| "Invalid challenge encoding")?;
+
+    let device_id_clone = payload.device_id.clone();
+    let (auth_sk, cb2) = (hybrid_sk.clone(), challenge_bytes.clone());
+    let signature = tokio::task::spawn_blocking(move || {
+        crypto::create_auth_signature(&auth_sk, &cb2, &device_id_clone)
+    })
+    .await
+    .map_err(|e| format!("Thread join error: {e}"))?
+    .map_err(|e| format!("Challenge signature failed: {e}"))?;
+
+    let verify_resp = client
+        .verify_signature(&VerifyRequest {
+            device_id: payload.device_id.clone(),
+            challenge: challenge_resp.challenge,
+            signature,
+            device_name: Some(crate::audit::get_device_name()),
+            device_type: Some("desktop".to_string()),
+        })
+        .await
+        .map_err(|e| format!("Server authentication failed: {e}"))?;
+
+    let token = verify_resp.token;
+    let user_id = verify_resp.user_id;
+
+    // ── download RMS capsule from server ──────────────────────────────────────
+    let (capsule_resp, _) = client
+        .get_capsule(&token)
+        .await
+        .map_err(|e| format!("Failed to download RMS capsule: {e}"))?;
+    let capsule_bytes = B64
+        .decode(&capsule_resp.capsule)
+        .map_err(|_| "Invalid capsule encoding")?;
+
+    // ── decrypt capsule → RMS ─────────────────────────────────────────────────
+    let rms = crypto::decrypt_rms_capsule(&transfer_key, &capsule_bytes)
+        .map_err(|e| format!("Failed to decrypt RMS capsule: {e}"))?;
+
+    // ── store RMS encrypted with password ─────────────────────────────────────
+    crate::biometric::store_password_encrypted(&rms, &password)
+        .map_err(|e| format!("Failed to store vault key: {e}"))?;
+
+    // ── build Crypto and download vault ───────────────────────────────────────
+    let crypto_obj = crate::crypto::Crypto::new(&rms);
+    state
+        .store
+        .save_identity_keys(&hybrid_ek, &hybrid_vk, &hybrid_sk, &crypto_obj)
+        .map_err(|e| format!("Failed to save identity keys: {e}"))?;
+
+    // Download the vault chunk from the server.  Try the canonical name first,
+    // then fall back to an ORAM-style vault-data-* chunk from the manifest.
+    let vault = download_vault_after_enrollment(&crypto_obj, &client, &token).await?;
+
+    state
+        .store
+        .save_vault(&vault, &crypto_obj)
+        .map_err(|e| format!("Failed to save vault locally: {e}"))?;
+    state
+        .store
+        .save_device_id_with_user_id(&payload.device_id, &user_id)
+        .map_err(|e| format!("Failed to save user ID: {e}"))?;
+
+    // ── unlock session ────────────────────────────────────────────────────────
+    {
+        let mut session = state.session.write();
+        session.set_server_token(token);
+        session.unlock(payload.device_id.clone(), user_id, 15 * 60);
+    }
+    {
+        let mut crypto_state = state.crypto.write();
+        *crypto_state = Some(crypto_obj);
+    }
+    {
+        let mut vault_state = state.vault.write();
+        *vault_state = vault;
+    }
+
+    record_audit_event(state, AuditAction::VaultUnlocked);
+    tracing::info!(device_id = %payload.device_id, "Enrollment import complete");
+    Ok(())
 }

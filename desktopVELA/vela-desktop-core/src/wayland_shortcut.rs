@@ -68,27 +68,42 @@ pub async fn run(host: Arc<dyn Host>, preferred_trigger: String) {
     }
 }
 
-async fn bind_and_listen(host: &Arc<dyn Host>, preferred_trigger: &str) -> ashpd::Result<()> {
-    // Host (non-sandboxed) apps have no app id the portal can discover, and
-    // portal backends reject GlobalShortcuts sessions without one ("An app id
-    // is required"). Claim ours via org.freedesktop.host.portal.Registry —
-    // this must happen before any other call on the portal connection, and
-    // it only succeeds when a matching `<identifier>.desktop` entry is
-    // installed on the host.
-    let identifier = host.app_identifier();
-    match ashpd::AppID::try_from(identifier.as_str()) {
-        Ok(app_id) => {
-            if let Err(e) = ashpd::register_host_app(app_id).await {
-                warn!(
-                    "Could not register '{identifier}' with the desktop portal ({e}); \
-                     the global shortcut needs a `{identifier}.desktop` entry installed \
-                     (e.g. in ~/.local/share/applications/)"
-                );
-            }
-        }
+/// Claim our app id with `org.freedesktop.host.portal.Registry`.
+///
+/// **Must be called before anything else in the process makes a portal call.**
+/// `ashpd` caches one process-wide session-bus connection (`static SESSION:
+/// OnceLock<zbus::Connection>` in its `proxy.rs`), and xdg-desktop-portal
+/// binds an app id to a *connection*, once — a second attempt fails with
+/// "Connection already associated with an application ID". Host
+/// (non-sandboxed) apps have no app id the portal can discover on its own,
+/// and portal backends reject GlobalShortcuts sessions without one ("An app
+/// id is required"), so losing this race silently costs the global shortcut.
+///
+/// This bit the gpui build specifically: `gpui_linux`'s
+/// `xdg_desktop_portal.rs` opens `org.freedesktop.portal.Settings` during
+/// platform init (to watch color-scheme/cursor-theme) — that is a portal call
+/// on the shared connection, and it happens before any code inside the
+/// `Application::run` closure gets to run. Hence: call this from `main()`
+/// *before* starting the gpui application, not from the shortcut task.
+///
+/// Also requires a matching `<identifier>.desktop` entry installed on the
+/// host (e.g. in `~/.local/share/applications/`).
+pub async fn register_app_id(identifier: &str) {
+    match ashpd::AppID::try_from(identifier) {
+        Ok(app_id) => match ashpd::register_host_app(app_id).await {
+            Ok(()) => info!("Registered '{identifier}' with the desktop portal"),
+            Err(e) => warn!(
+                "Could not register '{identifier}' with the desktop portal ({e}); \
+                 the global shortcut needs a `{identifier}.desktop` entry installed \
+                 (e.g. in ~/.local/share/applications/), and this must run before any \
+                 other portal call in the process"
+            ),
+        },
         Err(e) => warn!("App identifier '{identifier}' is not a valid portal app id: {e}"),
     }
+}
 
+async fn bind_and_listen(host: &Arc<dyn Host>, preferred_trigger: &str) -> ashpd::Result<()> {
     let global_shortcuts = GlobalShortcuts::new().await?;
     let session = global_shortcuts
         .create_session(CreateSessionOptions::default())

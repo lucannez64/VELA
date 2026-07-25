@@ -30,6 +30,17 @@ pub enum TrayCommand {
     /// Raise and focus the main window ("Open VELA" menu item, or left-click
     /// on the tray icon itself).
     Activate,
+    /// A tray-triggered "Sync Now" finished — carries the same toast text
+    /// `SettingsScreen::sync_now` shows for an in-app sync, so both trigger
+    /// points give the same "small alert" the original shows for every sync
+    /// (`App.tsx`'s `doSync`), not just the in-window one. Sent from ksni's
+    /// own thread (via `runtime.spawn`, not gpui's foreground executor), so
+    /// it has to cross to gpui the same way every other tray command does —
+    /// through this channel, not a direct `&mut App` call.
+    SyncFinished { message: String, kind: crate::toast::ToastKind },
+    /// Session locked via the tray's "Lock Now" — same state-change alert as
+    /// the in-app lock button.
+    Locked,
     Quit,
 }
 
@@ -100,6 +111,7 @@ impl ksni::Tray for VelaTray {
                 activate: Box::new(|this: &mut Self| {
                     vela_desktop_core::commands::session::lock_session(&this.app_state);
                     tracing::info!("Session locked via tray");
+                    let _ = this.cmd_tx.send(TrayCommand::Locked);
                 }),
                 ..Default::default()
             }
@@ -108,17 +120,28 @@ impl ksni::Tray for VelaTray {
                 label: "Sync Now".into(),
                 activate: Box::new(|this: &mut Self| {
                     let app_state = this.app_state.clone();
+                    let cmd_tx = this.cmd_tx.clone();
                     this.runtime.spawn(async move {
-                        match vela_desktop_core::sync::trigger_sync(&app_state).await {
+                        use crate::toast::ToastKind;
+                        let (message, kind) = match vela_desktop_core::sync::trigger_sync(&app_state).await {
                             Ok(status) => {
                                 if let Some(err) = status.error {
                                     tracing::warn!("Manual sync via tray finished with an error: {err}");
+                                    (err, ToastKind::Info)
+                                } else if !status.conflicts.is_empty() {
+                                    tracing::warn!("Manual sync via tray found conflicts");
+                                    (format!("{} conflict(s) detected", status.conflicts.len()), ToastKind::Error)
                                 } else {
                                     tracing::info!("Manual sync via tray complete");
+                                    ("Vault synced".to_string(), ToastKind::Success)
                                 }
                             }
-                            Err(e) => tracing::warn!("Manual sync via tray failed: {e}"),
-                        }
+                            Err(e) => {
+                                tracing::warn!("Manual sync via tray failed: {e}");
+                                (format!("Sync failed: {e}"), ToastKind::Error)
+                            }
+                        };
+                        let _ = cmd_tx.send(TrayCommand::SyncFinished { message, kind });
                     });
                     tracing::info!("Manual sync triggered via tray");
                 }),

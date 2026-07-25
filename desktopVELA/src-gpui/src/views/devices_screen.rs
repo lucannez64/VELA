@@ -1343,8 +1343,8 @@ fn enrollment_modal(
                                         cx.notify();
                                     });
                                 })
-                                .on_mouse_down(MouseButton::Left, move |_, _, _| {
-                                    crate::clipboard::copy("Enrollment code", &code_for_copy);
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    crate::clipboard::copy(cx, "Enrollment code", &code_for_copy);
                                 }),
                         )
                         .child(
