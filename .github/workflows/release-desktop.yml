@@ -11,6 +11,17 @@ name: release-desktop
 # (requires the AUR_SSH_PRIVATE_KEY repository secret; skipped otherwise).
 on:
   workflow_dispatch:
+  # PRs run a dry run: the Linux job builds and packages, but every
+  # publishing step (release upload, AUR push, and the Windows job, which
+  # publishes via tauri-action and has no separable build step) is gated off.
+  # This exists so the cargo-deb/cargo-generate-rpm path cannot make its
+  # first real execution the one that ships to users.
+  pull_request:
+    branches: [main]
+    paths:
+      - "desktopVELA/**"
+      - "libVELA/vela-crypto/**"
+      - ".github/workflows/release-desktop.yml"
   push:
     branches: [main]
     paths:
@@ -27,6 +38,9 @@ permissions:
 
 jobs:
   build-windows:
+    # tauri-action builds and publishes in a single step, so there is nothing
+    # to usefully dry-run here — skipped on PRs.
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +74,9 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA/src-tauri
+          # See the note in the macOS workflow: the workspace root is
+          # desktopVELA, so src-tauri caches the wrong lockfile/target dir.
+          workspaces: desktopVELA
 
       - name: Install frontend deps
         working-directory: desktopVELA
@@ -86,6 +102,52 @@ jobs:
           prerelease: false
           args: --bundles msi nsis
 
+  # PR dry run for Windows. tauri-action only creates a release when `tagName`
+  # is set, so omitting it gives a build-only run of the exact same bundling
+  # path, publishing nothing. Same rationale as the Linux dry run below: the
+  # first execution of a packaging path should never be the one that ships.
+  build-windows-dryrun:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktopVELA
+
+      - name: Install frontend deps
+        working-directory: desktopVELA
+        run: bun install
+
+      - name: Build MSI + NSIS (no release)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: desktopVELA
+          args: --bundles msi nsis
+
+      - name: Upload installers as build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-windows-installers
+          path: |
+            desktopVELA/target/release/bundle/msi/*.msi
+            desktopVELA/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  # Linux ships the native gpui-ce build, not the Tauri/WebKit one: it is the
+  # platform where the port is feature-complete (tray, XDG portal global
+  # shortcut, autofill IPC, secret-service all work), and it drops the whole
+  # WebKitGTK runtime. Windows/macOS stay on tauri-action above — the port's
+  # tray/shortcut/IPC layers are Linux-only today.
+  #
+  # The binary installs as `vela-desktop` so the desktop entry, icon name, WM
+  # class, portal app id and AUR package are all unchanged from the Tauri
+  # build; `update-aur` below therefore needs no changes at all.
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -103,61 +165,92 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Stamp version into tauri.conf.json
-        run: |
-          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
-            desktopVELA/src-tauri/tauri.conf.json > tmp.json
-          mv tmp.json desktopVELA/src-tauri/tauri.conf.json
-
-      # System libraries required to build a Tauri app on Linux (WebKitGTK,
-      # tray-icon support via Ayatana AppIndicator, SVG icons, xdo for the
-      # global-shortcut plugin). The .deb/.rpm bundlers are pure Rust, so no
-      # dpkg/rpmbuild tooling is needed.
+      # gpui-ce needs no WebKitGTK. Wayland/X11 windowing, font rendering,
+      # xkb keymaps and udev device enumeration are the real requirements;
+      # libssl/libudev come from the vault's own dependency chain.
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libxdo-dev
-
-      - uses: oven-sh/setup-bun@v2
+            libfontconfig-dev \
+            libfreetype-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxcb1-dev \
+            libwayland-dev \
+            libudev-dev \
+            libssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA/src-tauri
+          workspaces: desktopVELA
 
-      - name: Install frontend deps
+      - name: Stamp version into the gpui crate
         working-directory: desktopVELA
-        run: bun install
+        run: |
+          sed -i '0,/^version = ".*"$/s//version = "${{ steps.version.outputs.version }}"/' \
+            src-gpui/Cargo.toml
+          grep -m1 '^version' src-gpui/Cargo.toml
 
-      # Uploads the .deb + .rpm to the same release as the Windows job
-      # (tauri-action attaches to the existing release if it was already created).
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build (release)
+        working-directory: desktopVELA
+        run: cargo build --release -p vela-desktop-gpui
+
+      - name: Package .deb and .rpm
+        working-directory: desktopVELA/src-gpui
+        run: |
+          cargo install cargo-deb cargo-generate-rpm --locked
+          # --no-build/--no-strip: reuse the release binary built above rather
+          # than triggering a second compile of the whole gpui tree.
+          cargo deb --no-build --output ../target/debian/
+          # cargo-deb creates its output dir, cargo-generate-rpm does not — it
+          # fails with a misleading "Is a directory" if this is missing.
+          mkdir -p ../target/generate-rpm
+          cargo generate-rpm --output ../target/generate-rpm/
+
+      # Match the filenames the Windows job and update-aur expect.
+      - name: Normalise artifact names
+        id: artifacts
+        working-directory: desktopVELA
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          cp "$(ls target/debian/*.deb | head -1)" "dist/VELA_${V}_amd64.deb"
+          cp "$(ls target/generate-rpm/*.rpm | head -1)" "dist/VELA-${V}-1.x86_64.rpm"
+          ls -l dist
+
+      # Dry run: prove the .deb/.rpm build and are inspectable, publish nothing.
+      - name: Upload packages as build artifacts (PR dry run)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
-          projectPath: desktopVELA
-          tagName: ${{ steps.version.outputs.tag }}
-          releaseName: "VELA Desktop v${{ steps.version.outputs.version }}"
-          releaseBody: |
-            Automated desktop build.
+          name: vela-linux-packages
+          path: desktopVELA/dist/*
 
-            - Commit: ${{ github.sha }} (`${{ steps.version.outputs.sha }}`)
-            - Windows: `.msi` (WiX) and `-setup.exe` (NSIS)
-            - Linux: `.deb` and `.rpm`
-          releaseDraft: false
-          prerelease: false
-          args: --bundles deb,rpm
+      - name: Upload to the release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # The Windows job may have created the release already; create it
+          # only if missing, then attach (clobbering a re-run's leftovers).
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "VELA Desktop v${{ steps.version.outputs.version }}" \
+              --notes "Automated desktop build.
+
+          - Commit: ${{ github.sha }} (\`${{ steps.version.outputs.sha }}\`)
+          - Windows: \`.msi\` (WiX) and \`-setup.exe\` (NSIS), Tauri build
+          - Linux: \`.deb\` and \`.rpm\`, native gpui-ce build"
+          gh release upload "$TAG" desktopVELA/dist/* --clobber
 
   update-aur:
     # Keep the AUR package vela-desktop-bin in sync with the release.
     # Skipped gracefully until the AUR_SSH_PRIVATE_KEY secret is configured.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: [build-windows, build-linux]
     env:

@@ -11,6 +11,8 @@ tauri-plugin-shell = "2.0"
 tauri-plugin-global-shortcut = "2.0"
 tauri-plugin-notification = "2.0"
 tauri-plugin-clipboard-manager = "2.0"
+tauri-plugin-dialog = "2"
+vela-desktop-core = { path = "../vela-desktop-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
@@ -27,51 +29,19 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "http3"], defaul
 sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"
-zeroize = { version = "1", features = ["derive"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
-directories = "5"
 data-encoding = "2"
 subtle = "2"
 url = "2"
-psl = "2.1.213"
 base64 = "0.22"
 urlencoding = "2"
 hex = "0.4"
 scraper = "0.23"
-tauri-plugin-dialog = "2"
-
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_Security_Credentials",
-    "Win32_Security_Cryptography",
-    "Win32_System_Threading",
-    "Win32_Graphics_Gdi",
-    "Win32_Security_Authentication_Identity",
-    "Win32_System_Memory",
-    "Win32_System_Pipes",
-    "Win32_Storage_FileSystem",
-] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "global_shortcuts"] }
-futures-util = "0.3.33"
-secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }
 tikv-jemallocator = { version = "0.7.0", features = ["background_threads"] }
 webkit2gtk = { version = "2.0", features = ["v2_40"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-
-[profile.dev]
-incremental = true
-opt-level = 0
-debug = true
-
-[profile.dev.package."*"]
-opt-level = 1
-debug = false

@@ -20,6 +20,30 @@ fn cred_id_b64(passkey: &Passkey) -> String {
 
 const REGISTER_STATE_TTL_SECS: u64 = 300;
 
+#[derive(Serialize)]
+pub struct WebauthnConfigResponse {
+    pub rp_id: String,
+    pub rp_origin: String,
+}
+
+/// Publicly exposes the server's configured WebAuthn relying-party id/origin
+/// (`WEBAUTHN_RP_ID`/`WEBAUTHN_RP_ORIGIN`) so native clients — which have no
+/// browser "page origin" of their own to derive this from — can construct a
+/// `clientDataJSON` that this server's `webauthn-rs` verifier will actually
+/// accept, without requiring the user to hand-configure a value that must
+/// match this deployment's own server-side setting exactly. Neither value is
+/// a secret: `rp_id` is echoed back in every registration/assertion
+/// challenge already, and `rp_origin` is comparable to a public redirect URI
+/// in OAuth — deployment metadata, not an authorization credential.
+pub async fn get_webauthn_config(
+    State(state): State<AppState>,
+) -> Json<WebauthnConfigResponse> {
+    Json(WebauthnConfigResponse {
+        rp_id: state.config.webauthn_rp_id.clone(),
+        rp_origin: state.config.webauthn_rp_origin.clone(),
+    })
+}
+
 #[derive(Deserialize)]
 pub struct RegisterStartRequest {
     pub user_name: Option<String>,

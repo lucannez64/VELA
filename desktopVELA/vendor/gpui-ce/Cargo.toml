@@ -1,0 +1,213 @@
+[workspace]
+members = [
+  "./crates/gpui/",
+  "./crates/gpui_web/",
+  "./crates/gpui_wgpu/",
+  "./crates/gpui_linux/",
+  "./crates/gpui_macos/",
+  "./crates/gpui_tokio/",
+  "./crates/gpui_macros/",
+  "./crates/gpui_windows/",
+  "./crates/gpui_platform/",
+  "./crates/gpui_shared_string/",
+  "./crates/gpui_elements/",
+  "./crates/gpui_collections/",
+  "./crates/gpui_refineable/",
+  "./crates/gpui_derive_refineable/",
+  "./crates/gpui_scheduler/",
+  "./crates/gpui_sum_tree/",
+  "./crates/gpui_media/",
+  "./crates/gpui_zed_util/",
+  "./crates/gpui_ce_util/",
+  "./tooling/perf/",
+]
+default-members = ["./crates/gpui/"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+authors = ["Nathan Sobo <nathan@zed.dev>"]
+description = "A community fork of Zed's GPU-accelerated UI framework"
+publish = true
+license = "Apache-2.0"
+homepage = "https://gpui-ce.github.io/"
+readme = "README.md"
+
+[workspace.dependencies]
+accesskit = "0.24.0"
+accesskit_macos = "0.26.0"
+accesskit_unix = "0.22.0"
+accesskit_windows = "0.32.1"
+anyhow = "1.0.86"
+backtrace = "0.3"
+bitflags = "2.6.0"
+collections = { path = "crates/gpui_collections", version = "0.2.2", package = "gpui_collections" }
+ctor = "1.0.6"
+derive_more = { version = "2.1.1", features = [
+  "add",
+  "add_assign",
+  "deref",
+  "deref_mut",
+  "display",
+  "from_str",
+  "mul",
+  "mul_assign",
+  "not",
+] }
+futures = "0.3.32"
+futures-concurrency = "7.7.1"
+http = "1.3"
+image = "0.25.1"
+inventory = "0.3.19"
+itertools = "0.14.0"
+log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+parking_lot = "0.12.1"
+postage = { version = "0.5", features = ["futures-traits"] }
+proptest = { version = "1.10", features = ["attr-macro"] }
+chrono = { version = "0.4", features = ["serde"] }
+profiling = "1"
+rand = "0.9.4"
+regex = "1.5"
+refineable = { path = "crates/gpui_refineable", version = "0.2.2", package = "gpui_refineable" }
+scheduler = { path = "crates/gpui_scheduler", version = "0.2.2", package = "gpui_scheduler" }
+schemars = { version = "1.0", features = ["indexmap2"] }
+serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
+slotmap = "1.0.6"
+smallvec = { version = "1.6", features = ["union", "const_new"] }
+async-channel = "2.5.0"
+stacksafe = "1.0"
+strum = { version = "0.27.2", features = ["derive"] }
+sum_tree = { path = "crates/gpui_sum_tree", version = "0.2.2", package = "gpui_sum_tree" }
+thiserror = "2.0.12"
+hdrhistogram = "7"
+pollster = "0.4.0"
+url = "2.2"
+uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+web-time = "1.1.0"
+cocoa = "=0.26.0"
+cocoa-foundation = "=0.2.0"
+core-foundation = "=0.10.0"
+core-foundation-sys = "0.8.6"
+core-video = { version = "0.5.2", features = ["metal"] }
+media = { path = "crates/gpui_media", version = "0.2.2", package = "gpui_media" }
+objc = "0.2"
+mach2 = "0.5"
+metal = "0.33"
+scap = { version = "0.0.8-zed", package = "zed-scap", default-features = false }
+env_logger = "0.11"
+unicode-segmentation = "1.10"
+
+wasm-bindgen = "0.2.120"
+heck = "0.5"
+proc-macro2 = "1.0.93"
+syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
+quote = "1.0.9"
+ashpd = { version = "0.13", default-features = false, features = [
+  "async-io",
+  "notification",
+  "open_uri",
+  "file_chooser",
+  "settings",
+  "trash",
+] }
+libc = "0.2"
+smol = "2.0"
+util = { path = "crates/gpui_zed_util", version = "0.2.2", package = "gpui_zed_util" }
+wgpu = "29.0.3"
+criterion = { version = "0.5", features = ["html_reports"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "NSGraphics",
+] }
+semver = { version = "1.0", features = ["serde"] }
+windows-core = "0.61"
+tokio = { version = "1" }
+gpui_util = { path = "crates/gpui_ce_util", version = "0.2.2", package = "gpui_ce_util" }
+
+gpui = { path = "./crates/gpui/", version = "0.2.2" }
+gpui_platform = { path = "./crates/gpui_platform/", version = "0.1.0" }
+gpui_linux = { path = "./crates/gpui_linux/", version = "0.1.0" }
+gpui_macos = { path = "./crates/gpui_macos/", version = "0.1.0" }
+gpui_windows = { path = "./crates/gpui_windows/", version = "0.1.0" }
+gpui_web = { path = "./crates/gpui_web/", version = "0.1.0" }
+
+gpui_wgpu = { path = "./crates/gpui_wgpu/", version = "0.1.0" }
+
+gpui_macros = { path = "./crates/gpui_macros/", version = "0.1.0" }
+gpui_shared_string = { path = "./crates/gpui_shared_string/", version = "0.1.0" }
+gpui_tokio = { path = "./crates/gpui_tokio/", version = "0.1.0" }
+
+[workspace.dependencies.windows]
+version = "0.61"
+features = [
+  "Foundation_Numerics",
+  "Globalization_DateTimeFormatting",
+  "Storage_Search",
+  "Storage_Streams",
+  "System_Threading",
+  "UI_ViewManagement",
+  "Wdk_System_SystemServices",
+  "Win32_Foundation",
+  "Win32_Globalization",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Direct3D_Fxc",
+  "Win32_Graphics_DirectComposition",
+  "Win32_Graphics_DirectWrite",
+  "Win32_Graphics_DirectManipulation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Imaging",
+  "Win32_Graphics_Hlsl",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_Security_Credentials",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Console",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_DataExchange",
+  "Win32_System_IO",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_Performance",
+  "Win32_System_Pipes",
+  "Win32_System_RestartManager",
+  "Win32_System_SystemInformation",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_System_WinRT",
+  "Win32_UI_Controls",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_Ime",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Input_Pointer",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Media",
+]
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+declare_interior_mutable_const = "deny"
+redundant_clone = "deny"
+disallowed_methods = "deny"
+style = { level = "allow", priority = -1 }
+type_complexity = "allow"
+let_underscore_future = "allow"
+single_range_in_vec_init = "allow"
+too_many_arguments = "allow"
+large_enum_variant = "allow"
+nonminimal_bool = "allow"

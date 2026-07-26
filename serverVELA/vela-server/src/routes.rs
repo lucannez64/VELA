@@ -131,6 +131,10 @@ pub fn build(state: AppState) -> Router {
         .route("/recovery/share", get(crate::recovery::get_share))
         .route("/recovery/share", delete(crate::recovery::delete_share))
         .route(
+            "/recovery/webauthn/config",
+            get(crate::recovery::webauthn::get_webauthn_config),
+        )
+        .route(
             "/recovery/webauthn/register/start",
             post(crate::recovery::webauthn::post_register_start),
         )

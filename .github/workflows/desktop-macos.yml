@@ -39,7 +39,11 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA/src-tauri
+          # desktopVELA, not src-tauri: src-tauri is a workspace member now, so
+          # the lockfile and target dir it caches both live at the root. Pointed
+          # at src-tauri it keys off an orphaned lockfile and caches an empty
+          # target dir.
+          workspaces: desktopVELA
 
       - name: Install frontend deps
         working-directory: desktopVELA
@@ -65,11 +69,14 @@ jobs:
 
       # Launch the built app on the runner, screenshot it, and confirm it didn't
       # crash on startup. The screenshot is uploaded so the UI can be eyeballed.
+      # Bundles land in desktopVELA/target, not src-tauri/target: src-tauri is a
+      # member of the desktopVELA workspace, so the target dir is the workspace
+      # root's.
       - name: Smoke test (launch, screenshot, extension IPC bridge)
         run: |
           set -x
-          APP=$(find desktopVELA/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
-          if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R desktopVELA/src-tauri/target/release/bundle || true; exit 1; fi
+          APP=$(find desktopVELA/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R desktopVELA/target/release/bundle || true; exit 1; fi
           open "$APP"
           sleep 12
           screencapture -x smoke.png || true
@@ -95,7 +102,7 @@ jobs:
         with:
           name: vela-macos-arm64
           path: |
-            desktopVELA/src-tauri/target/release/bundle/dmg/*.dmg
-            desktopVELA/src-tauri/target/release/bundle/macos/*.app
+            desktopVELA/target/release/bundle/dmg/*.dmg
+            desktopVELA/target/release/bundle/macos/*.app
             smoke.png
           if-no-files-found: warn
