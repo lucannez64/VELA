@@ -3,8 +3,9 @@ name = "vela-desktop-gpui"
 version = "0.1.0"
 edition = "2021"
 # Required by cargo-generate-rpm, which hard-errors without `license`
-# (cargo-deb only warns). Both end up in the shipped package metadata.
-license = "MIT OR Apache-2.0"
+# (cargo-deb only warns). Both end up in the shipped package metadata,
+# and must stay in step with the LICENSE file at the repo root.
+license = "MIT"
 description = "Passwordless, zero-knowledge password vault."
 
 [dependencies]
