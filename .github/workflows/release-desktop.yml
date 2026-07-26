@@ -74,7 +74,9 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA/src-tauri
+          # See the note in the macOS workflow: the workspace root is
+          # desktopVELA, so src-tauri caches the wrong lockfile/target dir.
+          workspaces: desktopVELA
 
       - name: Install frontend deps
         working-directory: desktopVELA
@@ -99,6 +101,43 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --bundles msi nsis
+
+  # PR dry run for Windows. tauri-action only creates a release when `tagName`
+  # is set, so omitting it gives a build-only run of the exact same bundling
+  # path, publishing nothing. Same rationale as the Linux dry run below: the
+  # first execution of a packaging path should never be the one that ships.
+  build-windows-dryrun:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktopVELA
+
+      - name: Install frontend deps
+        working-directory: desktopVELA
+        run: bun install
+
+      - name: Build MSI + NSIS (no release)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: desktopVELA
+          args: --bundles msi nsis
+
+      - name: Upload installers as build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-windows-installers
+          path: |
+            desktopVELA/target/release/bundle/msi/*.msi
+            desktopVELA/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
 
   # Linux ships the native gpui-ce build, not the Tauri/WebKit one: it is the
   # platform where the port is feature-complete (tray, XDG portal global

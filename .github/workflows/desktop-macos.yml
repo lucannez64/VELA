@@ -39,7 +39,11 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA/src-tauri
+          # desktopVELA, not src-tauri: src-tauri is a workspace member now, so
+          # the lockfile and target dir it caches both live at the root. Pointed
+          # at src-tauri it keys off an orphaned lockfile and caches an empty
+          # target dir.
+          workspaces: desktopVELA
 
       - name: Install frontend deps
         working-directory: desktopVELA
