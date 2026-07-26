@@ -458,3 +458,7 @@ Check:
 - Chromium registration used `VELA_CHROME_EXTENSION_ID`.
 - The native host can read the desktop `ipc_auth.json`.
 - The desktop session is active and biometric approval succeeds before secrets are returned.
+
+# License
+
+MIT. See [LICENSE](LICENSE).
