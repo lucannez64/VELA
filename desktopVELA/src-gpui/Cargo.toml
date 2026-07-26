@@ -2,6 +2,10 @@
 name = "vela-desktop-gpui"
 version = "0.1.0"
 edition = "2021"
+# Required by cargo-generate-rpm, which hard-errors without `license`
+# (cargo-deb only warns). Both end up in the shipped package metadata.
+license = "MIT OR Apache-2.0"
+description = "Passwordless, zero-knowledge password vault."
 
 [dependencies]
 gpui = { package = "gpui", git = "https://github.com/gpui-ce/gpui-ce" }
@@ -26,15 +30,6 @@ ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = { version = "0.7.0", features = ["background_threads"] }
-
-[profile.dev]
-incremental = true
-opt-level = 0
-debug = true
-
-[profile.dev.package."*"]
-opt-level = 1
-debug = false
 
 # Installed as `vela-desktop`, NOT `vela-desktop-gpui`: the shipped
 # `com.vela.vault.desktop` entry has `Exec=vela-desktop` /
@@ -65,7 +60,11 @@ assets = [
 name = "VELA"
 summary = "Passwordless, zero-knowledge password vault."
 assets = [
-    { source = "target/release/vela-desktop", dest = "/usr/bin/vela-desktop", mode = "755" },
+    # `../target`, unlike the cargo-deb block above: cargo-deb rewrites a
+    # leading `target/release/` to the real (workspace) target dir, but
+    # cargo-generate-rpm resolves sources relative to the invocation cwd —
+    # which is this crate dir, one level below the workspace target.
+    { source = "../target/release/vela-desktop", dest = "/usr/bin/vela-desktop", mode = "755" },
     { source = "../src-tauri/assets/com.vela.vault.desktop", dest = "/usr/share/applications/com.vela.vault.desktop", mode = "644" },
     { source = "../src-tauri/icons/icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/vela-desktop.png", mode = "644" },
 ]

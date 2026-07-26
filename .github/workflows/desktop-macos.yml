@@ -65,11 +65,14 @@ jobs:
 
       # Launch the built app on the runner, screenshot it, and confirm it didn't
       # crash on startup. The screenshot is uploaded so the UI can be eyeballed.
+      # Bundles land in desktopVELA/target, not src-tauri/target: src-tauri is a
+      # member of the desktopVELA workspace, so the target dir is the workspace
+      # root's.
       - name: Smoke test (launch, screenshot, extension IPC bridge)
         run: |
           set -x
-          APP=$(find desktopVELA/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
-          if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R desktopVELA/src-tauri/target/release/bundle || true; exit 1; fi
+          APP=$(find desktopVELA/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R desktopVELA/target/release/bundle || true; exit 1; fi
           open "$APP"
           sleep 12
           screencapture -x smoke.png || true
@@ -95,7 +98,7 @@ jobs:
         with:
           name: vela-macos-arm64
           path: |
-            desktopVELA/src-tauri/target/release/bundle/dmg/*.dmg
-            desktopVELA/src-tauri/target/release/bundle/macos/*.app
+            desktopVELA/target/release/bundle/dmg/*.dmg
+            desktopVELA/target/release/bundle/macos/*.app
             smoke.png
           if-no-files-found: warn

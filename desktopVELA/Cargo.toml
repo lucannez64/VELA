@@ -9,6 +9,21 @@ exclude = ["vendor/gpui-ce"]
 [workspace.package]
 edition = "2021"
 
+# Profiles must live at the workspace root — Cargo ignores (and warns about)
+# `[profile.*]` in member manifests. Both src-tauri and src-gpui carried this
+# block back when each was its own workspace root; it lives here now so the
+# fast-debug-build tuning keeps applying to both.
+[profile.dev]
+incremental = true
+opt-level = 0
+debug = true
+
+# Dependencies at opt-level 1: the gpui tree is unusably slow when built fully
+# unoptimized, and we don't step through it anyway.
+[profile.dev.package."*"]
+opt-level = 1
+debug = false
+
 # Local fork of the pinned gpui-ce revision (vendor/gpui-ce, vendored from
 # the exact rev in Cargo.lock), carrying one fix not yet upstreamed:
 # `EditableTextState::replace_text_in_range`/`replace_and_mark_text_in_range`

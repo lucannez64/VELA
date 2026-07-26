@@ -166,6 +166,9 @@ jobs:
           # --no-build/--no-strip: reuse the release binary built above rather
           # than triggering a second compile of the whole gpui tree.
           cargo deb --no-build --output ../target/debian/
+          # cargo-deb creates its output dir, cargo-generate-rpm does not — it
+          # fails with a misleading "Is a directory" if this is missing.
+          mkdir -p ../target/generate-rpm
           cargo generate-rpm --output ../target/generate-rpm/
 
       # Match the filenames the Windows job and update-aur expect.
