@@ -26,7 +26,6 @@ mod toast;
 mod tray;
 mod views;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
@@ -234,13 +233,6 @@ impl Render for RootView {
     }
 }
 
-fn load_font_bytes(file_name: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../src/assets/fonts")
-        .join(file_name);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"))
-}
-
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -324,9 +316,9 @@ fn main() {
                 .as_keybindings(Some(gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT)),
         );
 
-        for font_file in fonts::FONT_FILES {
+        for (font_file, font_bytes) in fonts::FONT_FILES {
             cx.text_system()
-                .add_fonts(vec![load_font_bytes(font_file).into()])
+                .add_fonts(vec![std::borrow::Cow::Borrowed(*font_bytes)])
                 .unwrap_or_else(|e| panic!("failed to load font {font_file}: {e}"));
         }
 

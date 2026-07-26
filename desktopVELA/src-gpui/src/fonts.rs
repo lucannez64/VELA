@@ -17,9 +17,28 @@ pub const MONO: &str = "JetBrains Mono";
 /// Material Symbols Outlined — see `icon.rs`.
 pub const ICONS: &str = "Material Symbols Outlined";
 
-/// All font files under `desktopVELA/src/assets/fonts/`, loaded once at
-/// startup so every weight is available to gpui's font matcher.
-pub const FONT_FILES: &[&str] = &[
+macro_rules! embedded_fonts {
+    ($($file:literal),* $(,)?) => {
+        /// All font files under `desktopVELA/src/assets/fonts/`, embedded into
+        /// the binary and registered once at startup so every weight is
+        /// available to gpui's font matcher.
+        ///
+        /// Embedded rather than read from disk at runtime: the fonts live in
+        /// the source tree, not in any install prefix, so a `std::fs::read`
+        /// relative to `CARGO_MANIFEST_DIR` resolves to the *build* machine's
+        /// checkout and panics on every machine that isn't it (the released
+        /// binary looked for `/home/runner/work/VELA/...`). Same reason
+        /// `tray.rs` embeds the tray icon. ~3.7 MiB of the binary.
+        pub const FONT_FILES: &[(&str, &[u8])] = &[
+            $((
+                $file,
+                include_bytes!(concat!("../../src/assets/fonts/", $file)),
+            )),*
+        ];
+    };
+}
+
+embedded_fonts![
     "inter-300.ttf",
     "inter-400.ttf",
     "inter-500.ttf",
