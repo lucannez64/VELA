@@ -10,6 +10,7 @@ use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, IntoElement, Rend
 
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::fonts;
 use crate::icon::icon;
 use crate::sidebar::{NavView, Sidebar, SidebarEvent};
@@ -166,11 +167,12 @@ impl AppShell {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             let item = cx
-                .background_spawn({
+                .background_spawn_guarded("open item", {
                     let app_state = app_state.clone();
                     async move { vela_desktop_core::commands::vault::get_item(&app_state, &id) }
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Opening the item failed unexpectedly".to_string()));
             match item {
                 Ok(Some(item)) => {
                     this.update(cx, |this, cx| {

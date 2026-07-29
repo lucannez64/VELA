@@ -22,6 +22,7 @@ use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage}
 
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -112,8 +113,13 @@ impl WelcomeScreen {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
         cx.spawn(async move |this, cx| {
             let status = cx
-                .background_spawn(async { vela_desktop_core::biometric::check_enrollment() })
-                .await;
+                .background_spawn_guarded("welcome enrollment check", async {
+                    vela_desktop_core::biometric::check_enrollment()
+                })
+                .await
+                // A backend that can't answer is not a backend that enrolled
+                // us: fall through to the password path.
+                .unwrap_or_default();
             let has_real_biometric = status.enrolled
                 && !matches!(
                     status.provider,
@@ -192,10 +198,11 @@ impl WelcomeScreen {
             // Shells out to `rclone listremotes` — blocking process I/O, no
             // tokio reactor needed, so the background pool is the right home.
             let result = cx
-                .background_spawn(async {
+                .background_spawn_guarded("list cloud recovery remotes", async {
                     vela_desktop_core::recovery::list_cloud_backup_remotes().await
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Listing cloud remotes failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.recover.loading_remotes = false;
                 match result {
@@ -227,10 +234,11 @@ impl WelcomeScreen {
 
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move {
+                .background_spawn_guarded("fetch cloud recovery share", async move {
                     vela_desktop_core::recovery::fetch_cloud_recovery_share(remote.to_string()).await
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Downloading the recovery share failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.recover.fetching_share = false;
                 match result {

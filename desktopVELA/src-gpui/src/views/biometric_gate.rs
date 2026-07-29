@@ -26,6 +26,7 @@ use vela_desktop_core::biometric::BiometricProvider;
 use vela_desktop_core::commands::session;
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -75,8 +76,11 @@ impl BiometricGate {
 
         cx.spawn(async move |this, cx| {
             let status = cx
-                .background_spawn(async { vela_desktop_core::biometric::check_enrollment() })
-                .await;
+                .background_spawn_guarded("gate enrollment check", async {
+                    vela_desktop_core::biometric::check_enrollment()
+                })
+                .await
+                .unwrap_or_default();
             let available = status.enrolled
                 && !matches!(
                     status.provider,
@@ -207,8 +211,18 @@ impl BiometricGate {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             let auth_result = cx
-                .background_spawn(async { vela_desktop_core::biometric::authenticate() })
-                .await;
+                .background_spawn_guarded("biometric authenticate", async {
+                    vela_desktop_core::biometric::authenticate()
+                })
+                .await
+                // Same shape the backend returns on a refusal, so the failure
+                // lands in the retry/lockout path instead of unwinding.
+                .unwrap_or_else(|| vela_desktop_core::biometric::BiometricAuthResult {
+                    success: false,
+                    error_message: Some("Biometric authentication failed unexpectedly".to_string()),
+                    retry_count: None,
+                    uses_password: false,
+                });
 
             if !auth_result.success {
                 let message = auth_result

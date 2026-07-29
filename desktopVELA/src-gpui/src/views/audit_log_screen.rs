@@ -14,6 +14,7 @@ use gpui::{div, prelude::*, px, Context, IntoElement, Render, SharedString, Task
 use vela_desktop_core::audit::{AuditAction, AuditEntry};
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -30,8 +31,13 @@ impl AuditLogScreen {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
         cx.spawn(async move |this, cx| {
             let log = cx
-                .background_spawn(async move { vela_desktop_core::audit::load_audit_log(&app_state) })
-                .await;
+                .background_spawn_guarded("load audit log", async move {
+                    vela_desktop_core::audit::load_audit_log(&app_state)
+                })
+                .await
+                // Both the guard's `None` and the loader's own `None` mean
+                // the same thing to the screen below: no log to show.
+                .flatten();
             this.update(cx, |this, cx| {
                 match log {
                     Some(log) => {
