@@ -42,6 +42,9 @@ pub enum WelcomeEvent {
 
 impl EventEmitter<WelcomeEvent> for WelcomeScreen {}
 
+/// `max-w-4xl` on the original's card.
+const CARD_MAX_WIDTH: f32 = 896.;
+
 pub struct WelcomeScreen {
     app_state: Arc<AppState>,
     /// `None` while the initial `check_enrollment()` background call is in
@@ -489,207 +492,274 @@ impl Render for WelcomeScreen {
         let palette = crate::theme::current_palette(cx);
         let checking = self.biometric_available.is_none();
 
+        // The original is a 12-column grid inside `max-w-4xl`: the branding
+        // column is `hidden md:flex md:col-span-5`, the action column is
+        // `md:col-span-7 p-6 sm:p-10 md:p-16` with a `max-w-md` content
+        // block, and the headline steps `text-3xl sm:text-4xl md:text-5xl`.
+        // gpui has neither media queries nor grid, so the breakpoints come
+        // from the live viewport (same idiom as `sidebar.rs` and
+        // `item_detail.rs`) and the 5/12 split is computed here — a
+        // percentage width would be measured against a stretched parent and
+        // silently fall back to the content size.
+        let viewport = window.viewport_size().width;
+        let sm_up = viewport >= px(640.);
+        let md_up = viewport >= px(768.);
+        let card_width = (f32::from(viewport) - 64.).clamp(0., CARD_MAX_WIDTH);
+        let branding_width = px(card_width * 5. / 12.);
+        let pane_padding = if md_up {
+            px(64.)
+        } else if sm_up {
+            px(40.)
+        } else {
+            px(24.)
+        };
+        let headline_size = if md_up {
+            px(48.)
+        } else if sm_up {
+            px(36.)
+        } else {
+            px(30.)
+        };
+        // `mb-8 sm:mb-12` on the header, `mt-10 sm:mt-16` on the footer.
+        let header_gap = if sm_up { px(48.) } else { px(32.) };
+        let footer_gap = if sm_up { px(64.) } else { px(40.) };
+
         div()
+            .id("welcome")
             .relative()
             .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
+            .overflow_y_scroll()
             .bg(palette.surface)
             .font_family(fonts::LABEL)
-            .p_8()
             .child(
+                // `min-h-screen ... my-auto` in the original: centred while the
+                // card fits, growing (and scrolling) instead of centring once
+                // it doesn't. Centring directly on the scroll container would
+                // push the headline off the top with no way to reach it.
                 div()
+                    .min_h_full()
+                    .w_full()
                     .flex()
-                    .w(px(880.))
-                    .rounded_xl()
-                    .overflow_hidden()
-                    .bg(palette.surface_container_low)
+                    .items_center()
+                    .justify_center()
+                    .p_8()
                     .child(
-                        // Left branding panel — desktop-only column in the
-                        // original (`hidden md:flex`); always shown here for
-                        // now since there's no responsive breakpoint system
-                        // yet.
                         div()
-                            .w(px(340.))
-                            .p_8()
                             .flex()
-                            .flex_col()
-                            .justify_between()
-                            .bg(palette.surface_container)
-                            .child(
+                            .w_full()
+                            .max_w(px(CARD_MAX_WIDTH))
+                            .min_w_0()
+                            .rounded_xl()
+                            .overflow_hidden()
+                            .bg(palette.surface_container_low)
+                            .when(md_up, |el| el.child(
+                                // Left branding panel — `hidden md:flex` in the
+                                // original, so it drops out entirely below 768px
+                                // rather than squeezing the actions.
                                 div()
+                                    .w(branding_width)
+                                    .flex_shrink_0()
+                                    .p_12()
                                     .flex()
                                     .flex_col()
-                                    .gap_4()
-                                    .child({
-                                        let hover_t = animation::hover_transition("welcome-reset", window, cx);
-                                        let t = *hover_t.evaluate(window, cx);
-                                        let color = animation::lerp_hsla(
-                                            palette.primary,
-                                            gpui::Hsla { a: 0.8, ..palette.primary },
-                                            t,
-                                        );
-                                        div()
-                                            .id("welcome-reset")
-                                            .cursor_pointer()
-                                            .on_hover(move |is_hovered, _, cx| {
-                                                hover_t.update(cx, |v, cx| {
-                                                    *v = *is_hovered as u8 as f32;
-                                                    cx.notify();
-                                                });
-                                            })
-                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                                this.open_reset_modal(cx);
-                                            }))
-                                            .child(
-                                                fonts::tracked_text("VELA", px(24.), 0.2)
-                                                    .font_family(fonts::HEADLINE)
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_color(color)
-                                                    .text_xl(),
-                                            )
-                                    })
+                                    .justify_between()
+                                    .bg(palette.surface_container)
                                     .child(
                                         div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_4()
+                                            .child({
+                                                let hover_t = animation::hover_transition("welcome-reset", window, cx);
+                                                let t = *hover_t.evaluate(window, cx);
+                                                let color = animation::lerp_hsla(
+                                                    palette.primary,
+                                                    gpui::Hsla { a: 0.8, ..palette.primary },
+                                                    t,
+                                                );
+                                                div()
+                                                    .id("welcome-reset")
+                                                    .cursor_pointer()
+                                                    .on_hover(move |is_hovered, _, cx| {
+                                                        hover_t.update(cx, |v, cx| {
+                                                            *v = *is_hovered as u8 as f32;
+                                                            cx.notify();
+                                                        });
+                                                    })
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                        this.open_reset_modal(cx);
+                                                    }))
+                                                    .child(
+                                                        fonts::tracked_text("VELA", px(24.), 0.2)
+                                                            .font_family(fonts::HEADLINE)
+                                                            .font_weight(gpui::FontWeight::BOLD)
+                                                            .text_color(color)
+                                                            .text_xl(),
+                                                    )
+                                            })
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .text_xs()
+                                                    .text_color(palette.secondary)
+                                                    .child(icon("verified_user", px(14.), palette.secondary))
+                                                    .child(fonts::tracked_text("POST-QUANTUM READY", px(12.), 0.1)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .font_family(fonts::HEADLINE)
+                                                    .font_weight(gpui::FontWeight::LIGHT)
+                                                    .text_size(px(30.))
+                                                    .line_height(px(30.) * 1.25)
+                                                    .text_color(palette.on_surface)
+                                                    .child("Secure your identity in the void."),
+                                            ),
+                                    )
+                                    .child(
+                                        // `.security-pulse` (`index.css`: 4s pulse)
+                                        // wraps this whole card in the original.
+                                        div()
+                                            .p_3()
+                                            .rounded_lg()
+                                            .bg(palette.surface_container_high)
+                                            .opacity(animation::pulse_alpha(4.0))
                                             .flex()
                                             .items_center()
-                                            .gap_2()
-                                            .text_xs()
-                                            .text_color(palette.secondary)
-                                            .child(icon("verified_user", px(14.), palette.secondary))
-                                            .child(fonts::tracked_text("POST-QUANTUM READY", px(12.), 0.1)),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(fonts::HEADLINE)
-                                            .font_weight(gpui::FontWeight::LIGHT)
-                                            .text_2xl()
-                                            .text_color(palette.on_surface)
-                                            .child("Secure your identity in the void."),
+                                            .gap_3()
+                                            .child(icon("security", px(20.), palette.primary))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .child(
+                                                        div()
+                                                            .font_family(fonts::HEADLINE)
+                                                            .font_weight(gpui::FontWeight::BOLD)
+                                                            .text_sm()
+                                                            .text_color(palette.primary)
+                                                            .child("Active Protection"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(palette.on_surface_variant)
+                                                            .child("Zero-Knowledge Protocol Engaged"),
+                                                    ),
+                                            ),
                                     ),
-                            )
+                            ))
                             .child(
-                                // `.security-pulse` (`index.css`: 4s pulse)
-                                // wraps this whole card in the original.
                                 div()
-                                    .p_3()
-                                    .rounded_lg()
-                                    .bg(palette.surface_container_high)
-                                    .opacity(animation::pulse_alpha(4.0))
+                                    .flex_1()
+                                    // Without this the column's min-content width —
+                                    // the unwrapped subtitle — wins over `flex_1`, so
+                                    // the panel grows past the card and everything
+                                    // right of the fold is clipped, padding included.
+                                    .min_w_0()
+                                    .p(pane_padding)
                                     .flex()
+                                    .flex_col()
+                                    .justify_center()
                                     .items_center()
-                                    .gap_3()
-                                    .child(icon("security", px(20.), palette.primary))
                                     .child(
                                         div()
+                                            .w_full()
+                                            // `max-w-md mx-auto` in the original.
+                                            .max_w(px(448.))
                                             .flex()
                                             .flex_col()
                                             .child(
                                                 div()
-                                                    .font_family(fonts::HEADLINE)
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_sm()
-                                                    .text_color(palette.primary)
-                                                    .child("Active Protection"),
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_4()
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .font_family(fonts::HEADLINE)
+                                                            .font_weight(gpui::FontWeight::BOLD)
+                                                            // `tracked_text` only spaces the
+                                                            // glyphs; the size is inherited.
+                                                            .text_size(headline_size)
+                                                            // `leading-tight`.
+                                                            .line_height(headline_size * 1.25)
+                                                            .text_color(palette.on_surface)
+                                                            .child(fonts::tracked_text("Your vault.", headline_size, -0.025))
+                                                            .child(fonts::tracked_text("No passwords.", headline_size, -0.025)),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .font_family(fonts::BODY)
+                                                            .text_lg()
+                                                            .text_color(palette.on_surface_variant)
+                                                            .child(
+                                                                "Access your secrets through device-native \
+                                                                 biometrics and post-quantum encryption.",
+                                                            ),
+                                                    ),
                                             )
                                             .child(
                                                 div()
-                                                    .text_xs()
-                                                    .text_color(palette.on_surface_variant)
-                                                    .child("Zero-Knowledge Protocol Engaged"),
-                                            ),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .p_10()
-                            .flex()
-                            .flex_col()
-                            .justify_center()
-                            .gap_6()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .font_family(fonts::HEADLINE)
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_3xl()
-                                            .text_color(palette.on_surface)
-                                            .child(fonts::tracked_text("Your vault.", px(30.), -0.025))
-                                            .child(fonts::tracked_text("No passwords.", px(30.), -0.025)),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(fonts::BODY)
-                                            .text_color(palette.on_surface_variant)
-                                            .child(
-                                                "Access your secrets through device-native \
-                                                 biometrics and post-quantum encryption.",
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_3()
-                                    .child(primary_action_button(
-                                        &palette,
-                                        "create-vault",
-                                        self.create_vault_label(),
-                                        "add_circle",
-                                        !checking,
-                                        window,
-                                        cx,
-                                        cx.listener(|_this, _, _, cx| {
-                                            cx.emit(WelcomeEvent::CreateVault);
-                                        }),
-                                    ))
-                                    .child(action_button(
-                                        &palette,
-                                        "add-existing",
-                                        "Add existing device",
-                                        "devices",
-                                        !checking,
-                                        window,
-                                        cx,
-                                        cx.listener(|_this, _, _, cx| {
-                                            cx.emit(WelcomeEvent::AddExistingDevice);
-                                        }),
-                                    ))
-                                    .child(action_button(
-                                        &palette,
-                                        "join-account",
-                                        "Join existing account",
-                                        "vpn_key",
-                                        true,
-                                        window,
-                                        cx,
-                                        cx.listener(|this, _event, _window, cx| {
-                                            this.open_import_modal(cx);
-                                        }),
-                                    ))
-                                    .child(action_button(
-                                        &palette,
-                                        "recover-account",
-                                        "Recover my account",
-                                        "restore",
-                                        true,
-                                        window,
-                                        cx,
-                                        cx.listener(|this, _event, _window, cx| {
-                                            this.open_recover_modal(cx);
-                                        }),
-                                    )),
-                            ),
+                                                    .flex()
+                                                    .flex_col()
+                                                    // `space-y-4`, below a `mb-8 sm:mb-12` header.
+                                                    .gap_4()
+                                                    .mt(header_gap)
+                                                    .child(primary_action_button(
+                                                        &palette,
+                                                        "create-vault",
+                                                        self.create_vault_label(),
+                                                        "add_circle",
+                                                        !checking,
+                                                        window,
+                                                        cx,
+                                                        cx.listener(|_this, _, _, cx| {
+                                                            cx.emit(WelcomeEvent::CreateVault);
+                                                        }),
+                                                    ))
+                                                    .child(action_button(
+                                                        &palette,
+                                                        "add-existing",
+                                                        "Add existing device",
+                                                        "devices",
+                                                        !checking,
+                                                        window,
+                                                        cx,
+                                                        cx.listener(|_this, _, _, cx| {
+                                                            cx.emit(WelcomeEvent::AddExistingDevice);
+                                                        }),
+                                                    ))
+                                                    .child(action_button(
+                                                        &palette,
+                                                        "join-account",
+                                                        "Join existing account",
+                                                        "vpn_key",
+                                                        true,
+                                                        window,
+                                                        cx,
+                                                        cx.listener(|this, _event, _window, cx| {
+                                                            this.open_import_modal(cx);
+                                                        }),
+                                                    ))
+                                                    .child(action_button(
+                                                        &palette,
+                                                        "recover-account",
+                                                        "Recover my account",
+                                                        "restore",
+                                                        true,
+                                                        window,
+                                                        cx,
+                                                        cx.listener(|this, _event, _window, cx| {
+                                                            this.open_recover_modal(cx);
+                                                        }),
+                                                    )),
+                                            )
+                                            .child(trust_footer(&palette, footer_gap)),
+                                ),
+                        ),
                     ),
             )
             .when(self.show_reset_modal, |el| el.child(reset_confirm_modal(&palette, self, window, cx)))
@@ -1433,6 +1503,56 @@ fn reset_confirm_modal(palette: &Palette, screen: &WelcomeScreen, window: &mut W
         )
 }
 
+/// The original's closing `<footer>`: three overlapping credential avatars
+/// (`-space-x-2`) beside the "trusted by" line, above a hairline rule.
+fn trust_footer(palette: &Palette, top_margin: gpui::Pixels) -> impl IntoElement {
+    let avatar = |name: &'static str, overlap: bool| {
+        div()
+            .size(px(32.))
+            .rounded_full()
+            .border_2()
+            .border_color(palette.surface_container_low)
+            .bg(palette.surface_bright)
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(overlap, |el| el.ml(px(-8.)))
+            .child(icon(name, px(14.), palette.on_surface_variant))
+    };
+
+    div()
+        .mt(top_margin)
+        .pt_8()
+        .border_t_1()
+        .border_color(gpui::Hsla {
+            a: 0.1,
+            ..palette.outline_variant
+        })
+        .flex()
+        .items_center()
+        .gap_6()
+        .child(
+            div()
+                .flex()
+                .child(avatar("key", false))
+                .child(avatar("fingerprint", true))
+                .child(avatar("face", true)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .text_xs()
+                .text_color(palette.on_surface_variant)
+                .child("Trusted by individuals requiring")
+                .child(
+                    div()
+                        .text_color(palette.secondary)
+                        .child("sovereign data control."),
+                ),
+        )
+}
+
 fn action_button(
     palette: &Palette,
     id: &'static str,
@@ -1456,8 +1576,9 @@ fn action_button(
         .flex()
         .items_center()
         .justify_between()
-        .py_3()
-        .px_5()
+        // `py-4 px-6` in the original.
+        .py_4()
+        .px_6()
         .rounded_xl()
         .bg(bg)
         .text_color(text)
@@ -1511,13 +1632,18 @@ fn primary_action_button(
         gpui::linear_color_stop(palette.primary_dim, 1.),
     );
 
-    let mut outer = div().id(id).w_full().rounded_xl().p(px(1.)).bg(gradient).child(
+    // The inner fill has to be a *flex child* that grows: a percentage width
+    // resolved against this stretched parent falls back to the content size,
+    // which leaves the gradient showing as a slab beside a shrink-wrapped
+    // pill instead of reading as a 1px border.
+    let mut outer = div().id(id).w_full().flex().rounded_xl().p(px(1.)).bg(gradient).child(
         div()
-            .w_full()
+            .flex_1()
+            .min_w_0()
             .bg(inner_bg)
             .rounded(px(11.))
-            .py_3()
-            .px_5()
+            .py_4()
+            .px_6()
             .flex()
             .items_center()
             .justify_between()
