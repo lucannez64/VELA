@@ -58,6 +58,7 @@ windows = { version = "0.58", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
+async-io = "2"
 futures-util = "0.3.33"
 secret-service = { version = "5", features = ["rt-async-io-crypto-rust"] }
 
