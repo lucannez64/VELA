@@ -273,6 +273,9 @@ pub mod linux_biometric {
 
         match Handle::try_current() {
             Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                // The one place this is safe: we just proved we're on a
+                // multi-threaded runtime, which is exactly what it requires.
+                #[allow(clippy::disallowed_methods)]
                 tokio::task::block_in_place(|| async_io::block_on(fut))
             }
             _ => async_io::block_on(fut),
