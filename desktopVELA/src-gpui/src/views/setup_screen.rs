@@ -5,11 +5,13 @@
 //! already has a real vault, and `create_vault`/`create_vault_with_password`
 //! have no "abort if a vault already exists" guard — calling them for real
 //! here would create/overwrite vault state alongside the real one. Matches
-//! the session's write-path safety agreement. The recovery step's three
-//! methods (cloud backup via rclone, security key via WebAuthn, trusted
-//! contact) each need real native work not yet ported (WebAuthn is on the
-//! migration plan's explicit "do last" risk list) — their "Enable" buttons
-//! log rather than act, so the 2-of-3 gate can never actually clear yet.
+//! the session's write-path safety agreement. Of the recovery step's three
+//! methods, cloud backup (rclone) and security key (WebAuthn) call the real
+//! backend; trusted contact isn't ported, so it's marked unavailable rather
+//! than offering an "Enable" that only logs. That leaves the original's
+//! 2-of-3 Continue gate unreachable for anyone without both an rclone remote
+//! and a FIDO2 key, so this build adds a "Skip for now" the original doesn't
+//! have — recovery stays configurable from Settings.
 //! This proves the full navigable wizard shape, not a working vault-creation
 //! flow — a real follow-up once write-path testing is set up safely (e.g.
 //! against an isolated fixture store).
@@ -281,16 +283,54 @@ impl Render for SetupScreen {
             Step::Complete => complete_step(&palette, window, cx),
         };
 
+        // `max-w-lg w-full` on every step except Recovery, which is
+        // `max-w-xl` because it carries three option cards. The original's
+        // `<main>` is `p-6 overflow-y-auto` with `my-auto` on the content, so
+        // a step taller than the window scrolls instead of being clipped —
+        // Recovery is routinely taller than 720px.
+        let content_max_width = match self.step {
+            Step::Recovery => px(576.),
+            _ => px(512.),
+        };
+        // The original pins Back to the *screen* corner, outside the step's
+        // own column. gpui resolves `absolute` against the parent, not the
+        // nearest positioned ancestor, so it has to be mounted at the root.
+        let back_target = match self.step {
+            Step::Biometric | Step::Password => Some(Step::Welcome),
+            Step::Recovery => Some(Step::Password),
+            Step::Welcome | Step::Complete => None,
+        };
+
         div()
+            .id("setup")
             .relative()
             .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
+            .overflow_y_scroll()
             .bg(palette.surface)
             .font_family(fonts::LABEL)
-            .p_8()
-            .child(div().w(px(480.)).child(content))
+            .child(
+                div()
+                    .min_h_full()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .p_6()
+                    // `flex_col` so the step stretches to the block's width:
+                    // the steps' own `w_full` buttons measure against it, and
+                    // a shrink-to-fit step would leave them content-sized.
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(content_max_width)
+                            .flex()
+                            .flex_col()
+                            .child(content),
+                    ),
+            )
+            .when_some(back_target, |el, target| {
+                el.child(back_button(target, cx))
+            })
             // Modals mount at the top level, not inside `recovery_step` —
             // the same fix already applied across the other screens, so an
             // `.absolute().inset_0()` backdrop resolves against the real
@@ -583,6 +623,11 @@ fn back_button(target: Step, cx: &mut Context<SetupScreen>) -> impl IntoElement 
     let palette = crate::theme::current_palette(cx);
     div()
         .id("back")
+        // `absolute top-4 left-4 sm:top-6 sm:left-6` — pinned to the screen
+        // corner, not stacked above the step's own content.
+        .absolute()
+        .top_6()
+        .left_6()
         .flex()
         .items_center()
         .gap_2()
@@ -598,22 +643,29 @@ fn back_button(target: Step, cx: &mut Context<SetupScreen>) -> impl IntoElement 
 }
 
 fn step_icon(palette: &Palette, name: &'static str) -> impl IntoElement {
-    div()
-        .w(px(80.))
-        .h(px(80.))
-        .rounded_2xl()
-        .bg(palette.surface_container)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(icon(name, px(36.), palette.primary))
+    // `w-24 h-24 mx-auto rounded-2xl` around a `text-6xl` symbol — the
+    // wrapper is what makes `mx-auto` work on steps that don't centre their
+    // children themselves.
+    div().w_full().flex().justify_center().child(
+        div()
+            .w(px(96.))
+            .h(px(96.))
+            .flex_shrink_0()
+            .rounded_2xl()
+            .bg(palette.surface_container)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(icon(name, px(56.), palette.primary)),
+    )
 }
 
 fn step_title(palette: &Palette, title: &'static str) -> impl IntoElement {
     div()
         .font_family(fonts::HEADLINE)
         .font_weight(gpui::FontWeight::BOLD)
-        .text_2xl()
+        .text_size(px(30.))
+        .text_center()
         .text_color(palette.on_surface)
         .child(title)
 }
@@ -621,6 +673,7 @@ fn step_title(palette: &Palette, title: &'static str) -> impl IntoElement {
 fn step_body(palette: &Palette, body: &'static str) -> impl IntoElement {
     div()
         .font_family(fonts::BODY)
+        .text_center()
         .text_color(palette.on_surface_variant)
         .child(body)
 }
@@ -678,7 +731,6 @@ fn biometric_step(
         .flex()
         .flex_col()
         .gap_4()
-        .child(back_button(Step::Welcome, cx))
         .child(step_icon(palette, "fingerprint"))
         .child(step_title(palette, "Set up biometrics"))
         .child(step_body(
@@ -730,7 +782,6 @@ fn password_step(
         .flex()
         .flex_col()
         .gap_4()
-        .child(back_button(Step::Welcome, cx))
         .child(step_icon(palette, "password"))
         .child(step_title(palette, "Set up master password"))
         .child(step_body(
@@ -835,7 +886,6 @@ fn recovery_step(
         .flex()
         .flex_col()
         .gap_4()
-        .child(back_button(Step::Password, cx))
         .child(step_title(palette, "Set up recovery"))
         .child(step_body(
             palette,
@@ -847,6 +897,7 @@ fn recovery_step(
             "Cloud backup",
             "Upload a recovery share via rclone",
             screen.cloud_backup_done,
+            true,
             cx,
             |this, cx| this.open_cloud_backup_modal(cx),
         ))
@@ -856,6 +907,7 @@ fn recovery_step(
             "Security Key",
             "Passkey recovery enabled",
             screen.security_key_done,
+            true,
             cx,
             |this, cx| this.open_security_key_modal(cx),
         ))
@@ -863,8 +915,9 @@ fn recovery_step(
             palette,
             "3",
             "Trusted contact",
-            "Optional but recommended",
+            "Not ported to this build yet",
             screen.trusted_contact_done,
+            false,
             cx,
             |_this, _cx| {
                 tracing::info!("Trusted contact recovery — TrustedContactRecovery not yet ported");
@@ -903,7 +956,44 @@ fn recovery_step(
             this.step = Step::Complete;
             cx.notify();
         }))
+        // Deliberate divergence from the original, which hard-gates Continue
+        // on 2 of 3 methods: trusted contact isn't ported to this build, so
+        // only two are reachable — anyone without both an rclone remote and a
+        // FIDO2 key would be stuck in the wizard with no way to finish
+        // creating their vault. Recovery stays configurable from Settings.
+        .child(skip_recovery_button(palette, cx))
         .into_any_element()
+}
+
+/// "Skip for now" under the recovery step's Continue button.
+fn skip_recovery_button(palette: &Palette, cx: &mut Context<SetupScreen>) -> impl IntoElement {
+    div()
+        .id("skip-recovery")
+        .w_full()
+        .py_2()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_1()
+        .cursor_pointer()
+        .child(
+            div()
+                .text_sm()
+                .text_color(palette.on_surface_variant)
+                .child("Skip for now"),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(palette.on_surface_variant)
+                .opacity(0.7)
+                .child("You can set recovery up later in Settings"),
+        )
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+            tracing::info!("Recovery setup skipped during vault creation");
+            this.step = Step::Complete;
+            cx.notify();
+        }))
 }
 
 fn complete_step(palette: &Palette, window: &mut Window, cx: &mut Context<SetupScreen>) -> gpui::AnyElement {
@@ -962,6 +1052,10 @@ fn recovery_row(
     title: &'static str,
     subtitle: &'static str,
     done: bool,
+    // `false` for methods whose native side isn't ported yet — the row still
+    // lists the method (it exists in the product) but offers no button to
+    // press, rather than an "Enable" that only logs.
+    available: bool,
     cx: &mut Context<SetupScreen>,
     on_enable: impl Fn(&mut SetupScreen, &mut Context<SetupScreen>) + 'static,
 ) -> impl IntoElement {
@@ -1014,7 +1108,7 @@ fn recovery_row(
                         ),
                 ),
         )
-        .when(!done, |el| {
+        .when(!done && available, |el| {
             el.child(
                 div()
                     .id(SharedString::from(format!("enable-{title}")))
@@ -1028,6 +1122,17 @@ fn recovery_row(
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                         on_enable(this, cx);
                     })),
+            )
+        })
+        .when(!done && !available, |el| {
+            el.child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .opacity(0.6)
+                    .child("Not available yet"),
             )
         })
 }
@@ -1053,7 +1158,8 @@ fn primary_button(
     let mut el = div()
         .id(id)
         .w_full()
-        .py_3()
+        .py_4()
+        .px_6()
         .rounded_xl()
         .flex()
         .items_center()
@@ -1091,8 +1197,11 @@ fn secondary_button(
     let mut el = div()
         .id(id)
         .w_full()
-        .py_3()
+        .py_4()
+        .px_6()
         .rounded_xl()
+        .border_1()
+        .border_color(palette.outline_variant)
         .flex()
         .items_center()
         .justify_center()
