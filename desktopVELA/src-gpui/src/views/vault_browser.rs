@@ -32,6 +32,7 @@ use vela_desktop_core::commands::vault::{get_items, get_vault_health, VaultHealt
 use vela_desktop_core::vault::{ItemType, VaultItem};
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::favicon_ui::{self, FaviconCache};
 use crate::fonts;
@@ -173,8 +174,16 @@ impl VaultBrowser {
     fn spawn_reload(app_state: Arc<AppState>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let (items, health) = cx
-                .background_spawn(async move { (get_items(&app_state), get_vault_health(&app_state)) })
-                .await;
+                .background_spawn_guarded("load vault items", async move {
+                    (get_items(&app_state), get_vault_health(&app_state))
+                })
+                .await
+                .unwrap_or_else(|| {
+                    (
+                        Err("Loading the vault failed unexpectedly".to_string()),
+                        Err("Loading the vault failed unexpectedly".to_string()),
+                    )
+                });
             this.update(cx, |this, cx| {
                 match items {
                     Ok(items) => {
@@ -218,8 +227,16 @@ impl VaultBrowser {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             let (items, health) = cx
-                .background_spawn(async move { (get_items(&app_state), get_vault_health(&app_state)) })
-                .await;
+                .background_spawn_guarded("load vault items", async move {
+                    (get_items(&app_state), get_vault_health(&app_state))
+                })
+                .await
+                .unwrap_or_else(|| {
+                    (
+                        Err("Loading the vault failed unexpectedly".to_string()),
+                        Err("Loading the vault failed unexpectedly".to_string()),
+                    )
+                });
             this.update(cx, |this, cx| {
                 match items {
                     Ok(items) => this.items = items,

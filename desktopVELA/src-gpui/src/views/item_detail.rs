@@ -21,6 +21,7 @@ use chrono::{DateTime, Local};
 use vela_desktop_core::vault::{ItemType, VaultItem};
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::favicon_ui::{self, FaviconCache};
 use crate::fonts;
@@ -91,11 +92,12 @@ impl ItemDetail {
         let totp_task = totp_secret.map(|secret| {
             cx.spawn(async move |this, cx| loop {
                 let result = cx
-                    .background_spawn({
+                    .background_spawn_guarded("generate totp", {
                         let secret = secret.clone();
                         async move { vela_desktop_core::totp::generate_totp(secret) }
                     })
-                    .await;
+                    .await
+                    .unwrap_or_else(|| Err("TOTP generation failed unexpectedly".to_string()));
                 let should_continue = this
                     .update(cx, |this, cx| {
                         match result {
@@ -150,10 +152,11 @@ impl ItemDetail {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move {
+                .background_spawn_guarded("save favorite", async move {
                     vela_desktop_core::commands::vault::update_item(&app_state, updated).await
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Saving the item failed unexpectedly".to_string()));
             if let Err(e) = result {
                 tracing::warn!("Failed to save favorite: {e}");
                 this.update(cx, |this, cx| {
@@ -175,10 +178,11 @@ impl ItemDetail {
         let id = self.item.id().to_string();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move {
+                .background_spawn_guarded("delete item", async move {
                     vela_desktop_core::commands::vault::delete_item(&app_state, &id).await
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Deleting the item failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.deleting = false;
                 match result {

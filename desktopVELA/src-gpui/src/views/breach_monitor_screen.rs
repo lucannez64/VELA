@@ -17,6 +17,7 @@ use vela_desktop_core::commands::vault::get_items;
 use vela_desktop_core::vault::VaultItem;
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -40,7 +41,12 @@ impl BreachMonitorScreen {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
         let app_state_clone = app_state.clone();
         cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async move { get_items(&app_state_clone) }).await;
+            let result = cx
+                .background_spawn_guarded("load items for breach scan", async move {
+                    get_items(&app_state_clone)
+                })
+                .await
+                .unwrap_or_else(|| Err("Loading the vault failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 match result {
                     Ok(items) => this.items = Some(items),
@@ -69,7 +75,12 @@ impl BreachMonitorScreen {
     fn reload_items(&self, cx: &mut Context<Self>) {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async move { get_items(&app_state) }).await;
+            let result = cx
+                .background_spawn_guarded("reload items for breach scan", async move {
+                    get_items(&app_state)
+                })
+                .await
+                .unwrap_or_else(|| Err("Loading the vault failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 if let Ok(items) = result {
                     this.items = Some(items);

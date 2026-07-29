@@ -38,6 +38,7 @@ use vela_desktop_core::settings::Settings;
 use vela_desktop_core::vault::VaultItem;
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -102,11 +103,12 @@ impl SettingsScreen {
             let app_state = app_state.clone();
             async move |this, cx| {
                 let result = cx
-                    .background_spawn({
+                    .background_spawn_guarded("load settings", {
                         let app_state = app_state.clone();
                         async move { get_settings(&app_state) }
                     })
-                    .await;
+                    .await
+                    .unwrap_or_else(|| Err("Loading settings failed unexpectedly".to_string()));
                 this.update(cx, |this, cx| {
                     match result {
                         Ok(settings) => this.settings = Some(settings),
@@ -156,8 +158,11 @@ impl SettingsScreen {
         let app_state = app_state.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { vela_desktop_core::recovery::get_recovery_setup_status(&app_state) })
-                .await;
+                .background_spawn_guarded("load recovery status", async move {
+                    vela_desktop_core::recovery::get_recovery_setup_status(&app_state)
+                })
+                .await
+                .unwrap_or_else(|| Err("Loading recovery status failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 if let Ok(status) = result {
                     this.recovery_status = Some(status);
@@ -230,8 +235,11 @@ impl SettingsScreen {
         let app_state = app_state.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { vela_desktop_core::sync::get_sync_status(&app_state).await })
-                .await;
+                .background_spawn_guarded("load sync status", async move {
+                    vela_desktop_core::sync::get_sync_status(&app_state).await
+                })
+                .await
+                .unwrap_or_else(|| Err("Loading sync status failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 if let Ok(status) = result {
                     this.sync_status = Some(status);
@@ -393,11 +401,12 @@ impl SettingsScreen {
         cx.spawn(async move |this, cx| {
             let result: Result<Option<()>, String> = async {
                 let json = cx
-                    .background_spawn({
+                    .background_spawn_guarded("export vault", {
                         let app_state = app_state.clone();
                         async move { vela_desktop_core::commands::vault::export_vault_bitwarden_json(&app_state) }
                     })
-                    .await?;
+                    .await
+                    .unwrap_or_else(|| Err("Export failed unexpectedly".to_string()))?;
 
                 let default_name = format!("vela-export-{}.json", chrono::Local::now().format("%Y-%m-%d"));
                 let file = rfd::AsyncFileDialog::new()
@@ -442,11 +451,12 @@ impl SettingsScreen {
                 let text = String::from_utf8(data).map_err(|e| format!("Import file is not valid UTF-8: {e}"))?;
 
                 let imported = cx
-                    .background_spawn({
+                    .background_spawn_guarded("import vault", {
                         let app_state = app_state.clone();
                         async move { vela_desktop_core::commands::vault::import_vault_bitwarden_json(&app_state, &text) }
                     })
-                    .await?;
+                    .await
+                    .unwrap_or_else(|| Err("Import failed unexpectedly".to_string()))?;
                 Ok(Some(imported))
             }
             .await;
@@ -469,12 +479,13 @@ impl SettingsScreen {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn({
+                .background_spawn_guarded("save settings", {
                     let app_state = app_state.clone();
                     let settings = new_settings.clone();
                     async move { update_settings(&app_state, settings) }
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Saving settings failed unexpectedly".to_string()));
             this.update(cx, |this, cx| match result {
                 Ok(()) => {
                     let theme_changed = this

@@ -27,6 +27,7 @@ use vela_desktop_core::biometric::BiometricProvider;
 use vela_desktop_core::commands::session;
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -78,8 +79,11 @@ impl SetupScreen {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
         cx.spawn(async move |this, cx| {
             let status = cx
-                .background_spawn(async { vela_desktop_core::biometric::check_enrollment() })
-                .await;
+                .background_spawn_guarded("setup enrollment check", async {
+                    vela_desktop_core::biometric::check_enrollment()
+                })
+                .await
+                .unwrap_or_default();
             let available = !matches!(
                 status.provider,
                 BiometricProvider::None | BiometricProvider::MasterPassword
@@ -182,10 +186,11 @@ impl SetupScreen {
 
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async {
+                .background_spawn_guarded("list cloud backup remotes", async {
                     vela_desktop_core::recovery::list_cloud_backup_remotes().await
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Listing cloud remotes failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.loading_cloud_remotes = false;
                 match result {
@@ -220,14 +225,15 @@ impl SetupScreen {
             // `rclone` upload is blocking process I/O, but `ensure_shares_split`
             // ahead of it touches the vault — both are fine off the reactor.
             let result = cx
-                .background_spawn(async move {
+                .background_spawn_guarded("upload cloud backup share", async move {
                     vela_desktop_core::recovery::setup_cloud_backup_recovery(
                         &app_state,
                         remote.to_string(),
                     )
                     .await
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Uploading the recovery share failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.uploading_cloud_backup = false;
                 match result {
@@ -318,8 +324,11 @@ impl SetupScreen {
         let app_state = self._app_state.clone();
         cx.spawn(async move |this, cx| {
             let status = cx
-                .background_spawn(async { vela_desktop_core::biometric::check_enrollment() })
-                .await;
+                .background_spawn_guarded("setup enrollment probe", async {
+                    vela_desktop_core::biometric::check_enrollment()
+                })
+                .await
+                .unwrap_or_default();
             let usable = status.enrolled
                 && !matches!(
                     status.provider,
@@ -336,21 +345,28 @@ impl SetupScreen {
             }
 
             let result = cx
-                .background_spawn(async { vela_desktop_core::biometric::authenticate() })
+                .background_spawn_guarded("setup biometric authenticate", async {
+                    vela_desktop_core::biometric::authenticate()
+                })
                 .await;
             this.update(cx, |this, cx| {
                 this.is_working = false;
-                if result.success {
-                    this.step = Step::Recovery;
-                } else {
-                    this.password_error = Some(
-                        result
-                            .error_message
-                            .unwrap_or_else(|| {
-                                "Authentication failed - use password instead".to_string()
-                            })
-                            .into(),
-                    );
+                match result {
+                    Some(result) if result.success => this.step = Step::Recovery,
+                    Some(result) => {
+                        this.password_error = Some(
+                            result
+                                .error_message
+                                .unwrap_or_else(|| {
+                                    "Authentication failed - use password instead".to_string()
+                                })
+                                .into(),
+                        );
+                    }
+                    // The original's `catch` arm: a ceremony that fails
+                    // outright drops to the password path rather than
+                    // dead-ending on the biometric step.
+                    None => this.step = Step::Password,
                 }
                 cx.notify();
             })

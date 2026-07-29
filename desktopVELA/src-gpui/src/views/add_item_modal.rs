@@ -17,6 +17,7 @@ use vela_desktop_core::commands::vault::add_item;
 use vela_desktop_core::vault::{VaultItem, VaultMeta};
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -238,14 +239,15 @@ impl AddItemModal {
         let is_edit = self.editing.is_some();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move {
+                .background_spawn_guarded("save item", async move {
                     if is_edit {
                         vela_desktop_core::commands::vault::update_item(&app_state, item).await.map(|_| ())
                     } else {
                         add_item(&app_state, item).await.map(|_| ())
                     }
                 })
-                .await;
+                .await
+                .unwrap_or_else(|| Err("Saving the item failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.saving = false;
                 match result {

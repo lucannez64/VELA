@@ -22,6 +22,7 @@ use vela_desktop_core::sharing::{get_shares, Share, ShareDirection};
 use vela_desktop_core::vault::VaultItem;
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -206,7 +207,10 @@ impl SharingScreen {
         self.share_search_state.update(cx, |state, cx| state.emplace("", cx));
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
-            let items = cx.background_spawn(async move { get_items(&app_state) }).await;
+            let items = cx
+                .background_spawn_guarded("load shareable items", async move { get_items(&app_state) })
+                .await
+                .unwrap_or_else(|| Err("Loading the vault failed unexpectedly".to_string()));
             if let Ok(items) = items {
                 this.update(cx, |this, cx| {
                     this.shareable_items = items.into_iter().filter(|i| !i.shared()).collect();

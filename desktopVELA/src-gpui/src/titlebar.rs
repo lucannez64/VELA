@@ -39,6 +39,7 @@ use vela_desktop_core::commands::session::get_session_status;
 use vela_desktop_core::session::SessionStatus;
 use vela_desktop_core::AppState;
 
+use crate::background::GuardedSpawn;
 use crate::animation;
 use crate::fonts;
 use crate::icon::icon;
@@ -65,7 +66,12 @@ impl TitleBar {
             let app_state = app_state.clone();
             async move |this, cx| loop {
                 let app_state = app_state.clone();
-                let status = cx.background_spawn(async move { get_session_status(&app_state).await }).await;
+                let status = cx
+                    .background_spawn_guarded("poll session status", async move {
+                        get_session_status(&app_state).await
+                    })
+                    .await
+                    .unwrap_or_else(|| Err("Session status poll failed unexpectedly".to_string()));
                 let alive = this
                     .update(cx, |this, cx| {
                         if let Ok(status) = status {

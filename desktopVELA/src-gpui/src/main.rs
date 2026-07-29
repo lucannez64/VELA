@@ -12,6 +12,7 @@ pub static malloc_conf: &[u8] =
     b"background_thread:true,narenas:2,dirty_decay_ms:2000,muzzy_decay_ms:2000\0";
 
 mod animation;
+mod background;
 mod clipboard;
 mod favicon_ui;
 mod fonts;
