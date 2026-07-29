@@ -324,8 +324,11 @@ impl SetupScreen {
         let app_state = self._app_state.clone();
         cx.spawn(async move |this, cx| {
             let status = cx
-                .background_spawn(async { vela_desktop_core::biometric::check_enrollment() })
-                .await;
+                .background_spawn_guarded("setup enrollment probe", async {
+                    vela_desktop_core::biometric::check_enrollment()
+                })
+                .await
+                .unwrap_or_default();
             let usable = status.enrolled
                 && !matches!(
                     status.provider,
@@ -342,21 +345,28 @@ impl SetupScreen {
             }
 
             let result = cx
-                .background_spawn(async { vela_desktop_core::biometric::authenticate() })
+                .background_spawn_guarded("setup biometric authenticate", async {
+                    vela_desktop_core::biometric::authenticate()
+                })
                 .await;
             this.update(cx, |this, cx| {
                 this.is_working = false;
-                if result.success {
-                    this.step = Step::Recovery;
-                } else {
-                    this.password_error = Some(
-                        result
-                            .error_message
-                            .unwrap_or_else(|| {
-                                "Authentication failed - use password instead".to_string()
-                            })
-                            .into(),
-                    );
+                match result {
+                    Some(result) if result.success => this.step = Step::Recovery,
+                    Some(result) => {
+                        this.password_error = Some(
+                            result
+                                .error_message
+                                .unwrap_or_else(|| {
+                                    "Authentication failed - use password instead".to_string()
+                                })
+                                .into(),
+                        );
+                    }
+                    // The original's `catch` arm: a ceremony that fails
+                    // outright drops to the password path rather than
+                    // dead-ending on the biometric step.
+                    None => this.step = Step::Password,
                 }
                 cx.notify();
             })
