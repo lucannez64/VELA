@@ -182,10 +182,35 @@ jobs:
             libssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: desktopVELA
+
+      # The only place the desktop crates' tests run: the macOS job compiles
+      # a different set of `cfg`s entirely (none of `linux_biometric`, the
+      # portal client or the IPC server), so a Linux-only regression can only
+      # be caught here.
+      - name: Test
+        working-directory: desktopVELA
+        env:
+          # Runners have no session bus. Point at one that cannot exist so the
+          # Secret Service probes fail fast and deterministically instead of
+          # waiting on autolaunch — they only have to *not panic*.
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/nonexistent
+        run: cargo test -p vela-desktop-core
+
+      # Not a general clippy gate (the tree has pre-existing warnings) — just
+      # the runtime-coupling guard from clippy.toml, which turns "panics on a
+      # machine none of us has" into a red PR. See that file for the why.
+      - name: Lint (runtime-coupling guard)
+        working-directory: desktopVELA
+        run: |
+          cargo clippy --all-targets \
+            -p vela-desktop-core -p vela-desktop-gpui \
+            -- -D clippy::disallowed_methods
 
       - name: Stamp version into the gpui crate
         working-directory: desktopVELA

@@ -1,0 +1,13 @@
+# Both of these assume an ambient tokio runtime on the calling thread. The
+# desktop crates are called from gpui's background executor, tokio worker and
+# blocking threads, and plain std threads, so that assumption is a panic
+# waiting for the right machine — see the Secret Service probes that took the
+# whole app down at startup on any box with biometrics enrolled.
+#
+# `Handle::try_current()` is fine: it reports the absence instead of panicking.
+# The one deliberate bridge (`linux_biometric::block_on`) carries an explicit
+# `#[allow(clippy::disallowed_methods)]`.
+disallowed-methods = [
+  { path = "tokio::runtime::Handle::current", reason = "assumes an ambient runtime; use Handle::try_current and handle the None case" },
+  { path = "tokio::task::block_in_place", reason = "panics off a multi-threaded runtime; go through a helper that checks the runtime flavor first" },
+]
