@@ -282,7 +282,12 @@ pub mod linux_biometric {
         }
     }
 
-    fn retrieve_rms_from_any_source() -> Option<[u8; 32]> {
+    /// Retrieve the device-bound RMS from whichever store holds it (TPM
+    /// first, then Secret Service). Callers must have verified the user
+    /// first (fingerprint, or the master-password migration path): these
+    /// stores gate on device possession and login session, NOT on user
+    /// presence — no OS prompt is shown when they are read.
+    pub(super) fn retrieve_rms_from_any_source() -> Option<[u8; 32]> {
         if tpm::is_tpm_available() && tpm::is_tpm_key_available() {
             if let Ok(rms) = tpm::retrieve_from_tpm() {
                 return Some(rms);
@@ -329,7 +334,34 @@ pub mod linux_biometric {
         })
     }
 
+    pub(super) fn secret_service_has_stored_item() -> bool {
+        if !check_secret_service_sync() {
+            return false;
+        }
+        block_on(async {
+            match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                Ok(ss) => match ss.get_default_collection().await {
+                    Ok(collection) => {
+                        let mut attrs = HashMap::new();
+                        attrs.insert("label", SECRET_SERVICE_LABEL);
+                        let search = collection.search_items(attrs).await;
+                        search.map(|items| !items.is_empty()).unwrap_or(false)
+                    }
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            }
+        })
+    }
+
     pub fn check_availability() -> BiometricEnrollmentStatus {
+        // A fingerprint verify is the only Linux path that actually proves
+        // the user's presence. TPM-sealed keys and Secret Service items are
+        // STORAGE, not verification: the OS shows no prompt when they are
+        // read, so reporting them as an enrolled biometric makes every UI
+        // layer auto-trigger a "biometric" unlock that silently succeeds for
+        // anyone who opens the app. They only count below as evidence that a
+        // master password can be offered (see authenticate_with_password).
         if tpm::fprint::is_fprint_available() && tpm::fprint::has_enrolled_fingers() {
             return BiometricEnrollmentStatus {
                 enrolled: true,
@@ -337,40 +369,13 @@ pub mod linux_biometric {
             };
         }
 
-        if tpm::is_tpm_key_available() {
-            return BiometricEnrollmentStatus {
-                enrolled: true,
-                provider: BiometricProvider::LinuxTpm,
-            };
-        }
-
-        if check_secret_service_sync() {
-            let enrolled = block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
-                    .await
-                {
-                    Ok(ss) => match ss.get_default_collection().await {
-                        Ok(collection) => {
-                            let mut attrs = HashMap::new();
-                            attrs.insert("label", SECRET_SERVICE_LABEL);
-                            let search = collection.search_items(attrs).await;
-                            search.map(|items| !items.is_empty()).unwrap_or(false)
-                        }
-                        Err(_) => false,
-                    },
-                    Err(_) => false,
-                }
-            });
-
-            if enrolled {
-                return BiometricEnrollmentStatus {
-                    enrolled: true,
-                    provider: BiometricProvider::LinuxSecretService,
-                };
-            }
-        }
-
-        if tpm::fallback::is_fallback_available() {
+        // Any stored credential means the vault can be opened with the
+        // master password: the Argon2id blob directly; a TPM/keyring-stored
+        // key via the one-time migration in authenticate_with_password.
+        if tpm::fallback::is_fallback_available()
+            || tpm::is_tpm_key_available()
+            || secret_service_has_stored_item()
+        {
             return BiometricEnrollmentStatus {
                 enrolled: true,
                 provider: BiometricProvider::MasterPassword,
@@ -418,27 +423,12 @@ pub mod linux_biometric {
             }
         }
 
-        // No fingerprint reader — but `check_availability` also reports
-        // `LinuxTpm` and `LinuxSecretService` as enrolled providers, and this
-        // function had no path to either. A machine whose key is sealed in the
-        // TPM was told it was enrolled, shown the unlock prompt, and then
-        // answered "No biometric available" on every attempt, forever.
-        //
-        // Reading the device-bound key back is exactly what Windows
-        // (`CredReadW`/TPM) and macOS (Keychain) already do here; the OS gates
-        // that read, not us.
-        if let Some(rms) = retrieve_rms_from_any_source() {
-            if let Ok(mut guard) = CACHED_RMS.lock() {
-                *guard = Some(rms);
-            }
-            return BiometricAuthResult {
-                success: true,
-                error_message: None,
-                retry_count: None,
-                uses_password: false,
-            };
-        }
-
+        // No fingerprint reader (or no enrolled fingers): there is no Linux
+        // path that verifies the user, so there is nothing to authenticate
+        // against here. Reading the TPM-sealed or keyring-stored key without
+        // a verify is NOT an authentication — those reads are ungated (the
+        // seal has no auth policy; the keyring is unlocked at login), which
+        // is what made the app unlock itself on launch for anyone.
         BiometricAuthResult {
             success: false,
             error_message: Some("No biometric available. Please use master password.".to_string()),
@@ -500,31 +490,9 @@ pub mod linux_biometric {
     }
 
     pub fn has_stored_rms() -> bool {
-        if tpm::is_tpm_key_available() {
-            return true;
-        }
-
-        block_on(async {
-            match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
-                Ok(ss) => match ss.get_default_collection().await {
-                    Ok(collection) => {
-                        let mut attrs = HashMap::new();
-                        attrs.insert("label", SECRET_SERVICE_LABEL);
-                        match collection.search_items(attrs).await {
-                            Ok(items) => {
-                                if !items.is_empty() {
-                                    return true;
-                                }
-                            }
-                            Err(_) => {}
-                        }
-                    }
-                    Err(_) => {}
-                },
-                Err(_) => {}
-            }
-            false
-        }) || tpm::fallback::is_fallback_available()
+        tpm::is_tpm_key_available()
+            || secret_service_has_stored_item()
+            || tpm::fallback::is_fallback_available()
     }
 
     pub fn delete_stored_rms() -> anyhow::Result<()> {
@@ -555,34 +523,60 @@ pub mod linux_biometric {
 
 #[cfg(target_os = "linux")]
 pub mod linux_password {
+    use super::linux_biometric;
     use crate::device::tpm;
 
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
+        // The Argon2id password blob is the ONLY store that lets a later
+        // unlock actually verify the master password — always write it.
+        // Previously a TPM machine kept only the TPM-sealed key and the
+        // password was discarded, so "password unlock" unsealed the TPM key
+        // without ever checking what was typed: any password opened the
+        // vault.
+        tpm::fallback::store_with_password(rms, password)?;
+
+        // Best-effort second copy, sealed to the TPM: it is what the
+        // fingerprint path retrieves after a successful verify on machines
+        // that have both a reader and a TPM. Failure here only costs that
+        // convenience — the password blob above is authoritative.
         if tpm::is_tpm_available() {
-            return tpm::store_in_tpm(rms);
+            if let Err(e) = tpm::store_in_tpm(rms) {
+                tracing::warn!(
+                    "TPM copy of the vault key failed (password blob is authoritative): {}",
+                    e
+                );
+            }
         }
-        tpm::fallback::store_with_password(rms, password)
+        Ok(())
     }
 
     pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
-        if tpm::is_tpm_key_available() {
-            match tpm::retrieve_from_tpm() {
-                Ok(rms) => return Some(rms),
-                Err(e) => {
-                    tracing::warn!(
-                        "TPM key present but unseal failed ({}); attempting \
-                         software fallback with the supplied password",
-                        e
-                    );
-                }
-            }
-        }
-
+        // Normal path: verify the typed password against the Argon2id blob.
+        // A wrong password fails the unwrap and returns None.
         if tpm::fallback::is_fallback_available() {
             return tpm::fallback::retrieve_with_password(password).ok();
         }
 
-        None
+        // One-time migration: vaults created while the TPM short-circuit
+        // existed have no password blob — the RMS is only sealed in the TPM
+        // (or sitting in the keyring) and the password chosen at setup was
+        // never recorded, so there is nothing to verify against. Retrieve
+        // the device-bound key and seal it under the password just typed, so
+        // every later unlock is verified for real. This trusts device
+        // possession exactly once, which is strictly better than what it
+        // replaces: those installs unlocked for anyone, silently, at launch.
+        let rms = linux_biometric::retrieve_rms_from_any_source()?;
+        match tpm::fallback::store_with_password(&rms, password) {
+            Ok(()) => tracing::info!(
+                "Vault key re-sealed under the master password (one-time migration)"
+            ),
+            Err(e) => tracing::warn!(
+                "Password verification blob could not be written; \
+                 the next unlock will migrate again: {}",
+                e
+            ),
+        }
+        Some(rms)
     }
 }
 
@@ -1021,6 +1015,10 @@ mod tests {
         std::thread::spawn(|| {
             let _ = super::linux_biometric::check_availability();
             let _ = super::linux_biometric::has_stored_rms();
+            // Called directly because the two public probes above may
+            // short-circuit on a stored credential before ever reaching the
+            // Secret Service check.
+            let _ = super::linux_biometric::secret_service_has_stored_item();
         })
         .join()
         .expect("Secret Service probes must not panic off a tokio runtime");

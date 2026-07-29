@@ -917,24 +917,57 @@ pub mod tpm {
     pub mod fprint {
         use std::process::Command;
 
+        fn current_username() -> Option<String> {
+            // $USER is what `loginctl`, PAM and fprintd itself key enrollment
+            // on. LOGNAME is the usual fallback when USER is scrubbed.
+            ["USER", "LOGNAME"]
+                .iter()
+                .filter_map(|var| std::env::var(var).ok())
+                .map(|u| u.trim().to_string())
+                .find(|u| !u.is_empty())
+        }
+
+        /// `fprintd-list <user>` output when the daemon answers, `None`
+        /// otherwise (no daemon, no device, no tools). The username argument
+        /// is NOT optional: bare `fprintd-list` prints a usage message and
+        /// exits 1, so probing without it reported "no fingerprint reader"
+        /// on every machine that has one.
+        fn list_output() -> Option<String> {
+            let username = current_username()?;
+            let output = Command::new("fprintd-list").arg(&username).output().ok()?;
+            if !output.status.success() {
+                // Includes the "No devices available" case (also exit 1).
+                return None;
+            }
+            Some(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
+
         pub fn is_fprint_available() -> bool {
-            Command::new("fprintd-list")
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
+            list_output().is_some()
+        }
+
+        /// Enrolled fingers show up as list entries:
+        ///
+        /// ```text
+        /// found 1 devices
+        /// Device at /net/reactivated/Fprint/Device/0
+        /// Using device /net/reactivated/Fprint/Device/0
+        /// Fingerprints for user alice on Synaptics Sensors (press):
+        ///  - #0: right-index-finger
+        /// ```
+        ///
+        /// while the unenrolled case is a single line "User alice has no
+        /// fingers enrolled for <device>." (still exit 0).
+        fn has_enrolled_fingers_in(output: &str) -> bool {
+            output
+                .lines()
+                .any(|line| line.trim_start().starts_with("- #"))
         }
 
         pub fn has_enrolled_fingers() -> bool {
-            let output = Command::new("fprintd-list").output();
-            match output {
-                Ok(o) if o.status.success() => {
-                    let stdout = String::from_utf8_lossy(&o.stdout);
-                    stdout
-                        .lines()
-                        .any(|line| line.contains("has enrolled fingers"))
-                }
-                _ => false,
-            }
+            list_output()
+                .map(|stdout| has_enrolled_fingers_in(&stdout))
+                .unwrap_or(false)
         }
 
         pub fn verify() -> anyhow::Result<()> {
@@ -957,6 +990,37 @@ pub mod tpm {
                 Err(e) => {
                     anyhow::bail!("Failed to run fprintd-verify: {}", e)
                 }
+            }
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            // Real `fprintd-list alice` output shapes (fprintd 1.94.x).
+            const ENROLLED: &str = "found 1 devices\n\
+                 Device at /net/reactivated/Fprint/Device/0\n\
+                 Using device /net/reactivated/Fprint/Device/0\n\
+                 Fingerprints for user alice on Synaptics Sensors (press):\n\
+                 - #0: right-index-finger\n\
+                 - #1: left-index-finger\n";
+
+            const NOT_ENROLLED: &str = "found 1 devices\n\
+                 Device at /net/reactivated/Fprint/Device/0\n\
+                 Using device /net/reactivated/Fprint/Device/0\n\
+                 User alice has no fingers enrolled for Synaptics Sensors.\n";
+
+            #[test]
+            fn enrolled_fingers_are_detected() {
+                assert!(has_enrolled_fingers_in(ENROLLED));
+            }
+
+            #[test]
+            fn no_enrolled_fingers_is_not_confused_with_enrollment() {
+                assert!(!has_enrolled_fingers_in(NOT_ENROLLED));
+                // The daemon answering about zero devices is not a reader.
+                assert!(!has_enrolled_fingers_in("No devices available\n"));
+                assert!(!has_enrolled_fingers_in(""));
             }
         }
     }
