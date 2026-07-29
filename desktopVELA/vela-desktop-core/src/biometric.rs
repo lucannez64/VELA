@@ -418,6 +418,27 @@ pub mod linux_biometric {
             }
         }
 
+        // No fingerprint reader — but `check_availability` also reports
+        // `LinuxTpm` and `LinuxSecretService` as enrolled providers, and this
+        // function had no path to either. A machine whose key is sealed in the
+        // TPM was told it was enrolled, shown the unlock prompt, and then
+        // answered "No biometric available" on every attempt, forever.
+        //
+        // Reading the device-bound key back is exactly what Windows
+        // (`CredReadW`/TPM) and macOS (Keychain) already do here; the OS gates
+        // that read, not us.
+        if let Some(rms) = retrieve_rms_from_any_source() {
+            if let Ok(mut guard) = CACHED_RMS.lock() {
+                *guard = Some(rms);
+            }
+            return BiometricAuthResult {
+                success: true,
+                error_message: None,
+                retry_count: None,
+                uses_password: false,
+            };
+        }
+
         BiometricAuthResult {
             success: false,
             error_message: Some("No biometric available. Please use master password.".to_string()),
