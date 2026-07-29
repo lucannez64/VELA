@@ -1,20 +1,19 @@
 //! Port of `desktopVELA/src/views/SetupScreen.tsx` — first-run onboarding
 //! wizard: welcome -> biometric or password -> recovery -> complete.
 //!
-//! **Deliberately stubbed, not wired to real writes**: this dev machine
-//! already has a real vault, and `create_vault`/`create_vault_with_password`
-//! have no "abort if a vault already exists" guard — calling them for real
-//! here would create/overwrite vault state alongside the real one. Matches
-//! the session's write-path safety agreement. Of the recovery step's three
-//! methods, cloud backup (rclone) and security key (WebAuthn) call the real
-//! backend; trusted contact isn't ported, so it's marked unavailable rather
-//! than offering an "Enable" that only logs. That leaves the original's
-//! 2-of-3 Continue gate unreachable for anyone without both an rclone remote
-//! and a FIDO2 key, so this build adds a "Skip for now" the original doesn't
-//! have — recovery stays configurable from Settings.
-//! This proves the full navigable wizard shape, not a working vault-creation
-//! flow — a real follow-up once write-path testing is set up safely (e.g.
-//! against an isolated fixture store).
+//! The password step creates a real vault (`create_vault_with_password`),
+//! and the biometric step runs the real enrollment probe and unlock — same
+//! backend calls as the Tauri build. Because that backend will overwrite an
+//! existing vault without asking and there is no undo, both paths refuse
+//! outright when `check_vault_exists` says one is already there.
+//!
+//! Of the recovery step's three methods, cloud backup (rclone) and security
+//! key (WebAuthn) call the real backend; trusted contact isn't ported, so
+//! it's marked unavailable rather than offering an "Enable" that only logs.
+//! That leaves the original's 2-of-3 Continue gate unreachable for anyone
+//! without both an rclone remote and a FIDO2 key, so this build adds a
+//! "Skip for now" the original doesn't have — recovery stays configurable
+//! from Settings.
 
 use std::sync::Arc;
 
@@ -25,6 +24,7 @@ use gpui::{
 use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
 
 use vela_desktop_core::biometric::BiometricProvider;
+use vela_desktop_core::commands::session;
 use vela_desktop_core::AppState;
 
 use crate::animation;
@@ -263,11 +263,100 @@ impl SetupScreen {
             return;
         }
         self.password_error = None;
-        tracing::info!(
-            "Would call create_vault_with_password here — stubbed, real vault already exists on this machine"
-        );
-        self.step = Step::Recovery;
+
+        // The guard the backend doesn't have: `create_vault_with_password`
+        // will happily overwrite an existing vault, and there is no undo for
+        // that. Refuse rather than trust the wizard to never be reachable
+        // with a vault present.
+        if session::check_vault_exists(&self._app_state) {
+            self.password_error =
+                Some("A vault already exists on this device. Unlock it instead of creating a new one.".into());
+            cx.notify();
+            return;
+        }
+
+        self.is_working = true;
         cx.notify();
+
+        let app_state = self._app_state.clone();
+        cx.spawn(async move |this, cx| {
+            // Vault creation touches the keyring/TPM and, when a server is
+            // configured, registers the device — real I/O, off the main
+            // thread.
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                session::create_vault_with_password(&app_state, password).await
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                this.is_working = false;
+                match result {
+                    Ok(Ok(())) => {
+                        tracing::info!("Vault created with a master password");
+                        this.step = Step::Recovery;
+                    }
+                    Ok(Err(e)) => this.password_error = Some(e.into()),
+                    Err(e) => this.password_error = Some(format!("Vault creation failed: {e}").into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Port of the original's `handleBiometricEnroll`. Note what it does
+    /// *not* do: create a vault. Enrolling here proves the existing
+    /// device-bound key still unlocks; a first-run machine has no key to
+    /// prove, so it falls through to the password step, which is where the
+    /// vault is actually created (and where the RMS gets sealed into the TPM
+    /// or keyring on the way).
+    fn enroll_biometric(&mut self, cx: &mut Context<Self>) {
+        self.is_working = true;
+        self.password_error = None;
+        cx.notify();
+
+        let app_state = self._app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let status = cx
+                .background_spawn(async { vela_desktop_core::biometric::check_enrollment() })
+                .await;
+            let usable = status.enrolled
+                && !matches!(
+                    status.provider,
+                    BiometricProvider::None | BiometricProvider::MasterPassword
+                );
+            if !usable || !session::check_vault_exists(&app_state) {
+                this.update(cx, |this, cx| {
+                    this.is_working = false;
+                    this.step = Step::Password;
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
+
+            let result = cx
+                .background_spawn(async { vela_desktop_core::biometric::authenticate() })
+                .await;
+            this.update(cx, |this, cx| {
+                this.is_working = false;
+                if result.success {
+                    this.step = Step::Recovery;
+                } else {
+                    this.password_error = Some(
+                        result
+                            .error_message
+                            .unwrap_or_else(|| {
+                                "Authentication failed - use password instead".to_string()
+                            })
+                            .into(),
+                    );
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
@@ -743,13 +832,7 @@ fn biometric_step(
             !working,
             window,
             cx,
-            |this, cx| {
-                tracing::info!(
-                    "Would call create_vault() (biometric-backed) here — stubbed, real vault already exists"
-                );
-                this.step = Step::Recovery;
-                cx.notify();
-            },
+            |this, cx| this.enroll_biometric(cx),
         ))
         .child(
             div()
