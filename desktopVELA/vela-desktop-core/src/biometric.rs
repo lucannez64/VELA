@@ -258,6 +258,27 @@ pub mod linux_biometric {
 
     const SECRET_SERVICE_LABEL: &str = "VELA_RMS";
 
+    /// Drive a Secret Service future to completion from synchronous code.
+    ///
+    /// `secret-service` is built on zbus's async-io backend, so these futures
+    /// need no tokio reactor — only somewhere to be polled. These functions are
+    /// called from whatever thread happens to be handy: gpui's background
+    /// executor, tokio's blocking pool, tokio worker threads, plain std
+    /// threads. So drive the future on the calling thread, and only hand the
+    /// thread back to tokio (via `block_in_place`) when we are actually sitting
+    /// on a multi-threaded runtime worker. Reaching for `Handle::current()`
+    /// here instead would panic on every non-tokio thread.
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        use tokio::runtime::{Handle, RuntimeFlavor};
+
+        match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| async_io::block_on(fut))
+            }
+            _ => async_io::block_on(fut),
+        }
+    }
+
     fn retrieve_rms_from_any_source() -> Option<[u8; 32]> {
         if tpm::is_tpm_available() && tpm::is_tpm_key_available() {
             if let Ok(rms) = tpm::retrieve_from_tpm() {
@@ -265,49 +286,43 @@ pub mod linux_biometric {
             }
         }
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
-                    .await
-                {
-                    Ok(ss) => match ss.get_default_collection().await {
-                        Ok(collection) => {
-                            let mut attrs = HashMap::new();
-                            attrs.insert("label", SECRET_SERVICE_LABEL);
-                            match collection.search_items(attrs).await {
-                                Ok(items) => {
-                                    if let Some(item) = items.first() {
-                                        match item.get_secret().await {
-                                            Ok(secret) => {
-                                                if secret.len() >= 32 {
-                                                    let mut rms = [0u8; 32];
-                                                    rms.copy_from_slice(&secret[..32]);
-                                                    return Some(rms);
-                                                }
+        block_on(async {
+            match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                Ok(ss) => match ss.get_default_collection().await {
+                    Ok(collection) => {
+                        let mut attrs = HashMap::new();
+                        attrs.insert("label", SECRET_SERVICE_LABEL);
+                        match collection.search_items(attrs).await {
+                            Ok(items) => {
+                                if let Some(item) = items.first() {
+                                    match item.get_secret().await {
+                                        Ok(secret) => {
+                                            if secret.len() >= 32 {
+                                                let mut rms = [0u8; 32];
+                                                rms.copy_from_slice(&secret[..32]);
+                                                return Some(rms);
                                             }
-                                            Err(_) => {}
                                         }
+                                        Err(_) => {}
                                     }
                                 }
-                                Err(_) => {}
                             }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
-                    },
+                    }
                     Err(_) => {}
-                }
-                None
-            })
+                },
+                Err(_) => {}
+            }
+            None
         })
     }
 
     fn check_secret_service_sync() -> bool {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
-                    .await
-                    .is_ok()
-            })
+        block_on(async {
+            secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
+                .await
+                .is_ok()
         })
     }
 
@@ -327,23 +342,21 @@ pub mod linux_biometric {
         }
 
         if check_secret_service_sync() {
-            let enrolled = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
-                        .await
-                    {
-                        Ok(ss) => match ss.get_default_collection().await {
-                            Ok(collection) => {
-                                let mut attrs = HashMap::new();
-                                attrs.insert("label", SECRET_SERVICE_LABEL);
-                                let search = collection.search_items(attrs).await;
-                                search.map(|items| !items.is_empty()).unwrap_or(false)
-                            }
-                            Err(_) => false,
-                        },
+            let enrolled = block_on(async {
+                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
+                    .await
+                {
+                    Ok(ss) => match ss.get_default_collection().await {
+                        Ok(collection) => {
+                            let mut attrs = HashMap::new();
+                            attrs.insert("label", SECRET_SERVICE_LABEL);
+                            let search = collection.search_items(attrs).await;
+                            search.map(|items| !items.is_empty()).unwrap_or(false)
+                        }
                         Err(_) => false,
-                    }
-                })
+                    },
+                    Err(_) => false,
+                }
             });
 
             if enrolled {
@@ -420,41 +433,45 @@ pub mod linux_biometric {
             }
         }
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
-                    Ok(ss) => match ss.get_default_collection().await {
-                        Ok(collection) => {
-                            let mut attrs = HashMap::new();
-                            attrs.insert("label", SECRET_SERVICE_LABEL);
-                            attrs.insert("application", "vela-desktop");
+        block_on(async {
+            match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                Ok(ss) => match ss.get_default_collection().await {
+                    Ok(collection) => {
+                        let mut attrs = HashMap::new();
+                        attrs.insert("label", SECRET_SERVICE_LABEL);
+                        attrs.insert("application", "vela-desktop");
 
-                            match collection
-                                .create_item("VELA Root Master Seed", attrs, rms, true, "application/vnd.vela.rms")
-                                .await
-                            {
-                                Ok(_) => {
-                                    return Ok(());
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Secret Service storage failed: {}", e);
-                                }
+                        match collection
+                            .create_item(
+                                "VELA Root Master Seed",
+                                attrs,
+                                rms,
+                                true,
+                                "application/vnd.vela.rms",
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                tracing::warn!("Secret Service storage failed: {}", e);
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!("Failed to get default collection: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!("Failed to connect to Secret Service: {}", e);
                     }
+                    Err(e) => {
+                        tracing::warn!("Failed to get default collection: {}", e);
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to connect to Secret Service: {}", e);
                 }
+            }
 
-                Err(anyhow::anyhow!(
-                    "No secure storage available on Linux. Please install tpm2-tools for TPM support, \
+            Err(anyhow::anyhow!(
+                "No secure storage available on Linux. Please install tpm2-tools for TPM support, \
                      or ensure GNOME Keyring/KWallet is running for Secret Service support."
-                ))
-            })
+            ))
         })
     }
 
@@ -463,56 +480,48 @@ pub mod linux_biometric {
             return true;
         }
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
-                    .await
-                {
-                    Ok(ss) => match ss.get_default_collection().await {
-                        Ok(collection) => {
-                            let mut attrs = HashMap::new();
-                            attrs.insert("label", SECRET_SERVICE_LABEL);
-                            match collection.search_items(attrs).await {
-                                Ok(items) => {
-                                    if !items.is_empty() {
-                                        return true;
-                                    }
+        block_on(async {
+            match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                Ok(ss) => match ss.get_default_collection().await {
+                    Ok(collection) => {
+                        let mut attrs = HashMap::new();
+                        attrs.insert("label", SECRET_SERVICE_LABEL);
+                        match collection.search_items(attrs).await {
+                            Ok(items) => {
+                                if !items.is_empty() {
+                                    return true;
                                 }
-                                Err(_) => {}
                             }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
-                    },
+                    }
                     Err(_) => {}
-                }
-                false
-            })
+                },
+                Err(_) => {}
+            }
+            false
         }) || tpm::fallback::is_fallback_available()
     }
 
     pub fn delete_stored_rms() -> anyhow::Result<()> {
         let _ = tpm::delete_tpm_key();
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match secret_service::SecretService::connect(secret_service::EncryptionType::Dh)
-                    .await
-                {
-                    Ok(ss) => match ss.get_default_collection().await {
-                        Ok(collection) => {
-                            let mut attrs = HashMap::new();
-                            attrs.insert("label", SECRET_SERVICE_LABEL);
-                            if let Ok(items) = collection.search_items(attrs).await {
-                                for item in items {
-                                    let _ = item.delete().await;
-                                }
+        block_on(async {
+            match secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await {
+                Ok(ss) => match ss.get_default_collection().await {
+                    Ok(collection) => {
+                        let mut attrs = HashMap::new();
+                        attrs.insert("label", SECRET_SERVICE_LABEL);
+                        if let Ok(items) = collection.search_items(attrs).await {
+                            for item in items {
+                                let _ = item.delete().await;
                             }
                         }
-                        Err(_) => {}
-                    },
+                    }
                     Err(_) => {}
-                }
-            })
+                },
+                Err(_) => {}
+            }
         });
 
         let _ = tpm::fallback::delete_fallback();
@@ -553,7 +562,33 @@ pub mod linux_password {
     }
 }
 
+/// Run a platform backend probe, turning a panic into `fallback` instead of
+/// letting it unwind out of the calling thread.
+///
+/// These entry points run on background threads where a panic is not
+/// survivable: gpui's `background_spawn` closes the task, and the foreground
+/// `.await` then panics with "Task polled after completion", taking the whole
+/// app down. A misbehaving keyring/TPM/D-Bus backend should degrade to "no
+/// biometrics available" — the master password path still works.
+fn guard<T>(what: &str, f: impl FnOnce() -> T, fallback: impl FnOnce() -> T) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::error!("biometric backend panicked during {what}; treating it as unavailable");
+            fallback()
+        }
+    }
+}
+
 pub fn check_enrollment() -> BiometricEnrollmentStatus {
+    guard(
+        "enrollment check",
+        check_enrollment_inner,
+        BiometricEnrollmentStatus::default,
+    )
+}
+
+fn check_enrollment_inner() -> BiometricEnrollmentStatus {
     #[cfg(windows)]
     {
         windows_biometric::check_availability()
@@ -579,6 +614,19 @@ pub fn check_enrollment() -> BiometricEnrollmentStatus {
 }
 
 pub fn authenticate() -> BiometricAuthResult {
+    guard("authentication", authenticate_inner, || BiometricAuthResult {
+        success: false,
+        error_message: Some(
+            "Biometric authentication is unavailable on this system. Please use your master \
+             password."
+                .to_string(),
+        ),
+        retry_count: None,
+        uses_password: false,
+    })
+}
+
+fn authenticate_inner() -> BiometricAuthResult {
     #[cfg(windows)]
     {
         windows_biometric::authenticate()
@@ -646,6 +694,10 @@ pub fn store_rms(rms: &[u8; 32]) -> anyhow::Result<()> {
 }
 
 pub fn has_stored_rms() -> bool {
+    guard("stored-key probe", has_stored_rms_inner, || false)
+}
+
+fn has_stored_rms_inner() -> bool {
     #[cfg(windows)]
     {
         windows_biometric::has_stored_rms()
@@ -926,5 +978,27 @@ pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         default_password::authenticate_with_password(password)
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    /// Regression: the Secret Service probes run on gpui's background executor
+    /// and on tokio's blocking pool, neither of which has an ambient tokio
+    /// runtime. They used to reach for `Handle::current()`, which panicked the
+    /// worker thread — and that panic killed the app, because the foreground
+    /// task awaiting the now-closed task panicked in turn.
+    ///
+    /// Deliberately calls the backend directly rather than the public wrappers,
+    /// which swallow panics and would hide the regression. `authenticate()` is
+    /// left out on purpose: it can block on a real fingerprint prompt.
+    #[test]
+    fn secret_service_probes_run_without_a_tokio_runtime() {
+        std::thread::spawn(|| {
+            let _ = super::linux_biometric::check_availability();
+            let _ = super::linux_biometric::has_stored_rms();
+        })
+        .join()
+        .expect("Secret Service probes must not panic off a tokio runtime");
     }
 }
