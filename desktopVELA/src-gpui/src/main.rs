@@ -18,6 +18,7 @@ mod favicon_ui;
 mod fonts;
 mod host;
 mod icon;
+mod keyboard;
 mod qr;
 mod quick_search;
 mod sidebar;
@@ -218,6 +219,12 @@ impl Render for RootView {
             .flex_col()
             .bg(palette.surface)
             .font_family(fonts::LABEL)
+            // Window-wide Tab / Shift-Tab focus movement. It lives at the root
+            // because the tab order is a property of the window, not of any
+            // one screen, and because a key listener only sees keystrokes on
+            // the focused element's dispatch path — anything shallower than
+            // the root would miss fields rendered outside its subtree.
+            .on_key_down(keyboard::navigate_on_tab)
             .child(self.title_bar.clone())
             .child(
                 // `.overflow_hidden()` is load-bearing, not decorative: without

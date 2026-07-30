@@ -25,15 +25,27 @@ opt-level = 1
 debug = false
 
 # Local fork of the pinned gpui-ce revision (vendor/gpui-ce, vendored from
-# the exact rev in Cargo.lock), carrying one fix not yet upstreamed:
-# `EditableTextState::replace_text_in_range`/`replace_and_mark_text_in_range`
-# (the real per-keystroke typing path) never called the crate's own
-# `scroll_to_caret()`, unlike `move_to`/`select_to` (arrow-key/click
-# navigation) which do — so typing text past a field's visible width never
-# scrolled to reveal the tail. All four crates from this git source must be
-# patched together (not just gpui_elements) since they're one cohesive
-# workspace with internal path deps — patching only one would produce two
-# incompatible copies of `gpui`'s types in the same binary.
+# the exact rev in Cargo.lock), carrying fixes not yet upstreamed:
+#
+#  1. `EditableTextState::replace_text_in_range`/`replace_and_mark_text_in_range`
+#     (the real per-keystroke typing path) never called the crate's own
+#     `scroll_to_caret()`, unlike `move_to`/`select_to` (arrow-key/click
+#     navigation) which do — so typing text past a field's visible width never
+#     scrolled to reveal the tail.
+#
+#  2. Keyboard accessibility for editable text (upstream's own backlog item).
+#     Fields now register themselves as tab stops during paint, via a new
+#     `Window::insert_tab_stop`, so `focus_next`/`focus_prev` can reach them;
+#     and `insert_tab` / single-line `insert_enter` `cx.propagate()` instead of
+#     silently eating the key, since an action handler stops propagation by
+#     default. Without that, `tab` typed a literal tab with no way out of a
+#     field, and `enter` was swallowed before any enclosing form could treat it
+#     as submit. See `src-gpui/src/keyboard.rs` for the consuming side.
+#
+# All four crates from this git source must be patched together (not just
+# gpui_elements) since they're one cohesive workspace with internal path deps —
+# patching only one would produce two incompatible copies of `gpui`'s types in
+# the same binary.
 [patch."https://github.com/gpui-ce/gpui-ce"]
 gpui = { path = "vendor/gpui-ce/crates/gpui" }
 gpui_platform = { path = "vendor/gpui-ce/crates/gpui_platform" }

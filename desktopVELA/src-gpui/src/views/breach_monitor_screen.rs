@@ -416,6 +416,12 @@ fn add_email_form(palette: &Palette, screen: &BreachMonitorScreen, cx: &mut Cont
             div()
                 .flex()
                 .gap_3()
+                // Enter checks the typed email, same as the button beside it.
+                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                    if !this.adding_email {
+                        this.check_and_add_email(cx);
+                    }
+                }))
                 .child(
                     text_input("breach-email-input")
                         .state(screen.email_state.downgrade())

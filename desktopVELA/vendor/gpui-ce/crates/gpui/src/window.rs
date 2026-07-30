@@ -4381,6 +4381,21 @@ impl Window {
         self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
     }
 
+    /// Registers the given focus handle as a tab stop at the current position in the tab order.
+    ///
+    /// `div` does this for its `track_focus`ed handle automatically, but elements outside this
+    /// crate own their focus handles directly (e.g. `gpui_elements`' editable text, whose handle
+    /// lives on its state entity) and would otherwise be unreachable via `Window::focus_next` /
+    /// `Window::focus_prev`. Whether the handle is actually *reachable* by tab, and where it lands
+    /// in the order, comes from `FocusHandle::tab_stop` / `FocusHandle::tab_index`; call order
+    /// breaks ties, so call this from paint in the same position `div` would.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_tab_stop(&mut self, focus_handle: &FocusHandle) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.tab_stops.insert(focus_handle);
+    }
+
     /// Sets the view id for the current element, which will be used to manage view caching.
     ///
     /// This method should only be called as part of element prepaint. We plan on removing this

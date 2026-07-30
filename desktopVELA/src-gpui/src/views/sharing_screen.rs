@@ -697,6 +697,7 @@ fn share_modal(
         .child(
             div()
                 .id("share-modal-body")
+                .map(|el| crate::keyboard::trap_tab(el, "share-modal-trap", window, cx))
                 .w(px(420.))
                 .max_h(px(560.))
                 .p_8()
@@ -816,18 +817,30 @@ fn share_modal(
                         .text_color(palette.outline),
                 )
                 .child(
-                    text_input("share-recipient")
-                        .state(screen.recipient_state.downgrade())
-                        .placeholder("Enter recipient's VELA user ID")
-                        .caret_blink_interval_500ms()
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_xl()
-                        .p_3()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                    // Wrapped rather than hung off the modal body, so Enter
+                    // typed in the item-search box further up doesn't send the
+                    // share — a key listener only sees the focused element's
+                    // own dispatch path.
+                    div()
+                        .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                            if !this.sending && this.selected_item_id.is_some() {
+                                this.submit_share(cx);
+                            }
+                        }))
+                        .child(
+                            text_input("share-recipient")
+                                .state(screen.recipient_state.downgrade())
+                                .placeholder("Enter recipient's VELA user ID")
+                                .caret_blink_interval_500ms()
+                                .bg(palette.surface_container_highest)
+                                .text_color(palette.on_surface)
+                                .rounded_xl()
+                                .p_3()
+                                .w_full()
+                                .min_h_auto()
+                                .whitespace_nowrap()
+                                .overflow_x_scroll(),
+                        ),
                 )
                 .when_some(screen.action_error.clone(), |el, error| {
                     el.child(div().text_sm().text_color(palette.error).child(error))

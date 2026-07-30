@@ -633,7 +633,7 @@ impl Render for SettingsScreen {
                         el.child(div().text_sm().text_color(palette.error).child(error))
                     }),
             )
-            .when(self.show_delete_modal, |el| el.child(delete_modal(&palette, self, cx)))
+            .when(self.show_delete_modal, |el| el.child(delete_modal(&palette, self, window, cx)))
             .when(self.conflict_modal.is_some(), |el| el.child(conflict_resolution_modal(&palette, self, window, cx)))
             .when(self.show_security_key_modal, |el| el.child(security_key_modal(&palette, self, window, cx)))
             .into_any_element()
@@ -945,6 +945,18 @@ fn security_section(
                             div()
                                 .flex()
                                 .gap_2()
+                                // Enter saves the edited shortcut, same as the
+                                // Save button beside it.
+                                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                                    let draft = this.shortcut_state.read(cx).as_str().trim().to_string();
+                                    if let Some(settings) = this.settings.clone() {
+                                        let mut updated = settings;
+                                        updated.quick_search_shortcut = draft;
+                                        this.save(updated, cx);
+                                    }
+                                    this.editing_shortcut = false;
+                                    cx.notify();
+                                }))
                                 .child(
                                     text_input("shortcut-input")
                                         .state(screen.shortcut_state.downgrade())
@@ -1175,6 +1187,7 @@ fn security_key_modal(
         .child(
             div()
                 .id("security-key-modal-body")
+                .map(|el| crate::keyboard::trap_tab(el, "security-key-modal-trap", window, cx))
                 .w(px(420.))
                 .p_8()
                 .rounded_2xl()
@@ -1185,6 +1198,11 @@ fn security_key_modal(
                 .flex_col()
                 .gap_4()
                 .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                    if !this.registering_security_key {
+                        this.register_security_key(cx);
+                    }
+                }))
                 .child(
                     div()
                         .font_family(fonts::HEADLINE)
@@ -1345,6 +1363,18 @@ fn sync_section(
                             div()
                                 .flex()
                                 .gap_2()
+                                // Enter saves the edited URL, same as the Save
+                                // button beside it.
+                                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                                    let draft = this.server_url_state.read(cx).as_str().trim().to_string();
+                                    if let Some(settings) = this.settings.clone() {
+                                        let mut updated = settings;
+                                        updated.server_url = draft;
+                                        this.save(updated, cx);
+                                    }
+                                    this.editing_server_url = false;
+                                    cx.notify();
+                                }))
                                 .child(
                                     text_input("server-url-input")
                                         .state(screen.server_url_state.downgrade())
@@ -1655,7 +1685,12 @@ fn account_section(
         )
 }
 
-fn delete_modal(palette: &Palette, screen: &SettingsScreen, cx: &mut Context<SettingsScreen>) -> impl IntoElement {
+fn delete_modal(
+    palette: &Palette,
+    screen: &SettingsScreen,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+) -> impl IntoElement {
     let confirm_text = screen.delete_confirm_state.read(cx).as_str().to_string();
     let can_delete = confirm_text == "DELETE";
 
@@ -1674,6 +1709,7 @@ fn delete_modal(palette: &Palette, screen: &SettingsScreen, cx: &mut Context<Set
         .child(
             div()
                 .id("delete-modal-body")
+                .map(|el| crate::keyboard::trap_tab(el, "delete-modal-trap", window, cx))
                 .w(px(420.))
                 .p_8()
                 .rounded_2xl()
@@ -1684,6 +1720,13 @@ fn delete_modal(palette: &Palette, screen: &SettingsScreen, cx: &mut Context<Set
                 .flex_col()
                 .gap_4()
                 .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                // Enter confirms, but only once DELETE has actually been
+                // typed — the same guard the button carries.
+                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                    if !this.deleting && this.delete_confirm_state.read(cx).as_str() == "DELETE" {
+                        this.delete_vault(cx);
+                    }
+                }))
                 .child(
                     div()
                         .flex()

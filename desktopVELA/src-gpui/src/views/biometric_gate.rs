@@ -856,6 +856,14 @@ fn password_view(
                 .flex()
                 .flex_col()
                 .gap_3()
+                // Enter in the master-password field unlocks, same as clicking
+                // Unlock. Scoped to this form's container so it only fires for
+                // keystrokes typed into the field below it.
+                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                    if !this.is_authenticating && !this.is_locked() {
+                        this.trigger_password_auth(cx);
+                    }
+                }))
                 .child({
                     // gpui has no CSS-`transform` equivalent, so an
                     // absolutely-positioned `top_1_2()` (top: 50%) alone
@@ -1034,6 +1042,7 @@ fn reset_confirm_modal(palette: &Palette, gate: &BiometricGate, window: &mut Win
         .child(
             div()
                 .id("reset-modal-body")
+                .map(|el| crate::keyboard::trap_tab(el, "reset-modal-trap", window, cx))
                 .w(px(420.))
                 .p_8()
                 .rounded_2xl()
@@ -1044,6 +1053,13 @@ fn reset_confirm_modal(palette: &Palette, gate: &BiometricGate, window: &mut Win
                 .flex_col()
                 .gap_4()
                 .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                // Enter confirms, but only once DELETE has actually been
+                // typed — the same guard the button carries.
+                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                    if !this.resetting && this.reset_confirm_state.read(cx).as_str() == "DELETE" {
+                        this.confirm_reset(cx);
+                    }
+                }))
                 .child(
                     div()
                         .flex()

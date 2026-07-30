@@ -1413,6 +1413,7 @@ fn web_access_modal(
         .child(
             div()
                 .id("web-access-modal-body")
+                .map(|el| crate::keyboard::trap_tab(el, "web-access-modal-trap", window, cx))
                 .w(px(520.))
                 .max_h(px(640.))
                 .p_8()

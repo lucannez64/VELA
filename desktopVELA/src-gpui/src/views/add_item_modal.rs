@@ -546,6 +546,7 @@ impl Render for AddItemModal {
             .child(
                 div()
                     .id("add-item-card")
+                    .map(|el| crate::keyboard::trap_tab(el, "add-item-card-trap", window, cx))
                     .w(px(560.))
                     .max_h(px(640.))
                     .rounded_2xl()
@@ -557,6 +558,14 @@ impl Render for AddItemModal {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
+                    // Enter saves from any single-line field. The Notes and
+                    // Secure-note bodies are `text_area`s, where Enter inserts
+                    // a newline and never reaches here.
+                    .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                        if !this.saving {
+                            this.submit(cx);
+                        }
+                    }))
                     .child(
                         div()
                             .flex()

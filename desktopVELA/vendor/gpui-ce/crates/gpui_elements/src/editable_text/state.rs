@@ -881,20 +881,24 @@ impl<'app> EditableTextActionHandler<Context<'app, Self>> for EditableTextState 
     }
 
     fn insert_enter(&mut self, _: &Enter, window: &mut Window, cx: &mut Context<'app, Self>) {
-        if !self.layout_data.supports_multiline {
-            return;
-        }
-        if !self.layout_data.accepts_input {
+        if !self.layout_data.supports_multiline || !self.layout_data.accepts_input {
+            // There is no newline to insert here, and an action handler stops
+            // propagation by default — which would silently eat the key. Hand
+            // it back so an enclosing form can treat Enter on a single-line
+            // field as "submit", the way a browser does.
+            cx.propagate();
             return;
         }
         self.replace_text_in_range(None, "\n", window, cx);
     }
 
-    fn insert_tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<'app, Self>) {
-        if !self.layout_data.accepts_input {
-            return;
-        }
-        self.replace_text_in_range(None, "\t", window, cx);
+    fn insert_tab(&mut self, _: &Tab, _window: &mut Window, cx: &mut Context<'app, Self>) {
+        // Tab moves focus rather than typing a literal tab — the module-level
+        // backlog item, and what every other text field on every platform
+        // does. Propagating (instead of handling) is what lets the key reach
+        // the containing view's `focus_next` / `focus_prev`; without it a
+        // keyboard user has no way out of a text field at all.
+        cx.propagate();
     }
 
     fn delete_left(&mut self, _: &DeleteLeft, _: &mut Window, cx: &mut Context<'app, Self>) {

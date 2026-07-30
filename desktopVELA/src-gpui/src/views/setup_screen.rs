@@ -463,6 +463,12 @@ fn security_key_modal(
 
     modal_backdrop("setup-security-key", cx, |this, cx| this.close_security_key_modal(cx)).child(
         modal_body(palette, "setup-security-key")
+            .map(|el| crate::keyboard::trap_tab(el, "setup-security-key-trap", window, cx))
+            .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                if !this.registering_security_key {
+                    this.register_security_key(cx);
+                }
+            }))
             .child(modal_header(palette, "key", "Register security key"))
             .child(
                 div().text_sm().text_color(palette.on_surface_variant).child(
@@ -881,6 +887,11 @@ fn password_step(
         .flex()
         .flex_col()
         .gap_4()
+        // Enter from either password box creates the vault, so the whole step
+        // can be completed without reaching for the mouse.
+        .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+            this.submit_password(cx);
+        }))
         .child(step_icon(palette, "password"))
         .child(step_title(palette, "Set up master password"))
         .child(step_body(

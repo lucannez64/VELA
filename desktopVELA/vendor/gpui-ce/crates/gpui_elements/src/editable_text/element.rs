@@ -31,6 +31,8 @@ pub fn editable_text(id: impl Into<ElementId>) -> EditableTextElement {
         colors: EditableTextColors::default(),
         caret_blink_interval: None,
         mask_char: None,
+        tab_stop: true,
+        tab_index: None,
     };
     this.interactivity.element_id = Some(id.into());
 
@@ -76,6 +78,16 @@ pub struct EditableTextElement {
     /// track this element's own internal scroll offset and desyncs on any
     /// text long enough to scroll.
     mask_char: Option<char>,
+    /// Whether this field can be reached with Tab / Shift-Tab. On by default:
+    /// an input a keyboard user cannot reach is an accessibility bug, and
+    /// unlike `div` this element has no "focusable but deliberately not a tab
+    /// stop" container use case — it is always a leaf. A field built with
+    /// `accepts_input(false)` is skipped regardless; a disabled input is not
+    /// tabbable.
+    tab_stop: bool,
+    /// Position in the tab order. `None` (the default) leaves it at 0, which
+    /// orders fields by paint — i.e. document — order.
+    tab_index: Option<isize>,
 }
 
 /// EditableText styling that goes beyond what Style/StyleRefinement supports
@@ -170,6 +182,22 @@ impl EditableTextElement {
     /// itself can fully solve.
     pub fn mask_char(mut self, c: Option<char>) -> Self {
         self.mask_char = c;
+        self
+    }
+
+    /// Configures whether this field can be reached with Tab / Shift-Tab
+    /// (default: `true`). Fields built with `accepts_input(false)` are left
+    /// out of the tab order regardless of this setting.
+    pub fn tab_stop(mut self, enabled: bool) -> Self {
+        self.tab_stop = enabled;
+        self
+    }
+
+    /// Sets this field's position in the tab order. Fields sharing an index
+    /// (the default is 0 for everything) are visited in paint order, so this
+    /// is only needed to pull a field out of its document position.
+    pub fn tab_index(mut self, index: isize) -> Self {
+        self.tab_index = Some(index);
         self
     }
 
@@ -455,11 +483,23 @@ impl Element for EditableTextElement {
         }
 
         let accepts_input = self.accepts_input;
+        let tab_stop = self.tab_stop && accepts_input;
+        let tab_index = self.tab_index;
         let hitbox = prepaint.interactivity.hitbox.clone();
         let perform_paint = |style: &Style, window: &mut Window, cx: &mut App| {
             if style.display == Display::None {
                 return;
             }
+
+            // Join the window's tab order at this point, so Tab / Shift-Tab
+            // walk fields in the order they're painted. `div` does this for
+            // the handle it `track_focus`es, but this element owns its handle
+            // on its state entity instead, so nothing else would register it.
+            let mut tab_handle = prepaint.focus_handle.clone().tab_stop(tab_stop);
+            if let Some(index) = tab_index {
+                tab_handle = tab_handle.tab_index(index);
+            }
+            window.insert_tab_stop(&tab_handle);
 
             // Register event listeners to the window for the next frame
             if accepts_input {
@@ -935,5 +975,110 @@ fn build_quad_over_text(
         ));
 
         quad_corners
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editable_text::{EditableTextState, StringStorage, actions};
+    use gpui::{
+        AppContext, KeyDownEvent, Render, TestAppContext, WindowHandle, div, prelude::*,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    /// Two single-line fields under one root that does what a real app's root
+    /// does with the keys the fields hand back: Tab moves focus, Enter is the
+    /// enclosing form's submit.
+    struct TwoFields {
+        first: Entity<EditableTextState>,
+        second: Entity<EditableTextState>,
+        enters: Rc<Cell<usize>>,
+    }
+
+    impl Render for TwoFields {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let enters = self.enters.clone();
+            div()
+                .size_full()
+                .on_key_down(
+                    move |event: &KeyDownEvent, window, cx| match event.keystroke.key.as_str() {
+                        // Stopping propagation is what keeps the platform from
+                        // falling back to typing the keystroke's `key_char`
+                        // ("\t") into the field it just left.
+                        "tab" if event.keystroke.modifiers.shift => {
+                            cx.stop_propagation();
+                            window.focus_prev(cx);
+                        }
+                        "tab" => {
+                            cx.stop_propagation();
+                            window.focus_next(cx);
+                        }
+                        "enter" => {
+                            cx.stop_propagation();
+                            enters.set(enters.get() + 1);
+                        }
+                        _ => {}
+                    },
+                )
+                .child(text_input("first").state(self.first.downgrade()))
+                .child(text_input("second").state(self.second.downgrade()))
+        }
+    }
+
+    fn two_fields(cx: &mut TestAppContext) -> (WindowHandle<TwoFields>, Rc<Cell<usize>>) {
+        cx.update(|cx| {
+            cx.bind_keys(
+                actions::default_bindings().as_keybindings(Some(actions::DEFAULT_INPUT_CONTEXT)),
+            )
+        });
+        let enters = Rc::new(Cell::new(0));
+        let window = cx.add_window(|_, cx| TwoFields {
+            first: cx.new(|cx| EditableTextState::new(StringStorage::from("one"), cx)),
+            second: cx.new(|cx| EditableTextState::new(StringStorage::from("two"), cx)),
+            enters: enters.clone(),
+        });
+        window
+            .update(cx, |view, window, cx| {
+                window.focus(&view.first.read(cx).focus_handle(cx), cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        (window, enters)
+    }
+
+    #[gpui::test]
+    fn test_tab_moves_focus_between_fields(cx: &mut TestAppContext) {
+        let (window, _) = two_fields(cx);
+
+        cx.simulate_keystrokes(*window, "tab");
+        window
+            .update(cx, |view, window, cx| {
+                assert!(view.second.read(cx).focus_handle(cx).is_focused(window));
+                // The key moved focus rather than being typed into the field.
+                assert_eq!(view.first.read(cx).as_str(), "one");
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(*window, "shift-tab");
+        window
+            .update(cx, |view, window, cx| {
+                assert!(view.first.read(cx).focus_handle(cx).is_focused(window));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_enter_in_a_single_line_field_reaches_the_form(cx: &mut TestAppContext) {
+        let (window, enters) = two_fields(cx);
+
+        cx.simulate_keystrokes(*window, "enter");
+        assert_eq!(enters.get(), 1);
+        window
+            .update(cx, |view, _window, cx| {
+                assert_eq!(view.first.read(cx).as_str(), "one");
+            })
+            .unwrap();
     }
 }

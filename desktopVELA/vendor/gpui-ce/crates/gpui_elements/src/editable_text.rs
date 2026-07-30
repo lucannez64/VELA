@@ -157,8 +157,12 @@
 //! - text sanitation & validation (see no-op implementation of [`EditableTextState::validate_incoming_text`])
 //! - nav & select via PageUp/PageDown
 //! - screen reader support via a11y
-//! - masking text (e.g. for passwords)
-//! - disabling `insert_tab` if favor of tab being used to change focus between elements (i.e. escaping the field)
+//!
+//! ### Keyboard focus
+//! Fields join the window's tab order automatically (see [`EditableTextElement::tab_stop`]), and
+//! `tab` escapes the field rather than inserting a literal tab, so `Window::focus_next` /
+//! `Window::focus_prev` can move between them. `enter` on a single-line field is likewise left
+//! unhandled, so an enclosing form can treat it as "submit".
 //!
 
 pub mod actions;
