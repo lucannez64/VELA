@@ -14,6 +14,29 @@
 //! short-lived CLI tools that exit immediately after copying — not a
 //! long-running GUI app like this one.
 //!
+//! That still wasn't enough on Wayland, because arboard was writing to the
+//! wrong clipboard entirely: with default features it has no Wayland backend
+//! at all (`wayland-data-control` is opt-in), so every copy went to
+//! Xwayland's X11 selection. wlroots-style compositors (Hyprland, sway) only
+//! mirror the X11 selection onto the Wayland clipboard while an *Xwayland*
+//! surface has keyboard focus — and this app's own window is a native
+//! Wayland surface, so at the moment of a copy the mirror is off: the value
+//! reaches Xwayland (another X11 client can read it back), `set_text()`
+//! returns `Ok(())`, the toast and the log both say "copied", and yet no
+//! Wayland app can paste it. Hence the primary path here is gpui's own
+//! clipboard, which speaks whichever protocol the platform window is
+//! actually using — the same one `gpui_elements`' text fields copy through.
+//!
+//! gpui's Wayland backend can only set the selection while one of our
+//! windows holds focus (a Wayland client needs a serial from an input event
+//! it received to do so). Copies are always click- or key-driven, so that
+//! holds for them — but the clear-on-lock path can fire while the window is
+//! unfocused (idle auto-lock, the tray's Lock item), which is exactly when a
+//! copied secret most needs wiping. arboard stays as the fallback for that
+//! case only, now built with `wayland-data-control`: the data-control
+//! protocol is what clipboard managers use and is deliberately
+//! focus-independent.
+//!
 //! Auto-clear ports `src/hooks/useClipboard.ts`: a copy schedules a clear
 //! `clipboard_clear_seconds` later, and a *new* copy cancels the pending
 //! clear rather than letting the old timer wipe the new value early (the
@@ -24,7 +47,7 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-use gpui::{App, Global, Task};
+use gpui::{App, ClipboardItem, Global, Task};
 
 use crate::toast::{self, ToastKind};
 
@@ -60,7 +83,23 @@ pub fn set_clear_seconds(cx: &mut App, seconds: u32) {
     cx.default_global::<ClipboardState>().clear_seconds = Some(seconds);
 }
 
-fn write_text(label: &str, value: &str) -> bool {
+fn write_text(cx: &mut App, label: &str, value: &str) -> bool {
+    // `active_window()` is the Wayland backend's own `keyboard_focused_window`
+    // — i.e. exactly the condition under which its `write_to_clipboard` does
+    // anything at all. Checking it here is what turns that silent no-op into
+    // a fall-through to the focus-independent backend below.
+    if cx.active_window().is_some() {
+        cx.write_to_clipboard(ClipboardItem::new_string(value.to_string()));
+        return true;
+    }
+    write_text_unfocused(label, value)
+}
+
+/// arboard fallback for writes made with no focused window — see the module
+/// doc. On X11 and on compositors without a data-control protocol this is the
+/// same X11 selection write as before; on wlroots-style Wayland it goes
+/// through `wayland-data-control` and works regardless of focus.
+fn write_text_unfocused(label: &str, value: &str) -> bool {
     CLIPBOARD.with(|cell| {
         let mut cell = cell.borrow_mut();
         if cell.is_none() {
@@ -83,7 +122,7 @@ fn write_text(label: &str, value: &str) -> bool {
 }
 
 pub fn copy(cx: &mut App, label: &str, value: &str) {
-    if !write_text(label, value) {
+    if !write_text(cx, label, value) {
         toast::show(cx, "Failed to copy", ToastKind::Error);
         return;
     }
@@ -133,18 +172,15 @@ fn clear_if_ours(cx: &mut App) -> bool {
     };
     // A read failure means we can't prove the content moved on — fail closed
     // and wipe (a copied secret must not linger because of a clipboard quirk).
-    let still_ours = read_text().map_or(true, |current| current == last_value);
-    still_ours && write_text("clipboard", "")
+    // Reading through gpui matters as much as writing through it: read and
+    // write have to name the same clipboard, or every check here would compare
+    // against whatever unrelated value Xwayland's selection happens to hold.
+    let still_ours = read_text(cx).map_or(true, |current| current == last_value);
+    still_ours && write_text(cx, "clipboard", "")
 }
 
-fn read_text() -> Option<String> {
-    CLIPBOARD.with(|cell| {
-        let mut cell = cell.borrow_mut();
-        if cell.is_none() {
-            *cell = arboard::Clipboard::new().ok();
-        }
-        cell.as_mut().and_then(|clipboard| clipboard.get_text().ok())
-    })
+fn read_text(cx: &App) -> Option<String> {
+    cx.read_from_clipboard().and_then(|item| item.text())
 }
 
 /// Immediate clear + cancel of any pending timer — ports `useClipboard.ts`'s
