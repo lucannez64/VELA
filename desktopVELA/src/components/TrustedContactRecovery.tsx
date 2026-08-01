@@ -43,7 +43,9 @@ export default function TrustedContactRecovery({ onComplete, onSkip }: Props) {
   const handleCopy = async () => {
     if (!share) return;
     try {
-      await navigator.clipboard.writeText(share);
+      // A recovery share reconstructs the vault key — same reasoning as the
+      // enrollment code: never leave it in the OS clipboard history.
+      await invoke('copy_secret', { text: share });
       setCopied(true);
       showToast('Recovery share copied', 'success');
       setTimeout(() => setCopied(false), 2000);

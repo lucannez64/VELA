@@ -1,6 +1,7 @@
 pub mod api;
 pub mod audit;
 pub mod breach;
+pub mod clipboard;
 pub mod biometric;
 pub mod commands;
 pub mod crypto;

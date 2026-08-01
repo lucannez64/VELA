@@ -20,13 +20,6 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# `wayland-data-control` is not a default feature, and without it arboard has
-# no Wayland backend whatsoever — it writes to Xwayland's X11 selection, which
-# wlroots-style compositors only mirror onto the Wayland clipboard while an
-# Xwayland window has focus (never, when the copy came from our own native
-# Wayland window). Only used for the unfocused clear-on-lock path now; see
-# src/clipboard.rs.
-arboard = { version = "3", features = ["wayland-data-control"] }
 chrono = "0.4"
 base64 = "0.22"
 open = "5"

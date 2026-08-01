@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import QRCode from 'qrcode';
 import { useApp } from '../context/AppContext';
 import WebAccessModal from '../components/WebAccessModal';
@@ -145,7 +144,9 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   const handleCopyCode = async () => {
     if (!enrollmentCode) return;
     try {
-      await writeText(enrollmentCode);
+      // An enrollment code grants vault access — copy it concealed so it does
+      // not land in the OS clipboard history.
+      await invoke('copy_secret', { text: enrollmentCode });
       setCodeCopied(true);
       setTimeout(() => setCodeCopied(false), 3000);
     } catch {

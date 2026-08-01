@@ -8615,21 +8615,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tauri-plugin-clipboard-manager"
-version = "2.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "206dc20af4ed210748ba945c2774e60fd0acd52b9a73a028402caf809e9b6ecf"
-dependencies = [
- "arboard",
- "log",
- "serde",
- "serde_json",
- "tauri",
- "tauri-plugin",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "tauri-plugin-dialog"
 version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9747,7 +9732,6 @@ dependencies = [
  "subtle",
  "tauri",
  "tauri-build",
- "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
@@ -9771,6 +9755,7 @@ name = "vela-desktop-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "ashpd 0.13.13",
  "async-io",
  "base64 0.22.1",
@@ -9805,6 +9790,7 @@ dependencies = [
  "webauthn-rs-proto",
  "windows 0.58.0",
  "wiremock",
+ "wl-clipboard-rs",
  "zeroize",
 ]
 
@@ -9812,7 +9798,6 @@ dependencies = [
 name = "vela-desktop-gpui"
 version = "0.1.0"
 dependencies = [
- "arboard",
  "base64 0.22.1",
  "chrono",
  "futures",

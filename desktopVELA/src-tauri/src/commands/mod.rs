@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod biometric;
+pub mod clipboard;
 pub mod devices;
 pub mod ipc;
 pub mod recovery;

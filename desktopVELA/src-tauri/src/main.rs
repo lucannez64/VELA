@@ -240,7 +240,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Arc::new(AppState::default()))
         .setup(|app| {
             info!("Application setup starting");
@@ -282,6 +281,8 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::clipboard::copy_secret,
+            commands::clipboard::clear_clipboard,
             commands::biometric::authenticate,
             commands::biometric::authenticate_password,
             commands::biometric::check_enrollment,

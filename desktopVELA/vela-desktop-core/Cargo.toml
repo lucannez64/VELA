@@ -44,6 +44,7 @@ ciborium = "0.2"
 webauthn-rs-proto = "=0.5.5"
 
 [target.'cfg(windows)'.dependencies]
+arboard = "3"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security_Credentials",
@@ -57,12 +58,19 @@ windows = { version = "0.58", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# `wayland-data-control` is not a default feature, and without it arboard has
+# no Wayland backend at all — see src/clipboard.rs.
+arboard = { version = "3", features = ["wayland-data-control"] }
+# Only for the data-control capability probe in src/clipboard.rs (already in
+# the tree as arboard's Wayland backend).
+wl-clipboard-rs = "0.9"
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 async-io = "2"
 futures-util = "0.3.33"
 secret-service = { version = "5", features = ["rt-async-io-crypto-rust"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+arboard = "3"
 security-framework = "3"
 
 [dev-dependencies]

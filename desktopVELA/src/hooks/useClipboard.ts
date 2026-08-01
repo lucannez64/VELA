@@ -1,7 +1,19 @@
 import { useCallback } from 'react';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { invoke } from '@tauri-apps/api/core';
 import { useApp } from '../context/AppContext';
 
+// Copies go through our own `copy_secret` command rather than
+// @tauri-apps/plugin-clipboard-manager: the plugin writes plain text, which
+// leaves the copied password in the OS clipboard history (Win+V and cloud
+// clipboard on Windows, Klipper or a `wl-paste --watch` recorder on Linux),
+// where clearing the clipboard afterwards can no longer reach it. The command
+// marks the copy concealed with whatever convention the platform has — see
+// vela-desktop-core/src/clipboard.rs.
+//
+// Clearing is `clear_clipboard`, which wipes only if the clipboard still holds
+// the secret we copied; writing '' unconditionally, as this hook used to,
+// would throw away whatever the user had copied from another app in between.
+//
 // The pending-clear timer lives in AppContext (not a local ref) so that a
 // clearClipboard() call from a different component instance — e.g. the lock
 // button — can cancel the timer a copy started from ItemDetail. A local ref
@@ -11,7 +23,7 @@ export function useClipboard() {
 
   const copyToClipboard = useCallback(async (text: string, label: string = 'Value') => {
     try {
-      await writeText(text);
+      await invoke('copy_secret', { text });
 
       const clearDelay = (settings?.clipboard_clear_seconds ?? 30) * 1000;
 
@@ -23,8 +35,9 @@ export function useClipboard() {
 
       const timer = setTimeout(async () => {
         try {
-          await writeText('');
-          showToast('Clipboard cleared', 'info');
+          if (await invoke<boolean>('clear_clipboard')) {
+            showToast('Clipboard cleared', 'info');
+          }
         } catch (e) {
           console.error('Failed to clear clipboard:', e);
         }
@@ -44,7 +57,7 @@ export function useClipboard() {
         clearTimeout(clipboardTimer);
         setClipboardTimer(null);
       }
-      await writeText('');
+      await invoke('clear_clipboard');
     } catch (e) {
       console.error('Failed to clear clipboard:', e);
     }

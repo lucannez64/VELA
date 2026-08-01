@@ -12,20 +12,25 @@ const mocks = vi.hoisted(() => {
   ctx.setClipboardTimer = vi.fn((t: ReturnType<typeof setTimeout> | null) => {
     ctx.clipboardTimer = t;
   });
-  return { ctx, writeText: vi.fn() };
+  return { ctx, invoke: vi.fn() };
 });
 
-vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
-  writeText: mocks.writeText,
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: mocks.invoke,
 }));
 
 vi.mock('../context/AppContext', () => ({
   useApp: () => mocks.ctx,
 }));
 
+// How many times the hook asked the backend to wipe the clipboard.
+const clearCalls = () => mocks.invoke.mock.calls.filter(([cmd]) => cmd === 'clear_clipboard');
+
 beforeEach(() => {
   vi.useFakeTimers();
-  mocks.writeText.mockResolvedValue(undefined);
+  // `clear_clipboard` answers whether it actually wiped anything — the hook
+  // only toasts when it did.
+  mocks.invoke.mockImplementation(async (cmd: string) => cmd === 'clear_clipboard');
 });
 
 afterEach(() => {
@@ -43,7 +48,7 @@ describe('copyToClipboard', () => {
       await result.current.copyToClipboard('s3cret', 'Password');
     });
 
-    expect(mocks.writeText).toHaveBeenCalledWith('s3cret');
+    expect(mocks.invoke).toHaveBeenCalledWith('copy_secret', { text: 's3cret' });
     expect(mocks.ctx.showToast).toHaveBeenCalledWith('Password copied (clears in 30s)', 'success');
     expect(mocks.ctx.clipboardTimer).not.toBeNull();
 
@@ -51,12 +56,12 @@ describe('copyToClipboard', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(29_000);
     });
-    expect(mocks.writeText).not.toHaveBeenCalledWith('');
+    expect(clearCalls()).toHaveLength(0);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_000);
     });
-    expect(mocks.writeText).toHaveBeenCalledWith('');
+    expect(clearCalls()).toHaveLength(1);
     expect(mocks.ctx.showToast).toHaveBeenCalledWith('Clipboard cleared', 'info');
     expect(mocks.ctx.setClipboardTimer).toHaveBeenCalledWith(null);
   });
@@ -81,7 +86,7 @@ describe('copyToClipboard', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
-    expect(mocks.writeText).toHaveBeenCalledWith('');
+    expect(clearCalls()).toHaveLength(1);
   });
 
   it('falls back to 30s when settings are unavailable', async () => {
@@ -108,12 +113,11 @@ describe('copyToClipboard', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
-    const clears = mocks.writeText.mock.calls.filter(([v]) => v === '');
-    expect(clears).toHaveLength(1);
+    expect(clearCalls()).toHaveLength(1);
   });
 
   it('reports a failed copy and does not schedule a clear', async () => {
-    mocks.writeText.mockRejectedValueOnce(new Error('clipboard busy'));
+    mocks.invoke.mockRejectedValueOnce(new Error('clipboard busy'));
     const { result } = renderHook(() => useClipboard());
 
     await act(async () => {
@@ -137,15 +141,14 @@ describe('clearClipboard', () => {
     await act(async () => {
       await result.current.clearClipboard();
     });
-    expect(mocks.writeText).toHaveBeenCalledWith('');
+    expect(clearCalls()).toHaveLength(1);
     expect(mocks.ctx.setClipboardTimer).toHaveBeenCalledWith(null);
 
     // The cancelled timer must not fire a second clear or a toast later.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
-    const clears = mocks.writeText.mock.calls.filter(([v]) => v === '');
-    expect(clears).toHaveLength(1);
+    expect(clearCalls()).toHaveLength(1);
     expect(mocks.ctx.showToast).not.toHaveBeenCalledWith('Clipboard cleared', 'info');
   });
 });
