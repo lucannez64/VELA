@@ -58,12 +58,16 @@ pub struct AppShell {
     edit_modal: Option<Entity<AddItemModal>>,
     _edit_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
+    /// Auto-sync (startup + periodic) — cancelled when this shell is dropped
+    /// on lock, so syncing stops exactly when the session does.
+    _sync_scheduler: gpui::Task<()>,
 }
 
 impl AppShell {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
         let sidebar = cx.new(Sidebar::new);
+        let sync_scheduler = crate::sync_scheduler::start(app_state.clone(), cx);
         let mut this = Self {
             app_state,
             sidebar,
@@ -72,6 +76,7 @@ impl AppShell {
             edit_modal: None,
             _edit_subscription: None,
             _subscriptions: Vec::new(),
+            _sync_scheduler: sync_scheduler,
         };
         this.subscribe_sidebar(cx);
         this.show_vault(cx);

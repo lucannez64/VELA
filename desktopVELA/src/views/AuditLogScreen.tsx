@@ -64,6 +64,8 @@ export default function AuditLogScreen() {
 
   useEffect(() => {
     loadAuditLog();
+    // Mount-once load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadAuditLog = async () => {

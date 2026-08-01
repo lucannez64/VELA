@@ -468,6 +468,15 @@ fn validate_export_path(
     state: &State<'_, Arc<AppState>>,
     raw: &str,
 ) -> Result<std::path::PathBuf, String> {
+    validate_export_path_inner(state.store.store_path(), raw)
+}
+
+/// The `State`-free core of [`validate_export_path`] so the rules can be
+/// unit-tested without a running Tauri app.
+fn validate_export_path_inner(
+    store_path: &std::path::Path,
+    raw: &str,
+) -> Result<std::path::PathBuf, String> {
     use std::path::{Component, PathBuf};
 
     let trimmed = raw.trim();
@@ -505,7 +514,7 @@ fn validate_export_path(
 
     // Never allow writing inside the app's own data directory — that would let
     // a compromised renderer overwrite vault.enc / ipc_auth.json / etc.
-    if let Some(store_canon) = std::fs::canonicalize(state.store.store_path()).ok() {
+    if let Some(store_canon) = std::fs::canonicalize(store_path).ok() {
         if canon_parent.starts_with(&store_canon) {
             return Err("Cannot export into the application data directory".to_string());
         }
@@ -930,4 +939,88 @@ pub async fn check_all_vault_passwords(
     }
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store_and_export_dirs() -> (tempfile::TempDir, tempfile::TempDir) {
+        let store = tempfile::tempdir().unwrap();
+        let export = tempfile::tempdir().unwrap();
+        (store, export)
+    }
+
+    #[test]
+    fn export_path_accepts_absolute_json_under_real_dir() {
+        let (store, export) = store_and_export_dirs();
+        let raw = export.path().join("vault-backup.json");
+        let validated = validate_export_path_inner(store.path(), raw.to_str().unwrap()).unwrap();
+        assert_eq!(validated, std::fs::canonicalize(export.path()).unwrap().join("vault-backup.json"));
+    }
+
+    #[test]
+    fn export_path_rejects_relative_and_empty() {
+        let (store, _export) = store_and_export_dirs();
+        let err = validate_export_path_inner(store.path(), "backup.json").unwrap_err();
+        assert!(err.contains("absolute"), "{err}");
+        let err = validate_export_path_inner(store.path(), "   ").unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn export_path_rejects_parent_traversal() {
+        let (store, export) = store_and_export_dirs();
+        let raw = export.path().join("..").join("evil.json");
+        let err = validate_export_path_inner(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("parent-directory"), "{err}");
+    }
+
+    #[test]
+    fn export_path_requires_json_extension() {
+        let (store, export) = store_and_export_dirs();
+        for name in ["vault.json.bak", "vault.txt", "vault", ".json_hidden"] {
+            let raw = export.path().join(name);
+            let err = validate_export_path_inner(store.path(), raw.to_str().unwrap()).unwrap_err();
+            assert!(err.contains(".json"), "{name}: {err}");
+        }
+        // Case-insensitive extension is accepted.
+        let raw = export.path().join("vault.JSON");
+        assert!(validate_export_path_inner(store.path(), raw.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn export_path_rejects_missing_directory() {
+        let (store, _export) = store_and_export_dirs();
+        let err = validate_export_path_inner(store.path(), "/nonexistent-dir-xyz/a.json").unwrap_err();
+        assert!(err.contains("not accessible"), "{err}");
+    }
+
+    #[test]
+    fn export_path_never_writes_into_app_data_dir() {
+        let (store, _export) = store_and_export_dirs();
+        // Directly inside the store dir...
+        let raw = store.path().join("export.json");
+        let err = validate_export_path_inner(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("application data directory"), "{err}");
+        // ...or a nested subdirectory of it.
+        let nested = store.path().join("sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        let raw = nested.join("export.json");
+        let err = validate_export_path_inner(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("application data directory"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_path_canonicalizes_symlinked_parents() {
+        // A symlinked directory must resolve to its real path, which also
+        // means a symlink INTO the data dir is caught by the data-dir guard.
+        let (store, export) = store_and_export_dirs();
+        let link = export.path().join("link-to-store");
+        std::os::unix::fs::symlink(store.path(), &link).unwrap();
+        let raw = link.join("export.json");
+        let err = validate_export_path_inner(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("application data directory"), "{err}");
+    }
 }

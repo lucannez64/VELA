@@ -226,3 +226,75 @@ impl Palette {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vela_desktop_core::settings::Theme;
+
+    fn assert_hsla_eq(a: Hsla, b: Hsla, what: &str) {
+        assert!(
+            a.h == b.h && a.s == b.s && a.l == b.l && a.a == b.a,
+            "{what}: ({},{},{},{}) != ({},{},{},{})",
+            a.h, a.s, a.l, a.a, b.h, b.s, b.l, b.a
+        );
+    }
+
+    #[test]
+    fn from_setting_maps_every_variant_including_legacy() {
+        assert_eq!(ThemeId::from_setting(&Theme::Vela), ThemeId::Vela);
+        assert_eq!(ThemeId::from_setting(&Theme::Macchiato), ThemeId::Macchiato);
+        assert_eq!(ThemeId::from_setting(&Theme::Latte), ThemeId::Latte);
+        assert_eq!(ThemeId::from_setting(&Theme::Gruvbox), ThemeId::Gruvbox);
+        // Legacy stored values keep their documented meaning.
+        assert_eq!(ThemeId::from_setting(&Theme::Dark), ThemeId::Vela);
+        assert_eq!(ThemeId::from_setting(&Theme::Light), ThemeId::Latte);
+        // System resolves to Vela in the gpui build (documented simplification).
+        assert_eq!(ThemeId::from_setting(&Theme::System), ThemeId::Vela);
+    }
+
+    #[test]
+    fn to_setting_roundtrips_all_concrete_themes() {
+        for id in ThemeId::ALL {
+            assert_eq!(ThemeId::from_setting(&id.to_setting()), id, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn metadata_is_complete_and_latte_is_the_only_light_theme() {
+        for id in ThemeId::ALL {
+            assert!(!id.label().is_empty());
+            assert!(!id.description().is_empty());
+        }
+        let light: Vec<_> = ThemeId::ALL.into_iter().filter(|t| !t.is_dark()).collect();
+        assert_eq!(light, vec![ThemeId::Latte]);
+    }
+
+    #[test]
+    fn vela_palette_matches_design_tokens() {
+        // README design tokens: primary VELA Green, accent Electric Violet.
+        let p = Palette::vela();
+        assert_hsla_eq(p.primary, rgb(0x73db9a).into(), "vela primary");
+        assert_hsla_eq(p.accent_violet, rgb(0x8b5cf6).into(), "vela accent");
+    }
+
+    #[test]
+    fn latte_surfaces_are_lighter_than_dark_themes() {
+        let latte = Palette::latte();
+        for dark in [Palette::vela(), Palette::macchiato(), Palette::gruvbox()] {
+            assert!(
+                latte.surface.l > dark.surface.l,
+                "latte surface lightness {} should exceed dark surface {}",
+                latte.surface.l,
+                dark.surface.l
+            );
+        }
+    }
+
+    #[test]
+    fn palettes_are_distinct() {
+        let vela = Palette::vela();
+        let macchiato = Palette::macchiato();
+        assert!(vela.surface.l != macchiato.surface.l || vela.surface.h != macchiato.surface.h);
+    }
+}

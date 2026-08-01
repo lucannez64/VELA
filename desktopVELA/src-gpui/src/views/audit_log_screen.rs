@@ -340,3 +340,142 @@ fn audit_row(
                 .child(device),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use vela_desktop_core::audit::AuditSubject;
+
+    fn entry(id: &str, ts: DateTime<Utc>, action: AuditAction) -> AuditEntry {
+        AuditEntry {
+            id: id.into(),
+            timestamp: ts,
+            action,
+            subject: AuditSubject::Device { device_name: "test-box".into() },
+        }
+    }
+
+    fn ts(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn every_action_has_a_label_and_icon() {
+        let actions = [
+            AuditAction::VaultSync { chunk_count: 1 },
+            AuditAction::VaultCreated,
+            AuditAction::VaultUnlocked,
+            AuditAction::VaultLocked,
+            AuditAction::DeviceEnrolled { device_id: "d".into(), enrolling_device_id: None },
+            AuditAction::DeviceRevoked { device_id: "d".into(), revoking_device_id: "r".into() },
+            AuditAction::ShareSent { recipient_user_id: "u".into() },
+            AuditAction::ShareReceived { sender_user_id: "u".into() },
+            AuditAction::ItemAdded { item_type: "login".into() },
+            AuditAction::ItemUpdated { item_type: "login".into() },
+            AuditAction::ItemDeleted { item_type: "login".into() },
+            AuditAction::PasswordGenerated { length: 20 },
+            AuditAction::SettingsChanged,
+            AuditAction::WebSessionGranted { mode: "ro".into(), ttl_secs: 60 },
+        ];
+        for action in &actions {
+            let (label, icon) = action_label_icon(action);
+            assert!(!label.is_empty(), "label missing for {action:?}");
+            assert!(!icon.is_empty(), "icon missing for {action:?}");
+        }
+        assert_eq!(action_label_icon(&AuditAction::VaultLocked), ("Vault locked", "lock"));
+    }
+
+    #[test]
+    fn action_details_render_payload_fields() {
+        assert_eq!(
+            action_details(&AuditAction::VaultSync { chunk_count: 5 }),
+            Some("5 chunk(s)".into())
+        );
+        assert_eq!(
+            action_details(&AuditAction::ItemAdded { item_type: "login".into() }),
+            Some("login".into())
+        );
+        assert_eq!(
+            action_details(&AuditAction::PasswordGenerated { length: 20 }),
+            Some("20 characters".into())
+        );
+        assert_eq!(
+            action_details(&AuditAction::DeviceEnrolled {
+                device_id: "abcdefgh1234".into(),
+                enrolling_device_id: None,
+            }),
+            Some("Device abcdefgh…".into())
+        );
+        assert_eq!(action_details(&AuditAction::VaultLocked), None);
+        assert_eq!(action_details(&AuditAction::SettingsChanged), None);
+    }
+
+    #[test]
+    fn short_id_truncates_to_eight_chars() {
+        assert_eq!(short_id("abcdefgh1234"), "abcdefgh");
+        assert_eq!(short_id("abcdefgh"), "abcdefgh");
+        assert_eq!(short_id("abc"), "abc");
+    }
+
+    #[test]
+    fn device_name_reads_both_subject_variants() {
+        let device = entry("a", ts("2025-03-01T12:00:00Z"), AuditAction::VaultLocked);
+        assert_eq!(device_name(&device), "test-box");
+
+        let session = AuditEntry {
+            subject: AuditSubject::Session { device_name: "web".into() },
+            ..entry("b", ts("2025-03-01T12:00:00Z"), AuditAction::VaultLocked)
+        };
+        assert_eq!(device_name(&session), "web");
+    }
+
+    #[test]
+    fn date_groups_contiguous_days_preserving_order() {
+        // Noon UTC keeps the local calendar day stable in every timezone
+        // (±12h never crosses midnight; even ±14h keeps the two days apart).
+        let day2_late = entry("c", ts("2025-03-02T11:00:00Z"), AuditAction::VaultUnlocked);
+        let day2_early = entry("b", ts("2025-03-02T09:00:00Z"), AuditAction::VaultLocked);
+        let day1 = entry("a", ts("2025-03-01T12:00:00Z"), AuditAction::VaultCreated);
+        let entries = vec![day2_late, day2_early, day1];
+
+        let groups = date_groups(&entries);
+        assert_eq!(groups.len(), 2, "two calendar days → two groups");
+        // Most recent day first, entries in original (descending) order.
+        assert_eq!(groups[0].1.len(), 2);
+        assert_eq!(groups[0].1[0].id, "c");
+        assert_eq!(groups[0].1[1].id, "b");
+        assert_eq!(groups[1].1.len(), 1);
+        assert_eq!(groups[1].1[0].id, "a");
+        assert_ne!(groups[0].0, groups[1].0, "group headers are the day labels");
+    }
+
+    #[test]
+    fn date_groups_empty_input() {
+        assert!(date_groups(&[]).is_empty());
+    }
+
+    #[test]
+    fn action_color_semantics() {
+        let palette = Palette::vela();
+        let eq = |a: gpui::Hsla, b: gpui::Hsla| a.h == b.h && a.s == b.s && a.l == b.l && a.a == b.a;
+
+        assert!(eq(action_color(&AuditAction::ItemDeleted { item_type: "login".into() }, &palette), palette.error));
+        assert!(eq(action_color(&AuditAction::DeviceRevoked { device_id: "d".into(), revoking_device_id: "r".into() }, &palette), palette.error));
+        assert!(eq(action_color(&AuditAction::VaultCreated, &palette), palette.secondary));
+        assert!(eq(action_color(&AuditAction::VaultLocked, &palette), palette.on_surface_variant));
+        assert!(eq(action_color(&AuditAction::ItemAdded { item_type: "login".into() }, &palette), palette.primary));
+    }
+
+    #[test]
+    fn local_timezone_conversion_is_stable() {
+        // The grouping math must hold for any reference timestamp.
+        let t = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
+        let e = entry("x", t, AuditAction::VaultLocked);
+        let entries = [e];
+        let groups = date_groups(&entries);
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].0.contains("2025"));
+    }
+}
+

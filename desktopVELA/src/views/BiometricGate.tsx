@@ -33,6 +33,8 @@ export default function BiometricGate({ onUnlock }: Props) {
 
   useEffect(() => {
     checkBiometricAvailability();
+    // Mount-once probe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

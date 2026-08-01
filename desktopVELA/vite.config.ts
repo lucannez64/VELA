@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -13,6 +14,11 @@ export default defineConfig({
     },
   },
   clearScreen: false,
+  test: {
+    environment: 'happy-dom',
+    globals: true,
+    setupFiles: ['src/test/setup.ts'],
+  },
   server: {
     port: 1420,
     strictPort: true,

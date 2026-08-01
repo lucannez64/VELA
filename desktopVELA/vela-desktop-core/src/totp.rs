@@ -171,3 +171,146 @@ pub fn verify_totp(secret: String, code: String) -> Result<bool, String> {
         expected.as_bytes().ct_eq(code_trimmed.as_bytes()),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // RFC 4226/6238 shared test secret: ASCII "12345678901234567890".
+    const RFC_SECRET_B32: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
+    fn rfc_secret_bytes() -> Vec<u8> {
+        b"12345678901234567890".to_vec()
+    }
+
+    #[test]
+    fn hotp_matches_rfc4226_vectors() {
+        let expected = [
+            "755224", "287082", "359152", "969429", "338314", "254676", "287922", "162583",
+            "399871", "520489",
+        ];
+        for (counter, code) in expected.iter().enumerate() {
+            assert_eq!(
+                compute_hotp(&rfc_secret_bytes(), counter as u64, 6),
+                *code,
+                "counter {counter}"
+            );
+        }
+    }
+
+    #[test]
+    fn hotp_matches_rfc6238_sha1_8digit_vectors() {
+        // RFC 6238 Appendix B (SHA-1): T=59 → counter 1, T=1111111109 →
+        // counter 0x23523EC, T=1234567890 → counter 0x273EF07.
+        assert_eq!(compute_hotp(&rfc_secret_bytes(), 1, 8), "94287082");
+        assert_eq!(compute_hotp(&rfc_secret_bytes(), 0x23523EC, 8), "07081804");
+        assert_eq!(compute_hotp(&rfc_secret_bytes(), 0x273EF07, 8), "89005924");
+    }
+
+    #[test]
+    fn base32_decode_handles_rfc_secret_and_sloppy_input() {
+        assert_eq!(base32_decode(RFC_SECRET_B32).unwrap(), rfc_secret_bytes());
+        // Lowercase, spaces and dashes are normalized away.
+        assert_eq!(
+            base32_decode("gezdgnbv-gy3t qojq gezdgnbvgy3tqojq").unwrap(),
+            rfc_secret_bytes()
+        );
+        // Unpadded input is padded internally (16 chars → 10 bytes).
+        assert_eq!(base32_decode("GEZDGNBVGY3TQOJQ").unwrap(), b"1234567890");
+        // Alphanumeric but outside the base32 alphabet (0/1/8/9) must fail.
+        assert!(base32_decode("0189ABCD").is_none());
+    }
+
+    #[test]
+    fn parse_otpauth_uri_extracts_all_params() {
+        let params = parse_otpauth("otpauth://totp/Alice?secret=ABC&period=60&digits=8");
+        assert_eq!(params.secret, "ABC");
+        assert_eq!(params.period, 60);
+        assert_eq!(params.digits, 8);
+    }
+
+    #[test]
+    fn parse_otpauth_defaults_and_garbage_fallbacks() {
+        let params = parse_otpauth("otpauth://totp/Alice?secret=ABC");
+        assert_eq!(params.period, DEFAULT_PERIOD);
+        assert_eq!(params.digits, DEFAULT_DIGITS);
+
+        let params = parse_otpauth("otpauth://totp/Alice?secret=ABC&period=abc&digits=x");
+        assert_eq!(params.period, DEFAULT_PERIOD);
+        assert_eq!(params.digits, DEFAULT_DIGITS);
+
+        // A bare secret is used as-is.
+        let params = parse_otpauth(RFC_SECRET_B32);
+        assert_eq!(params.secret, RFC_SECRET_B32);
+        assert_eq!(params.period, DEFAULT_PERIOD);
+    }
+
+    #[test]
+    fn params_validate_enforces_rfc_bounds() {
+        let ok = TotpParams { secret: String::new(), period: 30, digits: 6 };
+        assert!(ok.validate().is_ok());
+
+        for digits in [5, 9] {
+            let p = TotpParams { secret: String::new(), period: 30, digits };
+            assert!(p.validate().is_err(), "digits {digits} must be rejected");
+        }
+        for digits in [6, 7, 8] {
+            let p = TotpParams { secret: String::new(), period: 30, digits };
+            assert!(p.validate().is_ok(), "digits {digits} must be accepted");
+        }
+        for period in [14, 121] {
+            let p = TotpParams { secret: String::new(), period, digits: 6 };
+            assert!(p.validate().is_err(), "period {period} must be rejected");
+        }
+        for period in [15, 30, 120] {
+            let p = TotpParams { secret: String::new(), period, digits: 6 };
+            assert!(p.validate().is_ok(), "period {period} must be accepted");
+        }
+    }
+
+    #[test]
+    fn generate_totp_rejects_out_of_bounds_params() {
+        let err = generate_totp(
+            "otpauth://totp/A?secret=GEZDGNBVGY3TQOJQ&digits=10".to_string(),
+        );
+        assert!(err.is_err());
+        let err = generate_totp(
+            "otpauth://totp/A?secret=GEZDGNBVGY3TQOJQ&period=3600".to_string(),
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn generate_totp_rejects_invalid_base32() {
+        assert!(generate_totp("0189ABCD".to_string()).is_err());
+        assert!(generate_totp_code("0189ABCD").is_none());
+    }
+
+    #[test]
+    fn generate_totp_returns_code_with_period_metadata() {
+        let totp = generate_totp(RFC_SECRET_B32.to_string()).expect("valid secret");
+        assert_eq!(totp.code.len(), 6);
+        assert!(totp.code.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(totp.period, 30);
+        assert!(totp.remaining_secs >= 1 && totp.remaining_secs <= 30);
+
+        let totp8 = generate_totp(format!(
+            "otpauth://totp/A?secret={RFC_SECRET_B32}&period=60&digits=8"
+        ))
+        .expect("valid uri");
+        assert_eq!(totp8.code.len(), 8);
+        assert_eq!(totp8.period, 60);
+        assert!(totp8.remaining_secs >= 1 && totp8.remaining_secs <= 60);
+    }
+
+    #[test]
+    fn verify_totp_accepts_current_code_and_rejects_wrong() {
+        let code = generate_totp(RFC_SECRET_B32.to_string()).unwrap().code;
+        assert!(verify_totp(RFC_SECRET_B32.to_string(), code.clone()).unwrap());
+        // Whitespace around the code is tolerated.
+        assert!(verify_totp(RFC_SECRET_B32.to_string(), format!(" {code} ")).unwrap());
+
+        let wrong = if code == "000000" { "111111" } else { "000000" };
+        assert!(!verify_totp(RFC_SECRET_B32.to_string(), wrong.to_string()).unwrap());
+    }
+}

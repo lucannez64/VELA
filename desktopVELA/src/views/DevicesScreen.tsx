@@ -51,6 +51,8 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
     // become visible without manual refresh (real-time notification substitute).
     const t = setInterval(loadWebSessions, 30_000);
     return () => clearInterval(t);
+    // Mount-once: interval drives the periodic refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const displayDevices = devices

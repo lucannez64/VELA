@@ -131,6 +131,39 @@ impl AppState {
         let session = self.session.read();
         session.active && !session.is_expired() && self.crypto.read().is_some()
     }
+
+    /// Hermetic state for tests (unit and the headless `vela-e2e` integration
+    /// tests): the store is rooted at `store_dir` (a tempdir) instead of the
+    /// real app data dir, so tests never touch the developer's vault, OS
+    /// keychain, or app config.
+    pub fn for_test(store_dir: &std::path::Path) -> Self {
+        let store = Store::new_at(store_dir.to_path_buf()).expect("test store");
+        Self {
+            session: RwLock::new(session::Session::new()),
+            vault: RwLock::new(vault::VaultStore::new()),
+            crypto: RwLock::new(None),
+            store: Arc::new(store),
+            api: Arc::new(api::ApiClient::with_url(String::new())),
+            server_url: RwLock::new(String::new()),
+            rate_limiter: RwLock::new(HashMap::new()),
+            token_store: RwLock::new(token::TokenStore::new()),
+            secret_key: token::SecretKey::generate(),
+            ipc_capability: ipc::generate_capability(),
+            extension_connected: Arc::new(AtomicBool::new(false)),
+            sync_mutex: tokio::sync::Mutex::new(()),
+            session_generation: AtomicU64::new(0),
+        }
+    }
+
+    /// Put a `for_test` state into the unlocked condition (active session +
+    /// crypto context) without going through biometric/password unlock.
+    pub fn unlock_for_test(&self, rms: &[u8; 32]) {
+        {
+            let mut session = self.session.write();
+            session.unlock("test-device".to_string(), "test-user".to_string(), 900);
+        }
+        *self.crypto.write() = Some(crypto::Crypto::new(rms));
+    }
 }
 
 struct RateLimitState {
@@ -252,9 +285,7 @@ impl AppState {
 pub enum RateLimitResult {
     Allowed,
     Blocked,
-}
-
-impl Default for AppState {
+}impl Default for AppState {
     fn default() -> Self {
         let store = Store::new().expect("Failed to create store");
         let server_url = store
@@ -284,5 +315,132 @@ impl Default for AppState {
             sync_mutex: tokio::sync::Mutex::new(()),
             session_generation: AtomicU64::new(0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_server_url_accepts_empty_and_https() {
+        assert_eq!(validate_server_url("").unwrap(), "");
+        assert_eq!(validate_server_url("   ").unwrap(), "");
+        assert_eq!(
+            validate_server_url("https://vault.example.com").unwrap(),
+            "https://vault.example.com"
+        );
+        assert_eq!(
+            validate_server_url("  https://vault.example.com:8443/sync ").unwrap(),
+            "https://vault.example.com:8443/sync"
+        );
+    }
+
+    #[test]
+    fn validate_server_url_allows_http_only_for_loopback() {
+        for ok in [
+            "http://localhost",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080/api",
+            "http://[::1]:9000",
+        ] {
+            assert!(validate_server_url(ok).is_ok(), "{ok} should be allowed");
+        }
+        for rejected in [
+            "http://example.com",
+            "http://192.168.1.10",
+            "http://vault.internal.lan",
+        ] {
+            let err = validate_server_url(rejected).unwrap_err();
+            assert!(err.contains("Insecure"), "{rejected}: {err}");
+        }
+    }
+
+    #[test]
+    fn validate_server_url_rejects_other_schemes_and_garbage() {
+        let err = validate_server_url("ftp://example.com").unwrap_err();
+        assert!(err.contains("Unsupported"), "{err}");
+        assert!(validate_server_url("not a url at all :::").is_err());
+    }
+
+    #[test]
+    fn normalize_server_url_trims() {
+        assert_eq!(normalize_server_url("  https://x.example  "), "https://x.example");
+        assert_eq!(normalize_server_url("   "), "");
+    }
+
+    #[test]
+    fn rate_limiter_blocks_after_repeated_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+
+        assert!(matches!(state.check_rate_limit("dev-1", "ip"), RateLimitResult::Allowed));
+        for _ in 0..5 {
+            state.record_failed_attempt("dev-1", "ip");
+        }
+        // new() starts at 1 attempt + 5 recorded = 6 > FREE_ATTEMPTS → blocked.
+        assert!(matches!(state.check_rate_limit("dev-1", "ip"), RateLimitResult::Blocked));
+        // A different device is unaffected.
+        assert!(matches!(state.check_rate_limit("dev-2", "ip"), RateLimitResult::Allowed));
+
+        state.record_successful_auth("dev-1");
+        assert!(matches!(state.check_rate_limit("dev-1", "ip"), RateLimitResult::Allowed));
+    }
+
+    #[test]
+    fn session_token_is_none_when_locked_or_expired() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        assert!(state.get_session_token().is_none());
+
+        state.unlock_for_test(&crypto::Crypto::generate_rms());
+        // Unlocked but no server token yet.
+        assert!(state.get_session_token().is_none());
+
+        state.session.write().set_server_token("srv".into());
+        assert_eq!(state.get_session_token().as_deref(), Some("srv"));
+
+        state.session.write().lock();
+        assert!(state.get_session_token().is_none(), "locked vault must not hand out tokens");
+    }
+
+    #[test]
+    fn is_unlocked_and_generation_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        assert!(!state.is_unlocked());
+
+        state.unlock_for_test(&crypto::Crypto::generate_rms());
+        assert!(state.is_unlocked());
+
+        let generation = state.session_generation();
+        assert!(state.ensure_unlocked_since(generation).is_ok());
+        state.bump_session_generation();
+        assert!(state.ensure_unlocked_since(generation).is_err());
+
+        state.session.write().lock();
+        assert!(!state.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_throttle_persists_across_restarts_and_resets_on_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let rms = crypto::Crypto::generate_rms();
+
+        let state = AppState::for_test(dir.path());
+        state.unlock_for_test(&rms);
+        assert!(state.check_unlock_throttle().is_ok());
+        for _ in 0..5 {
+            state.record_unlock_failure();
+        }
+        assert!(state.check_unlock_throttle().is_err(), "6th attempt must throttle");
+
+        // A "restarted" app (fresh AppState over the same store dir) still
+        // sees the throttle — it is persisted to disk.
+        let restarted = AppState::for_test(dir.path());
+        assert!(restarted.check_unlock_throttle().is_err());
+
+        restarted.record_unlock_success();
+        assert!(restarted.check_unlock_throttle().is_ok());
     }
 }

@@ -19,7 +19,10 @@ fn normalize_login_domain(url: &str) -> Option<String> {
     };
     let parsed = url::Url::parse(&normalized).ok()?;
     let host = parsed.host_str()?.trim().to_lowercase();
-    if host.is_empty() || host.parse::<std::net::IpAddr>().is_ok() {
+    // `host_str` keeps the brackets on IPv6 literals ("[::1]") — strip them
+    // before the IpAddr check or literal v6 hosts slip past this layer.
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if host.is_empty() || bare.parse::<std::net::IpAddr>().is_ok() {
         return None;
     }
     Some(host)
@@ -169,11 +172,18 @@ async fn discover_favicon_from_html(
         .await
         .map_err(|e| e.to_string())?;
 
-    let document = Html::parse_document(&html);
+    let base_url = Url::parse(base).map_err(|e| e.to_string())?;
+    pick_best_favicon_url(&html, &base_url)
+}
+
+/// Choose the best `<link rel*=`icon`>` candidate from an HTML document.
+/// Preference order is a score: declared icon type (apple-touch-icon >
+/// generic icon > shortcut icon) + declared size + format bonus (SVG > PNG >
+/// ICO).
+fn pick_best_favicon_url(html: &str, base_url: &Url) -> Result<Option<String>, String> {
+    let document = Html::parse_document(html);
     let selector =
         Selector::parse("link[rel*='icon']").map_err(|e| format!("Failed to parse selector: {e:?}"))?;
-
-    let base_url = Url::parse(base).map_err(|e| e.to_string())?;
 
     let mut best: Option<(String, u32)> = None;
 
@@ -296,4 +306,163 @@ pub async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    #[test]
+    fn normalize_login_domain_adds_scheme_and_lowercases() {
+        assert_eq!(normalize_login_domain("Example.COM"), Some("example.com".into()));
+        assert_eq!(normalize_login_domain("https://ExAmple.com/path?q=1"), Some("example.com".into()));
+        assert_eq!(normalize_login_domain("http://sub.example.com"), Some("sub.example.com".into()));
+    }
+
+    #[test]
+    fn normalize_login_domain_rejects_ips_and_garbage() {
+        assert_eq!(normalize_login_domain("192.168.1.1"), None);
+        assert_eq!(normalize_login_domain("https://127.0.0.1:8080"), None);
+        assert_eq!(normalize_login_domain("https://[::1]"), None);
+        assert_eq!(normalize_login_domain(""), None);
+    }
+
+    #[test]
+    fn globally_routable_ip_classification() {
+        let cases: &[(&str, bool)] = &[
+            ("8.8.8.8", true),
+            ("1.1.1.1", true),
+            ("127.0.0.1", false),        // loopback
+            ("10.0.0.5", false),         // RFC 1918
+            ("172.16.0.5", false),       // RFC 1918
+            ("192.168.1.1", false),      // RFC 1918
+            ("169.254.169.254", false),  // link-local cloud metadata
+            ("100.64.0.1", false),       // CGNAT
+            ("100.127.255.254", false),  // CGNAT upper edge
+            ("0.0.0.0", false),          // unspecified
+            ("255.255.255.255", false),  // broadcast
+            ("224.0.0.1", false),        // multicast
+            ("192.0.2.1", false),        // documentation TEST-NET-1
+            ("::1", false),              // v6 loopback
+            ("::", false),               // v6 unspecified
+            ("fc00::1", false),          // v6 unique-local
+            ("fdff::1", false),          // v6 unique-local
+            ("ff02::1", false),          // v6 multicast
+            ("::ffff:127.0.0.1", false), // v4-mapped loopback
+            ("::ffff:8.8.8.8", true),    // v4-mapped public
+        ];
+        for (ip, expected) in cases {
+            let parsed: IpAddr = ip.parse().unwrap();
+            assert_eq!(is_globally_routable_ip(parsed), *expected, "ip {ip}");
+        }
+    }
+
+    #[test]
+    fn content_type_detection_by_magic_bytes() {
+        assert_eq!(
+            detect_image_content_type(None, b"\x89PNG\r\n\x1a\nrest"),
+            Some("image/png".into())
+        );
+        assert_eq!(detect_image_content_type(None, b"GIF89a...."), Some("image/gif".into()));
+        assert_eq!(detect_image_content_type(None, b"GIF87a...."), Some("image/gif".into()));
+        assert_eq!(
+            detect_image_content_type(None, &[0xff, 0xd8, 0xff, 0xe0]),
+            Some("image/jpeg".into())
+        );
+        assert_eq!(
+            detect_image_content_type(None, b"RIFF\x00\x00\x00\x00WEBP"),
+            Some("image/webp".into())
+        );
+        assert_eq!(
+            detect_image_content_type(None, &[0x00, 0x00, 0x01, 0x00]),
+            Some("image/x-icon".into())
+        );
+        assert_eq!(
+            detect_image_content_type(None, b"  \n<svg xmlns=\"http://www.w3.org/2000/svg\">"),
+            Some("image/svg+xml".into())
+        );
+        assert_eq!(
+            detect_image_content_type(None, b"<?xml version=\"1.0\"?><svg>"),
+            Some("image/svg+xml".into())
+        );
+    }
+
+    #[test]
+    fn content_type_detection_rejects_non_images() {
+        // HTML error pages served at /favicon.ico must not become icons.
+        assert_eq!(detect_image_content_type(Some("text/html; charset=utf-8"), b"<html>"), None);
+        assert_eq!(detect_image_content_type(Some("text/plain"), b"404"), None);
+        assert_eq!(detect_image_content_type(None, b""), None);
+        assert_eq!(detect_image_content_type(None, b"random bytes here"), None);
+    }
+
+    #[test]
+    fn content_type_detection_falls_back_to_declared_image_type() {
+        // Unknown magic but the server insists it's an image → trust the header.
+        assert_eq!(
+            detect_image_content_type(Some("image/avif"), b"\x00\x00\x00"),
+            Some("image/avif".into())
+        );
+        // But only image/* — never a generic type.
+        assert_eq!(detect_image_content_type(Some("application/octet-stream"), b"\x00\x00\x00"), None);
+    }
+
+    fn base() -> Url {
+        Url::parse("https://example.com").unwrap()
+    }
+
+    #[test]
+    fn pick_best_favicon_resolves_relative_hrefs() {
+        let html = r#"<html><head><link rel="icon" href="/icons/favicon.ico"></head></html>"#;
+        assert_eq!(
+            pick_best_favicon_url(html, &base()).unwrap(),
+            Some("https://example.com/icons/favicon.ico".into())
+        );
+    }
+
+    #[test]
+    fn pick_best_favicon_prefers_svg_then_png_then_ico() {
+        let html = r#"<html><head>
+            <link rel="icon" href="/favicon.ico">
+            <link rel="icon" type="image/png" href="/favicon.png">
+            <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+        </head></html>"#;
+        assert_eq!(
+            pick_best_favicon_url(html, &base()).unwrap(),
+            Some("https://example.com/favicon.svg".into())
+        );
+    }
+
+    #[test]
+    fn pick_best_favicon_prefers_larger_declared_size() {
+        let html = r#"<html><head>
+            <link rel="icon" sizes="16x16" href="/small.png">
+            <link rel="icon" sizes="192x192" href="/large.png">
+        </head></html>"#;
+        assert_eq!(
+            pick_best_favicon_url(html, &base()).unwrap(),
+            Some("https://example.com/large.png".into())
+        );
+    }
+
+    #[test]
+    fn pick_best_favicon_apple_touch_icon_beats_plain_icon() {
+        let html = r#"<html><head>
+            <link rel="icon" href="/favicon.ico">
+            <link rel="apple-touch-icon" href="/touch.png">
+        </head></html>"#;
+        assert_eq!(
+            pick_best_favicon_url(html, &base()).unwrap(),
+            Some("https://example.com/touch.png".into())
+        );
+    }
+
+    #[test]
+    fn pick_best_favicon_handles_missing_and_broken_links() {
+        assert_eq!(pick_best_favicon_url("<html><head></head></html>", &base()).unwrap(), None);
+        // No href → skipped, not a crash.
+        let html = r#"<html><head><link rel="icon"></head></html>"#;
+        assert_eq!(pick_best_favicon_url(html, &base()).unwrap(), None);
+    }
 }

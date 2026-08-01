@@ -58,6 +58,15 @@ impl Store {
         })
     }
 
+    /// A store rooted at an explicit directory instead of the platform app
+    /// data dir — used by tests (hermetic, no touching the developer's real
+    /// vault) and any future portable/CLI tooling.
+    pub fn new_at(path: PathBuf) -> anyhow::Result<Self> {
+        fs::create_dir_all(&path)?;
+        restrict_directory(&path)?;
+        Ok(Self { store_path: path })
+    }
+
     pub fn store_path(&self) -> &PathBuf {
         &self.store_path
     }
@@ -354,5 +363,209 @@ fn restrict_file(path: &Path) -> anyhow::Result<()> {
 impl Default for Store {
     fn default() -> Self {
         Self::new().expect("Failed to create store")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::Crypto;
+    use crate::vault::{VaultItem, VaultMeta, VaultStore};
+    use chrono::Utc;
+
+    fn test_store() -> (tempfile::TempDir, Store) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new_at(dir.path().join("vela")).unwrap();
+        (dir, store)
+    }
+
+    fn test_crypto() -> Crypto {
+        Crypto::new(&Crypto::generate_rms())
+    }
+
+    fn sample_vault() -> VaultStore {
+        let now = Utc::now();
+        let mut vault = VaultStore::new();
+        vault.add_item(VaultItem::Login {
+            meta: VaultMeta {
+                id: "1".into(),
+                name: "GitHub".into(),
+                notes: None,
+                created_at: now,
+                updated_at: now,
+                last_modified_device: None,
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
+            url: "https://github.com".into(),
+            username: "alice".into(),
+            pass: "hunter2pw".into(),
+            totp: None,
+        });
+        vault
+    }
+
+    #[test]
+    fn vault_save_load_roundtrip() {
+        let (_dir, store) = test_store();
+        let crypto = test_crypto();
+        let vault = sample_vault();
+
+        store.save_vault(&vault, &crypto).unwrap();
+
+        // The file on disk must be ciphertext, not JSON.
+        let raw = fs::read(store.store_path().join(VAULT_FILE)).unwrap();
+        assert!(
+            !raw.windows(8).any(|w| w == b"github.com".as_slice()),
+            "plaintext must not appear in vault.enc"
+        );
+
+        let loaded = store.load_vault(&crypto).unwrap();
+        assert_eq!(loaded.items.len(), 1);
+        assert_eq!(loaded.get_item("1").unwrap().username(), Some("alice"));
+    }
+
+    #[test]
+    fn vault_file_permissions_are_owner_only() {
+        let (_dir, store) = test_store();
+        store.save_vault(&sample_vault(), &test_crypto()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(store.store_path().join(VAULT_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "vault.enc must be 0600");
+        }
+    }
+
+    #[test]
+    fn load_vault_without_file_returns_empty() {
+        let (_dir, store) = test_store();
+        let loaded = store.load_vault(&test_crypto()).unwrap();
+        assert!(loaded.items.is_empty());
+    }
+
+    #[test]
+    fn load_vault_rejects_truncated_file() {
+        let (_dir, store) = test_store();
+        fs::write(store.store_path().join(VAULT_FILE), b"tiny").unwrap();
+        let err = store.load_vault(&test_crypto()).unwrap_err().to_string();
+        assert!(err.contains("corrupted"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rms_roundtrip_and_wrong_key_rejection() {
+        let (_dir, store) = test_store();
+        let rms = Crypto::generate_rms();
+        let device_key = [7u8; 32];
+
+        assert!(store.load_rms(&device_key).unwrap().is_none());
+        store.save_rms(&rms, &device_key).unwrap();
+        assert_eq!(store.load_rms(&device_key).unwrap(), Some(rms));
+
+        let wrong_key = [9u8; 32];
+        assert!(store.load_rms(&wrong_key).is_err());
+    }
+
+    #[test]
+    fn has_existing_vault_tracks_files() {
+        let (_dir, store) = test_store();
+        assert!(!store.has_existing_vault());
+        store.save_rms(&Crypto::generate_rms(), &[1u8; 32]).unwrap();
+        assert!(store.has_existing_vault());
+    }
+
+    #[test]
+    fn settings_roundtrip_and_default_when_missing() {
+        let (_dir, store) = test_store();
+        let defaults = store.load_settings().unwrap();
+        assert_eq!(defaults.auto_lock_minutes, 5);
+
+        let mut settings = crate::settings::Settings::default();
+        settings.auto_lock_minutes = 42;
+        settings.theme = crate::settings::Theme::Gruvbox;
+        store.save_settings(&settings).unwrap();
+
+        let loaded = store.load_settings().unwrap();
+        assert_eq!(loaded.auto_lock_minutes, 42);
+        assert_eq!(loaded.theme, crate::settings::Theme::Gruvbox);
+    }
+
+    #[test]
+    fn device_id_is_generated_once_and_stable() {
+        let (_dir, store) = test_store();
+        let first = store.load_device_id().unwrap();
+        let second = store.load_device_id().unwrap();
+        assert_eq!(first, second, "device id must persist across loads");
+
+        store.save_device_id_with_user_id("dev-x", "user-y").unwrap();
+        assert_eq!(store.load_device_id().unwrap(), "dev-x");
+        assert_eq!(store.load_user_id().unwrap(), "user-y");
+    }
+
+    #[test]
+    fn identity_keys_roundtrip_encrypted() {
+        let (_dir, store) = test_store();
+        let crypto = test_crypto();
+        store
+            .save_identity_keys_full(b"ek", b"vk", b"sk", b"share-ek", b"share-dk", &crypto)
+            .unwrap();
+
+        let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
+        assert_ne!(raw.first(), Some(&b'{'), "identity keys must not be plaintext");
+
+        let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();
+        assert_eq!(loaded.hybrid_ek, b"ek");
+        assert_eq!(loaded.hybrid_vk, b"vk");
+        assert_eq!(loaded.hybrid_sk, b"sk");
+        assert_eq!(loaded.share_ek, b"share-ek");
+        assert_eq!(loaded.share_dk, b"share-dk");
+
+        // A different RMS cannot read them.
+        assert!(store.load_identity_keys(&test_crypto()).is_err());
+    }
+
+    #[test]
+    fn legacy_plaintext_identity_file_is_migrated_to_encrypted() {
+        let (_dir, store) = test_store();
+        let crypto = test_crypto();
+        let legacy = IdentityKeysStore {
+            hybrid_ek: b"ek".to_vec(),
+            hybrid_vk: b"vk".to_vec(),
+            hybrid_sk: b"sk".to_vec(),
+            share_ek: vec![],
+            share_dk: vec![],
+        };
+        fs::write(
+            store.store_path().join(IDENTITY_KEYS_FILE),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();
+        assert_eq!(loaded.hybrid_ek, b"ek");
+
+        // After load, the file must have been re-encrypted in place.
+        let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
+        assert_ne!(raw.first(), Some(&b'{'), "migration must re-encrypt");
+    }
+
+    #[test]
+    fn write_secret_file_is_complete_and_restricted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("secret.bin");
+        write_secret_file(&path, b"top secret").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"top secret");
+        // No tmp file left behind after the atomic rename.
+        assert!(!path.with_extension("tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 }

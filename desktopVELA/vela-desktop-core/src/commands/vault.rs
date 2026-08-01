@@ -461,3 +461,297 @@ pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<
 
     Ok(ImportResult { added: added_count, skipped: skipped_count, total: total_count })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::Crypto;
+    use crate::vault::VaultMeta;
+
+    fn unlocked_state() -> (tempfile::TempDir, Arc<AppState>) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&Crypto::generate_rms());
+        (dir, state)
+    }
+
+    fn login(name: &str, url: &str, user: &str, pass: &str) -> VaultItem {
+        let now = Utc::now();
+        VaultItem::Login {
+            meta: VaultMeta {
+                id: Uuid::new_v4().to_string(),
+                name: name.into(),
+                notes: None,
+                created_at: now,
+                updated_at: now,
+                last_modified_device: None,
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
+            url: url.into(),
+            username: user.into(),
+            pass: pass.into(),
+            totp: None,
+        }
+    }
+
+    const STRONG: &str = "X9#mQ2$vL8&pZ4!wK7yN";
+
+    #[test]
+    fn password_strength_bands() {
+        let weak = calculate_password_strength("");
+        assert_eq!(weak.score, "weak");
+        assert_eq!(weak.entropy, 0.0);
+        assert_eq!(weak.crack_time, "instant");
+
+        // 5 lowercase: 5 * log2(26) ≈ 23.5 → weak.
+        assert_eq!(calculate_password_strength("abcde").score, "weak");
+        // 6 lowercase: ≈ 28.2 → fair.
+        let fair = calculate_password_strength("abcdef");
+        assert_eq!(fair.score, "fair");
+        assert_eq!(fair.crack_time, "minutes");
+        // 8 mixed upper/lower/digit: 8 * log2(62) ≈ 47.6 → good.
+        let good = calculate_password_strength("Abcdef12");
+        assert_eq!(good.score, "good");
+        assert_eq!(good.crack_time, "months");
+        // 21 chars all classes: ≥ 60 → strong.
+        let strong = calculate_password_strength(STRONG);
+        assert_eq!(strong.score, "strong");
+        assert_eq!(strong.crack_time, "centuries");
+    }
+
+    #[test]
+    fn generate_password_respects_options() {
+        let pw = generate_password(PasswordGeneratorOptions::default()).unwrap();
+        assert_eq!(pw.password.len(), 20);
+        assert!(pw.strength.entropy > 0.0);
+
+        let pw = generate_password(PasswordGeneratorOptions {
+            length: 8,
+            uppercase: false,
+            lowercase: true,
+            numbers: false,
+            symbols: false,
+            easy_to_type: false,
+            pronounceable: false,
+        })
+        .unwrap();
+        assert_eq!(pw.password.len(), 8);
+        assert!(pw.password.chars().all(|c| c.is_ascii_lowercase()));
+
+        // easy_to_type strips the symbol class from the charset.
+        let pw = generate_password(PasswordGeneratorOptions {
+            length: 64,
+            uppercase: true,
+            lowercase: true,
+            numbers: true,
+            symbols: true,
+            easy_to_type: true,
+            pronounceable: false,
+        })
+        .unwrap();
+        assert!(pw.password.chars().all(|c| c.is_alphanumeric()));
+
+        // No classes at all → falls back to lowercase rather than failing.
+        let pw = generate_password(PasswordGeneratorOptions {
+            length: 10,
+            uppercase: false,
+            lowercase: false,
+            numbers: false,
+            symbols: false,
+            easy_to_type: false,
+            pronounceable: false,
+        })
+        .unwrap();
+        assert_eq!(pw.password.len(), 10);
+        assert!(pw.password.chars().all(|c| c.is_ascii_lowercase()));
+
+        // Two generations are (overwhelmingly) distinct.
+        let a = generate_password(PasswordGeneratorOptions::default()).unwrap();
+        let b = generate_password(PasswordGeneratorOptions::default()).unwrap();
+        assert_ne!(a.password, b.password);
+    }
+
+    #[test]
+    fn require_unlocked_gates_on_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        assert_eq!(require_unlocked(&state).unwrap_err(), "Vault is locked");
+        state.unlock_for_test(&Crypto::generate_rms());
+        assert!(require_unlocked(&state).is_ok());
+    }
+
+    #[test]
+    fn vault_health_counts_weak_and_reused() {
+        let (_dir, state) = unlocked_state();
+        assert_eq!(
+            get_vault_health(&state).unwrap().health_score,
+            100.0,
+            "empty vault is perfectly healthy"
+        );
+
+        {
+            let mut vault = state.vault.write();
+            vault.add_item(login("Weak one", "https://a.example", "u", "abc"));
+            vault.add_item(login("Reused A", "https://b.example", "u", STRONG));
+            vault.add_item(login("Reused B", "https://c.example", "u", STRONG));
+            vault.add_item(login("Unique", "https://d.example", "u", "Z7!qW3#eR9&tY6^uI2*o"));
+        }
+
+        let health = get_vault_health(&state).unwrap();
+        assert_eq!(health.total_logins, 4);
+        assert_eq!(health.weak_passwords, 1);
+        assert_eq!(health.reused_passwords, 1, "one password shared by two items");
+        // score = 100 - (25%*0.6 + 25%*0.4) = 75 → GOOD.
+        assert_eq!(health.health_score, 75.0);
+        assert_eq!(health.status, "GOOD");
+    }
+
+    #[tokio::test]
+    async fn add_update_delete_roundtrip_through_disk() {
+        let (_dir, state) = unlocked_state();
+
+        // Locked vault rejects mutations.
+        let locked_dir = tempfile::tempdir().unwrap();
+        let locked = Arc::new(AppState::for_test(locked_dir.path()));
+        assert!(add_item(&locked, login("x", "u", "u", "p")).await.is_err());
+        assert!(delete_item(&locked, "anything").await.is_err());
+
+        let added = add_item(&state, login("GitHub", "https://github.com", "alice", "pw"))
+            .await
+            .unwrap();
+        assert_ne!(added.id(), "", "server-style id assigned");
+        assert_eq!(get_items(&state).unwrap().len(), 1);
+
+        // Persisted encrypted to disk — reload through the store.
+        let rms = state.crypto.read().as_ref().unwrap().rms();
+        let on_disk = state.store.load_vault(&Crypto::new(&rms)).unwrap();
+        assert_eq!(on_disk.items.len(), 1);
+        assert_eq!(on_disk.get_item(added.id()).unwrap().username(), Some("alice"));
+
+        let updated = update_item(
+            &state,
+            added.with_name("GitHub work".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.name(), "GitHub work");
+        assert!(updated.updated_at() >= added.updated_at());
+
+        delete_item(&state, added.id()).await.unwrap();
+        assert!(get_item(&state, added.id()).unwrap().is_none());
+        let vault = state.vault.read();
+        assert_eq!(vault.tombstones.len(), 1);
+        assert_eq!(vault.tombstones[0].deleted_by.as_deref(), Some("test-device"));
+    }
+
+    #[tokio::test]
+    async fn received_shares_are_immutable() {
+        let (_dir, state) = unlocked_state();
+        let shared = login("Shared", "https://s.example", "u", "p").with_shared_status(true, None);
+        let id = shared.id().to_string();
+        state.vault.write().add_item(shared);
+
+        let err = update_item(&state, login("Shared", "https://s.example", "u", "p2").with_id(id.clone()))
+            .await
+            .unwrap_err();
+        assert!(err.contains("received shared"), "{err}");
+
+        let err = delete_item(&state, &id).await.unwrap_err();
+        assert!(err.contains("received shared"), "{err}");
+    }
+
+    #[test]
+    fn normalize_import_url_schemes() {
+        assert_eq!(normalize_import_url(None), "");
+        assert_eq!(normalize_import_url(Some("  ")), "");
+        assert_eq!(normalize_import_url(Some("https://x.example")), "https://x.example");
+        assert_eq!(normalize_import_url(Some("http://x.example")), "http://x.example");
+        assert_eq!(normalize_import_url(Some("example.com")), "https://example.com");
+        // IPs get plain http (no TLS on most IP-targeted services).
+        assert_eq!(normalize_import_url(Some("192.168.1.1")), "http://192.168.1.1");
+        assert_eq!(normalize_import_url(Some("192.168.1.1:8080")), "http://192.168.1.1:8080");
+        // host:port (non-IP) keeps https.
+        assert_eq!(normalize_import_url(Some("example.com:8443")), "https://example.com:8443");
+    }
+
+    #[test]
+    fn import_rejects_bad_input_before_touching_vault() {
+        let (_dir, state) = unlocked_state();
+        assert!(import_vault_bitwarden_json(&state, "not json").is_err());
+        let v2 = serde_json::json!({"version": 2, "passwords": []}).to_string();
+        let err = import_vault_bitwarden_json(&state, &v2).unwrap_err();
+        assert!(err.contains("Unsupported export version"), "{err}");
+    }
+
+    #[test]
+    fn import_adds_login_items_and_normalizes_urls() {
+        let (_dir, state) = unlocked_state();
+        let data = serde_json::json!({
+            "version": 1,
+            "timestamp": null,
+            "user_id": "whoever",
+            "passwords": [
+                {"id": "a", "username": "alice", "password": "pw1", "app_id": null,
+                 "description": "note", "url": "github.com", "otp": null},
+                {"id": "b", "username": "bob", "password": "pw2", "app_id": null,
+                 "description": null, "url": null, "otp": "JBSWY3DPEHPK3PXP"}
+            ]
+        })
+        .to_string();
+
+        let result = import_vault_bitwarden_json(&state, &data).unwrap();
+        assert_eq!((result.added, result.skipped, result.total), (2, 0, 2));
+
+        let items = get_items(&state).unwrap();
+        assert_eq!(items.len(), 2);
+        let alice = items.iter().find(|i| i.username() == Some("alice")).unwrap();
+        assert_eq!(alice.url(), Some("https://github.com"));
+        assert_eq!(alice.name(), "github.com");
+        assert_eq!(alice.notes(), Some("note"));
+        // No URL → falls back to the username as the display name.
+        let bob = items.iter().find(|i| i.username() == Some("bob")).unwrap();
+        assert_eq!(bob.name(), "bob");
+        assert_eq!(bob.url(), Some(""));
+    }
+
+    #[test]
+    fn export_import_roundtrip_preserves_login_fields() {
+        let (_dir_a, state_a) = unlocked_state();
+        {
+            let mut vault = state_a.vault.write();
+            vault.add_item(login("GH", "https://github.com", "alice", "s3cret"));
+            // Non-login items are excluded from the export.
+            vault.add_item(VaultItem::SecureNote {
+                meta: crate::vault::VaultMeta {
+                    id: "n1".into(),
+                    name: "note".into(),
+                    notes: None,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                    last_modified_device: None,
+                    favorite: false,
+                    shared: false,
+                    share_recipient: None,
+                },
+                title: "t".into(),
+                content: "c".into(),
+            });
+        }
+
+        let exported = export_vault_bitwarden_json(&state_a).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&exported).unwrap();
+        assert_eq!(parsed["version"], 1);
+        assert_eq!(parsed["passwords"].as_array().unwrap().len(), 1);
+
+        let (_dir_b, state_b) = unlocked_state();
+        let result = import_vault_bitwarden_json(&state_b, &exported).unwrap();
+        assert_eq!(result.added, 1);
+        let items = get_items(&state_b).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].username(), Some("alice"));
+        assert_eq!(items[0].password(), Some("s3cret"));
+        assert_eq!(items[0].url(), Some("https://github.com"));
+    }
+}

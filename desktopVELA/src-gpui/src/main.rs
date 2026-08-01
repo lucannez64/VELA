@@ -22,6 +22,7 @@ mod keyboard;
 mod qr;
 mod quick_search;
 mod sidebar;
+mod sync_scheduler;
 mod theme;
 mod titlebar;
 mod toast;

@@ -36,6 +36,8 @@ export default function PasswordGenerator({ onSelect, onClose }: Props) {
   useEffect(() => {
     latestRequestId.current += 1;
     generatePassword(options, latestRequestId.current);
+    // generatePassword identity is stable for the component's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options]);
 
   const generatePassword = async (opts: typeof options, requestId: number) => {

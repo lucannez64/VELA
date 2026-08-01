@@ -230,3 +230,100 @@ pub fn derive_device_id(public_key_bytes: &[u8]) -> String {
     let result = hasher.finalize();
     Uuid::from_bytes(result[..16].try_into().unwrap()).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rms_capsule_roundtrip() {
+        let transfer_key = [3u8; 32];
+        let rms = Crypto::generate_rms();
+        let capsule = create_rms_capsule(&transfer_key, &rms).unwrap();
+        assert_ne!(capsule, rms, "capsule is ciphertext");
+        assert_eq!(decrypt_rms_capsule(&transfer_key, &capsule).unwrap(), rms);
+        // Wrong transfer key cannot open it.
+        assert!(decrypt_rms_capsule(&[9u8; 32], &capsule).is_err());
+    }
+
+    #[test]
+    fn share_seal_open_roundtrip() {
+        let (share_ek, share_dk) = generate_share_keypair();
+        let item_json = br#"{"secret":"value"}"#;
+        let capsule = seal_share(&share_ek, item_json).unwrap();
+        let opened = open_share(&share_dk, &capsule).unwrap();
+        assert_eq!(opened, item_json);
+
+        // A different recipient key cannot open it.
+        let (_other_ek, other_dk) = generate_share_keypair();
+        assert!(open_share(&other_dk, &capsule).is_err());
+    }
+
+    #[test]
+    fn identity_keypair_has_all_key_material() {
+        let keys = generate_identity_keypair().unwrap();
+        assert!(!keys.hybrid_ek.is_empty());
+        assert!(!keys.hybrid_vk.is_empty());
+        assert!(!keys.hybrid_sk.is_empty());
+        assert!(!keys.share_ek.is_empty());
+        assert!(!keys.share_dk.is_empty());
+        // Two keypairs are independent.
+        let other = generate_identity_keypair().unwrap();
+        assert_ne!(keys.hybrid_vk, other.hybrid_vk);
+        assert_ne!(keys.share_ek, other.share_ek);
+    }
+
+    #[test]
+    fn sign_enrollment_produces_hybrid_signature() {
+        let keys = generate_identity_keypair().unwrap();
+        let sig = sign_enrollment(&keys.hybrid_sk, &keys.hybrid_ek, &keys.hybrid_vk, b"capsule")
+            .unwrap();
+        // Hybrid sig = ML-DSA-87 (4627 B) ‖ Ed25519 (64 B).
+        assert_eq!(sig.len(), 4627 + 64);
+        // Garbage key material is rejected, not panicky.
+        assert!(sign_enrollment(b"short", b"ek", b"vk", b"cap").is_err());
+    }
+
+    #[test]
+    fn challenge_response_is_deterministic_sha256() {
+        let a = compute_challenge_response(b"challenge", "device-1");
+        let b = compute_challenge_response(b"challenge", "device-1");
+        assert_eq!(a, b);
+        // Domain-separated by device id.
+        let c = compute_challenge_response(b"challenge", "device-2");
+        assert_ne!(a, c);
+
+        // Matches a hand-rolled SHA-256(challenge ‖ device_id).
+        let mut hasher = Sha256::new();
+        hasher.update(b"challenge");
+        hasher.update(b"device-1");
+        assert_eq!(a.as_slice(), hasher.finalize().as_slice());
+    }
+
+    #[test]
+    fn derive_device_id_is_stable_uuid() {
+        let id = derive_device_id(b"public-key-bytes");
+        assert_eq!(id, derive_device_id(b"public-key-bytes"));
+        assert!(Uuid::parse_str(&id).is_ok(), "device id is a UUID: {id}");
+        assert_ne!(id, derive_device_id(b"other-key"));
+    }
+
+    #[test]
+    fn auth_signature_is_base64() {
+        let keys = generate_identity_keypair().unwrap();
+        let sig = create_auth_signature(&keys.hybrid_sk, b"challenge", "device-1").unwrap();
+        assert!(B64.decode(&sig).is_ok());
+    }
+
+    #[test]
+    fn vault_key_derivation_is_context_separated() {
+        let crypto = Crypto::new(&[42u8; 32]);
+        // Different contexts → different keys (no cross-protocol reuse).
+        assert_ne!(crypto.vault_key().as_bytes(), crypto.audit_key().as_bytes());
+        assert_ne!(crypto.vault_key().as_bytes(), crypto.mac_key().as_bytes());
+        assert_ne!(crypto.chunk_key(b"a").as_bytes(), crypto.chunk_key(b"b").as_bytes());
+        // Deterministic for the same RMS.
+        let same = Crypto::new(&[42u8; 32]);
+        assert_eq!(crypto.vault_key().as_bytes(), same.vault_key().as_bytes());
+    }
+}

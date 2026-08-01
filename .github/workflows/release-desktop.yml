@@ -189,10 +189,13 @@ jobs:
         with:
           workspaces: desktopVELA
 
-      # The only place the desktop crates' tests run: the macOS job compiles
+      # The main place the desktop crates' tests run: the macOS job compiles
       # a different set of `cfg`s entirely (none of `linux_biometric`, the
       # portal client or the IPC server), so a Linux-only regression can only
-      # be caught here.
+      # be caught here. Runs core + the gpui binary's tests, plus the headless
+      # end-to-end sync tests in vela-e2e (desktop client <-> mock server <->
+      # android client, all in-process); the src-tauri package's tests need the
+      # frontend `dist/` and run in the macOS job.
       - name: Test
         working-directory: desktopVELA
         env:
@@ -200,7 +203,18 @@ jobs:
           # Secret Service probes fail fast and deterministically instead of
           # waiting on autolaunch — they only have to *not panic*.
           DBUS_SESSION_BUS_ADDRESS: unix:path=/nonexistent
-        run: cargo test -p vela-desktop-core
+        run: cargo test -p vela-desktop-core -p vela-desktop-gpui -p vela-e2e
+
+      # React renderer unit tests (vitest) — the frontend has its own test
+      # suite under desktopVELA/src.
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Test frontend
+        working-directory: desktopVELA
+        run: |
+          bun install
+          bun run lint
+          bun run test
 
       # Not a general clippy gate (the tree has pre-existing warnings) — just
       # the runtime-coupling guard from clippy.toml, which turns "panics on a
@@ -209,7 +223,7 @@ jobs:
         working-directory: desktopVELA
         run: |
           cargo clippy --all-targets \
-            -p vela-desktop-core -p vela-desktop-gpui \
+            -p vela-desktop-core -p vela-desktop-gpui -p vela-e2e \
             -- -D clippy::disallowed_methods
 
       - name: Stamp version into the gpui crate

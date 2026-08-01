@@ -156,6 +156,31 @@ pub struct PasswordBreachResult {
     pub description: String,
 }
 
+/// SHA-1 of the password, uppercased, split into the k-anonymity prefix (the
+/// only part that ever leaves the device) and the suffix matched locally
+/// against the Pwned Passwords range response.
+fn pwned_hash_parts(password: &str) -> (String, String) {
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(password.as_bytes());
+    let hash_hex = hex::encode(hasher.finalize()).to_uppercase();
+    let (prefix, suffix) = hash_hex.split_at(5);
+    (prefix.to_string(), suffix.to_string())
+}
+
+/// Parse a Pwned Passwords range response (`HASH_SUFFIX:COUNT` lines) for our
+/// suffix. Returns the breach count when the password appears in the corpus.
+fn parse_pwned_range(body: &str, suffix: &str) -> Option<u32> {
+    for line in body.lines() {
+        if let Some((hash_suffix, count_str)) = line.split_once(':') {
+            if hash_suffix == suffix {
+                return Some(count_str.trim().parse().unwrap_or(0));
+            }
+        }
+    }
+    None
+}
+
 /// Checks every distinct vault password against Pwned Passwords via
 /// k-anonymity (only the first 5 hash chars ever leave the device). Real
 /// network calls, no vault writes.
@@ -182,43 +207,92 @@ pub async fn check_all_vault_passwords(state: &AppState) -> Result<Vec<PasswordB
     let mut results: Vec<PasswordBreachResult> = Vec::new();
 
     for (name, password) in passwords {
-        use sha1::{Digest, Sha1};
-        let mut hasher = Sha1::new();
-        hasher.update(password.as_bytes());
-        let hash_hex = hex::encode(hasher.finalize()).to_uppercase();
-        let (prefix, suffix) = hash_hex.split_at(5);
+        let (prefix, suffix) = pwned_hash_parts(&password);
 
         let url = format!("https://api.pwnedpasswords.com/range/{prefix}");
         if let Ok(response) = client.get(&url).header("User-Agent", "VELA-Desktop-App").send().await {
             if response.status().as_u16() == 200 {
                 let body = response.text().await.unwrap_or_default();
-                let mut found = false;
-                for line in body.lines() {
-                    if let Some((hash_suffix, count_str)) = line.split_once(':') {
-                        if hash_suffix == suffix {
-                            let count: u32 = count_str.trim().parse().unwrap_or(0);
-                            let result = PasswordBreachResult {
-                                breached: true,
-                                count,
-                                description: format!("Password for '{name}' found {count} times in breaches"),
-                            };
-                            tracing::info!("{}", result.description);
-                            results.push(result);
-                            found = true;
-                            break;
-                        }
+                match parse_pwned_range(&body, &suffix) {
+                    Some(count) => {
+                        let result = PasswordBreachResult {
+                            breached: true,
+                            count,
+                            description: format!("Password for '{name}' found {count} times in breaches"),
+                        };
+                        tracing::info!("{}", result.description);
+                        results.push(result);
                     }
-                }
-                if !found {
-                    results.push(PasswordBreachResult {
-                        breached: false,
-                        count: 0,
-                        description: format!("Password for '{name}' is safe"),
-                    });
+                    None => {
+                        results.push(PasswordBreachResult {
+                            breached: false,
+                            count: 0,
+                            description: format!("Password for '{name}' is safe"),
+                        });
+                    }
                 }
             }
         }
     }
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pwned_hash_parts_splits_uppercase_sha1() {
+        // SHA-1("password") = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8
+        let (prefix, suffix) = pwned_hash_parts("password");
+        assert_eq!(prefix, "5BAA6");
+        assert_eq!(suffix, "1E4C9B93F3F0682250B6CF8331B7EE68FD8");
+    }
+
+    #[test]
+    fn parse_pwned_range_finds_suffix_and_count() {
+        let body = "1E4C9B93F3F0682250B6CF8331B7EE68FD8:3861493\r\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:2\n";
+        let (_prefix, suffix) = pwned_hash_parts("password");
+        assert_eq!(parse_pwned_range(body, &suffix), Some(3861493));
+    }
+
+    #[test]
+    fn parse_pwned_range_misses_unknown_suffix() {
+        let body = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:2\nBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB:7";
+        assert_eq!(parse_pwned_range(body, "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"), None);
+    }
+
+    #[test]
+    fn parse_pwned_range_tolerates_malformed_lines() {
+        let body = "not-a-hash-line\n:5\n1E4C9B93F3F0682250B6CF8331B7EE68FD8:notanumber\n";
+        let (_prefix, suffix) = pwned_hash_parts("password");
+        // Matching line with an unparseable count degrades to 0, not a panic.
+        assert_eq!(parse_pwned_range(body, &suffix), Some(0));
+    }
+
+    #[test]
+    fn hibp_json_deserializes_into_breach_entry() {
+        let json = serde_json::json!({
+            "Name": "Adobe",
+            "Title": "Adobe",
+            "Domain": "adobe.com",
+            "BreachDate": "2013-10-04",
+            "Description": "In October 2013...",
+            "DataClasses": ["Email addresses", "Passwords"],
+            "IsVerified": true,
+            "IsFabricated": false,
+            "IsSensitive": false,
+            "IsRetired": false,
+            "IsSpamList": false
+        });
+        let breach: HibpBreach = serde_json::from_value(json).unwrap();
+        let entry: BreachEntry = breach.into();
+        assert_eq!(entry.name, "Adobe");
+        assert_eq!(entry.domain, "adobe.com");
+        assert_eq!(entry.breach_date, "2013-10-04");
+        assert_eq!(entry.data_classes, vec!["Email addresses", "Passwords"]);
+        assert!(entry.is_verified);
+        assert!(!entry.is_spam_list);
+    }
 }

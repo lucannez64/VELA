@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["vela-desktop-core", "src-tauri", "src-gpui"]
+members = ["vela-desktop-core", "src-tauri", "src-gpui", "vela-e2e"]
 # vendor/gpui-ce is its own separate workspace (vendored gpui-ce fork, see
 # the [patch] section below) — excluded so Cargo doesn't try to fold its
 # packages into this workspace's own dependency-inheritance resolution.

@@ -43,3 +43,68 @@ pub fn update_settings(state: &Arc<AppState>, mut settings: Settings) -> Result<
     record_audit_event(state, AuditAction::SettingsChanged);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::Crypto;
+
+    fn state() -> (tempfile::TempDir, Arc<AppState>) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&Crypto::generate_rms());
+        (dir, state)
+    }
+
+    #[test]
+    fn get_settings_returns_defaults_with_state_overlays() {
+        let (_dir, state) = state();
+        let settings = get_settings(&state).unwrap();
+        assert_eq!(settings.auto_lock_minutes, 5);
+        assert_eq!(settings.user_id, "test-user", "session user wins");
+        assert_eq!(settings.server_url, "");
+        assert!(!settings.extension_connected);
+    }
+
+    #[test]
+    fn update_settings_persists_and_normalizes() {
+        let (_dir, state) = state();
+        let settings = Settings {
+            auto_lock_minutes: 15,
+            server_url: "  https://vault.example.com ".into(),
+            quick_search_shortcut: "  ".into(),
+            ..Default::default()
+        };
+
+        update_settings(&state, settings).unwrap();
+
+        // State server_url updated (normalized: trimmed).
+        assert_eq!(state.server_url.read().as_str(), "https://vault.example.com");
+
+        let loaded = get_settings(&state).unwrap();
+        assert_eq!(loaded.auto_lock_minutes, 15);
+        assert_eq!(loaded.server_url, "https://vault.example.com");
+        // Blank shortcut falls back to the default.
+        assert_eq!(
+            loaded.quick_search_shortcut,
+            crate::settings::DEFAULT_QUICK_SEARCH_SHORTCUT
+        );
+    }
+
+    #[test]
+    fn update_settings_rejects_insecure_url_without_persisting() {
+        let (_dir, state) = state();
+        let settings = Settings {
+            server_url: "http://evil.example.com".into(),
+            auto_lock_minutes: 99,
+            ..Default::default()
+        };
+
+        let err = update_settings(&state, settings).unwrap_err();
+        assert!(err.contains("Insecure"), "{err}");
+
+        // Rejected update must not leak into state or disk.
+        assert_eq!(state.server_url.read().as_str(), "");
+        assert_eq!(state.store.load_settings().unwrap().auto_lock_minutes, 5);
+    }
+}

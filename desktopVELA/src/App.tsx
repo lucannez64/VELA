@@ -165,6 +165,8 @@ function AppContent() {
       unlistenSync.then(fn => fn());
       unlistenVaultItemsChanged.then(fn => fn());
     };
+    // Mount-once bootstrap: loads settings/items and wires listeners.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

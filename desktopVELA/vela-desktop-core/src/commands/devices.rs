@@ -595,3 +595,45 @@ pub async fn import_enrollment_code(
     tracing::info!(device_id = %payload.device_id, "Enrollment import complete");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verification_code_is_deterministic_and_code_dependent() {
+        let a = enrollment_verification_code("VELA-ENROLL:v2:abc");
+        assert_eq!(a, enrollment_verification_code("VELA-ENROLL:v2:abc"));
+        assert_ne!(a, enrollment_verification_code("VELA-ENROLL:v2:abd"));
+        assert!(!a.is_empty());
+    }
+
+    #[test]
+    fn qr_chunks_short_code_stays_single() {
+        let chunks = create_enrollment_qr_chunks("VELA-ENROLL:v2:short");
+        assert_eq!(chunks, vec!["VELA-ENROLL:v2:short".to_string()]);
+        // Exactly at the limit → still a single chunk.
+        let at_limit = "x".repeat(900);
+        assert_eq!(create_enrollment_qr_chunks(&at_limit).len(), 1);
+    }
+
+    #[test]
+    fn qr_chunks_split_with_position_prefixes() {
+        let code = "a".repeat(2000);
+        let chunks = create_enrollment_qr_chunks(&code);
+        assert_eq!(chunks.len(), 3, "2000 bytes / 900 → 3 chunks");
+        assert!(chunks[0].starts_with("VELA-ENROLL:1/3:"));
+        assert!(chunks[1].starts_with("VELA-ENROLL:2/3:"));
+        assert!(chunks[2].starts_with("VELA-ENROLL:3/3:"));
+
+        // Reassembly: strip prefixes and concatenate → original code.
+        let reassembled: String = chunks
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                c.strip_prefix(&format!("VELA-ENROLL:{}/3:", i + 1)).unwrap().to_string()
+            })
+            .collect();
+        assert_eq!(reassembled, code);
+    }
+}

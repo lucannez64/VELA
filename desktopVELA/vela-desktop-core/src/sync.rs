@@ -967,4 +967,90 @@ mod tests {
         assert!(conflicts.is_empty());
         assert_eq!(local.items.iter().find(|i| i.id() == "a").unwrap().updated_at(), t_new);
     }
+
+    /// An item tombstoned after its last update must stay deleted even when
+    /// the server still holds a copy — deletions propagate.
+    #[test]
+    fn tombstoned_item_stays_deleted_despite_server_copy() {
+        use crate::vault::Tombstone;
+        let t_item = Utc::now() - chrono::Duration::hours(2);
+        let t_deleted = Utc::now() - chrono::Duration::hours(1);
+
+        let mut local = store_with(vec![]);
+        local.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_deleted, deleted_by: Some("this-device".into()) });
+        let server = store_with(vec![login("a", t_item, Some("other-device"))]);
+
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+
+        assert!(conflicts.is_empty());
+        assert!(local.items.iter().all(|i| i.id() != "a"), "tombstoned item must not resurrect");
+        assert_eq!(local.tombstones.len(), 1, "tombstone is retained for other devices");
+    }
+
+    /// A server edit NEWER than the tombstone means the item was deliberately
+    /// re-created after the deletion — it comes back.
+    #[test]
+    fn server_edit_newer_than_tombstone_resurrects_item() {
+        use crate::vault::Tombstone;
+        let t_deleted = Utc::now() - chrono::Duration::hours(2);
+        let t_recreated = Utc::now() - chrono::Duration::hours(1);
+
+        let mut local = store_with(vec![]);
+        local.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_deleted, deleted_by: None });
+        let server = store_with(vec![login("a", t_recreated, Some("other-device"))]);
+
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+
+        assert!(conflicts.is_empty());
+        let kept = local.items.iter().find(|i| i.id() == "a").expect("re-created item resurrected");
+        assert_eq!(kept.updated_at(), t_recreated);
+    }
+
+    /// Both sides tombstoned the same id — the newest deletion time wins so
+    /// pruning is consistent across devices.
+    #[test]
+    fn duplicate_tombstones_keep_newest_timestamp() {
+        use crate::vault::Tombstone;
+        let t_old = Utc::now() - chrono::Duration::hours(3);
+        let t_new = Utc::now() - chrono::Duration::hours(1);
+
+        let mut local = store_with(vec![]);
+        local.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_old, deleted_by: None });
+        let mut server = store_with(vec![]);
+        server.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_new, deleted_by: Some("srv".into()) });
+
+        merge_server_vaults(&mut local, server, "this-device");
+
+        assert_eq!(local.tombstones.len(), 1);
+        assert_eq!(local.tombstones[0].deleted_at, t_new);
+    }
+
+    /// Items present on only one side are unioned into the merged vault.
+    #[test]
+    fn one_sided_items_are_unioned() {
+        let t = Utc::now() - chrono::Duration::hours(1);
+        let mut local = store_with(vec![login("local-only", t, Some("this-device"))]);
+        let server = store_with(vec![login("server-only", t, Some("other-device"))]);
+
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+
+        assert!(conflicts.is_empty());
+        assert_eq!(local.items.len(), 2);
+        assert!(local.items.iter().any(|i| i.id() == "local-only"));
+        assert!(local.items.iter().any(|i| i.id() == "server-only"));
+    }
+
+    /// Identical timestamps on both sides: no conflict, local copy kept.
+    #[test]
+    fn equal_timestamps_are_not_a_conflict() {
+        let t = Utc::now() - chrono::Duration::hours(1);
+        let mut local = store_with(vec![login("a", t, Some("this-device"))]);
+        let server = store_with(vec![login("a", t, Some("other-device"))]);
+
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+
+        assert!(conflicts.is_empty());
+        let kept = local.items.iter().find(|i| i.id() == "a").unwrap();
+        assert_eq!(kept.last_modified_device(), Some("this-device"));
+    }
 }

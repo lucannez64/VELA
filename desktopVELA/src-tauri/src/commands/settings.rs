@@ -265,3 +265,42 @@ pub async fn set_auto_lock_minutes(
     record_audit_event(&state, AuditAction::SettingsChanged);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The shortcut the user configures is handed to
+    // `tauri_plugin_global_shortcut::Shortcut::from_str` at registration time;
+    // these guard the strings we produce against what the plugin accepts.
+    #[test]
+    fn default_shortcut_parses_as_plugin_accelerator() {
+        assert!(Shortcut::from_str(DEFAULT_QUICK_SEARCH_SHORTCUT).is_ok());
+    }
+
+    #[test]
+    fn common_shortcut_spellings_parse() {
+        for shortcut in ["Ctrl+Alt+Q", "Shift+Super+Space", "CmdOrCtrl+K", "F12"] {
+            assert!(
+                Shortcut::from_str(shortcut).is_ok(),
+                "{shortcut} should be a valid accelerator"
+            );
+        }
+    }
+
+    #[test]
+    fn garbage_shortcut_is_rejected() {
+        assert!(Shortcut::from_str("").is_err());
+    }
+
+    #[test]
+    fn normalized_shortcut_always_parses_or_is_default() {
+        // normalize → empty falls back to the default, which parses.
+        let normalized = normalize_quick_search_shortcut("   ");
+        assert_eq!(normalized, DEFAULT_QUICK_SEARCH_SHORTCUT);
+        assert!(Shortcut::from_str(&normalized).is_ok());
+
+        let normalized = normalize_quick_search_shortcut(" Ctrl+Alt+V ");
+        assert!(Shortcut::from_str(&normalized).is_ok());
+    }
+}

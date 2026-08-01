@@ -576,3 +576,268 @@ pub struct ConflictItem {
     pub server_version: VaultItem,
     pub conflict_detected_at: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(id: &str, name: &str) -> VaultMeta {
+        let now = Utc::now();
+        VaultMeta {
+            id: id.into(),
+            name: name.into(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+            last_modified_device: None,
+            favorite: false,
+            shared: false,
+            share_recipient: None,
+        }
+    }
+
+    fn login(id: &str, name: &str, url: &str, user: &str, pass: &str) -> VaultItem {
+        VaultItem::Login {
+            meta: meta(id, name),
+            url: url.into(),
+            username: user.into(),
+            pass: pass.into(),
+            totp: None,
+        }
+    }
+
+    #[test]
+    fn masked_value_per_item_type() {
+        assert_eq!(login("1", "n", "u", "u", "secret").masked_value(), "••••••••••••");
+
+        let card = VaultItem::CreditCard {
+            meta: meta("2", "Visa"),
+            number: "4111111111111111".into(),
+            exp: "12/30".into(),
+            cvv: "123".into(),
+            pin: None,
+            cardholder_name: None,
+        };
+        assert_eq!(card.masked_value(), "•••• •••• •••• 1111");
+        assert_eq!(card.display_value(), "4111111111111111");
+
+        let short_card = VaultItem::CreditCard {
+            meta: meta("3", "odd"),
+            number: "12".into(),
+            exp: "12/30".into(),
+            cvv: "123".into(),
+            pin: None,
+            cardholder_name: None,
+        };
+        assert_eq!(short_card.masked_value(), "•••• •••• •••• ••••");
+
+        let note = VaultItem::SecureNote {
+            meta: meta("4", "note"),
+            title: "t".into(),
+            content: "c".into(),
+        };
+        assert_eq!(note.masked_value(), "••••••••••••");
+        assert_eq!(note.display_value(), "Secure Note");
+
+        let identity = VaultItem::Identity {
+            meta: meta("5", "id"),
+            first_name: "Ada".into(),
+            last_name: "L".into(),
+            ssn: "000".into(),
+        };
+        assert_eq!(identity.masked_value(), "••••••••");
+        assert_eq!(identity.display_value(), "Ada");
+        assert_eq!(identity.username(), Some("Ada"));
+
+        let file = VaultItem::FileBlob {
+            meta: meta("6", "f"),
+            filename: "doc.pdf".into(),
+            mime: "application/pdf".into(),
+            chunks: vec![],
+        };
+        assert_eq!(file.masked_value(), "doc.pdf");
+
+        let breach = VaultItem::BreachMonitor {
+            meta: meta("7", "b"),
+            email: "a@b.c".into(),
+            checked_at: None,
+            breach_count: 0,
+            breaches: vec![],
+        };
+        assert_eq!(breach.masked_value(), "a@b.c");
+    }
+
+    #[test]
+    fn is_received_share_semantics() {
+        let received = login("1", "n", "u", "u", "p").with_shared_status(true, None);
+        assert!(received.is_received_share());
+        // A share we SENT (recipient set) is still ours to modify.
+        let sent = login("1", "n", "u", "u", "p").with_shared_status(true, Some("bob".into()));
+        assert!(!sent.is_received_share());
+        let unshared = login("1", "n", "u", "u", "p");
+        assert!(!unshared.is_received_share());
+    }
+
+    #[test]
+    fn search_matches_name_username_url_notes_case_insensitively() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "GitHub", "https://github.com", "alice", "p"));
+        vault.add_item(login("2", "GitLab", "https://gitlab.com", "bob", "p"));
+        let mut notes_meta = meta("3", "Bank");
+        notes_meta.notes = Some("my pet name".into());
+        vault.add_item(VaultItem::Login {
+            meta: notes_meta,
+            url: "https://bank.example".into(),
+            username: "carol".into(),
+            pass: "p".into(),
+            totp: None,
+        });
+
+        assert_eq!(vault.search("GIT").len(), 2);
+        assert_eq!(vault.search("github").len(), 1);
+        assert_eq!(vault.search("ALICE").len(), 1);
+        assert_eq!(vault.search("gitlab.com").len(), 1);
+        assert_eq!(vault.search("pet").len(), 1, "notes are searchable");
+        assert!(vault.search("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn urls_match_cases() {
+        // Exact host.
+        assert!(urls_match("example.com", "https://example.com/login"));
+        // Subdomain of the stored host.
+        assert!(urls_match("login.example.com", "https://example.com"));
+        // The reverse (parent visiting a stored subdomain) must NOT match.
+        assert!(!urls_match("example.com", "https://login.example.com"));
+        // Different registrable domain.
+        assert!(!urls_match("evil-example.com", "https://example.com"));
+        // PSL multi-label suffix: subdomains of victim.co.uk match, but a
+        // different registrable domain under the same public suffix doesn't.
+        assert!(urls_match("sub.victim.co.uk", "https://victim.co.uk"));
+        assert!(!urls_match("victim.co.uk", "https://other.co.uk"));
+        // Scheme-less stored URLs work.
+        assert!(urls_match("github.com", "github.com"));
+        // IP literals: exact IP matches (ports compatible), different IP doesn't.
+        assert!(urls_match("192.168.1.1", "http://192.168.1.1:8080"));
+        assert!(!urls_match("192.168.1.1", "http://192.168.1.2"));
+        // Both ports present and different → no match.
+        assert!(!urls_match("example.com:8443", "https://example.com:9443"));
+        // Case-insensitive.
+        assert!(urls_match("ExAmPlE.CoM", "https://EXAMPLE.com"));
+    }
+
+    #[test]
+    fn search_by_domain_filters_to_logins_and_matches_psl() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "GH", "https://github.com", "alice", "p"));
+        vault.add_item(VaultItem::SecureNote {
+            meta: meta("2", "github note"),
+            title: "t".into(),
+            content: "github.com".into(),
+        });
+        vault.add_item(login("3", "Other", "https://example.org", "bob", "p"));
+
+        let hits = vault.search_by_domain("gist.github.com");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id(), "1");
+
+        assert!(vault.search_by_domain("").is_empty());
+        assert!(vault.search_by_domain("unrelated.net").is_empty());
+    }
+
+    #[test]
+    fn update_item_replaces_or_adds() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "Old", "u", "a", "p"));
+        vault.update_item(login("1", "New", "u", "b", "p2"));
+        assert_eq!(vault.items.len(), 1);
+        assert_eq!(vault.get_item("1").unwrap().name(), "New");
+        assert_eq!(vault.get_item("1").unwrap().username(), Some("b"));
+
+        // Unknown id → added (upsert semantics used by sync merge).
+        vault.update_item(login("2", "Added", "u", "c", "p"));
+        assert_eq!(vault.items.len(), 2);
+        assert_eq!(vault.get_item("2").unwrap().name(), "Added");
+    }
+
+    #[test]
+    fn delete_item_tombstones_and_prune() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "A", "u", "a", "p"));
+        vault.add_item(login("2", "B", "u", "b", "p"));
+        vault.delete_item("1", Some("dev-x"));
+        assert!(vault.get_item("1").is_none());
+        assert_eq!(vault.items.len(), 1);
+        assert_eq!(vault.tombstones.len(), 1);
+        assert_eq!(vault.tombstones[0].deleted_by.as_deref(), Some("dev-x"));
+
+        // Backdate the tombstone, add a fresh one, then prune.
+        vault.tombstones[0].deleted_at = Utc::now() - chrono::Duration::hours(2);
+        vault.delete_item("2", None);
+        vault.prune_tombstones(chrono::Duration::hours(1));
+        assert_eq!(vault.tombstones.len(), 1);
+        assert_eq!(vault.tombstones[0].id, "2");
+    }
+
+    #[test]
+    fn count_and_filter_by_type() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "A", "u", "a", "p"));
+        vault.add_item(login("2", "B", "u", "b", "p"));
+        vault.add_item(VaultItem::SecureNote {
+            meta: meta("3", "N"),
+            title: "t".into(),
+            content: "c".into(),
+        });
+        assert_eq!(vault.count_by_type(), (2, 0, 1, 0, 0));
+        assert_eq!(vault.by_type(&ItemType::Login).len(), 2);
+        assert_eq!(vault.by_type(&ItemType::CreditCard).len(), 0);
+    }
+
+    #[test]
+    fn meta_deserializes_legacy_snake_case_fields() {
+        let json = serde_json::json!({
+            "id": "1",
+            "name": "Old item",
+            "created_at": "2024-01-02T03:04:05Z",
+            "updated_at": "2024-01-02T03:04:05Z",
+            "last_modified_device": "dev-legacy"
+        });
+        let meta: VaultMeta = serde_json::from_value(json).unwrap();
+        assert_eq!(meta.name, "Old item");
+        assert_eq!(meta.last_modified_device.as_deref(), Some("dev-legacy"));
+        assert_eq!(meta.created_at.to_rfc3339(), "2024-01-02T03:04:05+00:00");
+    }
+
+    #[test]
+    fn vault_item_tagged_serde_roundtrip() {
+        let item = login("1", "GH", "https://github.com", "alice", "pw");
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["item_type"], "login");
+        assert_eq!(json["password"], "pw");
+        let back: VaultItem = serde_json::from_value(json).unwrap();
+        assert_eq!(back.id(), "1");
+        assert_eq!(back.password(), Some("pw"));
+    }
+
+    #[test]
+    fn vault_store_serde_roundtrip_preserves_items_and_tombstones() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "A", "u", "a", "p"));
+        vault.delete_item("1", Some("d"));
+        let json = serde_json::to_vec(&vault).unwrap();
+        let back: VaultStore = serde_json::from_slice(&json).unwrap();
+        assert!(back.get_item("1").is_none());
+        assert_eq!(back.tombstones.len(), 1);
+        // Index is rebuilt lazily — lookup still works after deserialize.
+        assert!(back.items.is_empty());
+    }
+
+    #[test]
+    fn password_generator_defaults() {
+        let opts = PasswordGeneratorOptions::default();
+        assert_eq!(opts.length, 20);
+        assert!(opts.uppercase && opts.lowercase && opts.numbers && opts.symbols);
+        assert!(!opts.easy_to_type && !opts.pronounceable);
+    }
+}

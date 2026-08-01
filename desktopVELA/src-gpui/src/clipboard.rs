@@ -45,6 +45,12 @@ struct ClipboardState {
     /// Dropping this cancels a pending clear — that's how a new copy
     /// supersedes the previous one's timer.
     _clear_task: Option<Task<()>>,
+    /// The last value *we* placed on the clipboard. Lets `clear()` wipe a
+    /// copied secret on lock even when auto-clear is "Never" (no pending
+    /// timer), and lets both `clear()` and the auto-clear timer avoid
+    /// stomping content the user has since copied from another app: the wipe
+    /// only happens when the clipboard still holds exactly this value.
+    last_value: Option<String>,
 }
 impl Global for ClipboardState {}
 
@@ -83,6 +89,15 @@ pub fn copy(cx: &mut App, label: &str, value: &str) {
     }
     tracing::info!("Copied {label} to clipboard");
 
+    {
+        let state = cx.global_mut::<ClipboardState>();
+        state.last_value = Some(value.to_string());
+        // Any previous copy's pending clear is superseded below (or right
+        // here for "Never") — otherwise an earlier timer would wipe this
+        // newly-copied value out from under the user.
+        state._clear_task = None;
+    }
+
     let seconds = cx
         .default_global::<ClipboardState>()
         .clear_seconds
@@ -90,10 +105,6 @@ pub fn copy(cx: &mut App, label: &str, value: &str) {
 
     if seconds == 0 {
         toast::show(cx, format!("{label} copied"), ToastKind::Success);
-        // Still cancel any *previous* copy's pending clear — otherwise an
-        // earlier timer would wipe this newly-copied value out from under
-        // the user.
-        cx.global_mut::<ClipboardState>()._clear_task = None;
         return;
     }
 
@@ -102,7 +113,7 @@ pub fn copy(cx: &mut App, label: &str, value: &str) {
     let task = cx.spawn(async move |cx| {
         cx.background_executor().timer(Duration::from_secs(seconds as u64)).await;
         cx.update(|cx| {
-            if write_text("clipboard", "") {
+            if clear_if_ours(cx) {
                 tracing::info!("Clipboard auto-cleared");
                 toast::show(cx, "Clipboard cleared", ToastKind::Info);
             }
@@ -112,22 +123,36 @@ pub fn copy(cx: &mut App, label: &str, value: &str) {
     cx.global_mut::<ClipboardState>()._clear_task = Some(task);
 }
 
+/// Wipe the clipboard only if it still holds exactly what we last copied —
+/// never stomp content the user has since copied from another app. Returns
+/// true when a wipe happened. Clears `last_value` either way: after this,
+/// whatever is on the clipboard is no longer ours to track.
+fn clear_if_ours(cx: &mut App) -> bool {
+    let Some(last_value) = cx.global_mut::<ClipboardState>().last_value.take() else {
+        return false;
+    };
+    // A read failure means we can't prove the content moved on — fail closed
+    // and wipe (a copied secret must not linger because of a clipboard quirk).
+    let still_ours = read_text().map_or(true, |current| current == last_value);
+    still_ours && write_text("clipboard", "")
+}
+
+fn read_text() -> Option<String> {
+    CLIPBOARD.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if cell.is_none() {
+            *cell = arboard::Clipboard::new().ok();
+        }
+        cell.as_mut().and_then(|clipboard| clipboard.get_text().ok())
+    })
+}
+
 /// Immediate clear + cancel of any pending timer — ports `useClipboard.ts`'s
 /// `clearClipboard`, called when the session locks so a copied secret can't
 /// outlive the unlocked session.
 pub fn clear(cx: &mut App) {
-    // Only clear if *we* put something there and it's still pending — with no
-    // pending timer there's nothing of ours on the clipboard, and wiping it
-    // anyway would stomp on whatever the user copied from another app in the
-    // meantime.
-    let has_pending = cx
-        .try_global::<ClipboardState>()
-        .is_some_and(|state| state._clear_task.is_some());
-    if !has_pending {
-        return;
-    }
     cx.global_mut::<ClipboardState>()._clear_task = None;
-    if write_text("clipboard", "") {
+    if clear_if_ours(cx) {
         tracing::info!("Clipboard cleared on lock");
     }
 }

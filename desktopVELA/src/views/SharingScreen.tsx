@@ -28,6 +28,8 @@ export default function SharingScreen() {
       setShowShareModal(true);
       setPendingShareItemId(null);
     }
+    // Mount-once: consume the deep-link intent and load shares.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadShares = async () => {

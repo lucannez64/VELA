@@ -371,3 +371,18 @@ impl Render for QuickSearch {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn item_icon_names_cover_all_item_types() {
+        assert_eq!(item_icon_name(ItemType::Login), "key");
+        assert_eq!(item_icon_name(ItemType::CreditCard), "credit_card");
+        assert_eq!(item_icon_name(ItemType::SecureNote), "note");
+        assert_eq!(item_icon_name(ItemType::Identity), "shield");
+        assert_eq!(item_icon_name(ItemType::FileBlob), "shield");
+        assert_eq!(item_icon_name(ItemType::BreachMonitor), "shield");
+    }
+}

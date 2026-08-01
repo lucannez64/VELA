@@ -43,6 +43,8 @@ export default function SettingsScreen() {
     invoke<string>('get_shortcut_backend')
       .then(backend => setShortcutBackend(backend === 'portal' ? 'portal' : 'plugin'))
       .catch(() => setShortcutBackend('plugin'));
+    // Mount-once probe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadSettings = async () => {

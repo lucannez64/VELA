@@ -139,3 +139,37 @@ async fn bind_and_listen(host: &Arc<dyn Host>, preferred_trigger: &str) -> ashpd
     drop(session);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portal_trigger_maps_modifiers() {
+        assert_eq!(to_portal_trigger("Ctrl+Alt+V"), "CTRL+ALT+v");
+        assert_eq!(to_portal_trigger("Shift+F9"), "SHIFT+f9");
+        assert_eq!(to_portal_trigger("Ctrl+Shift+Alt+Super+Space"), "CTRL+SHIFT+ALT+LOGO+space");
+    }
+
+    #[test]
+    fn portal_trigger_accepts_modifier_aliases() {
+        assert_eq!(to_portal_trigger("Control+V"), "CTRL+v");
+        assert_eq!(to_portal_trigger("CmdOrCtrl+V"), "CTRL+v");
+        assert_eq!(to_portal_trigger("Option+X"), "ALT+x");
+        assert_eq!(to_portal_trigger("Meta+K"), "LOGO+k");
+        assert_eq!(to_portal_trigger("cmd+k"), "LOGO+k");
+    }
+
+    #[test]
+    fn portal_trigger_tolerates_whitespace_and_case() {
+        assert_eq!(to_portal_trigger(" ctrl + alt + v "), "CTRL+ALT+v");
+        // Non-modifier keys are lowercased; modifiers normalized to caps.
+        assert_eq!(to_portal_trigger("CTRL+ALT+V"), "CTRL+ALT+v");
+    }
+
+    #[test]
+    fn portal_trigger_leaves_plain_keys_untouched() {
+        assert_eq!(to_portal_trigger("F12"), "f12");
+        assert_eq!(to_portal_trigger("q"), "q");
+    }
+}

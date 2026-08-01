@@ -163,3 +163,55 @@ pub async fn revoke_web_session(state: &AppState, session_id: &str) -> Result<()
     client.revoke_web_session(&token, session_id).await.map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base32_encode_matches_rfc4648_vectors() {
+        assert_eq!(base32_encode(b""), "");
+        assert_eq!(base32_encode(b"f"), "MY");
+        assert_eq!(base32_encode(b"fo"), "MZXQ");
+        assert_eq!(base32_encode(b"foo"), "MZXW6");
+        assert_eq!(base32_encode(b"foob"), "MZXW6YQ");
+        assert_eq!(base32_encode(b"fooba"), "MZXW6YTB");
+        assert_eq!(base32_encode(b"foobar"), "MZXW6YTBOI");
+    }
+
+    #[test]
+    fn key_fingerprint_is_13_base32_chars_and_deterministic() {
+        let fp = key_fingerprint(b"some-raw-key-material");
+        assert_eq!(fp.len(), 13, "8 bytes → ceil(64/5) = 13 base32 chars");
+        assert!(fp.chars().all(|c| BASE32_ALPHABET.contains(&(c as u8))));
+        assert_eq!(fp, key_fingerprint(b"some-raw-key-material"));
+        assert_ne!(fp, key_fingerprint(b"other-key"));
+    }
+
+    #[test]
+    fn parse_session_id_all_formats() {
+        // Current QR format: id#fingerprint#link_nonce.
+        let (id, fp, nonce) = parse_session_id("sess-1#FP123#NONCE9").unwrap();
+        assert_eq!((id.as_str(), fp.as_deref(), nonce.as_deref()), ("sess-1", Some("FP123"), Some("NONCE9")));
+
+        // Previous format without nonce.
+        let (id, fp, nonce) = parse_session_id("sess-2#FP123").unwrap();
+        assert_eq!((id.as_str(), fp.as_deref(), nonce.as_deref()), ("sess-2", Some("FP123"), None));
+
+        // Bare id (old format).
+        let (id, fp, nonce) = parse_session_id("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        assert_eq!((id.as_str(), fp, nonce), ("550e8400-e29b-41d4-a716-446655440000", None, None));
+
+        // Legacy JSON blob.
+        let (id, fp, nonce) = parse_session_id(r#"{"session_id": "sess-json"}"#).unwrap();
+        assert_eq!((id.as_str(), fp, nonce), ("sess-json", None, None));
+
+        // Whitespace is trimmed.
+        let (id, _, _) = parse_session_id("  sess-3  ").unwrap();
+        assert_eq!(id, "sess-3");
+
+        // Errors.
+        assert!(parse_session_id("   ").is_err());
+        assert!(parse_session_id("{not json").is_err());
+    }
+}

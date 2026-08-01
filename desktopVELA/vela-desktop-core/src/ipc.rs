@@ -569,6 +569,266 @@ pub mod server {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Err("No supported local IPC transport for this platform".into())
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::crypto::Crypto;
+        use crate::vault::{VaultItem, VaultMeta};
+        use crate::AppState;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct MockHost {
+            state: Arc<AppState>,
+            focus_calls: AtomicUsize,
+            quick_search_calls: AtomicUsize,
+            notify_calls: AtomicUsize,
+        }
+
+        impl MockHost {
+            fn new(unlocked: bool) -> (tempfile::TempDir, Arc<Self>) {
+                let dir = tempfile::tempdir().unwrap();
+                let state = Arc::new(AppState::for_test(dir.path()));
+                if unlocked {
+                    state.unlock_for_test(&Crypto::generate_rms());
+                }
+                let host = Arc::new(Self {
+                    state,
+                    focus_calls: AtomicUsize::new(0),
+                    quick_search_calls: AtomicUsize::new(0),
+                    notify_calls: AtomicUsize::new(0),
+                });
+                (dir, host)
+            }
+
+            fn focuses(&self) -> usize {
+                self.focus_calls.load(Ordering::SeqCst)
+            }
+
+            fn notifies(&self) -> usize {
+                self.notify_calls.load(Ordering::SeqCst)
+            }
+        }
+
+        impl Host for MockHost {
+            fn state(&self) -> &Arc<AppState> {
+                &self.state
+            }
+            fn focus_main_window(&self) {
+                self.focus_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            fn app_identifier(&self) -> String {
+                "com.vela.test".into()
+            }
+            fn open_quick_search(&self) {
+                self.quick_search_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            fn notify_vault_items_changed(&self) {
+                self.notify_calls.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        fn message(msg_type: IpcMessageType, payload: serde_json::Value, capability: &str) -> IpcMessage {
+            IpcMessage { msg_type, payload, capability: Some(capability.into()) }
+        }
+
+        #[tokio::test]
+        async fn frames_roundtrip() {
+            let (mut a, mut b) = tokio::io::duplex(64);
+            write_frame(&mut a, b"hello ipc").await.unwrap();
+            let got = read_frame(&mut b).await.unwrap();
+            assert_eq!(got, b"hello ipc");
+        }
+
+        #[tokio::test]
+        async fn frames_reject_bad_lengths() {
+            // Zero-length frame.
+            let (mut a, mut b) = tokio::io::duplex(64);
+            a.write_all(&0u32.to_le_bytes()).await.unwrap();
+            assert!(read_frame(&mut b).await.is_err());
+
+            // Over the 1 MiB cap — rejected from the header alone.
+            let (mut a, mut b) = tokio::io::duplex(64);
+            a.write_all(&((MAX_IPC_MESSAGE_BYTES + 1) as u32).to_le_bytes())
+                .await
+                .unwrap();
+            assert!(read_frame(&mut b).await.is_err());
+        }
+
+        #[tokio::test]
+        async fn write_auth_file_creates_restricted_json() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("nested").join(IPC_AUTH_FILE);
+            write_auth_file(&path, "cap-123", "unix_socket", "/tmp/x.sock").unwrap();
+
+            let parsed: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(parsed["version"], 1);
+            assert_eq!(parsed["capability"], "cap-123");
+            assert_eq!(parsed["protocol"], "unix_socket");
+            assert_eq!(parsed["endpoint"], "/tmp/x.sock");
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o600);
+            }
+        }
+
+        #[tokio::test]
+        async fn rejects_missing_or_wrong_capability() {
+            let (_dir, host) = MockHost::new(false);
+            let host: Arc<dyn Host> = host;
+
+            let no_cap = IpcMessage { msg_type: IpcMessageType::Ping, payload: serde_json::json!({}), capability: None };
+            let resp = process_message(no_cap, &host, "real-cap").await;
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(resp.payload["message"], "Unauthorized IPC request");
+
+            let wrong = message(IpcMessageType::Ping, serde_json::json!({}), "nope");
+            let resp = process_message(wrong, &host, "real-cap").await;
+            assert_eq!(resp.payload["message"], "Unauthorized IPC request");
+        }
+
+        #[tokio::test]
+        async fn ping_pong_and_open_vault() {
+            let (_dir, mock) = MockHost::new(false);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let resp = process_message(message(IpcMessageType::Ping, serde_json::json!({}), "cap"), &host, "cap").await;
+            assert_eq!(resp.msg_type, IpcMessageType::Pong);
+            assert_eq!(resp.payload["connected"], true);
+
+            let resp = process_message(message(IpcMessageType::OpenVault, serde_json::json!({}), "cap"), &host, "cap").await;
+            assert_eq!(resp.msg_type, IpcMessageType::Pong);
+            assert_eq!(mock.focuses(), 1, "open_vault surfaces the main window");
+
+            let resp = process_message(
+                message(IpcMessageType::BiometricChallenge, serde_json::json!({}), "cap"),
+                &host,
+                "cap",
+            )
+            .await;
+            assert_eq!(resp.payload["message"], "Unknown message type");
+        }
+
+        #[tokio::test]
+        async fn autofill_locked_vault_requires_biometric() {
+            let (_dir, mock) = MockHost::new(false);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
+                "cap",
+            );
+            let resp = process_message(req, &host, "cap").await;
+            assert_eq!(resp.msg_type, IpcMessageType::AutofillResponse);
+            assert_eq!(resp.payload["requires_biometric"], true);
+            assert_eq!(resp.payload["items"].as_array().unwrap().len(), 0);
+            assert_eq!(mock.focuses(), 1, "user-initiated autofill surfaces the unlock UI");
+        }
+
+        #[tokio::test]
+        async fn autofill_returns_full_items_when_user_initiated() {
+            let (_dir, mock) = MockHost::new(true);
+            {
+                let now = chrono::Utc::now();
+                mock.state.vault.write().add_item(VaultItem::Login {
+                    meta: VaultMeta {
+                        id: "1".into(),
+                        name: "GH".into(),
+                        notes: None,
+                        created_at: now,
+                        updated_at: now,
+                        last_modified_device: None,
+                        favorite: false,
+                        shared: false,
+                        share_recipient: None,
+                    },
+                    url: "https://github.com".into(),
+                    username: "alice".into(),
+                    pass: "s3cret".into(),
+                    totp: None,
+                });
+            }
+            let host: Arc<dyn Host> = mock.clone();
+
+            // user_initiated: full credentials (the extension will gate on
+            // biometric itself).
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
+                "cap",
+            );
+            let resp = process_message(req, &host, "cap").await;
+            let items = resp.payload["items"].as_array().unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0]["password"], "s3cret");
+
+            // Passive (page-load) request: metadata only, never passwords.
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://github.com/login", "user_initiated": false }),
+                "cap",
+            );
+            let resp = process_message(req, &host, "cap").await;
+            let items = resp.payload["items"].as_array().unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0]["username"], "alice");
+            assert!(items[0].get("password").is_none(), "passive autofill must not leak passwords");
+        }
+
+        #[tokio::test]
+        async fn save_credentials_validates_and_persists() {
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+
+            // Password is mandatory.
+            let req = message(
+                IpcMessageType::SaveCredentials,
+                serde_json::json!({ "username": "alice", "password": "", "url": "https://github.com" }),
+                "cap",
+            );
+            let resp = process_message(req, &host, "cap").await;
+            assert_eq!(resp.payload["success"], false);
+            assert_eq!(resp.payload["error"], "Password is required");
+
+            // Happy path: item lands in the vault, UI notified, name defaults
+            // to the domain.
+            let req = message(
+                IpcMessageType::SaveCredentials,
+                serde_json::json!({ "username": "alice", "password": "pw", "url": "https://github.com/login", "name": "" }),
+                "cap",
+            );
+            let resp = process_message(req, &host, "cap").await;
+            assert_eq!(resp.payload["success"], true);
+            assert!(!resp.payload["id"].as_str().unwrap().is_empty());
+            assert_eq!(mock.notifies(), 1);
+
+            let vault = mock.state.vault.read();
+            assert_eq!(vault.items.len(), 1);
+            assert_eq!(vault.items[0].name(), "github.com");
+            assert_eq!(vault.items[0].password(), Some("pw"));
+        }
+
+        #[tokio::test]
+        async fn save_credentials_locked_vault_surfaces_window() {
+            let (_dir, mock) = MockHost::new(false);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let req = message(
+                IpcMessageType::SaveCredentials,
+                serde_json::json!({ "username": "alice", "password": "pw", "url": "https://github.com" }),
+                "cap",
+            );
+            let resp = process_message(req, &host, "cap").await;
+            assert_eq!(resp.payload["success"], false);
+            assert_eq!(resp.payload["error"], "Vault is locked");
+            assert_eq!(mock.focuses(), 1);
+        }
+    }
 }
 
 /// Extract the host the autofill request is for.
@@ -590,4 +850,61 @@ fn extract_base_domain(url: &str) -> String {
     }
 
     url.to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_tokens_are_unique_and_url_safe() {
+        let a = generate_capability();
+        let b = generate_capability();
+        assert_ne!(a, b);
+        // 32 random bytes → 43 base64url-nopad chars.
+        assert_eq!(a.len(), 43);
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    #[test]
+    fn extract_base_domain_returns_full_lowercase_host() {
+        assert_eq!(
+            extract_base_domain("https://www.Example.COM/login?next=/x"),
+            "www.example.com"
+        );
+        assert_eq!(extract_base_domain("http://localhost:3000/app"), "localhost");
+        // Multi-label suffixes must NOT be collapsed to the public suffix.
+        assert_eq!(extract_base_domain("https://sub.victim.co.uk/"), "sub.victim.co.uk");
+        // Scheme-less input passes through lowercased.
+        assert_eq!(extract_base_domain("  Gist.GitHub.com "), "gist.github.com");
+    }
+
+    #[test]
+    fn ipc_message_type_serde_and_aliases() {
+        let json = serde_json::to_string(&IpcMessageType::AutofillRequest).unwrap();
+        assert_eq!(json, "\"autofill_request\"");
+
+        // Legacy spellings from older extension builds still parse.
+        for alias in ["\"autofill_request\"", "\"AutofillRequest\"", "\"autofillRequest\""] {
+            let parsed: IpcMessageType = serde_json::from_str(alias).unwrap();
+            assert_eq!(parsed, IpcMessageType::AutofillRequest, "alias {alias}");
+        }
+
+        let parsed: IpcMessageType = serde_json::from_str("\"open_vault\"").unwrap();
+        assert_eq!(parsed, IpcMessageType::OpenVault);
+    }
+
+    #[test]
+    fn message_constructors() {
+        let ping = IpcMessage::ping();
+        assert_eq!(ping.msg_type, IpcMessageType::Ping);
+
+        let pong = IpcMessage::pong();
+        assert_eq!(pong.msg_type, IpcMessageType::Pong);
+        assert_eq!(pong.payload["connected"], true);
+
+        let err = IpcMessage::error("boom".into());
+        assert_eq!(err.msg_type, IpcMessageType::Error);
+        assert_eq!(err.payload["message"], "boom");
+    }
 }

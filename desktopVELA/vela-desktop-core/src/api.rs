@@ -1244,3 +1244,187 @@ pub struct PutOramBucketResponse {
     pub bucket_index: u64,
     pub version: i64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn health_check_reflects_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        assert!(client.health_check().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn health_check_false_on_server_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        assert!(!client.health_check().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn get_challenge_parses_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/auth/challenge"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "challenge": "Y2hhbGxlbmdlLWJ5dGVz"
+            })))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let challenge = client.get_challenge().await.unwrap();
+        assert_eq!(challenge.challenge, "Y2hhbGxlbmdlLWJ5dGVz");
+    }
+
+    #[tokio::test]
+    async fn get_challenge_errors_on_failure_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/auth/challenge"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let err = client.get_challenge().await.unwrap_err().to_string();
+        assert!(err.contains("Challenge request failed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn verify_signature_roundtrip() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/verify"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "token": "srv-token",
+                "user_id": "user-42"
+            })))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let resp = client
+            .verify_signature(&VerifyRequest {
+                device_id: "dev".into(),
+                challenge: "ch".into(),
+                signature: "sig".into(),
+                device_name: None,
+                device_type: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(resp.token, "srv-token");
+        assert_eq!(resp.user_id, "user-42");
+    }
+
+    #[tokio::test]
+    async fn sync_manifest_sends_bearer_and_captures_rotated_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .and(header("Authorization", "Bearer old-token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-New-Token", "rotated-token")
+                    .set_body_json(serde_json::json!({
+                        "chunks": [{
+                            "chunk_id": "vault-main",
+                            "version": 7,
+                            "lamport_clock": 42,
+                            "last_writer": "dev-1"
+                        }]
+                    })),
+            )
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let (manifest, new_token) = client.get_sync_manifest("old-token").await.unwrap();
+        assert_eq!(new_token.as_deref(), Some("rotated-token"));
+        assert_eq!(manifest.chunks.len(), 1);
+        assert_eq!(manifest.chunks[0].chunk_id, "vault-main");
+        assert_eq!(manifest.chunks[0].lamport_clock, 42);
+    }
+
+    #[tokio::test]
+    async fn sync_manifest_without_rotation_returns_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "chunks": [] })))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let (_manifest, new_token) = client.get_sync_manifest("t").await.unwrap();
+        assert!(new_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_chunk_reads_version_headers_and_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-main"))
+            .and(header("Authorization", "Bearer t"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-Chunk-Version", "12")
+                    .insert_header("X-Lamport-Clock", "99")
+                    .set_body_bytes(vec![1u8, 2, 3, 4]),
+            )
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let (ciphertext, version, lamport, _new_token) =
+            client.get_chunk("t", "vault-main").await.unwrap();
+        assert_eq!(ciphertext, vec![1u8, 2, 3, 4]);
+        assert_eq!(version, 12);
+        assert_eq!(lamport, 99);
+    }
+
+    #[tokio::test]
+    async fn put_chunk_sends_concurrency_headers() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/vault/chunk/c1"))
+            .and(header("If-Match", "5"))
+            .and(header("X-Lamport-Clock", "77"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "version": 6 })))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let (version, _token) = client.put_chunk("t", "c1", 5, vec![9u8; 4], 77).await.unwrap();
+        assert_eq!(version, 6);
+    }
+
+    #[tokio::test]
+    async fn conflict_status_surfaces_as_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/vault/chunk/c1"))
+            .respond_with(ResponseTemplate::new(412))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let err = client.put_chunk("t", "c1", 5, vec![9u8; 4], 77).await.unwrap_err().to_string();
+        assert!(err.contains("Chunk upload failed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn http_base_url_uses_fallback_client() {
+        // A plain http:// URL never gets an HTTP/3 client — nothing to probe.
+        let client = ApiClient::new("http://127.0.0.1:1");
+        assert!(client.h3_client.is_none());
+        assert_eq!(client.select_protocol().await, PreferredProtocol::Fallback);
+    }
+}

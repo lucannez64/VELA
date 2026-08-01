@@ -136,12 +136,16 @@ pub fn validate_local_token(
     token: &str,
     secret_key: &SecretKey,
 ) -> Result<PasetoToken, anyhow::Error> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
+    // Split from the right: the signature is base64url (never contains '.'),
+    // while the JSON payload can (RFC3339 fractional seconds). A naive
+    // `split('.')` rejects legitimately-issued tokens whenever iat/exp carry
+    // sub-second precision.
+    let Some((message, signature)) = token.rsplit_once('.') else {
         anyhow::bail!("Invalid token format");
-    }
-
-    let message = format!("{}.{}", parts[0], parts[1]);
+    };
+    let Some((_header, payload_json)) = message.split_once('.') else {
+        anyhow::bail!("Invalid token format");
+    };
 
     use hmac::{Hmac, Mac};
     type HmacSha256 = Hmac<sha2::Sha256>;
@@ -149,10 +153,10 @@ pub fn validate_local_token(
     let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())?;
     mac.update(message.as_bytes());
 
-    let expected_sig = data_encoding::BASE64URL.decode(parts[2].as_bytes())?;
+    let expected_sig = data_encoding::BASE64URL.decode(signature.as_bytes())?;
     mac.verify_slice(&expected_sig)?;
 
-    let payload: serde_json::Value = serde_json::from_str(parts[1])?;
+    let payload: serde_json::Value = serde_json::from_str(payload_json)?;
 
     let jti = payload["jti"].as_str().unwrap_or_default().to_string();
     let device_id = payload["device_id"]
@@ -262,5 +266,177 @@ impl TokenStore {
 impl Default for TokenStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    /// Craft a token with arbitrary claims, signed exactly like
+    /// `create_local_token` does — used to exercise validation paths
+    /// (expired, over-age, missing claims) that fresh tokens can't hit.
+    fn craft_token(payload: serde_json::Value, secret_key: &SecretKey) -> String {
+        use hmac::{Hmac, Mac};
+        type HmacSha256 = Hmac<sha2::Sha256>;
+
+        let header = json!({ "typ": "v4-local", "alg": "loc" });
+        let mut message = serde_json::to_string(&header).unwrap();
+        message.push('.');
+        message.push_str(&serde_json::to_string(&payload).unwrap());
+
+        let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes()).unwrap();
+        mac.update(message.as_bytes());
+        let signature = data_encoding::BASE64URL.encode(&mac.finalize().into_bytes());
+
+        message.push('.');
+        message.push_str(&signature);
+        message
+    }
+
+    fn claims(iat: DateTime<Utc>, exp: DateTime<Utc>) -> serde_json::Value {
+        json!({
+            "jti": "test-jti",
+            "device_id": "dev-1",
+            "user_id": "user-1",
+            "iat": iat.to_rfc3339(),
+            "exp": exp.to_rfc3339(),
+        })
+    }
+
+    #[test]
+    fn create_validate_roundtrip_preserves_claims() {
+        let key = SecretKey::generate();
+        let token = create_local_token("dev-1", "user-1", &key).unwrap();
+        let parsed = validate_local_token(&token, &key).unwrap();
+        assert_eq!(parsed.device_id, "dev-1");
+        assert_eq!(parsed.user_id, "user-1");
+        assert!(!parsed.jti.is_empty());
+        assert!(parsed.is_valid());
+        assert!(!parsed.is_expired());
+    }
+
+    #[test]
+    fn distinct_generated_keys_and_from_bytes_roundtrip() {
+        let a = SecretKey::generate();
+        let b = SecretKey::generate();
+        assert_ne!(a.as_bytes(), b.as_bytes());
+        let bytes = *a.as_bytes();
+        assert_eq!(SecretKey::from_bytes(&bytes).as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn wrong_key_is_rejected() {
+        let token = create_local_token("dev-1", "user-1", &SecretKey::generate()).unwrap();
+        assert!(validate_local_token(&token, &SecretKey::generate()).is_err());
+    }
+
+    #[test]
+    fn tampered_payload_is_rejected() {
+        let key = SecretKey::generate();
+        let token = create_local_token("dev-1", "user-1", &key).unwrap();
+        let tampered = token.replacen("dev-1", "dev-2", 1);
+        assert_ne!(tampered, token);
+        assert!(validate_local_token(&tampered, &key).is_err());
+    }
+
+    #[test]
+    fn malformed_segment_counts_are_rejected() {
+        let key = SecretKey::generate();
+        assert!(validate_local_token("a.b", &key).is_err());
+        assert!(validate_local_token("a.b.c.d", &key).is_err());
+        assert!(validate_local_token("", &key).is_err());
+    }
+
+    #[test]
+    fn expired_token_is_rejected() {
+        let key = SecretKey::generate();
+        let now = Utc::now();
+        let token = craft_token(claims(now - Duration::minutes(20), now - Duration::minutes(5)), &key);
+        let err = validate_local_token(&token, &key).unwrap_err().to_string();
+        assert!(err.contains("expired"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn over_age_token_is_rejected_even_when_unexpired() {
+        let key = SecretKey::generate();
+        let now = Utc::now();
+        // exp still in the future, but iat is past MAX_TOKEN_AGE_SECS (8h).
+        let token = craft_token(claims(now - Duration::hours(9), now + Duration::hours(1)), &key);
+        let err = validate_local_token(&token, &key).unwrap_err().to_string();
+        assert!(err.contains("maximum age"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn missing_timestamps_are_rejected_not_silently_accepted() {
+        let key = SecretKey::generate();
+        let now = Utc::now();
+
+        let mut no_iat = claims(now, now + Duration::minutes(15));
+        no_iat.as_object_mut().unwrap().remove("iat");
+        let token = craft_token(no_iat, &key);
+        assert!(validate_local_token(&token, &key).is_err());
+
+        let mut no_exp = claims(now, now + Duration::minutes(15));
+        no_exp.as_object_mut().unwrap().remove("exp");
+        let token = craft_token(no_exp, &key);
+        assert!(validate_local_token(&token, &key).is_err());
+    }
+
+    #[test]
+    fn paseto_token_refresh_window() {
+        let now = Utc::now();
+        let mk = |exp: DateTime<Utc>| PasetoToken {
+            jti: "j".into(),
+            device_id: "d".into(),
+            user_id: "u".into(),
+            iat: now,
+            exp,
+        };
+        // Within 5 minutes of expiry → refresh.
+        assert!(mk(now + Duration::minutes(4)).should_refresh());
+        // Plenty of time left → no refresh.
+        assert!(!mk(now + Duration::minutes(10)).should_refresh());
+        // Already expired → never "refresh", it's just invalid.
+        assert!(!mk(now - Duration::minutes(1)).should_refresh());
+
+        let old = PasetoToken { iat: now - Duration::hours(1), ..mk(now + Duration::hours(7)) };
+        let age = old.age_secs();
+        assert!((3599..=3601).contains(&age), "age was {age}");
+    }
+
+    #[test]
+    fn token_store_revocation_lifecycle() {
+        let mut store = TokenStore::new();
+        store.add_token("dev-1", "jti-a".to_string());
+        store.add_token("dev-1", "jti-b".to_string());
+        store.add_token("dev-2", "jti-c".to_string());
+
+        store.revoke_token("jti-a", "dev-1");
+        assert!(store.is_token_revoked("jti-a"));
+        assert!(!store.is_token_revoked("jti-b"));
+
+        store.revoke_device_tokens("dev-1");
+        assert!(store.is_token_revoked("jti-b"));
+        assert!(!store.is_token_revoked("jti-c"));
+    }
+
+    #[test]
+    fn cleanup_expired_drops_only_dead_revocations() {
+        let mut store = TokenStore::new();
+        let now = Utc::now();
+        store.revoke_token_with_expiry("dead", "d", Some(now - Duration::minutes(1)));
+        store.revoke_token_with_expiry("live", "d", Some(now + Duration::minutes(10)));
+        store.revoke_token("unknown-expiry", "d");
+
+        store.cleanup_expired();
+
+        assert!(!store.is_token_revoked("dead"), "expired revocation should be dropped");
+        assert!(store.is_token_revoked("live"), "live revocation must survive cleanup");
+        assert!(
+            store.is_token_revoked("unknown-expiry"),
+            "revocation without expiry must survive cleanup"
+        );
     }
 }

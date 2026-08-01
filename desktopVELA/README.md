@@ -67,6 +67,48 @@ npm run tauri dev
 npm run tauri build
 ```
 
+## Testing
+
+Rust workspace tests (core backend, Tauri app, gpui app):
+
+```bash
+# Shared core backend (used by both desktop variants)
+DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent cargo test -p vela-desktop-core
+
+# gpui binary (theme/QR/audit-log formatting tests)
+cargo test -p vela-desktop-gpui
+
+# Headless end-to-end sync tests: real vela-desktop-core drives by an
+# in-process mock of the server, against a Rust mirror of the Android
+# client's sync logic (same libVELA crypto via JNI-style derivation).
+# Covers enrollment codes, chunk upload/download, Lamport-ordered merge,
+# tombstones and cross-client decryption. No device or emulator needed.
+DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent cargo test -p vela-e2e
+
+# Tauri package (requires dist/ — run `bun run build` once first)
+cargo test -p vela-desktop
+```
+
+The `DBUS_SESSION_BUS_ADDRESS` override makes the Linux Secret Service probes
+fail fast and deterministically on machines without a session bus (CI, headless);
+the tests are hermetic and never touch the real keychain or app data dir.
+
+Frontend unit tests (vitest + Testing Library, covering `themes.ts`,
+`lib/webauthn.ts`, `hooks/useClipboard.ts`):
+
+```bash
+bun run test        # single run
+bun run test:watch  # watch mode
+```
+
+Frontend lint (ESLint flat config in `eslint.config.js` — TypeScript +
+react-hooks + react-refresh rules; the React Compiler static-analysis rules
+are off since the codebase predates the compiler):
+
+```bash
+bun run lint
+```
+
 ## Project Structure
 
 ```
@@ -85,6 +127,9 @@ desktopVELA/
 │   │   ├── vault.rs        # Vault operations
 │   │   └── ipc.rs          # IPC for browser extension
 │   └── icons/              # App icons
+├── vela-desktop-core/      # Shared core backend (both desktop variants)
+├── vela-e2e/               # Headless end-to-end sync tests
+├── src-gpui/               # Native gpui build (Linux)
 └── package.json
 ```
 

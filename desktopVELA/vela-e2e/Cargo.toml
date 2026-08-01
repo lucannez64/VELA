@@ -1,0 +1,28 @@
+[package]
+name = "vela-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "vela_e2e"
+path = "src/lib.rs"
+
+[dependencies]
+vela-desktop-core = { path = "../vela-desktop-core" }
+vela-crypto = { path = "../../libVELA/vela-crypto" }
+vela-core = { path = "../../libVELA/vela-core" }
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3"
+rand = "0.8"
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"

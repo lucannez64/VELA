@@ -264,3 +264,204 @@ impl RateLimitEntry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_session_is_inactive_and_expired() {
+        let s = Session::new();
+        assert!(!s.active);
+        assert!(s.is_expired());
+        assert_eq!(s.remaining_time(), 0);
+        assert!(s.get_token().is_none());
+    }
+
+    #[test]
+    fn unlock_sets_active_state_and_token_prefix() {
+        let mut s = Session::new();
+        s.unlock("dev-1".into(), "user-1".into(), 900);
+        assert!(s.active);
+        assert!(!s.is_expired());
+        assert_eq!(s.get_device_id(), Some("dev-1"));
+        assert_eq!(s.get_user_id(), Some("user-1"));
+        assert!(s.get_token().unwrap().starts_with("v2.local."));
+        let remaining = s.remaining_time();
+        assert!(remaining > 0 && remaining <= 900);
+    }
+
+    #[test]
+    fn unlock_caps_duration_at_max_session() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 999_999);
+        assert_eq!(s.session_time_remaining_secs, MAX_SESSION_DURATION_SECS);
+        let remaining = s.remaining_time();
+        assert!(remaining <= MAX_SESSION_DURATION_SECS && remaining > MAX_SESSION_DURATION_SECS - 10);
+    }
+
+    #[test]
+    fn unlock_preserves_server_token_but_lock_clears_it() {
+        let mut s = Session::new();
+        s.set_server_token("srv-token".into());
+        s.unlock("d".into(), "u".into(), 900);
+        // server_token lives outside the local session lifecycle on purpose.
+        assert_eq!(s.get_server_token(), Some("srv-token"));
+
+        s.lock();
+        assert!(!s.active);
+        assert!(s.get_token().is_none());
+        assert!(s.get_server_token().is_none());
+        assert!(s.get_device_id().is_none());
+        assert!(s.is_expired());
+    }
+
+    #[test]
+    fn zero_duration_unlock_is_immediately_expired() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 0);
+        assert!(s.is_expired());
+    }
+
+    #[test]
+    fn refresh_on_inactive_session_is_noop() {
+        let mut s = Session::new();
+        s.refresh();
+        assert!(!s.active);
+        assert!(s.expires_at.is_none());
+    }
+
+    #[test]
+    fn refresh_never_resurrects_expired_session() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 0);
+        let expired_at = s.expires_at.unwrap();
+        s.refresh();
+        assert_eq!(s.expires_at, Some(expired_at), "expired session must stay expired");
+    }
+
+    #[test]
+    fn refresh_extends_expiry_and_rotates_token_near_expiry() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 60);
+        let old_token = s.get_token().unwrap().to_string();
+        let old_expiry = s.expires_at.unwrap();
+
+        s.refresh();
+
+        let new_expiry = s.expires_at.unwrap();
+        assert!(new_expiry > old_expiry, "refresh should extend a live session");
+        let remaining = s.remaining_time();
+        assert!(remaining > 60 && remaining <= SESSION_DURATION_SECS);
+        // 60s left ≤ 5min window → token rotates.
+        assert_ne!(s.get_token().unwrap(), old_token);
+    }
+
+    #[test]
+    fn refresh_keeps_token_when_far_from_expiry() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 60);
+        // Pretend there's plenty of time left so refresh extends without
+        // crossing the 5-minute rotation window.
+        let now = Utc::now();
+        s.started_at = Some(now);
+        s.expires_at = Some(now + chrono::Duration::seconds(MAX_SESSION_DURATION_SECS as i64 - 60));
+        let old_token = s.get_token().unwrap().to_string();
+        let old_expiry = s.expires_at.unwrap();
+
+        s.refresh();
+
+        // desired (now+15min) < current expiry → no change at all.
+        assert_eq!(s.expires_at, Some(old_expiry));
+        assert_eq!(s.get_token().unwrap(), old_token);
+    }
+
+    #[test]
+    fn refresh_never_extends_past_absolute_cap() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 60);
+        let now = Utc::now();
+        // Started almost 8h ago: only ~60s of absolute lifetime remains.
+        let started = now - chrono::Duration::seconds(MAX_SESSION_DURATION_SECS as i64 - 60);
+        s.started_at = Some(started);
+        s.expires_at = Some(now + chrono::Duration::seconds(30));
+
+        s.refresh();
+
+        let cap = started + chrono::Duration::seconds(MAX_SESSION_DURATION_SECS as i64);
+        assert!(s.expires_at.unwrap() <= cap, "expiry must not pass the 8h cap");
+        // But it should still extend up to the cap (30s → ~60s).
+        assert!(s.expires_at.unwrap() > now + chrono::Duration::seconds(30));
+    }
+
+    #[test]
+    fn generate_local_token_embeds_decodable_claims() {
+        let s = Session::generate_local_token("dev-9", "user-9");
+        assert!(s.active);
+        assert_eq!(s.get_device_id(), Some("dev-9"));
+        assert_eq!(s.session_time_remaining_secs, SESSION_DURATION_SECS);
+
+        let token = s.get_token().unwrap();
+        let encoded = token.strip_prefix("v2.local.").expect("v2.local prefix");
+        let json = BASE64URL.decode(encoded.as_bytes()).expect("base64url payload");
+        let payload: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        assert_eq!(payload["device_id"], "dev-9");
+        assert_eq!(payload["user_id"], "user-9");
+        assert!(!payload["jti"].as_str().unwrap().is_empty());
+        assert!(payload["exp"].as_str().is_some());
+    }
+
+    #[test]
+    fn rate_limit_backoff_starts_after_free_attempts() {
+        let mut entry = RateLimitEntry::new();
+        assert_eq!(entry.attempts, 1);
+        assert!(!entry.is_blocked());
+
+        for _ in 0..4 {
+            entry.record_failure();
+        }
+        assert_eq!(entry.attempts, 5);
+        assert!(!entry.is_blocked(), "first 5 failures are free");
+
+        entry.record_failure(); // 6th → first backoff step
+        assert!(entry.is_blocked());
+        let remaining = entry.blocked_remaining_secs();
+        assert!(remaining > 0 && remaining <= 15, "first backoff is 15s, got {remaining}");
+    }
+
+    #[test]
+    fn rate_limit_backoff_grows_exponentially_and_caps() {
+        let mut entry = RateLimitEntry::new();
+        // Pre-fill to the free-attempt boundary (new() starts at 1).
+        for _ in 0..4 {
+            entry.record_failure();
+        }
+        assert_eq!(entry.attempts, 5);
+        // attempts: new()=1, then record_failure increments. Backoff for
+        // attempts n>5 is 15 * 2^(n-6) seconds, capped at 300.
+        let expected = [(6, 15), (7, 30), (8, 60), (9, 120), (10, 240), (11, 300), (12, 300)];
+        for (attempts, max_secs) in expected {
+            entry.record_failure();
+            assert_eq!(entry.attempts, attempts);
+            assert!(entry.is_blocked(), "attempt {attempts} should block");
+            let remaining = entry.blocked_remaining_secs();
+            assert!(
+                remaining > 0 && remaining <= max_secs,
+                "attempt {attempts}: remaining {remaining} should be ≤ {max_secs}"
+            );
+        }
+    }
+
+    #[test]
+    fn rate_limit_success_resets() {
+        let mut entry = RateLimitEntry::new();
+        for _ in 0..6 {
+            entry.record_failure();
+        }
+        assert!(entry.is_blocked());
+        entry.record_success();
+        assert_eq!(entry.attempts, 0);
+        assert!(!entry.is_blocked());
+        assert_eq!(entry.blocked_remaining_secs(), 0);
+    }
+}

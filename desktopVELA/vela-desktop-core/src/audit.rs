@@ -176,3 +176,125 @@ pub fn merge_audit_from_plaintext(state: &AppState, plaintext: &[u8]) -> Result<
 
     save_audit_log(state, &local_log)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::Crypto;
+    use crate::AppState;
+
+    fn entry(id: &str, secs_offset: i64) -> AuditEntry {
+        AuditEntry {
+            id: id.into(),
+            timestamp: DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+                + chrono::Duration::seconds(secs_offset),
+            action: AuditAction::VaultUnlocked,
+            subject: AuditSubject::Device { device_name: "test".into() },
+        }
+    }
+
+    fn unlocked_state() -> (tempfile::TempDir, AppState) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        state.unlock_for_test(&Crypto::generate_rms());
+        (dir, state)
+    }
+
+    #[test]
+    fn audit_action_serde_uses_snake_case_tag() {
+        let json = serde_json::to_value(AuditAction::VaultLocked).unwrap();
+        assert_eq!(json, serde_json::json!({ "action_type": "vault_locked" }));
+
+        let json = serde_json::to_value(AuditAction::ItemAdded { item_type: "login".into() }).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "action_type": "item_added", "item_type": "login" })
+        );
+
+        let back: AuditAction = serde_json::from_value(json).unwrap();
+        assert_eq!(back, AuditAction::ItemAdded { item_type: "login".into() });
+    }
+
+    #[test]
+    fn add_entry_caps_log_at_1000_keeping_newest() {
+        let mut log = AuditLog::default();
+        for i in 0..1005 {
+            log.add_entry(entry(&format!("e{i:04}"), i));
+        }
+        assert_eq!(log.entries.len(), 1000);
+        assert_eq!(log.entries[0].id, "e0005", "oldest entries are dropped first");
+        assert_eq!(log.entries[999].id, "e1004");
+    }
+
+    #[test]
+    fn record_and_load_roundtrip_encrypted() {
+        let (_dir, state) = unlocked_state();
+        record_audit_event(&state, AuditAction::VaultCreated);
+        record_audit_event(&state, AuditAction::ItemDeleted { item_type: "login".into() });
+
+        // On disk it must be ciphertext.
+        let raw = std::fs::read(state.store.store_path().join(AUDIT_FILE)).unwrap();
+        assert!(!raw.windows(6).any(|w| w == b"action".as_slice()));
+
+        let log = load_audit_log(&state).unwrap();
+        assert_eq!(log.entries.len(), 2);
+        assert_eq!(log.entries[0].action, AuditAction::VaultCreated);
+        assert_eq!(
+            log.entries[1].action,
+            AuditAction::ItemDeleted { item_type: "login".into() }
+        );
+    }
+
+    #[test]
+    fn load_audit_log_requires_crypto() {
+        let dir = tempfile::tempdir().unwrap();
+        let locked = AppState::for_test(dir.path());
+        assert!(load_audit_log(&locked).is_none());
+    }
+
+    #[test]
+    fn merge_unions_by_id_sorted_and_keeps_local() {
+        let (_dir, state) = unlocked_state();
+        save_audit_log(
+            &state,
+            &AuditLog { entries: vec![entry("b", 20), entry("a", 10)] },
+        )
+        .unwrap();
+
+        let server = AuditLog {
+            // "a" duplicates a local id (must not be re-added), "c" is new.
+            entries: vec![entry("c", 5), entry("a", 10)],
+        };
+        merge_audit_from_plaintext(&state, &serde_json::to_vec(&server).unwrap()).unwrap();
+
+        let log = load_audit_log(&state).unwrap();
+        let ids: Vec<&str> = log.entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["c", "a", "b"], "union, sorted by timestamp");
+    }
+
+    #[test]
+    fn merge_caps_at_1000_entries() {
+        let (_dir, state) = unlocked_state();
+        let server = AuditLog {
+            entries: (0..1100).map(|i| entry(&format!("s{i:04}"), i)).collect(),
+        };
+        merge_audit_from_plaintext(&state, &serde_json::to_vec(&server).unwrap()).unwrap();
+        let log = load_audit_log(&state).unwrap();
+        assert_eq!(log.entries.len(), 1000);
+        assert_eq!(log.entries[0].id, "s0100");
+    }
+
+    #[test]
+    fn replace_audit_from_plaintext_validates_json() {
+        let (_dir, state) = unlocked_state();
+        assert!(replace_audit_from_plaintext(&state, b"garbage").is_err());
+        replace_audit_from_plaintext(
+            &state,
+            &serde_json::to_vec(&AuditLog { entries: vec![entry("x", 1)] }).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_audit_log(&state).unwrap().entries.len(), 1);
+    }
+}

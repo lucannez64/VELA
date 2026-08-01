@@ -365,3 +365,21 @@ fn window_button(
         })
         .child(icon(icon_name, px(16.), icon_color))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_time_renders_minutes_and_zero_padded_seconds() {
+        assert_eq!(format_time(0), "0m 00s");
+        assert_eq!(format_time(5), "0m 05s");
+        assert_eq!(format_time(59), "0m 59s");
+        assert_eq!(format_time(60), "1m 00s");
+        assert_eq!(format_time(65), "1m 05s");
+        assert_eq!(format_time(599), "9m 59s");
+        assert_eq!(format_time(900), "15m 00s");
+        // Long sessions render large minute counts without wrapping.
+        assert_eq!(format_time(3600), "60m 00s");
+    }
+}
