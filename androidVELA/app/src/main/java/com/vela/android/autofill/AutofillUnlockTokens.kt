@@ -1,8 +1,8 @@
 package com.vela.android.autofill
 
-import android.util.Base64
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Base64
 
 /**
  * One-time tokens that prove an "unlock then fill" intent really came from
@@ -33,16 +33,20 @@ object AutofillUnlockTokens {
 
     /** Mint a token for one locked `FillResponse`. */
     @Synchronized
-    fun issue(): String {
+    fun issue(): String = issueExpiringAt(System.currentTimeMillis() + TTL_MILLIS)
+
+    /** [issue] with an explicit deadline, so expiry is testable without waiting. */
+    @Synchronized
+    internal fun issueExpiringAt(expiresAtMillis: Long): String {
         val bytes = ByteArray(32)
         random.nextBytes(bytes)
-        val token = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val token = Base64.getEncoder().encodeToString(bytes)
         prune()
         while (outstanding.size >= MAX_OUTSTANDING) {
             val oldest = outstanding.keys.firstOrNull() ?: break
             outstanding.remove(oldest)
         }
-        outstanding[token] = System.currentTimeMillis() + TTL_MILLIS
+        outstanding[token] = expiresAtMillis
         return token
     }
 
@@ -64,6 +68,12 @@ object AutofillUnlockTokens {
             }
         }
         return matched?.let { outstanding.remove(it) != null } ?: false
+    }
+
+    /** Drop every outstanding token. Test seam; also useful on sign-out. */
+    @Synchronized
+    internal fun clear() {
+        outstanding.clear()
     }
 
     private fun prune() {

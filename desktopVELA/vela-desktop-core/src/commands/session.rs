@@ -252,8 +252,20 @@ pub fn spawn_auto_lock_watchdog<F>(state: Arc<AppState>, on_locked: F)
 where
     F: Fn() + Send + 'static,
 {
+    spawn_auto_lock_watchdog_every(state, AUTO_LOCK_TICK, on_locked);
+}
+
+/// [`spawn_auto_lock_watchdog`] with the interval spelled out, so a test can
+/// exercise the thread and the callback without waiting a real tick.
+pub fn spawn_auto_lock_watchdog_every<F>(
+    state: Arc<AppState>,
+    tick: std::time::Duration,
+    on_locked: F,
+) where
+    F: Fn() + Send + 'static,
+{
     std::thread::spawn(move || loop {
-        std::thread::sleep(AUTO_LOCK_TICK);
+        std::thread::sleep(tick);
         if auto_lock_if_expired(&state) {
             on_locked();
         }
@@ -758,6 +770,7 @@ pub fn get_device_id(state: &Arc<AppState>) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     /// Audit D-1: expiry must be enforced by the clock, not by the next command
     /// the user happens to run.
@@ -788,5 +801,45 @@ mod tests {
 
         // Idempotent: a locked session is not re-locked on the next tick.
         assert!(!auto_lock_if_expired(&state));
+    }
+
+    /// The watchdog has to actually run on its own and tell the UI layer, or
+    /// the clipboard and the frontend's copy of the vault outlive the lock.
+    #[test]
+    fn watchdog_locks_in_the_background_and_reports_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[7u8; 32]);
+        {
+            let mut session = state.session.write();
+            session.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+        }
+
+        let locks = Arc::new(AtomicUsize::new(0));
+        let counter = locks.clone();
+        spawn_auto_lock_watchdog_every(state.clone(), Duration::from_millis(10), move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if locks.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(!state.is_unlocked(), "no user action was needed to lock");
+        assert_eq!(
+            locks.load(Ordering::SeqCst),
+            1,
+            "the UI is told exactly once, not on every subsequent tick"
+        );
+
+        // Keep ticking past several intervals: a locked session must stay quiet.
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(locks.load(Ordering::SeqCst), 1);
     }
 }

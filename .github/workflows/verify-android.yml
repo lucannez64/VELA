@@ -52,3 +52,11 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      # The JVM unit tests existed but nothing ran them, so a green PR proved
+      # only that the app compiled. They cover the vault JSON round-trip, the
+      # password-protected RMS store, and the autofill unlock tokens that keep
+      # an exported activity from handing credentials to any caller (audit A-1).
+      - name: Run unit tests
+        working-directory: androidVELA
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
