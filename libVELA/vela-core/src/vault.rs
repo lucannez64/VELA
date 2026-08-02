@@ -126,6 +126,49 @@ pub enum VaultItem {
 ///
 /// The non-secret metadata is kept — an item you cannot identify is useless to
 /// debug with.
+impl VaultItem {
+    /// Wipe the secret fields in place.
+    ///
+    /// Called from `Drop`, so every path that lets an item go — locking the
+    /// vault, replacing the store after a sync, a temporary clone falling out of
+    /// scope — clears the plaintext rather than handing the allocator a buffer
+    /// that still holds a password. That is the whole point of doing it in
+    /// `Drop` and not at chosen call sites: the ones you forget are exactly the
+    /// ones that matter.
+    ///
+    /// Only the secrets. Names, URLs and usernames are not wiped: they are not
+    /// what this protects, and zeroing them would cost on every drop for nothing.
+    fn zeroize_secrets(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            VaultItem::Login { pass, totp, .. } => {
+                pass.zeroize();
+                if let Some(totp) = totp {
+                    totp.zeroize();
+                }
+            }
+            VaultItem::CreditCard { number, cvv, pin, .. } => {
+                number.zeroize();
+                cvv.zeroize();
+                if let Some(pin) = pin {
+                    pin.zeroize();
+                }
+            }
+            VaultItem::SecureNote { content, .. } => content.zeroize(),
+            VaultItem::Identity { ssn, .. } => ssn.zeroize(),
+            // Nothing secret: a file blob's bytes live in chunks, and a breach
+            // monitor holds an address the user already published.
+            VaultItem::FileBlob { .. } | VaultItem::BreachMonitor { .. } => {}
+        }
+    }
+}
+
+impl Drop for VaultItem {
+    fn drop(&mut self) {
+        self.zeroize_secrets();
+    }
+}
+
 impl std::fmt::Debug for VaultItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         const REDACTED: &str = "[REDACTED]";
@@ -627,9 +670,9 @@ mod tests {
 
         // camelCase, as a JS client would write it.
         let camel = r#"{"item_type":"login","id":"abc","name":"t","url":"https://uber.com","username":"u","password":"p","appIds":["androidapp://com.ubercab"],"createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z"}"#;
-        match serde_json::from_str::<VaultItem>(camel).unwrap() {
+        match &serde_json::from_str::<VaultItem>(camel).unwrap() {
             VaultItem::Login { app_ids, .. } => {
-                assert_eq!(app_ids, vec!["androidapp://com.ubercab".to_string()])
+                assert_eq!(app_ids, &vec!["androidapp://com.ubercab".to_string()])
             }
             _ => panic!("expected a login"),
         }
