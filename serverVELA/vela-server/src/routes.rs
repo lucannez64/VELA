@@ -275,7 +275,23 @@ fn request_was_https(req: &Request, state: &AppState) -> bool {
         || headers
             .get("cf-visitor")
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.contains("\"scheme\":\"https\""))
+            .is_some_and(cf_visitor_says_https)
+}
+
+/// Whether Cloudflare's `CF-Visitor` header states the edge leg was HTTPS.
+///
+/// It is a JSON object, so read it as one. Substring-matching `"scheme":"https"`
+/// also matched it appearing anywhere else in the value — inside a longer field,
+/// or with the real scheme elsewhere in the object. The header is only honoured
+/// from a trusted proxy, so this was bounded rather than exploitable, but a
+/// check that can be satisfied by a coincidence is not a check.
+fn cf_visitor_says_https(value: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(value)
+        .ok()
+        .as_ref()
+        .and_then(|v| v.get("scheme"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https"))
 }
 
 fn request_from_trusted_proxy(req: &Request, state: &AppState) -> bool {
@@ -319,4 +335,37 @@ async fn health(
             "status": if all_ok { "ok" } else { "degraded" },
         })),
     )
+}
+
+#[cfg(test)]
+mod cf_visitor_tests {
+    use super::cf_visitor_says_https;
+
+    #[test]
+    fn accepts_what_cloudflare_actually_sends() {
+        assert!(cf_visitor_says_https(r#"{"scheme":"https"}"#));
+        assert!(cf_visitor_says_https(r#"{ "scheme": "https" }"#));
+        assert!(cf_visitor_says_https(r#"{"scheme":"HTTPS"}"#));
+    }
+
+    #[test]
+    fn rejects_plain_http() {
+        assert!(!cf_visitor_says_https(r#"{"scheme":"http"}"#));
+    }
+
+    #[test]
+    fn the_string_appearing_elsewhere_is_not_the_scheme() {
+        // What substring matching could not tell apart.
+        assert!(!cf_visitor_says_https(r#"{"scheme":"http","note":"\"scheme\":\"https\""}"#));
+        assert!(!cf_visitor_says_https(r#"{"other":"scheme\":\"https"}"#));
+    }
+
+    #[test]
+    fn rejects_anything_that_is_not_an_object_with_that_field() {
+        assert!(!cf_visitor_says_https(""));
+        assert!(!cf_visitor_says_https("not json"));
+        assert!(!cf_visitor_says_https("{}"));
+        assert!(!cf_visitor_says_https(r#"{"scheme":null}"#));
+        assert!(!cf_visitor_says_https(r#"["https"]"#));
+    }
 }
