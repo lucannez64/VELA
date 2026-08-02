@@ -32,14 +32,18 @@ import org.json.JSONObject
  *  * `privileged_browsers_community.json` — privacy-focused forks (IronFox,
  *    Cromite, Iceraven, Mull, …) that Google does not list. Sourced from
  *    `bitwarden/android`'s `fido2_privileged_community.json`.
+ *  * `privileged_browsers_vela.json` — browsers neither list names, whose
+ *    certificates we pulled out of the vendor's own APK and checked by hand.
+ *    Each entry records its provenance so the check is reproducible (#125).
  *
- * Refresh both by re-downloading; they are data, and nothing here needs to change.
+ * The first two are verbatim copies; refresh them by re-downloading. Anything we
+ * verify ourselves goes in the third so they stay pristine.
  *
- * A browser on neither list gets no browser trust — there is no name-only tier,
+ * A browser on none of them gets no browser trust — there is no name-only tier,
  * because a package name is the thing this finding is about. The cost is real:
  * passwords saved in such a browser are filed under its package rather than the
- * site, and are then offered across every site in it. See issue on unpinned
- * browsers; the fix is a published fingerprint, not a looser rule here.
+ * site, and are then offered across every site in it. The fix is a verified
+ * fingerprint, not a looser rule here.
  */
 class BrowserAllowlist(private val context: Context) {
 
@@ -86,6 +90,7 @@ class BrowserAllowlist(private val context: Context) {
         private val ASSETS = listOf(
             "privileged_browsers_google.json",
             "privileged_browsers_community.json",
+            "privileged_browsers_vela.json",
         )
 
         /**

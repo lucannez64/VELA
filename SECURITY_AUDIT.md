@@ -353,9 +353,12 @@ permission.
 >    non-browser can still justify the domain it claims, but only via its own
 >    site's asset links. There is no name-only tier: a browser on neither list
 >    gets no browser trust, since a package name is precisely what this finding
->    is about. The cost is real and tracked separately — passwords saved in an
->    unpinned browser (Tor, Kiwi, Ecosia, Opera GX, UC) are filed under its
->    package rather than the site, and are then offered across every site in it.
+>    is about. Tor Browser and Kiwi carry certificates we pulled out of the
+>    vendor's own APK and checked by hand (Tor's against its published OpenPGP
+>    signing key), recorded with their provenance in a third list. Three remain
+>    unpinned (Ecosia, Opera GX, UC): passwords saved in those are filed under
+>    the package rather than the site, and are then offered across every site in
+>    that browser, until their certificates can be verified too.
 >
 > An app nobody has vouched for gets no suggestions, where it previously got the
 > whole vault when the request identified nothing.
