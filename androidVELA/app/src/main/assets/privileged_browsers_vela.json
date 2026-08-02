@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "Browsers that neither Google's privileged-apps list nor the community list",
+    "names, whose signing certificates we verified ourselves (issue #125).",
+    "",
+    "Same format and same meaning as the other two lists: being here means this",
+    "app's claimed webDomain is believed, so an entry is only ever added from the",
+    "vendor's own distribution channel, and only after checking the certificate",
+    "in the APK by hand. Each entry records where it came from so the check is",
+    "reproducible.",
+    "",
+    "A fingerprint that does not match a given user's install simply fails, and",
+    "they are left exactly where they were before the entry existed. So the risk",
+    "of an entry is not 'it might not match' — it is 'it might match something",
+    "that is not really that browser'. That is why provenance is recorded and why",
+    "nothing goes in here from a mirror, an APK aggregator, or a search result.",
+    "",
+    "These two are the channels we could verify. Play Store installs may carry a",
+    "different certificate where the vendor uses Play App Signing; those users",
+    "keep the pre-#125 behaviour until the Play certificate can be confirmed.",
+    "The remaining unpinned browsers (Ecosia, Opera GX, UC) are still open."
+  ],
+  "apps": [
+    {
+      "type": "android",
+      "info": {
+        "package_name": "org.torproject.torbrowser",
+        "signatures": [
+          {
+            "build": "release",
+            "cert_fingerprint_sha256": "20:06:1F:04:5E:73:7C:67:37:5C:17:79:4C:FE:DB:43:6A:03:CE:C6:BA:CB:7C:B9:F9:66:42:20:5C:A2:CE:C8"
+          }
+        ],
+        "_provenance": {
+          "source": "https://dist.torproject.org/torbrowser/15.0.19/tor-browser-android-aarch64-15.0.19.apk",
+          "apk_sha256": "4982ff6e9eb1075f6035acae84aafcd70e4b9a70e72499af2476e6c1852516d0",
+          "verified": "Detached OpenPGP signature (.asc) checks out against the Tor Browser Developers signing key EF6E286DDA85EA2A4BA7DE684E2C6E8793298290. APK signature schemes v1, v2 and v3 all carry the same certificate, subject 'CN=Tor Browser, O=The Tor Project, L=Seattle, ST=WA, C=US', self-signed.",
+          "checked": "2026-08-02"
+        }
+      }
+    },
+    {
+      "type": "android",
+      "info": {
+        "package_name": "com.kiwibrowser.browser",
+        "signatures": [
+          {
+            "build": "release",
+            "cert_fingerprint_sha256": "82:9B:93:0E:91:9C:D5:6C:9A:67:61:7C:31:2E:3B:42:5A:38:89:4B:92:9E:73:5C:3D:39:1D:9C:51:B9:E4:C0"
+          }
+        ],
+        "_provenance": {
+          "source": "https://github.com/kiwibrowser/src.next/releases/download/14310011181/com.kiwibrowser.browser-arm64-14310011181-github.apk",
+          "apk_sha256": "3e34f950b3907b867af4a64ca060ca480480f16581071b036615eb1d399043f8",
+          "verified": "Official kiwibrowser GitHub organisation. APK signature schemes v1, v2 and v3 all carry the same certificate, subject 'CN=Arnaud GRANAL, O=Geometry OU, C=EE' — Kiwi Browser's author — self-signed, valid 2018-03-25 to 2045-08-10. This is the GitHub release channel; the asset name says so, and whether the Play build carries the same certificate is unconfirmed.",
+          "checked": "2026-08-02"
+        }
+      }
+    }
+  ]
+}

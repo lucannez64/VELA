@@ -20,7 +20,8 @@ class BrowserAllowlistTest {
 
     private val shipped: Map<String, Set<String>> by lazy {
         BrowserAllowlist.parse(asset("privileged_browsers_google.json")) +
-            BrowserAllowlist.parse(asset("privileged_browsers_community.json"))
+            BrowserAllowlist.parse(asset("privileged_browsers_community.json")) +
+            BrowserAllowlist.parse(asset("privileged_browsers_vela.json"))
     }
 
     // ── The shipped data ───────────────────────────────────────────────────
@@ -74,18 +75,31 @@ class BrowserAllowlistTest {
     }
 
     @Test
-    fun `browsers on neither list get no trust at all`() {
+    fun `the browsers we verified ourselves are pinned`() {
+        // Certificates taken from the vendor's own APK; see the provenance
+        // recorded against each entry in privileged_browsers_vela.json (#125).
+        val vela = BrowserAllowlist.parse(asset("privileged_browsers_vela.json"))
+        assertEquals(
+            setOf("20:06:1F:04:5E:73:7C:67:37:5C:17:79:4C:FE:DB:43:6A:03:CE:C6:BA:CB:7C:B9:F9:66:42:20:5C:A2:CE:C8"),
+            vela["org.torproject.torbrowser"],
+        )
+        assertEquals(
+            setOf("82:9B:93:0E:91:9C:D5:6C:9A:67:61:7C:31:2E:3B:42:5A:38:89:4B:92:9E:73:5C:3D:39:1D:9C:51:B9:E4:C0"),
+            vela["com.kiwibrowser.browser"],
+        )
+    }
+
+    @Test
+    fun `the browsers still without a fingerprint get no trust at all`() {
         // There is no name-only tier: a package name is the thing A-2 is about.
-        // These five are real browsers that neither list names, so they are
-        // simply absent — and absent means untrusted, with the cost that
-        // passwords saved in them are filed under the package rather than the
-        // site. If a refresh ever pins one, move it out of this test.
+        // These are real browsers no list names, so they are simply absent — and
+        // absent means untrusted, with the cost that passwords saved in them are
+        // filed under the package rather than the site. Move one out of here the
+        // moment its certificate can be verified.
         for (pkg in listOf(
             "com.ecosia.android",
-            "com.kiwibrowser.browser",
             "com.opera.gx",
             "com.ucmobile.intl",
-            "org.torproject.torbrowser",
         )) {
             assertFalse("$pkg is pinned now — update this test", shipped.containsKey(pkg))
         }
