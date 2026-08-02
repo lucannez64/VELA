@@ -1022,6 +1022,41 @@ credit the existing hardening:
 
 ---
 
+## Extension + Android hardening sweep (#116)
+
+> **STATUS: MOSTLY DONE.** Two items were already closed and are verified rather
+> than re-done: the release build enables R8 (`isMinifyEnabled`), and the
+> `location.href` interpolation in the content script goes through
+> `velaEscapeHtml`. The rest:
+>
+> * **`webNavigation` is gone from both manifests.** Nothing in the extension
+>   used it. A permission nobody calls is only a promise to the user that we take
+>   more than we need.
+> * **`web_accessible_resources` is gone from both manifests.** It exposed
+>   `content/content-script.js` at a predictable extension URL, letting any page
+>   probe for it and fingerprint the browser as running VELA. Nothing loaded it
+>   that way — it is declared as a content script and injected by the browser — so
+>   the entry bought nothing and cost anonymity.
+> * **Cleartext server URLs are refused where they are typed.** `http://` was
+>   accepted, normalised, stored, and then blocked at runtime by Android's
+>   cleartext policy, so sync failed with a bare network error and nothing said
+>   why. The Save button is now disabled with a reason that says what is actually
+>   at stake: the vault is encrypted either way, and what cleartext leaks is which
+>   server you use and when.
+> * **The clipboard window is 15 seconds and configurable** (5–120s). It is the
+>   largest live-secret surface on the platform — while a password sits there,
+>   every app with focus can read it — and 30 seconds was longer than pasting
+>   takes. It is a setting because "long enough to paste" genuinely differs.
+>
+> **Not done: the native-messaging host's static bearer.**
+> `vela-native-messaging-host.py`'s capability token has no HMAC and no nonce, and
+> `is_safe_auth_file` returns `True` unconditionally on Windows because POSIX
+> ownership bits do not exist there and checking Windows ACLs needs `pywin32`,
+> which the host deliberately does not depend on. Shared with #106; both issues
+> stay open for it.
+
+---
+
 ## crypto / libVELA hardening sweep (#115)
 
 > **STATUS: DONE.** Four of the five were already closed by earlier work and are
