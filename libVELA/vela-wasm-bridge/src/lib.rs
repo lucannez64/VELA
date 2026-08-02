@@ -78,6 +78,10 @@ struct EncryptChunkRequest {
     /// session never receives the root seed (audit D-2).
     chunk_key_b64: String,
     vault_json: String,
+    /// The clock this chunk will be stored under, bound into the ciphertext so
+    /// the server cannot replay an older revision (audit C-2).
+    chunk_id: String,
+    lamport_clock: i64,
 }
 
 #[derive(Serialize)]
@@ -181,7 +185,12 @@ fn open_share_impl(request_json: &str) -> Result<OpenShareResponse, String> {
 fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, String> {
     let req: EncryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
-    let ciphertext = aead::encrypt(&key, req.vault_json.as_bytes()).map_err(|e| e.to_string())?;
+    let ciphertext = aead::seal(
+        &key,
+        req.vault_json.as_bytes(),
+        &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(EncryptChunkResponse {
         ciphertext_b64: B64.encode(ciphertext),
     })

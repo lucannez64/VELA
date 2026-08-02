@@ -20,7 +20,7 @@ final class Phase4Tests: XCTestCase {
     func testVaultChunkRoundTripBindsChunkID() {
         let rms = Data(repeating: 5, count: 32).base64EncodedString()
         let vaultJSON = "{\"items\":[]}"
-        guard let cipher = VelaCoreFFI.encryptVaultChunk(rmsBase64: rms, chunkID: "vault", vaultJSON: vaultJSON) else {
+        guard let cipher = VelaCoreFFI.encryptVaultChunk(rmsBase64: rms, chunkID: "vault", vaultJSON: vaultJSON, lamportClock: 1) else {
             return XCTFail("encrypt failed")
         }
         XCTAssertEqual(VelaCoreFFI.decryptVaultChunk(rmsBase64: rms, chunkID: "vault", ciphertextBase64: cipher), vaultJSON)

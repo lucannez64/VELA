@@ -143,6 +143,11 @@ struct EncryptChunkRequest {
     rms_b64: String,
     chunk_id: String,
     vault_json: String,
+    /// The clock this chunk will be stored under, bound into the ciphertext so
+    /// the server cannot replay an older revision (audit C-2). Not defaulted:
+    /// a caller that forgets it would seal against clock 0 and write something
+    /// nothing can read.
+    lamport_clock: i64,
 }
 #[derive(Deserialize)]
 struct DecryptChunkRequest {
@@ -569,7 +574,11 @@ fn encrypt_vault_chunk_json(request_json: &str) -> FfiResult<EncryptVaultRespons
     let rms = decode_rms(&req.rms_b64)?;
     let _: VaultStore = serde_json::from_str(&req.vault_json)?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let ciphertext = aead::encrypt(&key, req.vault_json.as_bytes())?;
+    let ciphertext = aead::seal(
+        &key,
+        req.vault_json.as_bytes(),
+        &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
+    )?;
     Ok(EncryptVaultResponse {
         ciphertext_b64: B64.encode(ciphertext),
     })
