@@ -1,0 +1,78 @@
+name: security
+
+# Project-specific security tooling (see SECURITY_AUDIT.md):
+#   - static-scan : semgrep (extension JS), scan.py (Rust rules), cargo-audit,
+#                   cargo-deny.
+#   - regression  : live exploits against a fresh isolated loopback server
+#                   (temp DATA_DIR, teardown via trap — never touches production).
+#
+# Gating status:
+#   - regression's IDOR/XFF defence test IS a hard gate.
+#   - regression's S-1 test is reported but NON-blocking (EXPECT_S1_OPEN=1) while
+#     the web-session grant hijack is open. Drop the flag once the fix lands.
+#   - static-scan reports known findings (S-2, M4 x3, L2, E-1, E-2) but does not
+#     block, so existing issues don't stall unrelated PRs. After the findings are
+#     fixed, remove continue-on-error to make it a hard gate.
+
+on:
+  pull_request:
+    paths:
+      - "security/**"
+      - "serverVELA/**"
+      - "libVELA/vela-crypto/**"
+      - "libVELA/vela-core/**"
+      - "libVELA/vela-android-bridge/**"
+      - "libVELA/vela-wasm-bridge/**"
+      - "extension/src/**"
+      - "Cargo.lock"
+      - "**/Cargo.lock"
+      - ".github/workflows/security.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "security/**"
+      - "serverVELA/**"
+      - "libVELA/vela-crypto/**"
+      - "libVELA/vela-core/**"
+      - "libVELA/vela-android-bridge/**"
+      - "libVELA/vela-wasm-bridge/**"
+      - "extension/src/**"
+      - "Cargo.lock"
+      - "**/Cargo.lock"
+      - ".github/workflows/security.yml"
+  workflow_dispatch:
+
+jobs:
+  static-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Install semgrep
+        run: |
+          python3 -m pip install --quiet semgrep
+          semgrep --version
+
+      - name: Run static scan (reports known findings; not yet a hard gate)
+        run: ./security/run-scan.sh
+        continue-on-error: true
+
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build server
+        run: cargo build --manifest-path serverVELA/Cargo.toml
+
+      - name: Run exploit regression suite (S-1 reported, IDOR/XFF gates)
+        run: EXPECT_S1_OPEN=1 ./security/exploits/run-exploits.sh

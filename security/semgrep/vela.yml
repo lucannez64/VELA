@@ -1,0 +1,111 @@
+# VELA project-specific semgrep rules.
+#
+# These encode the vulnerability *classes* found during the 2026-08-02 white-box
+# audit (see SECURITY_AUDIT.md) so they don't regress. Tune the allowlists as the
+# codebase evolves; every rule message references the audit finding ID.
+
+rules:
+  # ── Rust: Axum handler that takes State<AppState> but no AuthSession ──────────
+  # Catches the S-2 / S-4 class (unauthenticated or unscoped route handlers).
+  # Allowlist below = handlers that are intentionally public by design.
+  - id: vela-rust-missing-authsession
+    languages: [rust]
+    severity: ERROR
+    message: >
+      Route handler $F takes State<AppState> but has no `AuthSession` parameter.
+      If this is reachable from the public router, it is an unauthenticated (or
+      unownership-scoped) endpoint. Audit ref S-2/S-4. If it is intentionally
+      public, add its name to `public-handlers.txt`.
+    paths:
+      include: ["serverVELA/vela-server/src/**/*.rs"]
+    patterns:
+      - pattern-inside: |
+          pub async fn $F($ARGS) -> $RET {
+            ...
+          }
+      - pattern: "State($STATE): State<AppState>"
+      - pattern-not-inside: |
+          pub async fn $F($ARGS) -> $RET {
+            ...
+            $AUTH: AuthSession,
+            ...
+          }
+
+  # ── Rust: debug formatting (`{:?}`) used to build crypto/derivation context ──
+  # Catches kdf.rs `format!("{...} || {:?}", ...)` (audit M4): debug formatting is
+  # not a stable serialization contract and diverges across clients/platforms.
+  - id: vela-rust-debug-format-in-crypto-context
+    languages: [rust]
+    severity: WARNING
+    message: >
+      `{:?}` Debug formatting used in a (likely) key/context derivation. Debug
+      repr is not a stable serialization contract and has caused cross-client
+      key divergence (audit crypto M4). Use a canonical byte encoding instead.
+    paths:
+      include:
+        - "libVELA/vela-crypto/src/**/*.rs"
+        - "libVELA/vela-core/src/**/*.rs"
+        - "libVELA/vela-android-bridge/src/**/*.rs"
+        - "libVELA/vela-wasm-bridge/src/**/*.rs"
+    pattern-regex: 'format!\("[^"]*\{:?\}[^"]*"'
+
+  # ── Rust: panicking inside extern "C" is UB across the FFI boundary ───────────
+  # Catches android-bridge `expect(...)`/`unwrap()` in JNI exports (audit L2).
+  - id: vela-rust-panic-across-ffi
+    languages: [rust]
+    severity: WARNING
+    message: >
+      Panicking operator inside an `extern "C"` function. Unwinding across the
+      FFI boundary is undefined behaviour (audit crypto L2). Return an error
+      value instead.
+    patterns:
+      - pattern-inside: |
+          $VIS extern "C" fn $F(...) -> ... {
+            ...
+          }
+      - pattern-either:
+          - pattern: $X.expect(...)
+          - pattern: $X.unwrap()
+          - pattern: panic!(...)
+          - pattern: $X.unwrap_or_else(|_| ... .expect(...))
+
+  # ── JS: unescaped template interpolation inside an HTML attribute ────────────
+  # Catches `data-login-id="${login.id}"` XSS (audit E-2). Flags any `data-*` /
+  # `value` / `title` attribute whose `${...}` does not start with an escaper.
+  - id: vela-js-unescaped-attr-interpolation
+    languages: [javascript]
+    severity: ERROR
+    message: >
+      HTML attribute value uses template interpolation without an escaper.
+      Breakout via `"` enables attribute injection / XSS in the privileged
+      extension origin (audit E-2). Route the value through escapeHtml() and
+      ensure the escaper also escapes `"` and `'`.
+    paths:
+      include: ["extension/src/**/*.js"]
+    pattern-regex: '(?i)(data-[a-z-]+|value|title|href|src)="\$\{(?![^}]*escape[a-z]*\()[^}]*\}"'
+
+  # ── JS: extension command forwarded to the native host without authorization ─
+  # Catches the `nativeMessage` / `getNativeMessage` bypass (audit E-1). A handler
+  # that calls the native host but never calls authorizeCredentialRequest() lets a
+  # content script request credentials for an arbitrary origin.
+  - id: vela-js-native-call-without-authorization
+    languages: [javascript]
+    severity: ERROR
+    message: >
+      Native-host call inside $F with no authorizeCredentialRequest() in the same
+      function. This can bypass the cross-origin credential gate (audit E-1).
+      Either remove the passthrough or call authorizeCredentialRequest() first.
+    paths:
+      include: ["extension/src/background/**/*.js"]
+    patterns:
+      - pattern-inside: |
+          async function $F($DATA, ...) {
+            ...
+          }
+      - pattern: sendNativeMessage($DATA)
+      - pattern-not-inside: |
+          async function $F($DATA, ...) {
+            ...
+            authorizeCredentialRequest(...)
+            ...
+          }

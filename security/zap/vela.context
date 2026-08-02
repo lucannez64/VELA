@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  VELA ZAP context for scanning the sync API + (optional) ephemeral web SPA.
+
+  Why this file: a bare `zaproxy -quickurl` spider finds nothing on a pure JSON
+  API. This context:
+    - scopes scanning to the API and the SPA origin,
+    - registers Bearer-token auth so the active scanner reaches authenticated
+      endpoints (vault chunks, shares, devices) instead of 401ing,
+    - imports the endpoints so the spider/ascan have explicit targets.
+
+  Usage:
+    zaproxy -cmd -addoninstall ascanrules \
+      -context import --context "security/zap/vela.context" \
+      -autorun "security/zap/vela.plan"
+  or point the ZAP desktop at this context file.
+
+  The token is injected via the "Bearer" script-based auth (context attribute
+  `token=<PASETO>` below) — replace the placeholder with a real test token.
+-->
+<configuration>
+  <context name="vela">
+    <desc>VELA sync API + web SPA (isolated test instance only)</desc>
+    <inScope>true</inScope>
+    <urls>
+      <url>https://127.0.0.1:8443</url>
+      <url>https://vault.example.com</url>
+    </urls>
+    <tech></tech>
+    <parametrisation></parametrisation>
+    <authentication>
+      <method type="scriptAuth" name="vela-bearer">
+        <param name="Script Name">vela-bearer</param>
+        <param name="Script Engine">Graal.js</param>
+      </method>
+      <loggedin indicator="(?i)auth|bearer|x-new-token"/>
+    </authentication>
+    <users>
+      <user name="test-user">1</user>
+    </users>
+    <sessionManagement method="script" name="vela-session"/>
+  </context>
+</configuration>

@@ -1,0 +1,35 @@
+# Route handlers that are intentionally reachable WITHOUT authentication.
+# The scanner (security/scan.py, check R1) treats any State<AppState> handler
+# lacking an AuthSession param as a finding UNLESS its name is listed here.
+# Keep entries to genuinely public endpoints; everything else must require auth.
+
+# Account creation (no account exists yet to authenticate against)
+post_register
+
+# Auth challenge / verify: bootstrap device login before a session exists
+get_challenge
+post_verify
+
+# Device enrollment bootstrap: first device proves identity via signed challenge
+post_enroll
+post_enrollment_package
+get_enrollment_package
+
+# Recovery is pre-auth by design (user has lost their devices)
+post_initiate
+post_recover
+post_enroll_device
+post_register_start
+post_register_finish
+get_webauthn_config
+post_register_start           # webauthn recovery registration (pre-auth)
+
+# Share inbox delivery can be pulled by a not-yet-linked recipient token;
+# scoped checks live inside the handler. (Review if this widens.)
+get_inbox
+
+# Web-session START is the browser (unauthenticated) creating a pending session.
+# NOTE: get_session (the poll) is deliberately NOT listed — it is the audit S-2
+# finding and must be fixed, not allowlisted.
+post_start
+post_token

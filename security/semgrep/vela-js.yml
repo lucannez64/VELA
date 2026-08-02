@@ -1,0 +1,33 @@
+rules:
+  - id: vela-js-unescaped-attr-interpolation
+    languages: [javascript]
+    severity: ERROR
+    message: >
+      HTML attribute value uses template interpolation without an escaper.
+      Breakout via " enables attribute injection / XSS in the privileged
+      extension origin (audit E-2). Route through escapeHtml(); ensure the
+      escaper also escapes " and '.
+    paths:
+      include: ["extension/src/**/*.js"]
+    pattern-regex: '(?i)(data-[a-z-]+|value|title|href|src)="\$\{(?![^}]*escape[a-z]*\()[^}]*\}"'
+
+  - id: vela-js-native-call-without-authorization
+    languages: [javascript]
+    severity: ERROR
+    message: >
+      Native-host call inside $F with no authorizeCredentialRequest() in the
+      same function — can bypass the cross-origin credential gate (audit E-1).
+    paths:
+      include: ["extension/src/background/**/*.js"]
+    patterns:
+      - pattern-inside: |
+          async function $F($DATA, ...) {
+            ...
+          }
+      - pattern: sendNativeMessage($DATA)
+      - pattern-not-inside: |
+          async function $F($DATA, ...) {
+            ...
+            authorizeCredentialRequest(...)
+            ...
+          }
