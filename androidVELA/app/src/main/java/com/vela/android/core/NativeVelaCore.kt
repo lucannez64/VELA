@@ -42,11 +42,22 @@ object NativeVelaCore {
         }
     }
 
-    fun encryptVaultChunkJson(rms: ByteArray, chunkId: String, vaultJson: String): String? {
+    /// `lamportClock` is the revision this chunk is about to be stored under.
+    /// It is sealed into the ciphertext, so the server cannot serve an older
+    /// revision back as if it were current (audit C-2, rollout step 3). Pass the
+    /// clock that will actually be sent with the upload, or the result will not
+    /// decrypt.
+    fun encryptVaultChunkJson(
+        rms: ByteArray,
+        chunkId: String,
+        vaultJson: String,
+        lamportClock: Long,
+    ): String? {
         return callNative {
             val request = JSONObject()
                 .put("chunk_id", chunkId)
                 .put("vault_json", vaultJson)
+                .put("lamport_clock", lamportClock)
                 .toString()
             val response = JSONObject(nativeEncryptVaultChunkJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }

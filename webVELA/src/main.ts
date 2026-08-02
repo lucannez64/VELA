@@ -469,9 +469,11 @@ async function saveVault() {
   let lamport = Math.max(0, ...[...man.values()].map((m) => m.lamport));
   for (let i = 0; i < pieces.length; i++) {
     const id = dataChunkId(i);
-    const ct = b64ToBytes(encryptVaultChunk(chunkKeyFor(id), pieces[i]));
+    // The clock has to be settled before sealing: it is bound into the
+    // ciphertext, so numbering afterwards would upload something unreadable.
     const existing = man.get(id);
     lamport = Math.max(lamport, existing?.lamport ?? 0) + 1;
+    const ct = b64ToBytes(encryptVaultChunk(chunkKeyFor(id), pieces[i], id, lamport));
     await authed.putChunk(id, ct, existing?.version ?? 0, lamport);
   }
 
