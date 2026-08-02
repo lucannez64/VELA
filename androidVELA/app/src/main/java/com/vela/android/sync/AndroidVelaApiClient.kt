@@ -396,8 +396,8 @@ class AndroidVelaApiClient(
     }
 
     /// Approve an ephemeral web session: deliver the sealed capsule with the
-    /// chosen mode and TTL. `linkNonce` is echoed back from the link code when
-    /// present so the server can bind the grant to the requesting browser.
+    /// chosen mode and TTL. `linkNonce` is echoed back from the link code so the
+    /// server can bind the grant to the requesting browser.
     /// Returns the server-clamped expiry (RFC3339).
     fun grantWebSession(
         token: String,
@@ -405,13 +405,13 @@ class AndroidVelaApiClient(
         mode: String,
         capsuleB64: String,
         ttlSecs: Long,
-        linkNonce: String? = null,
+        linkNonce: String,
     ): String {
         val body = JSONObject()
             .put("mode", mode)
             .put("capsule", capsuleB64)
             .put("ttl_secs", ttlSecs)
-            .apply { if (linkNonce != null) put("link_nonce", linkNonce) }
+            .put("link_nonce", linkNonce)
             .toString()
             .toByteArray(Charsets.UTF_8)
         val response = request("POST", "/web-session/$sessionId/grant", token, body, contentType = "application/json")

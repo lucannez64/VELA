@@ -1,4 +1,14 @@
 //! Toolkit-agnostic core of `src-tauri/src/commands/web_session.rs`.
+//!
+//! Capsule envelope (sealed plaintext, JSON):
+//! ```json
+//! { "v": 1, "mode": "ro", "vault": <VaultStore> }              // read-only snapshot
+//! { "v": 2, "mode": "rw", "chunk_keys": { "<chunk id>": "<base64 32B>" } } // read-write live
+//! ```
+//!
+//! The read-write envelope carries the browser's per-chunk vault keys, never the
+//! RMS: a leaked capsule yields vault chunk contents only, not the root the whole
+//! key hierarchy (identity, share, audit, MAC, ORAM, recovery) derives from.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -7,13 +17,6 @@ use sha2::{Digest, Sha256};
 use crate::api::{ApiClient, WebSessionInfo};
 use crate::audit::{record_audit_event, AuditAction};
 use crate::AppState;
-
-/// Optional JSON form of the link code (older format). The current QR/code is
-/// just the bare `session_id`; we still accept a JSON blob containing one.
-#[derive(Debug, Deserialize)]
-struct WebSessionQr {
-    session_id: String,
-}
 
 const BASE32_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -42,27 +45,40 @@ fn key_fingerprint(raw_key: &[u8]) -> String {
     base32_encode(&hash[..8])
 }
 
-/// Extract the session id (and optional key fingerprint / link nonce) from the
-/// scanned/pasted code. Formats accepted:
-///   - `{session_id}#{fingerprint}#{link_nonce}` ← current QR format
-///   - `{session_id}#{fingerprint}`              ← previous QR format
-///   - bare UUID                                  ← old format (no fingerprint)
-///   - JSON `{"session_id": "..."}`               ← legacy format
-/// Returns `(session_id, fingerprint?, link_nonce?)`.
-fn parse_session_id(input: &str) -> Result<(String, Option<String>, Option<String>), String> {
+/// Extract the session id, key fingerprint and link nonce from the scanned/pasted
+/// code. The only accepted form is the full `{session_id}#{fingerprint}#{link_nonce}`:
+/// the shorter legacy forms let a code skip the key-substitution check (and the
+/// nonce binding) entirely, so they are rejected rather than silently downgraded.
+fn parse_session_id(input: &str) -> Result<(String, String, String), String> {
     let t = input.trim();
-    if t.starts_with('{') {
-        let qr: WebSessionQr = serde_json::from_str(t).map_err(|e| format!("Invalid web access code: {e}"))?;
-        return Ok((qr.session_id, None, None));
-    }
     if t.is_empty() {
         return Err("Empty web access code".into());
     }
     let mut parts = t.splitn(3, '#');
     let id = parts.next().unwrap_or_default().to_string();
-    let fp = parts.next().filter(|s| !s.is_empty()).map(|s| s.to_string());
-    let link_nonce = parts.next().filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let fp = parts.next().unwrap_or_default().to_string();
+    let link_nonce = parts.next().unwrap_or_default().to_string();
+    if id.is_empty() || fp.is_empty() || link_nonce.is_empty() {
+        return Err("This web access code is incomplete or from an unsupported version. \
+                    Reload the web page and scan the new code."
+            .into());
+    }
     Ok((id, fp, link_nonce))
+}
+
+/// The read-write capsule's plaintext: the browser's **per-chunk vault keys**,
+/// never the RMS they are derived from (audit D-2).
+///
+/// Kept separate from the grant flow so the one invariant that matters — no key
+/// hierarchy root leaves this device — is a pure function with a test, rather
+/// than something buried in a network call.
+pub fn rw_capsule_envelope(rms: &[u8; 32]) -> serde_json::Value {
+    let chunk_keys: serde_json::Map<String, serde_json::Value> =
+        vela_crypto::kdf::web_session_chunk_keys(rms)
+            .into_iter()
+            .map(|(id, key)| (id, serde_json::json!(B64.encode(key.as_bytes()))))
+            .collect();
+    serde_json::json!({ "v": 2, "mode": "rw", "chunk_keys": chunk_keys })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,16 +115,14 @@ pub async fn grant_web_session(
     let ephemeral_pk =
         B64.decode(ephemeral_pk_b64.as_bytes()).map_err(|_| "Invalid ephemeral key from server".to_string())?;
 
-    // Verify the key fingerprint if one was embedded in the QR.
-    // A mismatch means the server may have substituted a different key — abort.
-    if let Some(fp) = expected_fp {
-        let actual_fp = key_fingerprint(&ephemeral_pk);
-        if actual_fp != fp {
-            return Err(format!(
-                "Key fingerprint mismatch — possible server-side key substitution. \
-                 Expected {fp}, got {actual_fp}. Do not proceed."
-            ));
-        }
+    // Verify the key fingerprint from the QR against the key the server handed
+    // back. A mismatch means the server may have substituted its own key — abort.
+    let actual_fp = key_fingerprint(&ephemeral_pk);
+    if actual_fp != expected_fp {
+        return Err(format!(
+            "Key fingerprint mismatch — possible server-side key substitution. \
+             Expected {expected_fp}, got {actual_fp}. Do not proceed."
+        ));
     }
 
     // Build the capsule plaintext from the current (unlocked) state.
@@ -120,11 +134,7 @@ pub async fn grant_web_session(
                 if web_vk.is_empty() {
                     return Err("This browser did not offer read-write access; choose read-only.".into());
                 }
-                serde_json::json!({
-                    "v": 1,
-                    "mode": "rw",
-                    "rms_b64": B64.encode(crypto.rms()),
-                })
+                rw_capsule_envelope(&crypto.rms())
             }
             _ => {
                 let vault = state.vault.read().clone();
@@ -138,7 +148,7 @@ pub async fn grant_web_session(
     let capsule_b64 = B64.encode(&capsule);
 
     let expires_at = client
-        .grant_web_session(&token, &session_id, mode, &capsule_b64, ttl_secs, link_nonce.as_deref())
+        .grant_web_session(&token, &session_id, mode, &capsule_b64, ttl_secs, &link_nonce)
         .await
         .map_err(|e| format!("Failed to grant web access: {e}"))?;
 
@@ -188,30 +198,55 @@ mod tests {
         assert_ne!(fp, key_fingerprint(b"other-key"));
     }
 
+    /// Audit D-2: a read-write grant must ship derived per-chunk keys and
+    /// nothing that can rebuild the key hierarchy.
     #[test]
-    fn parse_session_id_all_formats() {
+    fn rw_envelope_ships_chunk_keys_and_never_the_rms() {
+        let rms = [7u8; 32];
+        let envelope = rw_capsule_envelope(&rms);
+
+        assert_eq!(envelope["v"], 2);
+        assert_eq!(envelope["mode"], "rw");
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        assert!(!serialized.contains("rms"), "no rms field of any spelling");
+        assert!(
+            !serialized.contains(&B64.encode(rms)),
+            "the seed itself must not appear anywhere in the capsule"
+        );
+
+        let keys = envelope["chunk_keys"].as_object().expect("chunk_keys map");
+        assert_eq!(keys.len(), vela_crypto::kdf::web_session_chunk_ids().len());
+
+        // Each entry is the key that client writes that chunk with, so the
+        // browser can actually read what the apps wrote...
+        for (id, value) in keys {
+            let expected = B64.encode(vela_crypto::kdf::chunk_key(&rms, id.as_bytes()).as_bytes());
+            assert_eq!(value.as_str().unwrap(), expected, "key for {id}");
+        }
+        // ...and nothing outside the granted window is reachable.
+        assert!(!keys.contains_key("vault-data-000032"));
+        assert!(keys.contains_key("vault-data-000000"));
+        assert!(keys.contains_key("vault-main"));
+    }
+
+    #[test]
+    fn parse_session_id_requires_full_code() {
         // Current QR format: id#fingerprint#link_nonce.
         let (id, fp, nonce) = parse_session_id("sess-1#FP123#NONCE9").unwrap();
-        assert_eq!((id.as_str(), fp.as_deref(), nonce.as_deref()), ("sess-1", Some("FP123"), Some("NONCE9")));
-
-        // Previous format without nonce.
-        let (id, fp, nonce) = parse_session_id("sess-2#FP123").unwrap();
-        assert_eq!((id.as_str(), fp.as_deref(), nonce.as_deref()), ("sess-2", Some("FP123"), None));
-
-        // Bare id (old format).
-        let (id, fp, nonce) = parse_session_id("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        assert_eq!((id.as_str(), fp, nonce), ("550e8400-e29b-41d4-a716-446655440000", None, None));
-
-        // Legacy JSON blob.
-        let (id, fp, nonce) = parse_session_id(r#"{"session_id": "sess-json"}"#).unwrap();
-        assert_eq!((id.as_str(), fp, nonce), ("sess-json", None, None));
+        assert_eq!((id.as_str(), fp.as_str(), nonce.as_str()), ("sess-1", "FP123", "NONCE9"));
 
         // Whitespace is trimmed.
-        let (id, _, _) = parse_session_id("  sess-3  ").unwrap();
+        let (id, _, _) = parse_session_id("  sess-3#FP#NONCE  ").unwrap();
         assert_eq!(id, "sess-3");
 
-        // Errors.
+        // Downgraded/legacy forms are refused: without the fingerprint the
+        // key-substitution check is skipped, without the nonce the grant is
+        // unbound from the browser that started the session.
+        assert!(parse_session_id("sess-2#FP123").is_err()); // no nonce
+        assert!(parse_session_id("550e8400-e29b-41d4-a716-446655440000").is_err()); // bare id
+        assert!(parse_session_id("sess-4##NONCE").is_err()); // empty fingerprint
+        assert!(parse_session_id(r#"{"session_id": "sess-json"}"#).is_err()); // legacy JSON
         assert!(parse_session_id("   ").is_err());
-        assert!(parse_session_id("{not json").is_err());
     }
 }

@@ -113,6 +113,16 @@ button.small { padding: 5px 11px; font-size: 0.82rem; border-radius: 9px; }
 }
 .search::placeholder { color: var(--muted); }
 
+/* Account-id entry (link screen) */
+.text-input {
+  width: 100%; margin-bottom: 12px;
+  background: var(--surface-lowest); border: 1px solid var(--outline);
+  border-radius: 12px; padding: 11px 14px; color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92rem;
+}
+.text-input::placeholder { color: var(--muted); font-family: inherit; }
+.text-input:focus { outline: none; border-color: var(--primary); }
+
 /* Items */
 .item { border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 13px; margin-bottom: 10px; background: var(--surface-low); overflow: hidden; }
 .item-head { display: flex; align-items: center; gap: 12px; padding: 13px 15px; cursor: pointer; }

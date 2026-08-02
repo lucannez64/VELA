@@ -17,9 +17,15 @@ import { startSession, pollSession, getChallenge, getSessionToken, AuthedSession
 // ── In-memory session secrets (never persisted) ─────────────────────────────────
 let shareDk = '';
 let signingSk = '';
-let rmsB64 = '';
+// Per-chunk vault keys the approver granted (`chunk_id → base64 32B`). This
+// browser never receives the RMS they were derived from (audit D-2), so it can
+// only ever touch the chunks it was handed keys for.
+let chunkKeys: Record<string, string> = {};
 let sessionId = '';
-let linkPayload = { ephemeral_pk: '', web_vk: '', link_nonce: '' };
+// Proof that a poller is this browser: the server stores only its SHA-256, and
+// it never travels in the QR (audit S-2).
+let pollSecret = '';
+let linkPayload = { ephemeral_pk: '', web_vk: '', link_nonce: '', approver_user_id: '', poll_secret_hash: '' };
 let polling = false;
 
 // RW state
@@ -68,7 +74,8 @@ const app = document.getElementById('app')!;
 function wipeKeys() {
   shareDk = '';
   signingSk = '';
-  rmsB64 = '';
+  chunkKeys = {};
+  pollSecret = '';
   authed = null;
 }
 /** Full wipe: secrets and the decrypted vault. */
@@ -89,7 +96,7 @@ window.addEventListener('beforeunload', () => { clearRwStore(); wipe(); });
 // machines, locking on backgrounding is the intended posture here, matching
 // how the other VELA clients auto-lock when backgrounded.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && (authed || rmsB64)) {
+  if (document.visibilityState === 'hidden' && (authed || Object.keys(chunkKeys).length)) {
     clearRwStore();
     location.reload();
   }
@@ -151,12 +158,51 @@ function base32Encode(bytes: Uint8Array): string {
   if (bits > 0) out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
   return out;
 }
+/** base64(SHA-256(base64-decoded input)) — used for the poll-secret commitment. */
+async function sha256B64(valueB64: string): Promise<string> {
+  const bytes = b64ToBytes(valueB64);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return bytesToB64(new Uint8Array(hash));
+}
+
 async function ekFingerprint(ekB64: string): Promise<string> {
-  const bytes = b64ToBytes(ekB64);
-  const buf = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buf).set(bytes);
-  const hash = await crypto.subtle.digest('SHA-256', buf);
+  const hash = await crypto.subtle.digest('SHA-256', b64ToBytes(ekB64));
   return base32Encode(new Uint8Array(hash).slice(0, 8));
+}
+
+// ── Account screen ──────────────────────────────────────────────────────────────
+// The session is bound to an account *before* the QR exists: the server only lets
+// that account read the browser's keys or grant the session. Without it, the
+// bearer token of anyone who saw the QR could grant this browser an
+// attacker-controlled vault (audit S-1/S-4).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function showAccountScreen(error?: string) {
+  const node = el(`<div>${brand}
+    <h1>Open your vault here</h1>
+    <p class="sub">Temporary, expiring, revocable access — no install, no permanent device.</p>
+    <div class="card">
+      <h2>Your account ID</h2>
+      <p class="muted">In the VELA app, open <b>Settings → Account</b> and copy your account ID.
+        Only that account can approve this browser.</p>
+      <input class="text-input" id="uid" placeholder="00000000-0000-0000-0000-000000000000"
+             autocomplete="off" autocapitalize="off" spellcheck="false" />
+      ${error ? `<p class="error">${esc(error)}</p><div class="gap-sm"></div>` : ''}
+      <button class="primary" id="go">Continue</button>
+    </div>
+  </div>`);
+  render(node);
+  const input = node.querySelector<HTMLInputElement>('#uid')!;
+  const submit = () => {
+    const uid = input.value.trim().toLowerCase();
+    if (!UUID_RE.test(uid)) {
+      return showAccountScreen('That does not look like a VELA account ID. Copy it from Settings → Account.');
+    }
+    void beginSession(uid);
+  };
+  node.querySelector<HTMLButtonElement>('#go')!.onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+  input.focus();
 }
 
 async function showLinkScreen() {
@@ -373,6 +419,21 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
 
 // ── RW: authenticate, fetch live vault, save ────────────────────────────────────
 
+/**
+ * The key granted for `id`. A read-write grant covers a fixed set of chunk ids;
+ * anything outside it is simply unreachable from this session, which is the
+ * point — the browser holds keys, not the seed they came from.
+ */
+function chunkKeyFor(id: string): string {
+  const key = chunkKeys[id];
+  if (!key) {
+    throw new Error(
+      `This session was not granted access to "${id}". Your vault may be larger than a web session supports — reopen it from your app.`,
+    );
+  }
+  return key;
+}
+
 async function loadReadWrite(expiresAt?: string) {
   showSplash('Connecting to your vault…');
   const challenge = await getChallenge();
@@ -393,7 +454,8 @@ async function loadReadWrite(expiresAt?: string) {
   let json = '';
   for (const id of readIds) {
     const ct = await authed.getChunk(id);
-    if (ct) json += decryptVaultChunk(rmsB64, id, bytesToB64(ct));
+    if (!ct) continue;
+    json += decryptVaultChunk(chunkKeyFor(id), bytesToB64(ct));
   }
   items = json ? ((JSON.parse(json) as { items?: Record<string, unknown>[] }).items ?? []) : [];
   showVault({ editable: true, expiresAt });
@@ -407,7 +469,7 @@ async function saveVault() {
   let lamport = Math.max(0, ...[...man.values()].map((m) => m.lamport));
   for (let i = 0; i < pieces.length; i++) {
     const id = dataChunkId(i);
-    const ct = b64ToBytes(encryptVaultChunk(rmsB64, id, pieces[i]));
+    const ct = b64ToBytes(encryptVaultChunk(chunkKeyFor(id), pieces[i]));
     const existing = man.get(id);
     lamport = Math.max(lamport, existing?.lamport ?? 0) + 1;
     await authed.putChunk(id, ct, existing?.version ?? 0, lamport);
@@ -429,7 +491,12 @@ async function saveVault() {
 
 async function onGranted(res: PollResponse) {
   if (!res.capsule) return showError('No capsule delivered — try again.');
-  let envelope: { mode: string; vault?: { items?: Record<string, unknown>[] }; rms_b64?: string };
+  let envelope: {
+    mode: string;
+    vault?: { items?: Record<string, unknown>[] };
+    chunk_keys?: Record<string, string>;
+    rms_b64?: string;
+  };
   try {
     envelope = JSON.parse(openShare(shareDk, res.capsule));
   } catch (e) {
@@ -437,9 +504,14 @@ async function onGranted(res: PollResponse) {
   }
 
   if (envelope.mode === 'rw') {
-    rmsB64 = envelope.rms_b64 ?? '';
+    // A v1 grant carried the raw RMS. Refuse it rather than accept the root of
+    // the key hierarchy into a browser (audit D-2).
+    if (envelope.rms_b64) {
+      return showError('Your VELA app granted access in an outdated, less safe format. Update the app, then try again.');
+    }
+    chunkKeys = envelope.chunk_keys ?? {};
     shareDk = ''; // KEM key no longer needed
-    if (!rmsB64) return showError('Read-write grant was missing the vault key.');
+    if (!Object.keys(chunkKeys).length) return showError('Read-write grant was missing the vault keys.');
     try {
       await loadReadWrite(res.expires_at);
     } catch (e) {
@@ -458,7 +530,7 @@ async function pollLoop() {
   while (polling) {
     let res: PollResponse;
     try {
-      res = await pollSession(sessionId);
+      res = await pollSession(sessionId, pollSecret);
       consecutiveErrors = 0;
     } catch {
       // A dead/recovering server was retried at a fixed 2.5s forever, with
@@ -486,19 +558,36 @@ async function pollLoop() {
   }
 }
 
+/** Mint the ephemeral keys and open a pending session bound to `approverUserId`. */
+async function beginSession(approverUserId: string) {
+  showSplash('Starting session…');
+  try {
+    const kem = generateEphemeralKeypair();
+    const sign = generateSigningKeypair();
+    shareDk = kem.share_dk_b64;
+    signingSk = sign.sk_b64;
+    pollSecret = randomB64(32);
+    linkPayload = {
+      ephemeral_pk: kem.share_ek_b64,
+      web_vk: sign.vk_b64,
+      link_nonce: randomB64(32),
+      approver_user_id: approverUserId,
+      poll_secret_hash: await sha256B64(pollSecret),
+    };
+    sessionId = await startSession(linkPayload);
+    await showLinkScreen();
+    void pollLoop();
+  } catch (e) {
+    showError((e as Error).message);
+  }
+}
+
 async function start() {
   showSplash('Loading secure core…');
   clearRwStore(); // purge any stale blob from a previous session
   try {
     await initVela();
-    const kem = generateEphemeralKeypair();
-    const sign = generateSigningKeypair();
-    shareDk = kem.share_dk_b64;
-    signingSk = sign.sk_b64;
-    linkPayload = { ephemeral_pk: kem.share_ek_b64, web_vk: sign.vk_b64, link_nonce: randomB64(32) };
-    sessionId = await startSession(linkPayload);
-    await showLinkScreen();
-    void pollLoop();
+    showAccountScreen();
   } catch (e) {
     showError((e as Error).message);
   }

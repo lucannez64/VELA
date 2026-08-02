@@ -682,8 +682,8 @@ impl ApiClient {
 
     /// Approve an ephemeral web session: deliver the sealed capsule (RO snapshot
     /// or RW RMS) with the chosen mode and TTL. `link_nonce` is echoed back from
-    /// the link code when present so the server can bind the grant to the browser
-    /// that started the session. Returns the server-clamped expiry.
+    /// the link code so the server can bind the grant to the browser that started
+    /// the session. Returns the server-clamped expiry.
     pub async fn grant_web_session(
         &self,
         token: &str,
@@ -691,15 +691,14 @@ impl ApiClient {
         mode: &str,
         capsule_b64: &str,
         ttl_secs: i64,
-        link_nonce: Option<&str>,
+        link_nonce: &str,
     ) -> Result<String> {
         #[derive(Serialize)]
         struct GrantBody<'a> {
             mode: &'a str,
             capsule: &'a str,
             ttl_secs: i64,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            link_nonce: Option<&'a str>,
+            link_nonce: &'a str,
         }
         let resp = self
             .send_request(false, |client| {

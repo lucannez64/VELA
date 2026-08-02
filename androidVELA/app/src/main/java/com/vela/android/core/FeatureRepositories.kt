@@ -202,35 +202,39 @@ class SharingRepository(
     /// See EPHEMERAL_WEB_ACCESS_DESIGN.md §14 for the wire formats.
     fun grantWebAccess(qrJson: String, mode: String, ttlSecs: Long): String {
         require(mode == "ro" || mode == "rw") { "mode must be 'ro' or 'rw'" }
-        // The QR/code carries the session id plus optional #fingerprint and
-        // #link_nonce segments; fetch the browser's ephemeral key from the server
-        // (keeps the QR small enough to scan).
+        // The QR/code carries the session id, the #fingerprint and the #link_nonce;
+        // fetch the browser's ephemeral key from the server (keeps the QR small
+        // enough to scan).
         val (sessionId, expectedFp, linkNonce) = parseSessionId(qrJson)
 
         val expiresAt = sync.withAuthenticatedClient { client, token ->
             val (ephemeralPk, webVk) = client.getWebSessionKeys(token, sessionId)
 
-            // Verify fingerprint if present to detect server-side key substitution.
-            if (expectedFp != null) {
-                val keyBytes = android.util.Base64.decode(ephemeralPk, android.util.Base64.DEFAULT)
-                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(keyBytes)
-                val actualFp = base32Encode(digest.take(8).toByteArray())
-                require(actualFp == expectedFp) {
-                    "Key fingerprint mismatch — possible server-side key substitution. " +
-                    "Expected $expectedFp, got $actualFp. Approval aborted."
-                }
+            // Verify the fingerprint to detect server-side key substitution.
+            val keyBytes = android.util.Base64.decode(ephemeralPk, android.util.Base64.DEFAULT)
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(keyBytes)
+            val actualFp = base32Encode(digest.take(8).toByteArray())
+            require(actualFp == expectedFp) {
+                "Key fingerprint mismatch — possible server-side key substitution. " +
+                "Expected $expectedFp, got $actualFp. Approval aborted."
             }
 
-            val envelope = JSONObject().put("v", 1).put("mode", mode)
+            val envelope = JSONObject().put("mode", mode)
             if (mode == "rw") {
                 if (webVk.isBlank()) error("This browser did not offer read-write access; choose read-only.")
                 val rms = security.currentRmsCopy() ?: error("Vault is locked")
-                try {
-                    envelope.put("rms_b64", Base64.getEncoder().encodeToString(rms))
+                // Per-chunk vault keys, not the RMS: the browser can read and
+                // rewrite the vault for the session, but never holds the root of
+                // the key hierarchy (audit D-2).
+                val chunkKeys = try {
+                    NativeVelaCore.webSessionChunkKeys(Base64.getEncoder().encodeToString(rms))
+                        ?: error("Native VELA bridge is required for web access")
                 } finally {
                     rms.fill(0)
                 }
+                envelope.put("v", 2).put("chunk_keys", JSONObject(chunkKeys))
             } else {
+                envelope.put("v", 1)
                 val vaultJson = VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8)
                 envelope.put("vault", JSONObject(vaultJson))
             }
@@ -244,17 +248,19 @@ class SharingRepository(
         return expiresAt
     }
 
-    /// The scanned/pasted code is `{id}#{fingerprint}#{link_nonce}`, `{id}#{fingerprint}`,
-    /// a bare id, or (older) JSON. Returns `Triple(sessionId, fingerprint?, linkNonce?)`.
-    private fun parseSessionId(input: String): Triple<String, String?, String?> {
-        val t = input.trim()
-        if (t.startsWith("{")) return Triple(JSONObject(t).getString("session_id"), null, null)
-        val parts = t.split('#', limit = 3)
-        return Triple(
-            parts[0],
-            parts.getOrNull(1)?.ifEmpty { null },
-            parts.getOrNull(2)?.ifEmpty { null },
-        )
+    /// The scanned/pasted code must be the full `{id}#{fingerprint}#{link_nonce}`.
+    /// The shorter legacy forms skip the key-substitution check (no fingerprint)
+    /// or the browser binding (no nonce), so they are refused, not downgraded.
+    private fun parseSessionId(input: String): Triple<String, String, String> {
+        val parts = input.trim().split('#', limit = 3)
+        val id = parts.getOrNull(0).orEmpty()
+        val fp = parts.getOrNull(1).orEmpty()
+        val nonce = parts.getOrNull(2).orEmpty()
+        require(id.isNotEmpty() && fp.isNotEmpty() && nonce.isNotEmpty()) {
+            "This web access code is incomplete or from an unsupported version. " +
+            "Reload the web page and scan the new code."
+        }
+        return Triple(id, fp, nonce)
     }
 
     private fun base32Encode(bytes: ByteArray): String {

@@ -8,6 +8,10 @@ export interface StartRequest {
   ephemeral_pk: string;
   web_vk?: string;
   link_nonce: string;
+  /** Account this browser asks for. Only that account can grant the session. */
+  approver_user_id: string;
+  /** SHA-256 of the poll secret below; proves the poller is this browser. */
+  poll_secret_hash: string;
 }
 
 export async function startSession(body: StartRequest): Promise<string> {
@@ -27,8 +31,15 @@ export interface PollResponse {
   expires_at?: string;
 }
 
-export async function pollSession(id: string): Promise<PollResponse> {
-  const r = await fetch(`${BASE}/web-session/${id}`);
+/**
+ * Poll for the grant. The secret never appears in the QR or the URL, so a leaked
+ * `session_id` cannot be used to collect — and thereby destroy — the one-shot
+ * capsule (audit S-2).
+ */
+export async function pollSession(id: string, pollSecret: string): Promise<PollResponse> {
+  const r = await fetch(`${BASE}/web-session/${id}`, {
+    headers: { 'X-Web-Session-Secret': pollSecret },
+  });
   if (!r.ok) throw new Error(`Poll failed (HTTP ${r.status})`);
   return (await r.json()) as PollResponse;
 }

@@ -133,6 +133,20 @@ object NativeVelaCore {
         }
     }
 
+    /// The per-chunk vault keys a read-write web session is granted, as
+    /// `chunk_id → base64(32-byte key)`. The browser gets these instead of the
+    /// RMS, so a leaked capsule yields vault chunks only — no identity, share,
+    /// audit or recovery key can be derived from it (audit D-2).
+    fun webSessionChunkKeys(rmsB64: String): Map<String, String>? {
+        return callNative {
+            val request = JSONObject().put("rms_b64", rmsB64).toString()
+            val response = JSONObject(nativeWebSessionChunkKeysJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            val keys = response.getJSONObject("chunk_keys")
+            keys.keys().asSequence().associateWith { keys.getString(it) }
+        }
+    }
+
     /// Seal `itemJson` for a recipient using their share public key (base64, 1600 B).
     /// Returns base64 capsule on success, null on error.
     fun sealShare(recipientShareEkB64: String, itemJson: String): String? {
@@ -209,6 +223,7 @@ object NativeVelaCore {
     private external fun nativeCreateAuthSignatureJson(requestJson: String): String
     private external fun nativeDecryptRmsCapsuleJson(requestJson: String): String
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
+    private external fun nativeWebSessionChunkKeysJson(requestJson: String): String
     private external fun nativeSealShareJson(requestJson: String): String
     private external fun nativeOpenShareJson(requestJson: String): String
     private external fun nativeSplitRecoveryJson(requestJson: String): String

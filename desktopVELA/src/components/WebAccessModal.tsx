@@ -63,7 +63,8 @@ export default function WebAccessModal({ open, onClose }: Props) {
         <h2 className="font-headline text-2xl font-bold text-on-surface mb-1">Approve web access</h2>
         <p className="text-on-surface-variant mb-6 text-sm">
           Temporarily open this vault in a browser, with no install and no permanent device. Access
-          expires automatically and can be revoked any time.
+          expires automatically and can be revoked any time. The web page asks for your account ID
+          first (Settings → Account) — only this account can approve the code it then shows.
         </p>
 
         <label className="block text-xs uppercase tracking-widest text-outline mb-2">

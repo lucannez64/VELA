@@ -29,7 +29,9 @@ post_register_start           # webauthn recovery registration (pre-auth)
 get_inbox
 
 # Web-session START is the browser (unauthenticated) creating a pending session.
-# NOTE: get_session (the poll) is deliberately NOT listed — it is the audit S-2
-# finding and must be fixed, not allowlisted.
+# The poll (get_session) has no account to authenticate against either, but it
+# is not open: it requires the poll secret registered at start (audit S-2 fix),
+# checked by `check_poll_secret`. Re-review if that check is ever removed.
 post_start
+get_session
 post_token

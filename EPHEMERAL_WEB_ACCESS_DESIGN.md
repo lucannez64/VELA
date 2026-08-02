@@ -33,7 +33,8 @@ device at grant time.
 - A hard **server-enforced expiry** plus **explicit revocation**.
 - Two security/utility tiers selectable per grant (the "flag at creation"):
   - **RO — Read-Only Snapshot:** the browser never receives the RMS.
-  - **RW — Read-Write Live Session:** full vault, edits + sync, RMS in memory only.
+  - **RW — Read-Write Live Session:** full vault, edits + sync, vault chunk keys
+    in memory only — never the RMS.
 - Reuse existing primitives: Hybrid KEM capsules, the enrollment QR channel,
   PASETO v4 tokens, `/device/revoke`, and the device list UI.
 
@@ -52,12 +53,12 @@ device at grant time.
 
 | | **RO — Read-Only Snapshot** | **RW — Read-Write Live Session** |
 | :--- | :--- | :--- |
-| What the browser receives | A **decrypted vault snapshot**, sealed by the approver | The **RMS**, sealed by the approver |
-| RMS ever in the browser? | **Never** | Yes (process memory only) |
+| What the browser receives | A **decrypted vault snapshot**, sealed by the approver | The **per-chunk vault keys**, sealed by the approver |
+| RMS ever in the browser? | **Never** | **Never** (only keys derived from it, for a bounded set of chunks) |
 | Live sync / editing | No (point-in-time snapshot) | Yes (full ORAM sync) |
 | Server token | Short-lived, read-scoped (snapshot fetch only) | TTL-capped PASETO v4, vault read/write |
 | Best for | Untrusted / borrowed device, "just read a password" | Temporary but trusted device |
-| Residual risk on revoke | None beyond the snapshot already shown | RMS could have been copied (see §9) |
+| Residual risk on revoke | None beyond the snapshot already shown | The vault chunk keys could have been copied (see §9) |
 
 The **mode is chosen by the approving device** when it scans the QR — the user
 decides, per grant, how much power to hand the browser.
@@ -99,8 +100,12 @@ The handshake mirrors device enrollment ([SPEC.md §4.2]) but produces an
 ```text
   Web (browser)                  Server                    Approver (phone)
        │                            │                             │
+  0. user enters their account id   │                             │
+       │                            │                             │
   1. POST /web-session/start ──────►│  create pending session     │
-       │◄──────── { session_id } ───┤  (status=pending)           │
+     { …, approver_user_id,         │  (status=pending, bound to  │
+       poll_secret_hash }           │   approver_user_id)         │
+       │◄──────── { session_id } ───┤                             │
        │                            │                             │
   2. gen ephemeral Hybrid keypair   │                             │
      (in WASM memory only)          │                             │
@@ -117,6 +122,7 @@ The handshake mirrors device enrollment ([SPEC.md §4.2]) but produces an
        │                            │      { capsule, mode,       │
        │                            │        expires_at, … }      │
   7. poll GET /web-session/{id} ───►│                             │
+     + X-Web-Session-Secret         │                             │
        │◄──── { granted, capsule } ─┤                             │
        │                            │                             │
   8. decapsulate in WASM            │                             │
@@ -124,6 +130,21 @@ The handshake mirrors device enrollment ([SPEC.md §4.2]) but produces an
 
 - The **QR channel is never routed through the server** (same property as
   enrollment). The `link_nonce` binds the QR the approver scanned to the session.
+- **The session is bound to an account before the QR exists.** The browser sends
+  the `approver_user_id` the user typed at step 0 (copied from *Settings →
+  Account* in their app); the server admits only that account at
+  `/web-session/{id}/keys` and `/web-session/{id}/grant`. Without it, the bearer
+  token of *any* user who merely saw the QR was enough to grant the session an
+  attacker-chosen vault or RMS (audit S-1/S-4). The id is not secret and is not
+  checked against the `users` table — `start` is unauthenticated, so confirming
+  that an account exists would make it a user-enumeration oracle; a wrong id just
+  yields a session nobody can grant.
+- **Only the browser that started the session can collect the capsule.** It
+  registers `poll_secret_hash = SHA-256(secret)` at step 1 and presents the raw
+  secret on every poll. The secret is never in the QR, so learning a
+  `session_id` (from a URL, a log, a referrer) no longer lets anyone race the
+  browser for the one-shot capsule — which the poll deletes server-side. A wrong
+  secret and a nonexistent session return the same 401.
 - The approver **authenticates the request** (it is an authed device) and **shows
   the user exactly what is being authorized**: target = "a web browser", chosen
   **mode** and **duration**. This is the human checkpoint against a malicious QR.
@@ -152,8 +173,10 @@ The RMS is **never** sealed or transmitted in RO mode.
 ### 5.3 RW grant (live session)
 
 At step 5–6 the approver:
-1. **Seals the RMS** to `ephemeral_pk` via Hybrid KEM (exactly the enrollment
-   capsule of [SPEC.md §4.2]).
+1. **Seals the per-chunk vault keys** (`kdf::web_session_chunk_keys`, §14.2) to
+   `ephemeral_pk` via Hybrid KEM. The RMS itself never leaves the approver, so a
+   captured capsule yields vault chunk contents only — no identity, share, audit,
+   MAC, ORAM or recovery key derives from it (audit D-2).
 2. Registers the web session's **hybrid verification key** as an **ephemeral
    device** (`kind = web_ephemeral`, `expires_at`), signing the payload with its
    own identity key, so the web client can authenticate like any device — but with
@@ -161,7 +184,8 @@ At step 5–6 the approver:
 3. `POST /web-session/{id}/grant { mode: "rw", capsule, expires_at, web_verification_key, enroll_signature }`.
 
 At step 7–8 the web client:
-1. Decapsulates the **RMS into WASM memory only** (never IndexedDB / no keychain).
+1. Decapsulates the **chunk keys into WASM/JS memory only** (never IndexedDB / no
+   keychain), and refuses a legacy `rms_b64` envelope outright.
 2. Authenticates as the ephemeral device via `/auth/challenge` + `/auth/verify`,
    receiving a **PASETO whose `exp` is capped to `min(normal_ttl, session.expires_at)`**.
 3. Performs normal ORAM vault sync; edits write back through the usual chunk PUTs.
@@ -173,7 +197,7 @@ At step 7–8 the web client:
 Everything reuses primitives already in `vela-crypto`:
 
 - **Sealing** (`seal_share` / `open_share`, Hybrid ML-KEM-1024 + X25519): used for
-  the RW RMS capsule and the RO snapshot capsule. Wire format is the existing
+  the RW chunk-key capsule and the RO snapshot capsule. Wire format is the existing
   `[1600 B KEM capsule ‖ XChaCha20-Poly1305 ciphertext]`.
 - **Ephemeral keypair:** `kem::generate_keypair()` in WASM. Public key goes in the
   QR; secret key lives in WASM linear memory and is **zeroized on session end /
@@ -199,7 +223,7 @@ struct WebSession {
     link_nonce:       [u8; 32],
     mode:             Mode,         // Ro | Rw  (set at grant)
     status:           Status,       // Pending | Granted | Revoked | Expired
-    capsule:          Option<Vec<u8>>, // RO snapshot OR RW RMS capsule, sealed
+    capsule:          Option<Vec<u8>>, // RO snapshot OR RW chunk-key capsule, sealed
     web_verification_key: Option<Vec<u8>>, // RW only
     approved_by:      Option<DeviceId>,
     created_at:       DateTime<Utc>,
@@ -215,9 +239,10 @@ For **RW**, the grant also inserts a normal `devices` row flagged
 
 | Route | Method | Auth | Description |
 | :--- | :--- | :--- | :--- |
-| `/web-session/start` | POST | None | Create a pending session; body carries `ephemeral_pk`, `link_nonce`. Returns `session_id`. Rate-limited per IP. |
-| `/web-session/{id}` | GET | None (pending) / PASETO (approver) | Web polls for grant status + capsule; approver fetches the pending request to display. |
-| `/web-session/{id}/grant` | POST | PASETO v4 (approver) | Body: `mode`, `capsule`, `expires_at`, and (RW) `web_verification_key` + `enroll_signature`. `expires_at` defaults to **30 min** and is capped to the server max of **24 h**. |
+| `/web-session/start` | POST | None | Create a pending session; body carries `ephemeral_pk`, `link_nonce`, `approver_user_id` (the only account allowed to grant it) and `poll_secret_hash`. Returns `session_id`. Rate-limited per IP. |
+| `/web-session/{id}` | GET | `X-Web-Session-Secret` (the browser's poll secret) | Web polls for grant status + capsule. No account auth — the browser has none — but the secret registered at `start` is required, else 401. |
+| `/web-session/{id}/keys` | GET | PASETO v4 (**must be the committed approver**, else 404) | Fetch the browser's `ephemeral_pk` / `web_vk` so the QR can stay short. |
+| `/web-session/{id}/grant` | POST | PASETO v4 (**must be the committed approver**, else 403) | Body: `mode`, `capsule`, `expires_at`, and (RW) `web_verification_key` + `enroll_signature`. `expires_at` defaults to **30 min** and is capped to the server max of **24 h**. |
 | `/web-session/{id}` | DELETE | PASETO v4 | Revoke (also reachable via `/device/revoke` for RW devices). |
 
 ### 7.3 Token TTL enforcement
@@ -254,7 +279,8 @@ A periodic task (modeled on the existing `inbox_cleanup_task`) deletes expired
 - **UI:** can reuse the desktop Tauri React/TS frontend, gated to read-only in RO
   mode.
 - **Memory hygiene:**
-  - By default, RMS / snapshot / ephemeral keys live in **WASM memory only**;
+  - By default, vault chunk keys / snapshot / ephemeral keys live in **WASM
+    memory only**;
     never `localStorage`/`IndexedDB`/cookies. The only exception is the opt-in RW
     reload-survival blob below, which is **PIN-wrapped** and in `sessionStorage`.
   - Zeroize and drop on **`visibilitychange`→hidden idle timeout**, on
@@ -302,11 +328,14 @@ reload-survival is active.
   Revoking a *pending* (not-yet-fetched) session voids it before delivery. This is
   the recommended, lowest-footprint mode for untrusted devices.
 - **RW mode:** revoking stops *future* server sync immediately. **But** a malicious
-  browser that received the RMS could have copied it; revocation cannot retroact.
-  The honest framing: **revocation + short TTL bound exposure; they do not
-  guarantee secrecy of a leaked RMS.**
-- **True containment** for a suspected-compromised RW session requires **RMS
-  rotation**: generate a new RMS, re-encrypt the vault, re-distribute to all
+  browser that received the chunk keys could have copied them, and those keys do
+  not rotate; revocation cannot retroact. The honest framing: **revocation + short
+  TTL bound exposure; they do not guarantee secrecy of leaked vault keys.** What
+  the browser can never leak is the RMS itself — it is not sent (§5.3) — so the
+  blast radius stops at vault chunks and never reaches identity, share, audit or
+  recovery material.
+- **True containment** for a suspected-compromised RW session requires **vault
+  re-keying**: rotate the RMS, re-encrypt the vault, re-distribute to all
   permanent devices, and invalidate the old recovery shares. This is a heavy,
   separate feature (a "panic / rotate keys" action) and is **out of scope for v1**,
   but this design's clean separation of ephemeral sessions makes it a natural
@@ -405,19 +434,27 @@ Nothing remains open; the design is ready to implement.
 Defined while building the approver (phase 3) so the web SPA (phase 4) and every
 approver platform agree.
 
-### 14.1 Link QR payload
+### 14.1 Link code / QR payload
 
-The browser encodes this JSON in the QR it shows (and the desktop approver accepts
-it pasted):
+The QR (and the pasteable code) is the compact text form — the ~2 KB public key
+stays on the server so the code remains scannable:
 
-```json
-{
-  "session_id": "<uuid>",
-  "ephemeral_pk": "<base64 1600 B hybrid KEM public key>",
-  "web_vk": "<base64 2624 B hybrid signing verification key>",  // omit for RO-only
-  "link_nonce": "<base64 32 B>"
-}
+```text
+{session_id}#{fingerprint}#{link_nonce}
 ```
+
+- `fingerprint` — `base32(sha256(ephemeral_pk)[0..8])`, 13 chars. The approver
+  fetches `ephemeral_pk` from `/web-session/{id}/keys` and **must** check it
+  against this, which is what detects a server-substituted key.
+- `link_nonce` — base32/base64 of the 32 B nonce registered at `start`, echoed
+  back in the grant.
+
+All three segments are **required**: the approver apps reject a code that is
+missing the fingerprint or the nonce (older short forms and the older
+`{"session_id": …}` JSON blob) rather than silently skipping the check.
+
+The account the session is bound to (`approver_user_id`) is **not** in the code —
+the user enters it in the browser before the code is generated (§5.1).
 
 ### 14.2 Sealed capsule envelope
 
@@ -425,10 +462,21 @@ The approver seals this JSON (UTF-8) to `ephemeral_pk` via the hybrid KEM
 (`seal_share`); the browser recovers it with `open_share`:
 
 ```json
-{ "v": 1, "mode": "ro", "vault": { /* VaultStore */ } }   // read-only snapshot
-{ "v": 1, "mode": "rw", "rms_b64": "<base64 32 B RMS>" }   // read-write live
+{ "v": 1, "mode": "ro", "vault": { /* VaultStore */ } }    // read-only snapshot
+{ "v": 2, "mode": "rw",                                     // read-write live
+  "chunk_keys": { "vault-data-000000": "<base64 32 B>", … } }
 ```
 
-Wrapping binary (the RMS) as base64 text keeps the sealed plaintext valid UTF-8,
+**The `rw` envelope never carries the RMS.** It carries the per-chunk vault keys
+(`kdf::web_session_chunk_keys`: `vault-main`, `vault`, and the first
+`WEB_SESSION_DATA_CHUNKS` = 32 `vault-data-NNNNNN` chunks — ~32 MiB of vault
+JSON). The browser can read and rewrite the vault for the session, but nothing
+else in the key hierarchy — identity, share, audit, MAC, ORAM, recovery — is
+reachable from what it holds, and neither is any chunk outside that window
+(a vault that outgrows it must be reopened from an app). Clients still on the v1
+`rms_b64` envelope are refused by the web client with an "update your app"
+message rather than accepted.
+
+Wrapping binary keys as base64 text keeps the sealed plaintext valid UTF-8,
 which the JSON-string `open_share` API requires. The `grant` body is then
-`{ mode, capsule: base64(sealed_bytes), ttl_secs }`.
+`{ mode, capsule: base64(sealed_bytes), ttl_secs, link_nonce }`.

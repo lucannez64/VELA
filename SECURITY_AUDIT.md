@@ -22,7 +22,10 @@ The most material problems are **authorization-model** weaknesses, not crypto br
 
 1. The **web-session grant** flow trusts "any authenticated user who saw the QR" — and the `rw`
    mode hands the **non-rotating Root Master Seed (RMS)** to the browser. This is the single
-   highest-impact weakness.
+   highest-impact weakness. *(Since fixed — S-1/S-4: the browser commits the account it wants at
+   `start` and only that account may fetch the session keys or grant it; S-2: polling requires a
+   secret the browser registered and the QR never carries; D-2: `rw` seals per-chunk vault keys
+   instead of the RMS.)*
 2. The **Android launcher activity** returns plaintext credentials to any caller that
    `startActivityForResult`s it, with no caller validation.
 3. The **desktop app's auto-lock is lazy** — secrets stay in memory past the expiry deadline
@@ -66,25 +69,25 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 
 ## Findings summary
 
-| # | Severity | Component | Title | Verified |
-|---|---|---|---|---|
-| S-1 | **High** | server + desktop | Web-session grant trusts "any user who saw the QR"; `rw` leaks the RMS | code + dynamic |
-| S-2 | High | server | `GET /web-session/:id` fully unauthenticated; one-shot capsule DoS | **[DYN-VERIFIED]** |
-| S-3 | Medium | server | Recovery-initiation per-user DoS (rate limit keyed on `user_id` only) | **[DYN-VERIFIED]** |
-| S-4 | Medium | server | `/web-session/:id/keys` not ownership-scoped (enabler for S-1) | code |
-| A-1 | **High** | android | Exported `MainActivity` leaks plaintext creds to any caller | code |
-| A-2 | Medium | android | `com.<x>` package name auto-maps to `<x>.com` (autofill phishing) | code |
-| A-3 | Medium | android | Release silently debug-signed when keystore missing | code |
-| D-1 | **High** | desktop | Auto-lock is lazy — secrets persist in RAM past expiry | code |
-| D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code |
-| D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code |
-| D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code |
-| E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code |
-| E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code |
-| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code |
-| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code |
-| C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code |
-| C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code |
+| # | Severity | Component | Title | Verified | Status |
+|---|---|---|---|---|---|
+| S-1 | **High** | server + desktop | Web-session grant trusts "any user who saw the QR"; `rw` leaks the RMS | code + dynamic | **FIXED** (grant bound to the approver; RMS export = D-2, also fixed) |
+| S-2 | High | server | `GET /web-session/:id` fully unauthenticated; one-shot capsule DoS | **[DYN-VERIFIED]** | **FIXED** (poll requires the browser's secret) |
+| S-3 | Medium | server | Recovery-initiation per-user DoS (rate limit keyed on `user_id` only) | **[DYN-VERIFIED]** | open |
+| S-4 | Medium | server | `/web-session/:id/keys` not ownership-scoped (enabler for S-1) | code | **FIXED** (scoped to the committed approver) |
+| A-1 | **High** | android | Exported `MainActivity` leaks plaintext creds to any caller | code | open |
+| A-2 | Medium | android | `com.<x>` package name auto-maps to `<x>.com` (autofill phishing) | code | open |
+| A-3 | Medium | android | Release silently debug-signed when keystore missing | code | open |
+| D-1 | **High** | desktop | Auto-lock is lazy — secrets persist in RAM past expiry | code | open |
+| D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code | **FIXED** (per-chunk vault keys instead of the RMS) |
+| D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | open |
+| D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | open |
+| E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | open |
+| E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | open |
+| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | open |
+| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | open |
+| C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | open |
+| C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | open |
 
 (Lower-severity / hardening items are listed in the final section.)
 
@@ -93,6 +96,19 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 ## Detailed findings
 
 ### S-1 — Web-session grant trusts "any authenticated user who saw the QR"  ·  **HIGH** (server + desktop)
+
+> **STATUS: FIXED.** The browser now commits the account it wants access to
+> (`approver_user_id`) in `POST /web-session/start`, before the QR exists, and the
+> server admits only that account at `/web-session/:id/keys` (404 otherwise) and
+> `/web-session/:id/grant` (403 otherwise) — the identity check is re-asserted in
+> the `UPDATE ... WHERE approver_user_id = $7` so a concurrent grant can't slip
+> past it. The approver apps additionally require the full
+> `{id}#{fingerprint}#{link_nonce}` code, so the key-substitution check can no
+> longer be skipped by presenting a legacy short code. Regression:
+> `security/exploits/test_s1_grant_hijack.py` (hard CI gate) and
+> `web_session_is_bound_to_the_committed_approver` in the server integration
+> tests. The `rw` raw-RMS export was the other half of this finding and is fixed
+> under D-2.
 
 **Locations**
 - `serverVELA/vela-server/src/web_session/mod.rs:336-413` (`post_grant`)
@@ -147,6 +163,17 @@ require the grantor to be that user; or require the grantor to re-assert the bro
 ---
 
 ### S-2 — `GET /web-session/:id` is fully unauthenticated  ·  **HIGH**  ·  **[DYN-VERIFIED]**
+
+> **STATUS: FIXED.** The browser now registers `poll_secret_hash` (SHA-256 of a
+> 32-byte secret) at `start` and must present the secret in
+> `X-Web-Session-Secret` to poll. The secret never travels in the QR, so knowing
+> a `session_id` no longer lets anyone collect — and thereby destroy — the
+> one-shot capsule. A missing session and a wrong secret both return the same
+> 401, so the endpoint is no longer an existence oracle either. The endpoint
+> stays account-unauthenticated by design: the browser has no account, and
+> possession of the secret is what stands in for identity. Regression:
+> `web_session_poll_requires_the_browsers_secret` plus the S-2 leg of
+> `security/exploits/test_s1_grant_hijack.py`.
 
 **Location.** `serverVELA/vela-server/src/web_session/mod.rs:208-251` (`get_session`)
 
@@ -214,6 +241,10 @@ party.
 ---
 
 ### S-4 — `/web-session/:id/keys` not ownership-scoped  ·  **MEDIUM** (enabler for S-1)
+
+> **STATUS: FIXED.** The lookup is now
+> `WHERE id = $1 AND approver_user_id = $2`; any other caller gets the same 404 as
+> a nonexistent session.
 
 **Location.** `serverVELA/vela-server/src/web_session/mod.rs:269-311`
 
@@ -328,6 +359,22 @@ and recovers the cleartext vault.
 ---
 
 ### D-2 — `rw` web-session grants the non-rotating RMS to the browser  ·  **HIGH**
+
+> **STATUS: FIXED.** An `rw` grant now seals a **v2 envelope carrying per-chunk
+> vault keys** (`kdf::web_session_chunk_keys`, `vault-main` + `vault` + the first
+> 32 `vault-data-NNNNNN` chunks) instead of `rms_b64`. What a leaked capsule
+> yields is bounded to those chunks' contents: no identity, share, audit, MAC,
+> ORAM or recovery key derives from it, and no chunk outside the granted window.
+> The WASM bridge takes a `chunk_key_b64` and no longer has an RMS decode path at
+> all, and the web client refuses a v1 (`rms_b64`) grant from an outdated app.
+> The fingerprint check is now unconditional in every approver (desktop, gpui,
+> Android, iOS) — codes missing the fingerprint or link nonce are rejected, not
+> downgraded.
+>
+> **Residual risk:** the granted chunk keys are still long-lived vault keys, not
+> per-session ones — revocation stops server access but does not re-key what a
+> browser already copied. True containment still needs vault re-keying (§9,
+> out of scope for v1).
 
 **Location.** `desktopVELA/src-tauri/src/commands/web_session.rs:145-179`
 
@@ -584,9 +631,14 @@ credit the existing hardening:
 
 ## Remediation priority
 
-1. **Web-session grant (S-1 + D-2 + S-4).** Bind the grant to the intended approver at `start`
-   time; drop the raw-RMS `rw` export for a session-scoped derived key; make the fingerprint
-   check unconditional. Highest-impact, lowest-effort-to-architect change.
+1. ~~**Web-session grant (S-1 + S-4).** Bind the grant to the intended approver at `start`
+   time; make the fingerprint check unconditional.~~ **Done** — the browser commits
+   `approver_user_id` at `start` and only that account may fetch keys or grant; the approver
+   apps reject codes missing the fingerprint or link nonce.
+   ~~**D-2**~~ **Done** — `rw` now seals per-chunk vault keys (envelope v2), so the browser never
+   holds the RMS; ~~**S-2**~~ **Done** — polling requires the browser's registered secret. `rw`
+   still hands over long-lived *vault* keys, so it remains "I trust this device" until vault
+   re-keying (§9) exists.
 2. **Android `MainActivity` (A-1 + A-2).** Enforce caller == Autofill framework before returning
    the `FillResponse`; remove the `com.<x>`→`<x>.com` package heuristic.
 3. **Desktop auto-lock (D-1).** Add a background timer that wipes RMS + clipboard on expiry.
@@ -636,7 +688,7 @@ XFF bypass, SQLi), which is recorded below to scope future work.
 | Dependency CVEs (`libVELA/vela-crypto`) | `cargo audit` | clean (127 deps, 0 advisories) |
 | Generic static rules (server / extension / desktop) | `semgrep scan --config p/default` | 0 findings across all three (the domain-specific issues in this report need custom rules) |
 | Service fingerprint | `nmap -sV -sC` | axum/hyper HTTP; security headers present on `GET`/`OPTIONS`/`HTTPOptions` probes; rejects `RTSP`/`RPC`/`DNS` probes with 400 |
-| **Web-session grant hijack (S-1+S-2+S-4)** | custom PoC | **EXPLOITED — see transcript below** |
+| **Web-session grant hijack (S-1+S-2+S-4)** | custom PoC | **EXPLOITED — see transcript below** (all three since fixed; the PoC now exits blocked) |
 | Cross-user vault access (IDOR) | custom PoC | **BLOCKED** — `GET`/`PUT`/`DELETE` all scoped by `user_id`; cross-user → 404/409 |
 | Rate-limit bypass via `X-Forwarded-For` | custom PoC | **BLOCKED** — XFF ignored without `TRUST_PROXY_HEADERS`; spoofed IPs still attribute to real peer |
 | `chunk_id` length DoS | manual | bounded by HTTP layer (100 000-char id → `414 URI Too Long` from hyper) |
@@ -679,6 +731,26 @@ anti-phishing binding — `link_nonce` — travels in the same QR) → **S-2** (
 attacker-chosen RMS). Pair this with **D-2** (the desktop client seals the real, non-rotating
 RMS into `rw` grants) and a single observed QR is permanent full-vault compromise on every
 device, past and future.
+
+### Post-fix re-run
+
+The same PoC, kept as `security/exploits/test_s1_grant_hijack.py`, now runs against a session
+the browser bound to a victim account and reports the chain broken at every link. The attacker
+is handed the *whole* QR — session id and `link_nonce` — and still gets nothing:
+
+```
+[+] browser started session 546e1a57-... (QR carries id + link_nonce)
+[+] S-4 blocked: /keys -> HTTP 404
+[+] S-1 blocked: grant -> HTTP 403
+[+] S-2 blocked: poll without the browser secret -> HTTP 401
+[+] browser polls fine with its secret: status=pending, no capsule
+[/] BLOCKED: the session stayed bound to the account that started it,
+    and only the browser that started it can collect the capsule.
+```
+
+The capsule race that made S-2 a reliable DoS is closed by the poll secret (registered as a hash
+at `start`, never in the QR); D-2 no longer applies because an `rw` grant carries per-chunk vault
+keys rather than the RMS.
 
 ## Refuted-by-dynamic-testing (defenses confirmed)
 
@@ -750,19 +822,22 @@ python3 security/scan.py          # Rust checks only
 VELA_BASE=http://127.0.0.1:8553 VELA_TEST_TOKEN=<paseto> security/zap/run-zap.sh
 ```
 
-Current expected result: `scan.py` reports 5 findings (S-2 `get_session`, M4 ×3, L2), semgrep-js
-reports 7 (E-2 ×4, E-1, 2 review points), `cargo-audit` clean on all workspaces. **The scan
-should be green again only after S-2, M4, L2, E-1, E-2 are fixed** — that is the regression gate.
+Current expected result: `scan.py` reports 3 findings (M4 ×2, L2) — `get_session` is now
+allowlisted (S-2 fixed: it authenticates with the browser's poll secret) and the WASM bridge's
+`{:?}` derivation is gone with the RMS export (D-2) — semgrep-js reports 7 (E-2 ×4, E-1, 2 review
+points), `cargo-audit` clean on all workspaces. **The scan should be green again only after M4,
+L2, E-1, E-2 are fixed** — that is the regression gate.
 
 ## Exploit artifacts
 
 The PoCs are now permanent regression tests in-repo under `security/exploits/`
 (see its README):
-- `security/exploits/test_s1_grant_hijack.py` — the S-1+S-2+S-4 chain. Regression
-  gate: exits 1 **while** the vulnerability is exploitable, 0 after the fix.
+- `security/exploits/test_s1_grant_hijack.py` — the S-1+S-4 grant hijack. Hard
+  regression gate: exits 0 only while the grant stays bound to the account that
+  started the session.
 - `security/exploits/test_idor_ratelimit.py` — IDOR (blocked) + XFF-bypass
   (blocked) defence checks; stays green only while the defences hold.
 - `security/exploits/run-exploits.sh` — builds/starts a fresh isolated loopback
   instance (temp `DATA_DIR`, teardown via trap), runs both tests.
 
-Run: `./security/exploits/run-exploits.sh` (expected today: S-1 red, IDOR/XFF green).
+Run: `./security/exploits/run-exploits.sh` (expected: both green; a red run is a regression).
