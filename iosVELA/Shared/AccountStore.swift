@@ -4,9 +4,14 @@ import Security
 /// The device's server account: identity keypair, server-assigned ids, and the
 /// current PASETO token.
 ///
-/// `hybridSK` (signing secret, used in `createAuthSignature` to authenticate to
-/// the server) and `shareDK` (share KEM secret, used to open incoming shares)
-/// are secret key material and live in the Keychain via `KeychainAccountKeyStore`.
+/// The device signing key and the share decapsulation key are **not** here.
+/// They live behind a native handle (`VelaCoreFFI.IdentityHandle`); this struct
+/// carries only `sealedIdentity`, an opaque AEAD blob the native side can
+/// reopen, and the 32-byte seal key lives in the Keychain via
+/// `KeychainAccountKeyStore`. Holding the keys here as base64 `String`s meant
+/// un-wipeable copies on the heap for the life of the process, readable from any
+/// crash report (audit C-1).
+///
 /// The rest of this struct is non-secret and is persisted file-protected in the
 /// shared App Group so the app (and later the extension) can reach the server
 /// as the same device.
@@ -16,16 +21,15 @@ struct AccountState: Codable, Equatable {
     var deviceID: String
     var hybridEK: String
     var hybridVK: String
-    var hybridSK: String
     var token: String?
     /// ML-KEM-1024 + X25519 share public key (1600 B, base64). Published to server at registration.
     var shareEK: String = ""
-    /// ML-KEM-1024 + X25519 share secret key (3200 B, base64). Used to open shares addressed to us.
-    var shareDK: String = ""
+    /// Sealed private halves — opaque to Swift, reopened natively with the seal key.
+    var sealedIdentity: String = ""
 }
 
-/// The non-secret subset of `AccountState` that's safe to keep in the
-/// file-backed store once `hybridSK`/`shareDK` have moved to the Keychain.
+/// The file-backed subset. The sealed blob rides along: it is useless without
+/// the seal key, which is the thing that stays in the Keychain.
 private struct AccountFileState: Codable {
     var serverURL: String
     var userID: String
@@ -34,6 +38,7 @@ private struct AccountFileState: Codable {
     var hybridVK: String
     var token: String?
     var shareEK: String = ""
+    var sealedIdentity: String = ""
 
     init(_ state: AccountState) {
         serverURL = state.serverURL
@@ -43,18 +48,24 @@ private struct AccountFileState: Codable {
         hybridVK = state.hybridVK
         token = state.token
         shareEK = state.shareEK
+        sealedIdentity = state.sealedIdentity
     }
 
-    func merged(hybridSK: String, shareDK: String) -> AccountState {
+    func merged() -> AccountState {
         AccountState(serverURL: serverURL, userID: userID, deviceID: deviceID,
-                     hybridEK: hybridEK, hybridVK: hybridVK, hybridSK: hybridSK,
-                     token: token, shareEK: shareEK, shareDK: shareDK)
+                     hybridEK: hybridEK, hybridVK: hybridVK,
+                     token: token, shareEK: shareEK, sealedIdentity: sealedIdentity)
     }
 }
 
+/// Stores the 32-byte key the native side seals the identity under, plus (for
+/// migration only) any legacy plaintext keys written before the handle existed.
 protocol AccountKeyStore {
-    func store(hybridSK: String, shareDK: String) throws
-    func load() -> (hybridSK: String, shareDK: String)?
+    func storeSealKey(_ key: Data) throws
+    func loadSealKey() -> Data?
+    /// Legacy plaintext keys, if this device still has them.
+    func loadLegacyKeys() -> (hybridSK: String, shareDK: String)?
+    func clearLegacyKeys()
     func clear()
 }
 
@@ -71,19 +82,27 @@ struct KeychainAccountKeyStore: AccountKeyStore {
         self.service = service
     }
 
-    func store(hybridSK: String, shareDK: String) throws {
-        try set(hybridSK, account: "hybridSK")
-        try set(shareDK, account: "shareDK")
+    func storeSealKey(_ key: Data) throws {
+        try set(key.base64EncodedString(), account: "identitySealKey")
     }
 
-    func load() -> (hybridSK: String, shareDK: String)? {
+    func loadSealKey() -> Data? {
+        get(account: "identitySealKey").flatMap { Data(base64Encoded: $0) }
+    }
+
+    func loadLegacyKeys() -> (hybridSK: String, shareDK: String)? {
         guard let hybridSK = get(account: "hybridSK") else { return nil }
         return (hybridSK, get(account: "shareDK") ?? "")
     }
 
-    func clear() {
+    func clearLegacyKeys() {
         SecItemDelete(query(account: "hybridSK") as CFDictionary)
         SecItemDelete(query(account: "shareDK") as CFDictionary)
+    }
+
+    func clear() {
+        clearLegacyKeys()
+        SecItemDelete(query(account: "identitySealKey") as CFDictionary)
     }
 
     private func set(_ value: String, account: String) throws {
@@ -121,7 +140,11 @@ struct KeychainAccountKeyStore: AccountKeyStore {
 /// Keychain isn't reliably usable (mirrors `FileRMSStore`'s role for the RMS).
 /// File-protected at rest; NOT used on real devices.
 struct FileAccountKeyStore: AccountKeyStore {
-    private struct Keys: Codable { var hybridSK: String; var shareDK: String }
+    private struct Keys: Codable {
+        var sealKey: String = ""
+        var hybridSK: String = ""
+        var shareDK: String = ""
+    }
     let url: URL
 
     init(directory: URL) {
@@ -129,15 +152,36 @@ struct FileAccountKeyStore: AccountKeyStore {
         self.url = directory.appendingPathComponent("account_keys.json")
     }
 
-    func store(hybridSK: String, shareDK: String) throws {
-        let data = try JSONEncoder().encode(Keys(hybridSK: hybridSK, shareDK: shareDK))
+    private func read() -> Keys? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(Keys.self, from: data)
+    }
+
+    private func write(_ keys: Keys) throws {
+        let data = try JSONEncoder().encode(keys)
         try data.write(to: url, options: [.completeFileProtection, .atomic])
     }
 
-    func load() -> (hybridSK: String, shareDK: String)? {
-        guard let data = try? Data(contentsOf: url),
-              let keys = try? JSONDecoder().decode(Keys.self, from: data) else { return nil }
+    func storeSealKey(_ key: Data) throws {
+        var keys = read() ?? Keys()
+        keys.sealKey = key.base64EncodedString()
+        try write(keys)
+    }
+
+    func loadSealKey() -> Data? {
+        read().flatMap { Data(base64Encoded: $0.sealKey) }
+    }
+
+    func loadLegacyKeys() -> (hybridSK: String, shareDK: String)? {
+        guard let keys = read(), !keys.hybridSK.isEmpty else { return nil }
         return (keys.hybridSK, keys.shareDK)
+    }
+
+    func clearLegacyKeys() {
+        guard var keys = read() else { return }
+        keys.hybridSK = ""
+        keys.shareDK = ""
+        try? write(keys)
     }
 
     func clear() {
@@ -162,23 +206,18 @@ struct AccountStore {
     }
 
     func load() -> AccountState? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-
-        // Pre-fix account.json embedded hybridSK/shareDK inline. If the file
-        // still decodes as a full AccountState, migrate the keys into the
-        // Keychain once and rewrite the file without them.
-        if let legacy = try? JSONDecoder().decode(AccountState.self, from: data), !legacy.hybridSK.isEmpty {
-            try? save(legacy)
-            return legacy
+        guard let data = try? Data(contentsOf: url),
+              let fileState = try? JSONDecoder().decode(AccountFileState.self, from: data) else {
+            return nil
         }
-
-        guard let fileState = try? JSONDecoder().decode(AccountFileState.self, from: data),
-              let keys = keyStore.load() else { return nil }
-        return fileState.merged(hybridSK: keys.hybridSK, shareDK: keys.shareDK)
+        var state = fileState.merged()
+        if state.sealedIdentity.isEmpty, let migrated = migrateLegacyKeys(into: state) {
+            state = migrated
+        }
+        return state
     }
 
     func save(_ state: AccountState) throws {
-        try keyStore.store(hybridSK: state.hybridSK, shareDK: state.shareDK)
         let data = try JSONEncoder().encode(AccountFileState(state))
         try data.write(to: url, options: [.completeFileProtection, .atomic])
     }
@@ -186,5 +225,42 @@ struct AccountStore {
     func clear() {
         try? FileManager.default.removeItem(at: url)
         keyStore.clear()
+        VelaCoreFFI.identityForgetAll()
+    }
+
+    /// The seal key for this device, minted on first use.
+    func sealKey() -> Data {
+        if let existing = keyStore.loadSealKey() { return existing }
+        var key = Data(count: 32)
+        _ = key.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+        try? keyStore.storeSealKey(key)
+        return key
+    }
+
+    /// Open the stored identity, returning a live handle.
+    func identityHandle(for state: AccountState) -> VelaCoreFFI.IdentityHandle? {
+        guard !state.sealedIdentity.isEmpty else { return nil }
+        return VelaCoreFFI.identityOpen(sealKey: sealKey(), sealedBase64: state.sealedIdentity)
+    }
+
+    /// Move a device that still holds plaintext keys onto the sealed format.
+    ///
+    /// The legacy keys are read exactly once — migration cannot avoid touching
+    /// them — handed to the native side, and then deleted.
+    private func migrateLegacyKeys(into state: AccountState) -> AccountState? {
+        guard let legacy = keyStore.loadLegacyKeys(), !legacy.hybridSK.isEmpty else { return nil }
+        guard let imported = VelaCoreFFI.identityImport(
+            sealKey: sealKey(),
+            hybridSKBase64: legacy.hybridSK,
+            shareDKBase64: legacy.shareDK,
+            hybridEKBase64: state.hybridEK
+        ) else { return nil }
+
+        var migrated = state
+        migrated.sealedIdentity = imported.sealed
+        if migrated.shareEK.isEmpty { migrated.shareEK = imported.shareEK }
+        try? save(migrated)
+        keyStore.clearLegacyKeys()
+        return migrated
     }
 }

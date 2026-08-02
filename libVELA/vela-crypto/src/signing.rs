@@ -235,6 +235,31 @@ impl HybridSignature {
 pub const ML_DSA_SK_LEN: usize = 4896;
 
 impl HybridSigningKey {
+    /// Recompute the verifying half.
+    ///
+    /// Both components can regenerate their public key from the private one, so
+    /// a stored identity does not have to carry the verifying key alongside —
+    /// and code that holds the secret never needs the caller to hand it back.
+    pub fn verifying_key(&self) -> HybridVerifyingKey {
+        HybridVerifyingKey {
+            ml_dsa: self.ml_dsa.get_public_key(),
+            ed25519: self.ed25519.verifying_key(),
+        }
+    }
+
+    /// Serialize the signing key without consuming it.
+    ///
+    /// `into_bytes` takes ownership because `fips204` does; sealing a key that
+    /// is still in use needs a borrowing form, so this rebuilds the same layout
+    /// from a re-encoded copy of each component.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let ml_dsa_bytes = <MlDsaSk as SerDes>::into_bytes(self.ml_dsa.clone());
+        let mut out = Vec::with_capacity(ml_dsa_bytes.as_ref().len() + 32);
+        out.extend_from_slice(ml_dsa_bytes.as_ref());
+        out.extend_from_slice(&self.ed25519.to_bytes());
+        out
+    }
+
     /// Serialize the signing key for storage.
     ///
     /// Format: `ml_dsa_87_sk (4896 B) ‖ ed25519_sk (32 B)` = 4928 B.

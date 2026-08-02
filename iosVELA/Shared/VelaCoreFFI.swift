@@ -25,6 +25,14 @@ enum VelaCoreFFI {
         return value
     }
 
+    /// Pull a numeric field (e.g. an identity handle) out of a JSON response.
+    private static func numberField(_ response: String, _ key: String) -> UInt64? {
+        guard let data = response.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let value = obj[key] as? NSNumber else { return nil }
+        return value.uint64Value
+    }
+
     /// Pull a `[String]` field out of a JSON object response, or nil on error.
     private static func stringArray(_ response: String, _ key: String) -> [String]? {
         guard let data = response.data(using: .utf8),
@@ -39,34 +47,110 @@ enum VelaCoreFFI {
     }
 
     // MARK: - Identity & auth
+    //
+    // The device signing key and the share decapsulation key never cross this
+    // boundary. Swift `String`s are immutable and un-wipeable, so a base64 key
+    // handed back here stayed readable in memory (and in any crash report) for
+    // the life of the process (audit C-1). Instead the native side keeps the
+    // keys, hands back a handle plus the public halves, and does the signing and
+    // share-opening itself. The only secret that crosses is the 32-byte seal
+    // key, as `Data` the caller can zero.
 
-    /// A freshly generated device identity (all base64).
-    struct Identity {
+    /// A live identity: an opaque handle, the public halves, and the sealed blob
+    /// to persist.
+    struct IdentityHandle {
+        let handle: UInt64
         let hybridEK: String
         let hybridVK: String
-        let hybridSK: String
         let shareEK: String
-        let shareDK: String
+        let sealed: String
     }
 
-    /// Generate a fresh device identity, or nil on error.
-    static func generateIdentity() -> Identity? {
-        let response = generateIdentityJSON()
-        guard let ek = field(response, "hybrid_ek_b64"),
+    private static func parseHandle(_ response: String) -> IdentityHandle? {
+        guard let handle = numberField(response, "handle"),
+              let ek = field(response, "hybrid_ek_b64"),
               let vk = field(response, "hybrid_vk_b64"),
-              let sk = field(response, "hybrid_sk_b64"),
               let shareEK = field(response, "share_ek_b64"),
-              let shareDK = field(response, "share_dk_b64") else { return nil }
-        return Identity(hybridEK: ek, hybridVK: vk, hybridSK: sk, shareEK: shareEK, shareDK: shareDK)
+              let sealed = field(response, "sealed_b64") else { return nil }
+        return IdentityHandle(handle: handle, hybridEK: ek, hybridVK: vk, shareEK: shareEK, sealed: sealed)
     }
 
-    /// Generate only a fresh share keypair `(shareEK, shareDK)`, base64. Used to
-    /// backfill share keys for identities created before sharing existed.
-    static func generateShareKeypair() -> (shareEK: String, shareDK: String)? {
-        let response = consume(vela_ffi_generate_share_keypair_json())
-        guard let ek = field(response, "share_ek_b64"),
-              let dk = field(response, "share_dk_b64") else { return nil }
-        return (ek, dk)
+    /// Generate a fresh device identity. The private halves stay native.
+    static func identityCreate(sealKey: Data) -> IdentityHandle? {
+        let response = sealKey.withUnsafeBytes { buffer in
+            consume(vela_ffi_identity_create(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count))
+        }
+        return parseHandle(response)
+    }
+
+    /// Adopt key material that already exists: migrating a device that stored
+    /// its keys in the clear, or enrolling from a code that carries the signing
+    /// key. The bytes are handed over once and live natively from then on.
+    static func identityImport(
+        sealKey: Data,
+        hybridSKBase64: String,
+        shareDKBase64: String = "",
+        hybridEKBase64: String = ""
+    ) -> IdentityHandle? {
+        let request = json([
+            "hybrid_sk_b64": hybridSKBase64,
+            "share_dk_b64": shareDKBase64,
+            "hybrid_ek_b64": hybridEKBase64,
+        ])
+        let response = sealKey.withUnsafeBytes { buffer in
+            request.withCString {
+                consume(vela_ffi_identity_import(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count, $0))
+            }
+        }
+        return parseHandle(response)
+    }
+
+    /// Reopen a persisted identity.
+    static func identityOpen(sealKey: Data, sealedBase64: String) -> IdentityHandle? {
+        let request = json(["sealed_b64": sealedBase64])
+        let response = sealKey.withUnsafeBytes { buffer in
+            request.withCString {
+                consume(vela_ffi_identity_open(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count, $0))
+            }
+        }
+        return parseHandle(response)
+    }
+
+    /// Replace the share keypair; returns the new public half and sealed blob.
+    static func identityRotateShareKey(sealKey: Data, handle: UInt64) -> (shareEK: String, sealed: String)? {
+        let request = json(["handle": handle])
+        let response = sealKey.withUnsafeBytes { buffer in
+            request.withCString {
+                consume(vela_ffi_identity_rotate_share_key(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count, $0))
+            }
+        }
+        guard let shareEK = field(response, "share_ek_b64"),
+              let sealed = field(response, "sealed_b64") else { return nil }
+        return (shareEK, sealed)
+    }
+
+    /// Sign a server auth challenge with the held signing key.
+    static func identitySign(handle: UInt64, challengeBase64: String, deviceID: String) -> String? {
+        let request = json(["handle": handle, "challenge_b64": challengeBase64, "device_id": deviceID])
+        let response = request.withCString { consume(vela_ffi_identity_sign_json($0)) }
+        return field(response, "signature_b64")
+    }
+
+    /// Open a capsule sealed to this device's share key.
+    static func identityOpenShare(handle: UInt64, capsuleBase64: String) -> String? {
+        let request = json(["handle": handle, "capsule_b64": capsuleBase64])
+        let response = request.withCString { consume(vela_ffi_identity_open_share_json($0)) }
+        return field(response, "item_json")
+    }
+
+    /// Drop a handle, wiping its keys. Call on sign-out.
+    static func identityForget(handle: UInt64) {
+        let request = json(["handle": handle])
+        _ = request.withCString { consume(vela_ffi_identity_forget_json($0)) }
+    }
+
+    static func identityForgetAll() {
+        _ = consume(vela_ffi_identity_forget_all())
     }
 
     // MARK: - KEM-sealed sharing
@@ -76,20 +160,6 @@ enum VelaCoreFFI {
         let request = json(["recipient_share_ek_b64": recipientShareEKBase64, "item_json": itemJSON])
         let response = request.withCString { consume(vela_ffi_seal_share_json($0)) }
         return field(response, "capsule_b64")
-    }
-
-    /// Decrypt a share capsule using our share secret key. Returns the item JSON or nil on error.
-    static func openShare(shareDKBase64: String, capsuleBase64: String) -> String? {
-        let request = json(["share_dk_b64": shareDKBase64, "capsule_b64": capsuleBase64])
-        let response = request.withCString { consume(vela_ffi_open_share_json($0)) }
-        return field(response, "item_json")
-    }
-
-    /// Sign a server auth challenge with the device signing key. Returns base64 signature.
-    static func createAuthSignature(hybridSKBase64: String, challengeBase64: String, deviceID: String) -> String? {
-        let request = json(["hybrid_sk_b64": hybridSKBase64, "challenge_b64": challengeBase64, "device_id": deviceID])
-        let response = request.withCString { consume(vela_ffi_create_auth_signature_json($0)) }
-        return field(response, "signature_b64")
     }
 
     // MARK: - Sync (per-chunk)
@@ -168,9 +238,6 @@ enum VelaCoreFFI {
         json(["password": password]).withCString { consume(vela_ffi_password_strength_json($0)) }
     }
 
-    static func generateIdentityJSON() -> String {
-        consume(vela_ffi_generate_identity_json())
-    }
 
     /// Encrypt a vault (JSON string) under the RMS. Returns base64 ciphertext, or nil on error.
     static func encryptVault(rmsBase64: String, vaultJSON: String) -> String? {

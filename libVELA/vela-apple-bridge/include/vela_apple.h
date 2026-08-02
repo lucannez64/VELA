@@ -5,6 +5,9 @@
  * Every char* return value is heap-allocated and must be freed with
  * vela_ffi_free_string. All payloads are UTF-8 JSON. */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,9 +21,20 @@ char *vela_ffi_enrollment_verification_code(const char *code);
 char *vela_ffi_password_strength_json(const char *request_json);
 char *vela_ffi_encrypt_vault_json(const char *request_json);
 char *vela_ffi_decrypt_vault_json(const char *request_json);
-char *vela_ffi_generate_identity_json(void);
-char *vela_ffi_generate_share_keypair_json(void);
-char *vela_ffi_create_auth_signature_json(const char *request_json);
+/* Device identity behind an opaque handle: the signing key and the share
+ * decapsulation key never cross this boundary (audit C-1). The seal key is
+ * passed as raw bytes so the caller can wipe it — a Swift String cannot be. */
+char *vela_ffi_identity_create(const uint8_t *seal_key, size_t seal_key_len);
+char *vela_ffi_identity_import(const uint8_t *seal_key, size_t seal_key_len,
+                               const char *request_json);
+char *vela_ffi_identity_open(const uint8_t *seal_key, size_t seal_key_len,
+                             const char *request_json);
+char *vela_ffi_identity_rotate_share_key(const uint8_t *seal_key, size_t seal_key_len,
+                                         const char *request_json);
+char *vela_ffi_identity_sign_json(const char *request_json);
+char *vela_ffi_identity_open_share_json(const char *request_json);
+char *vela_ffi_identity_forget_json(const char *request_json);
+char *vela_ffi_identity_forget_all(void);
 
 /* Phase 4: sync (per-chunk vault crypto), enrollment (RMS capsule / enrollment
  * package), and recovery (Shamir split/combine of the RMS). */
@@ -37,7 +51,6 @@ char *vela_ffi_combine_recovery_json(const char *request_json);
  * seal: { recipient_share_ek_b64, item_json } -> { capsule_b64 }
  * open: { share_dk_b64, capsule_b64 } -> { item_json } */
 char *vela_ffi_seal_share_json(const char *request_json);
-char *vela_ffi_open_share_json(const char *request_json);
 
 #ifdef __cplusplus
 }

@@ -7,10 +7,10 @@
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, c_uchar, CStr, CString};
 
 use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
-use vela_crypto::{aead, kdf, kem, shamir, signing};
+use vela_crypto::{aead, kdf, kem, shamir};
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
 const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
@@ -51,21 +51,6 @@ struct DecryptVaultResponse {
     vault_json: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct GenerateIdentityResponse {
-    hybrid_ek_b64: String,
-    hybrid_vk_b64: String,
-    hybrid_sk_b64: String,
-    share_ek_b64: String,
-    share_dk_b64: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ShareKeypairResponse {
-    share_ek_b64: String,
-    share_dk_b64: String,
-}
-
 #[derive(Deserialize)]
 struct SealShareRequest {
     recipient_share_ek_b64: String,
@@ -77,29 +62,71 @@ struct SealShareResponse {
     capsule_b64: String,
 }
 
-#[derive(Deserialize)]
-struct OpenShareRequest {
-    share_dk_b64: String,
-    capsule_b64: String,
-}
-
 #[derive(Serialize)]
 struct OpenShareResponse {
     item_json: String,
 }
 
-#[derive(Deserialize)]
-struct AuthSignatureRequest {
-    hybrid_sk_b64: String,
-    challenge_b64: String,
-    device_id: String,
+// Phase 4 ── sync / enrollment / recovery payloads ──────────────────────────────
+
+/// Everything an identity handle exposes: public halves plus the sealed blob the
+/// app persists. No private key appears here — that is the point (audit C-1).
+#[derive(Serialize)]
+struct IdentityHandleResponse {
+    handle: u64,
+    hybrid_ek_b64: String,
+    hybrid_vk_b64: String,
+    share_ek_b64: String,
+    sealed_b64: String,
 }
+
+#[derive(Deserialize)]
+struct IdentityImportRequest {
+    hybrid_sk_b64: String,
+    #[serde(default)]
+    share_dk_b64: String,
+    #[serde(default)]
+    hybrid_ek_b64: String,
+}
+
+#[derive(Deserialize)]
+struct IdentityOpenRequest {
+    sealed_b64: String,
+}
+
+#[derive(Deserialize)]
+struct IdentitySignRequest {
+    handle: u64,
+    device_id: String,
+    challenge_b64: String,
+}
+
 #[derive(Serialize, Deserialize)]
 struct AuthSignatureResponse {
     signature_b64: String,
 }
 
-// Phase 4 ── sync / enrollment / recovery payloads ──────────────────────────────
+#[derive(Deserialize)]
+struct IdentityOpenShareRequest {
+    handle: u64,
+    capsule_b64: String,
+}
+
+#[derive(Deserialize)]
+struct IdentityHandleRequest {
+    handle: u64,
+}
+
+#[derive(Serialize)]
+struct IdentityRotateShareKeyResponse {
+    share_ek_b64: String,
+    sealed_b64: String,
+}
+
+#[derive(Serialize)]
+struct IdentityOkResponse {
+    ok: bool,
+}
 
 #[derive(Deserialize)]
 struct WebSessionChunkKeysRequest {
@@ -225,27 +252,91 @@ pub unsafe extern "C" fn vela_ffi_decrypt_vault_json(request_json: *const c_char
     json_result(|| decrypt_vault_json(c_str(request_json)?))
 }
 
-/// Generate a fresh device identity (hybrid EK/VK/SK, base64). Free the result.
+// ── Identity handles (audit C-1) ─────────────────────────────────────────────
+//
+// The seal key arrives as raw bytes, never as a `String`: Swift strings are as
+// immutable and un-wipeable as JVM ones. The signing key and share
+// decapsulation key never cross this boundary in either direction.
+
+/// # Safety
+/// `seal_key` must point to `seal_key_len` readable bytes.
 #[no_mangle]
-pub extern "C" fn vela_ffi_generate_identity_json() -> *mut c_char {
-    json_result(generate_identity)
+pub unsafe extern "C" fn vela_ffi_identity_create(
+    seal_key: *const c_uchar,
+    seal_key_len: usize,
+) -> *mut c_char {
+    json_result(|| identity_create_impl(raw_slice(seal_key, seal_key_len)?))
 }
 
-/// Generate only a fresh share keypair (`{ share_ek_b64, share_dk_b64 }`).
-/// Used to backfill share keys for identities created before sharing existed,
-/// without disturbing the device-auth hybrid keys. Free the result.
+/// # Safety
+/// `seal_key` must point to `seal_key_len` readable bytes; `request_json` must
+/// be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
-pub extern "C" fn vela_ffi_generate_share_keypair_json() -> *mut c_char {
-    json_result(generate_share_keypair)
+pub unsafe extern "C" fn vela_ffi_identity_import(
+    seal_key: *const c_uchar,
+    seal_key_len: usize,
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| {
+        identity_import_impl(raw_slice(seal_key, seal_key_len)?, c_str(request_json)?)
+    })
+}
+
+/// # Safety
+/// `seal_key` must point to `seal_key_len` readable bytes; `request_json` must
+/// be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_open(
+    seal_key: *const c_uchar,
+    seal_key_len: usize,
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_open_impl(raw_slice(seal_key, seal_key_len)?, c_str(request_json)?))
+}
+
+/// # Safety
+/// `seal_key` must point to `seal_key_len` readable bytes; `request_json` must
+/// be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_rotate_share_key(
+    seal_key: *const c_uchar,
+    seal_key_len: usize,
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| {
+        identity_rotate_share_key_impl(raw_slice(seal_key, seal_key_len)?, c_str(request_json)?)
+    })
 }
 
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
-pub unsafe extern "C" fn vela_ffi_create_auth_signature_json(
+pub unsafe extern "C" fn vela_ffi_identity_sign_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| identity_sign_impl(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_open_share_json(
     request_json: *const c_char,
 ) -> *mut c_char {
-    json_result(|| create_auth_signature_json(c_str(request_json)?))
+    json_result(|| identity_open_share_impl(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_forget_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_forget_impl(c_str(request_json)?))
+}
+
+#[no_mangle]
+pub extern "C" fn vela_ffi_identity_forget_all() -> *mut c_char {
+    vela_crypto::identity::forget_all();
+    json_result(|| Ok(IdentityOkResponse { ok: true }))
 }
 
 /// # Safety
@@ -306,15 +397,6 @@ pub unsafe extern "C" fn vela_ffi_seal_share_json(request_json: *const c_char) -
     json_result(|| seal_share_json(c_str(request_json)?))
 }
 
-/// Decrypt a share capsule using our share secret key.
-/// Request: `{ share_dk_b64, capsule_b64 }` → `{ item_json }`.
-/// # Safety
-/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
-#[no_mangle]
-pub unsafe extern "C" fn vela_ffi_open_share_json(request_json: *const c_char) -> *mut c_char {
-    json_result(|| open_share_json(c_str(request_json)?))
-}
-
 // ── Core logic (also exercised by the unit tests) ──────────────────────────────
 
 fn encrypt_vault_json(request_json: &str) -> FfiResult<EncryptVaultResponse> {
@@ -340,34 +422,6 @@ fn decrypt_vault_json(request_json: &str) -> FfiResult<DecryptVaultResponse> {
     })
 }
 
-fn generate_identity() -> FfiResult<GenerateIdentityResponse> {
-    // `hybrid_ek` must be a real KEM public key, not filler bytes — it is
-    // signed and transmitted to the server as this device's identity. The
-    // matching secret key is intentionally not persisted: nothing in the
-    // current protocol encapsulates under hybrid_ek (the RMS capsule uses a
-    // symmetric transfer_key instead), so a public key with no stored
-    // private counterpart is inert, not insecure.
-    let (hybrid_ek_pk, _unused_hybrid_ek_sk) = kem::generate_keypair();
-    let hybrid_ek = hybrid_ek_pk.to_bytes();
-    let (vk, sk) = signing::generate_keypair()?;
-    let (share_pk, share_sk) = kem::generate_keypair();
-    Ok(GenerateIdentityResponse {
-        hybrid_ek_b64: B64.encode(hybrid_ek),
-        hybrid_vk_b64: B64.encode(vk.to_bytes()),
-        hybrid_sk_b64: B64.encode(sk.into_bytes()),
-        share_ek_b64: B64.encode(share_pk.to_bytes()),
-        share_dk_b64: B64.encode(share_sk.to_bytes()),
-    })
-}
-
-fn generate_share_keypair() -> FfiResult<ShareKeypairResponse> {
-    let (share_pk, share_sk) = kem::generate_keypair();
-    Ok(ShareKeypairResponse {
-        share_ek_b64: B64.encode(share_pk.to_bytes()),
-        share_dk_b64: B64.encode(share_sk.to_bytes()),
-    })
-}
-
 fn seal_share_json(request_json: &str) -> FfiResult<SealShareResponse> {
     let req: SealShareRequest = serde_json::from_str(request_json)?;
     let ek_bytes = B64.decode(req.recipient_share_ek_b64.as_bytes())?;
@@ -375,29 +429,6 @@ fn seal_share_json(request_json: &str) -> FfiResult<SealShareResponse> {
     let capsule = kem::seal_share(&pk, req.item_json.as_bytes())?;
     Ok(SealShareResponse {
         capsule_b64: B64.encode(capsule),
-    })
-}
-
-fn open_share_json(request_json: &str) -> FfiResult<OpenShareResponse> {
-    let req: OpenShareRequest = serde_json::from_str(request_json)?;
-    let dk_bytes = B64.decode(req.share_dk_b64.as_bytes())?;
-    let sk = kem::HybridSecretKey::from_bytes(&dk_bytes)?;
-    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
-    let plaintext = kem::open_share(&sk, &capsule)?;
-    Ok(OpenShareResponse {
-        item_json: String::from_utf8(plaintext)?,
-    })
-}
-
-fn create_auth_signature_json(request_json: &str) -> FfiResult<AuthSignatureResponse> {
-    let req: AuthSignatureRequest = serde_json::from_str(request_json)?;
-    let sk_bytes = B64.decode(req.hybrid_sk_b64.as_bytes())?;
-    let challenge = B64.decode(req.challenge_b64.as_bytes())?;
-    let sk = signing::HybridSigningKey::from_bytes(&sk_bytes)?;
-    let message = signing::auth_message(&req.device_id, &challenge);
-    let signature = signing::sign(&sk, &message)?;
-    Ok(AuthSignatureResponse {
-        signature_b64: B64.encode(signature.to_bytes()),
     })
 }
 
@@ -419,6 +450,111 @@ fn web_session_chunk_keys_json(request_json: &str) -> FfiResult<WebSessionChunkK
         .map(|(id, key)| (id, B64.encode(key.as_bytes())))
         .collect();
     Ok(WebSessionChunkKeysResponse { chunk_keys })
+}
+
+// ── Identity handles (audit C-1) ─────────────────────────────────────────────
+
+fn identity_response(
+    identity: vela_crypto::identity::DeviceIdentity,
+    seal_key: &[u8],
+) -> FfiResult<IdentityHandleResponse> {
+    let key = seal_key_from(seal_key)?;
+    let sealed = identity.seal(&key)?;
+    let publics = identity.publics().clone();
+    let handle = vela_crypto::identity::register(identity);
+    Ok(IdentityHandleResponse {
+        handle,
+        hybrid_ek_b64: B64.encode(publics.hybrid_ek),
+        hybrid_vk_b64: B64.encode(publics.hybrid_vk),
+        share_ek_b64: B64.encode(publics.share_ek),
+        sealed_b64: B64.encode(sealed),
+    })
+}
+
+fn seal_key_from(bytes: &[u8]) -> FfiResult<[u8; 32]> {
+    bytes
+        .try_into()
+        .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
+            "seal key must be 32 bytes".into()
+        })
+}
+
+fn identity_create_impl(seal_key: &[u8]) -> FfiResult<IdentityHandleResponse> {
+    identity_response(vela_crypto::identity::DeviceIdentity::generate()?, seal_key)
+}
+
+fn identity_import_impl(seal_key: &[u8], request_json: &str) -> FfiResult<IdentityHandleResponse> {
+    let req: IdentityImportRequest = serde_json::from_str(request_json)?;
+    let signing_sk = B64.decode(req.hybrid_sk_b64.as_bytes())?;
+    let share_dk = if req.share_dk_b64.is_empty() {
+        None
+    } else {
+        Some(B64.decode(req.share_dk_b64.as_bytes())?)
+    };
+    let hybrid_ek = if req.hybrid_ek_b64.is_empty() {
+        None
+    } else {
+        Some(B64.decode(req.hybrid_ek_b64.as_bytes())?)
+    };
+    let identity = vela_crypto::identity::DeviceIdentity::import(
+        &signing_sk,
+        share_dk.as_deref(),
+        hybrid_ek.as_deref(),
+    )?;
+    identity_response(identity, seal_key)
+}
+
+fn identity_open_impl(seal_key: &[u8], request_json: &str) -> FfiResult<IdentityHandleResponse> {
+    let req: IdentityOpenRequest = serde_json::from_str(request_json)?;
+    let sealed = B64.decode(req.sealed_b64.as_bytes())?;
+    let key = seal_key_from(seal_key)?;
+    let identity = vela_crypto::identity::DeviceIdentity::open(&sealed, &key)?;
+    identity_response(identity, seal_key)
+}
+
+fn identity_sign_impl(request_json: &str) -> FfiResult<AuthSignatureResponse> {
+    let req: IdentitySignRequest = serde_json::from_str(request_json)?;
+    let challenge = B64.decode(req.challenge_b64.as_bytes())?;
+    let signature = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.sign_auth(&req.device_id, &challenge)
+    })?;
+    Ok(AuthSignatureResponse {
+        signature_b64: B64.encode(signature),
+    })
+}
+
+fn identity_open_share_impl(request_json: &str) -> FfiResult<OpenShareResponse> {
+    let req: IdentityOpenShareRequest = serde_json::from_str(request_json)?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let plaintext = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.open_share(&capsule)
+    })?;
+    Ok(OpenShareResponse {
+        item_json: String::from_utf8(plaintext)?,
+    })
+}
+
+fn identity_rotate_share_key_impl(
+    seal_key: &[u8],
+    request_json: &str,
+) -> FfiResult<IdentityRotateShareKeyResponse> {
+    let req: IdentityHandleRequest = serde_json::from_str(request_json)?;
+    let key = seal_key_from(seal_key)?;
+    let (share_ek, sealed) = vela_crypto::identity::with_identity(req.handle, |identity| {
+        let share_ek = identity.rotate_share_key();
+        Ok((share_ek, identity.seal(&key)?))
+    })?;
+    Ok(IdentityRotateShareKeyResponse {
+        share_ek_b64: B64.encode(share_ek),
+        sealed_b64: B64.encode(sealed),
+    })
+}
+
+fn identity_forget_impl(request_json: &str) -> FfiResult<IdentityOkResponse> {
+    let req: IdentityHandleRequest = serde_json::from_str(request_json)?;
+    Ok(IdentityOkResponse {
+        ok: vela_crypto::identity::forget(req.handle),
+    })
 }
 
 fn encrypt_vault_chunk_json(request_json: &str) -> FfiResult<EncryptVaultResponse> {
@@ -513,6 +649,14 @@ fn decode_rms(b64: &str) -> FfiResult<[u8; 32]> {
 
 // ── FFI plumbing ───────────────────────────────────────────────────────────────
 
+/// Borrow raw bytes handed over from Swift (a seal key, never a string).
+unsafe fn raw_slice<'a>(ptr: *const c_uchar, len: usize) -> FfiResult<&'a [u8]> {
+    if ptr.is_null() {
+        return Err("null byte pointer".into());
+    }
+    Ok(std::slice::from_raw_parts(ptr, len))
+}
+
 unsafe fn c_str<'a>(ptr: *const c_char) -> FfiResult<&'a str> {
     if ptr.is_null() {
         return Err("null string pointer".into());
@@ -603,25 +747,76 @@ mod tests {
         assert!(dec.contains("error"), "wrong RMS must fail: {dec}");
     }
 
+    /// Audit C-1: the identity is created behind a handle. The response carries
+    /// public halves and a sealed blob; nothing the app can read is a key.
     #[test]
-    fn generate_identity_and_sign_roundtrip() {
-        let id_ptr = vela_ffi_generate_identity_json();
-        let id = unsafe { CStr::from_ptr(id_ptr) }.to_string_lossy().into_owned();
-        unsafe { vela_ffi_free_string(id_ptr) };
-        let id: GenerateIdentityResponse = serde_json::from_str(&id).unwrap();
-        assert_eq!(B64.decode(&id.hybrid_ek_b64).unwrap().len(), 1600);
+    fn identity_handle_signs_and_reveals_no_private_key() {
+        let seal_key = [4u8; 32];
+        let created_ptr = unsafe { vela_ffi_identity_create(seal_key.as_ptr(), seal_key.len()) };
+        let created = unsafe { CStr::from_ptr(created_ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { vela_ffi_free_string(created_ptr) };
 
+        for forbidden in ["hybrid_sk", "share_dk"] {
+            assert!(!created.contains(forbidden), "response leaks {forbidden}: {created}");
+        }
+        let created: serde_json::Value = serde_json::from_str(&created).unwrap();
+        assert_eq!(
+            B64.decode(created["hybrid_ek_b64"].as_str().unwrap()).unwrap().len(),
+            1600
+        );
+
+        let handle = created["handle"].as_u64().unwrap();
         let sig = call(
-            vela_ffi_create_auth_signature_json,
+            vela_ffi_identity_sign_json,
             &serde_json::json!({
-                "hybrid_sk_b64": id.hybrid_sk_b64,
+                "handle": handle,
+                "device_id": "device-123",
                 "challenge_b64": B64.encode([9u8; 32]),
-                "device_id": "device-123"
             })
             .to_string(),
         );
         let sig: AuthSignatureResponse = serde_json::from_str(&sig).unwrap();
         assert!(!sig.signature_b64.is_empty());
+
+        // Reopening the sealed blob is the same device; a wrong key is not.
+        let open_request =
+            serde_json::json!({ "sealed_b64": created["sealed_b64"] }).to_string();
+        let request = CString::new(open_request.clone()).unwrap();
+        let reopened_ptr = unsafe {
+            vela_ffi_identity_open(seal_key.as_ptr(), seal_key.len(), request.as_ptr())
+        };
+        let reopened = unsafe { CStr::from_ptr(reopened_ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { vela_ffi_free_string(reopened_ptr) };
+        let reopened: serde_json::Value = serde_json::from_str(&reopened).unwrap();
+        assert_eq!(reopened["hybrid_vk_b64"], created["hybrid_vk_b64"]);
+
+        let wrong = [7u8; 32];
+        let wrong_ptr =
+            unsafe { vela_ffi_identity_open(wrong.as_ptr(), wrong.len(), request.as_ptr()) };
+        let wrong_out = unsafe { CStr::from_ptr(wrong_ptr) }.to_string_lossy().into_owned();
+        unsafe { vela_ffi_free_string(wrong_ptr) };
+        assert!(wrong_out.contains("error"), "wrong seal key must fail: {wrong_out}");
+
+        // Forgetting the handle ends the ability to sign with it.
+        let forget = call(
+            vela_ffi_identity_forget_json,
+            &serde_json::json!({ "handle": handle }).to_string(),
+        );
+        assert!(forget.contains("true"), "{forget}");
+        let after = call(
+            vela_ffi_identity_sign_json,
+            &serde_json::json!({
+                "handle": handle,
+                "device_id": "device-123",
+                "challenge_b64": B64.encode([9u8; 32]),
+            })
+            .to_string(),
+        );
+        assert!(after.contains("error"), "a forgotten handle cannot sign: {after}");
     }
 
     #[test]

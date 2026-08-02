@@ -179,6 +179,17 @@ impl HybridSecretKey {
     /// Wire size: ML-KEM-1024 DK seed (64 B) ‖ X25519 SK (32 B) = 96 B.
     pub const BYTES_LEN: usize = ML_KEM_DK_SEED_LEN + 32;
 
+    /// Recompute the public half.
+    ///
+    /// Lets a caller hold only the secret key and still publish the key others
+    /// seal to, instead of storing (and moving around) both halves.
+    pub fn public_key(&self) -> HybridPublicKey {
+        HybridPublicKey {
+            mlkem_ek: self.mlkem_dk.encapsulation_key().clone(),
+            x25519_pk: X25519PublicKey::from(&self.x25519_sk),
+        }
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(Self::BYTES_LEN);
         // `to_bytes` returns the 64-byte seed for seed-backed keys (always the

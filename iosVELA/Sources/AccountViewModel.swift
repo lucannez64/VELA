@@ -38,6 +38,13 @@ final class AccountViewModel: ObservableObject {
     /// Persist a token rotated during another screen's request.
     func adoptToken(from client: VelaClient) async { await persistRenewedToken(from: client) }
 
+    /// A live handle for this device's identity, for the flows that need to open
+    /// shares. The keys behind it never come back across the FFI (audit C-1).
+    func identityHandle() -> UInt64? {
+        guard let account = account else { return nil }
+        return store.identityHandle(for: account)?.handle
+    }
+
     private func client() -> VelaClient {
         let urlString = account?.serverURL ?? defaultServer
         return VelaClient(baseURL: URL(string: urlString) ?? URL(string: defaultServer)!, token: account?.token)
@@ -61,7 +68,11 @@ final class AccountViewModel: ObservableObject {
     /// Register a fresh device identity with the server.
     func register(serverURL: String, deviceName: String) {
         run("Registering") { [self] in
-            guard let identity = VelaCoreFFI.generateIdentity() else { throw Failure("identity generation failed") }
+            // The private halves stay native; only the public keys and the
+            // sealed blob come back here (audit C-1).
+            guard let identity = VelaCoreFFI.identityCreate(sealKey: store.sealKey()) else {
+                throw Failure("identity generation failed")
+            }
             let base = URL(string: serverURL) ?? URL(string: defaultServer)!
             let client = VelaClient(baseURL: base)
             let resp = try await client.register(hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
@@ -69,11 +80,11 @@ final class AccountViewModel: ObservableObject {
             let token = await client.currentToken ?? resp.token
             var state = AccountState(
                 serverURL: serverURL, userID: resp.user_id, deviceID: resp.device_id,
-                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK, hybridSK: identity.hybridSK,
+                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
                 token: token
             )
             state.shareEK = identity.shareEK
-            state.shareDK = identity.shareDK
+            state.sealedIdentity = identity.sealed
             try store.save(state)
             account = state
             AuditLog.shared.record("device_registered", String(resp.device_id.prefix(8)))
@@ -87,8 +98,9 @@ final class AccountViewModel: ObservableObject {
             guard var state = account else { throw Failure("not registered") }
             let client = client()
             let challenge = try await client.challenge()
-            guard let signature = VelaCoreFFI.createAuthSignature(
-                hybridSKBase64: state.hybridSK, challengeBase64: challenge, deviceID: state.deviceID) else {
+            guard let identity = store.identityHandle(for: state),
+                  let signature = VelaCoreFFI.identitySign(
+                    handle: identity.handle, challengeBase64: challenge, deviceID: state.deviceID) else {
                 throw Failure("signing failed")
             }
             let resp = try await client.verify(deviceID: state.deviceID, challenge: challenge, signature: signature, deviceType: "ios")
@@ -120,11 +132,13 @@ final class AccountViewModel: ObservableObject {
     /// Best-effort and a no-op once a share key is present.
     private func ensureShareKey(client: VelaClient) async {
         guard var state = account, state.shareEK.isEmpty else { return }
-        guard let pair = VelaCoreFFI.generateShareKeypair() else { return }
+        guard let identity = store.identityHandle(for: state),
+              let rotated = VelaCoreFFI.identityRotateShareKey(
+                sealKey: store.sealKey(), handle: identity.handle) else { return }
         do {
-            try await client.putMyShareEK(pair.shareEK)
-            state.shareEK = pair.shareEK
-            state.shareDK = pair.shareDK
+            try await client.putMyShareEK(rotated.shareEK)
+            state.shareEK = rotated.shareEK
+            state.sealedIdentity = rotated.sealed
             try store.save(state)
             account = state
         } catch {
@@ -321,14 +335,16 @@ final class AccountViewModel: ObservableObject {
                 throw Failure("couldn't reconstruct the vault key from the two shares")
             }
 
-            guard let identity = VelaCoreFFI.generateIdentity() else { throw Failure("identity generation failed") }
+            guard let identity = VelaCoreFFI.identityCreate(sealKey: store.sealKey()) else {
+                throw Failure("identity generation failed")
+            }
             let deviceID = try await client.enrollDeviceViaRecovery(
                 userID: userID, recoveryGrant: recoverResp.recoveryGrant,
                 hybridEK: identity.hybridEK, hybridVK: identity.hybridVK, deviceName: deviceName)
 
             let challenge = try await client.challenge()
-            guard let signature = VelaCoreFFI.createAuthSignature(
-                hybridSKBase64: identity.hybridSK, challengeBase64: challenge, deviceID: deviceID) else {
+            guard let signature = VelaCoreFFI.identitySign(
+                handle: identity.handle, challengeBase64: challenge, deviceID: deviceID) else {
                 throw Failure("signing failed")
             }
             let verified = try await client.verify(deviceID: deviceID, challenge: challenge,
@@ -338,10 +354,10 @@ final class AccountViewModel: ObservableObject {
 
             var state = AccountState(
                 serverURL: serverURL, userID: verified.user_id, deviceID: deviceID,
-                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK, hybridSK: identity.hybridSK,
+                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
                 token: await client.currentToken ?? verified.token)
             state.shareEK = identity.shareEK
-            state.shareDK = identity.shareDK
+            state.sealedIdentity = identity.sealed
             try store.save(state)
             account = state
 
@@ -365,9 +381,17 @@ final class AccountViewModel: ObservableObject {
 
             // Authenticate as the device the primary already registered.
             let client = VelaClient(baseURL: base)
+            // The code carries the signing key the primary generated; hand it to
+            // the native side once and never hold it here (audit C-1).
+            guard let identity = VelaCoreFFI.identityImport(
+                sealKey: store.sealKey(),
+                hybridSKBase64: payload.hybrid_sk,
+                hybridEKBase64: payload.hybrid_ek) else {
+                throw Failure("could not adopt the enrolled identity")
+            }
             let challenge = try await client.challenge()
-            guard let signature = VelaCoreFFI.createAuthSignature(
-                hybridSKBase64: payload.hybrid_sk, challengeBase64: challenge, deviceID: payload.device_id) else {
+            guard let signature = VelaCoreFFI.identitySign(
+                handle: identity.handle, challengeBase64: challenge, deviceID: payload.device_id) else {
                 throw Failure("signing failed")
             }
             let verified = try await client.verify(deviceID: payload.device_id, challenge: challenge,
@@ -381,10 +405,12 @@ final class AccountViewModel: ObservableObject {
             }
             try vault.adoptVault(rms: rms, mode: secure, password: password)
 
-            let state = AccountState(
+            var state = AccountState(
                 serverURL: effectiveServer, userID: verified.user_id, deviceID: payload.device_id,
-                hybridEK: payload.hybrid_ek, hybridVK: payload.hybrid_vk, hybridSK: payload.hybrid_sk,
+                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
                 token: await client.currentToken ?? verified.token)
+            state.shareEK = identity.shareEK
+            state.sealedIdentity = identity.sealed
             try store.save(state)
             account = state
 

@@ -85,7 +85,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | open |
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | open |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | open |
-| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **PARTIAL** (RMS crosses as bytes; identity keys still strings) |
+| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
 | C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | open |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | open |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | open |
@@ -570,20 +570,34 @@ corrupted/synced/imported entry suffices. (Companion issue: `velaEscapeHtml`
 
 ### C-1 — Private keys / RMS cross the JNI/FFI boundary as immutable base64 `String`s  ·  **HIGH**
 
-> **STATUS: PARTIALLY FIXED — the RMS no longer crosses as a string.** Every JNI
-> entry point that consumes the RMS (vault and per-chunk encrypt/decrypt, web
-> session chunk keys, Shamir split) now takes it as a `ByteArray`, and the Rust
-> copy is wiped on drop (`SecretBytes`). The paths that *return* a recovered RMS
-> (RMS capsule decrypt, Shamir combine) write into a caller-provided `ByteArray`
-> instead of returning base64 in the JSON. Kotlin callers already held the RMS as
-> a `ByteArray` and wipe it with `fill(0)`, so the un-zeroizable base64 `String`
-> is gone from the RMS path entirely.
+> **STATUS: FIXED, in two parts.**
 >
-> **Still open:** `generate_server_identity` returns the hybrid signing key and
-> share decapsulation key as base64 strings, and `ServerIdentityStore` persists
-> them that way. Fixing that is a storage-format change (opaque handles + a
-> Rust-side keystore), tracked separately. iOS has the same string-based FFI
-> shape and is tracked with it.
+> **The RMS.** Every JNI entry point that consumes it (vault and per-chunk
+> encrypt/decrypt, web session chunk keys, Shamir split) takes a `ByteArray`, and
+> the Rust copy is wiped on drop (`SecretBytes`). The paths that *return* a
+> recovered RMS (capsule decrypt, Shamir combine) write into a caller-provided
+> array instead of returning base64. Kotlin already held the RMS as a `ByteArray`
+> and wipes it with `fill(0)`.
+>
+> **The long-term keys.** `vela_crypto::identity` now owns the device signing key
+> and the share decapsulation key. Callers get an opaque `IdentityHandle` plus the
+> public halves, ask the core to `sign_auth` or `open_share`, and persist only a
+> `DeviceIdentity::seal` blob — AEAD under a 32-byte key that itself crosses as
+> bytes, never a string. Both bridges expose it (`nativeIdentity*` on Android,
+> `vela_ffi_identity_*` on iOS) and **the entry points that used to hand out or
+> accept a private key are deleted**, so there is no longer a path that can
+> produce one: `generate_server_identity`, `generate_share_keypair`,
+> `create_auth_signature(hybrid_sk)` and `open_share(share_dk)` are gone from both
+> ABIs.
+>
+> Storage changed with it. Android's `ServerIdentity` and iOS's `AccountState`
+> keep identifiers, public keys and a sealed blob; the seal key lives in
+> EncryptedSharedPreferences / the Keychain. Devices holding the old plaintext
+> keys migrate on first load — read once, sealed natively, originals deleted.
+>
+> **Residual:** enrollment still transports a signing key inside the enrollment
+> code, so it exists as a string for the moment it is imported. That is the
+> protocol's shape, not the bridge's, and is out of scope here.
 
 **Locations**
 - `libVELA/vela-android-bridge/src/lib.rs:82-88, 426-429, 478-501` (key material returned as base64 strings)

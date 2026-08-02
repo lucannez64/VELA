@@ -103,10 +103,11 @@ class SharingRepository(
         val (linked, linkedToken) = client.getLinkedShares(currentToken)
         linkedToken?.let { currentToken = it }
 
-        val shareDkB64 = identityStore.load()?.shareDkB64
+        // A handle, not a key: the share decapsulation key stays native (C-1).
+        val identityHandle = identityStore.handle()
 
         val received = inbox.map { item ->
-            val decoded = if (shareDkB64 != null) openShareItem(shareDkB64, item.capsuleB64) else null
+            val decoded = identityHandle?.let { openShareItem(it, item.capsuleB64) }
             VaultShare(
                 id = item.id,
                 itemId = item.id,
@@ -161,11 +162,11 @@ class SharingRepository(
     }
 
     fun acceptShare(shareId: String) {
-        val shareDkB64 = identityStore.load()?.shareDkB64 ?: error("Share key not available")
+        val identityHandle = identityStore.handle() ?: error("Share key not available")
         sync.withAuthenticatedClient { client, token ->
             val (inbox, newToken) = client.getInbox(token)
             val item = inbox.find { it.id == shareId } ?: error("Share not found")
-            val decoded = openShareItem(shareDkB64, item.capsuleB64)?.withReceivedShare()
+            val decoded = openShareItem(identityHandle, item.capsuleB64)?.withReceivedShare()
                 ?: error("Could not decrypt shared item")
             vault.addItem(decoded)
             client.deleteInboxItem(newToken ?: token, shareId)
@@ -274,8 +275,8 @@ class SharingRepository(
         return out.toString()
     }
 
-    private fun openShareItem(shareDkB64: String, capsuleB64: String): VaultItem? {
-        val json = NativeVelaCore.openShare(shareDkB64, capsuleB64) ?: return null
+    private fun openShareItem(identityHandle: Long, capsuleB64: String): VaultItem? {
+        val json = NativeVelaCore.identityOpenShare(identityHandle, capsuleB64) ?: return null
         return VaultJson.decodeItem(json.toByteArray(Charsets.UTF_8))
     }
 }
