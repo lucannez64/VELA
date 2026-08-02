@@ -340,8 +340,16 @@ a stored web login.
 
 ### A-3 — Release builds silently signed with the debug key when keystore is missing  ·  **MEDIUM**
 
-> **STATUS: FIXED.** A release task without a keystore now fails with an
-> explicit message instead of falling back to the debug key. The check runs at
+> **STATUS: FIXED (both halves).** A release task without a keystore now fails
+> with an explicit message instead of falling back to the debug key, and the
+> release build type enables R8 (`isMinifyEnabled` + `isShrinkResources`) with
+> keep rules for the JNI bridge — whose symbols are resolved by class and method
+> *name*, so obfuscating them would break the app at its first native call. An
+> `-assumenosideeffects` block strips `Log.d`/`Log.v` and the string constants
+> behind them, which is what "debug metadata ships in release" meant. `verify-android`
+> now builds a release APK on every PR so R8 runs in CI rather than first on a
+> user's phone, and the release workflow keeps `mapping.txt` as a build artifact
+> so stack traces stay readable. The check runs at
 > task-graph time, not during configuration, so `assembleDebug` and `gradlew
 > tasks` keep working; `-PvelaAllowDebugSigning=true` is the deliberate opt-out.
 > The release workflow's keystore secret is configured, so signed releases are
@@ -837,7 +845,7 @@ credit the existing hardening:
 | extension | `manifests/*.json:56,60-69` | Unused `webNavigation` permission; `web_accessible_resources` enables fingerprinting |
 | extension | `content/content-script.js:1020` | Unescaped `location.href` hostname in `innerHTML` (URL spec makes `<>"'&` impossible, but inconsistent) |
 | extension | `native-messaging/vela-native-messaging-host.py:81-97` | Windows IPC-auth file check is a no-op; capability token is a static bearer with no HMAC/nonce |
-| android | `build.gradle.kts:49-54` | No R8/minification → `Log.d` metadata ships in release |
+| android | ~~`build.gradle.kts:49-54`~~ | ~~No R8/minification → `Log.d` metadata ships~~ **FIXED** — R8 on, with JNI keep rules and log stripping |
 | android | `sync/SyncSettingsStore.kt:84-88` | Server URL accepts `http://` (OS blocks cleartext, but failure is silent) |
 | android | `security/SecureClipboard.kt:20` | 30s clipboard exposure window (industry-standard, but the largest live-secret surface) |
 | crypto | `shamir.rs:19-56` | Variable-time GF(2⁸) arithmetic (cache-timing leak of RMS bytes; local-only) |

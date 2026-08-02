@@ -347,14 +347,36 @@ jobs:
           printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n' > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
+      # The AUR takes itself down for maintenance every so often. The release
+      # artifacts are already published by this point, so an unreachable AUR
+      # must not fail the run: retry a few times, then warn and skip. The next
+      # release picks the package back up.
+      - name: Clone the AUR package
+        if: steps.aur.outputs.enabled == 'true'
+        id: clone
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if timeout 120 git clone "ssh://aur@aur.archlinux.org/${AUR_PACKAGE}.git" aur; then
+              echo "cloned=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            rm -rf aur
+            if [ "$attempt" -lt 5 ]; then
+              DELAY=$((attempt * 30))
+              echo "AUR clone attempt $attempt failed; retrying in ${DELAY}s"
+              sleep "$DELAY"
+            fi
+          done
+          echo "::warning::AUR unreachable after 5 attempts (maintenance?) — skipping the AUR update for this release"
+          echo "cloned=false" >> "$GITHUB_OUTPUT"
+
       # Pushing this commit to the AUR creates the package if it does not
       # exist yet (as long as the name is available and the key's account
       # owns it), and updates it otherwise.
       - name: Update PKGBUILD and push to AUR
-        if: steps.aur.outputs.enabled == 'true'
+        if: steps.aur.outputs.enabled == 'true' && steps.clone.outputs.cloned == 'true'
         run: |
           set -e
-          git clone "ssh://aur@aur.archlinux.org/${AUR_PACKAGE}.git" aur
           cd aur
 
           cat > PKGBUILD <<EOF
@@ -392,7 +414,18 @@ jobs:
           git add PKGBUILD .SRCINFO
           if git diff --cached --quiet; then
             echo "AUR package already up to date"
-          else
-            git commit -m "Update to ${{ steps.version.outputs.version }}"
-            git push
+            exit 0
           fi
+
+          git commit -m "Update to ${{ steps.version.outputs.version }}"
+          for attempt in 1 2 3; do
+            if timeout 120 git push; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              DELAY=$((attempt * 30))
+              echo "AUR push attempt $attempt failed; retrying in ${DELAY}s"
+              sleep "$DELAY"
+            fi
+          done
+          echo "::warning::Could not push to the AUR — skipping the AUR update for this release"

@@ -61,6 +61,18 @@ android {
         release {
             signingConfig = signingConfigs.findByName("release")
                 ?: if (allowDebugSigning) signingConfigs.getByName("debug") else null
+
+            // Shrink, obfuscate, and strip the debug logging that used to ship
+            // in release APKs (audit A-3). `proguard-rules.pro` carries the
+            // keep rules for the one thing here resolved by name at runtime —
+            // the JNI bridge — and the `-assumenosideeffects` block that
+            // removes `Log.d`/`Log.v` and their string constants.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 

@@ -99,6 +99,17 @@ jobs:
           test -f "$SRC" || { echo "APK not found at $SRC"; find androidVELA/app/build/outputs -name '*.apk'; exit 1; }
           cp "$SRC" "VELA-android-v${{ steps.version.outputs.version }}.apk"
 
+      # The release build is minified, so a stack trace from it is unreadable
+      # without the mapping file. Keep it as a build artifact (not a release
+      # asset — it is deobfuscation material, not something to hand out).
+      - name: Keep the R8 mapping for retrace
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-mapping-v${{ steps.version.outputs.version }}
+          path: androidVELA/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -111,6 +122,7 @@ jobs:
             - versionCode: ${{ steps.version.outputs.count }}
             - ABIs: arm64-v8a, armeabi-v7a, x86, x86_64
             - Signing: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && 'stable release key' || 'debug key (sideload / testing build)' }}
+            - Minified with R8 (mapping.txt kept as a build artifact)
           files: VELA-android-v${{ steps.version.outputs.version }}.apk
           draft: false
           prerelease: false
