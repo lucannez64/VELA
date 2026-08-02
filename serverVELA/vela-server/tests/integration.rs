@@ -823,20 +823,56 @@ async fn web_session_is_bound_to_the_committed_approver() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // ...and the granted session belongs to the approver, not the attacker.
+    let list_req = |token: &str| {
+        Request::builder()
+            .uri("/web-sessions")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let listed_ids = |body: serde_json::Value| -> Vec<String> {
+        body["sessions"]
+            .as_array()
+            .expect("sessions array")
+            .iter()
+            .map(|s| s["id"].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+
+    let resp = app.clone().oneshot(list_req(&victim_token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+    let ids = listed_ids(serde_json::from_slice(&b).unwrap());
+    assert!(ids.contains(&session_id), "approver sees their own session");
+
+    // The attacker must not discover the session either: it is not in their
+    // list, and revoking it is a 404 rather than a way to kill someone else's
+    // browser session.
+    let resp = app.clone().oneshot(list_req(&attacker_token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+    let ids = listed_ids(serde_json::from_slice(&b).unwrap());
+    assert!(!ids.contains(&session_id), "attacker must not see the session");
+
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
-                .uri("/web-sessions")
-                .header("authorization", format!("Bearer {victim_token}"))
+                .method("DELETE")
+                .uri(format!("/web-session/{session_id}"))
+                .header("authorization", format!("Bearer {attacker_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // ...and the refused revoke left the session alive for its real owner.
+    let resp = app.oneshot(list_req(&victim_token)).await.unwrap();
     let b = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
-    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(v["sessions"][0]["id"], session_id);
+    let ids = listed_ids(serde_json::from_slice(&b).unwrap());
+    assert!(ids.contains(&session_id), "session survives a refused revoke");
 }
 
 /// Audit S-2: the poll endpoint is unauthenticated by design, so possession of
