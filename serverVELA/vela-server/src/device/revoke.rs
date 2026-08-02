@@ -54,6 +54,25 @@ pub async fn post_revoke(
         return Err(AppError::BadRequest("device is already revoked".into()));
     }
 
+    let device_id_str = body.target_device_id.to_string();
+
+    // Stop the device *before* recording that it is stopped.
+    //
+    // The auth middleware gates on the sled sentinel and the per-JTI markers,
+    // not on the SQL `revoked` column, so writing SQL first left a window —
+    // short, but real, and exactly during the seconds someone is revoking a
+    // device because they believe it is compromised — where the row said
+    // revoked and every existing token still worked. Doing it in this order
+    // fails the safe way instead: if the SQL update below fails, the device is
+    // already locked out and the row can be reconciled, whereas the reverse
+    // leaves a device marked revoked that still has access.
+    rate_limit::revoke_all_device_jtis(&state.store, &device_id_str)?;
+
+    let sentinel_key = format!("device:revoked:{}", body.target_device_id);
+    state
+        .store
+        .set_ex(&sentinel_key, &[1u8], rate_limit::TOKEN_MAX_LIFETIME_SECS)?;
+
     let now = Utc::now().to_rfc3339();
     state
         .db
@@ -66,15 +85,6 @@ pub async fn post_revoke(
             ],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let device_id_str = body.target_device_id.to_string();
-
-    rate_limit::revoke_all_device_jtis(&state.store, &device_id_str)?;
-
-    let sentinel_key = format!("device:revoked:{}", body.target_device_id);
-    state
-        .store
-        .set_ex(&sentinel_key, &[1u8], rate_limit::TOKEN_MAX_LIFETIME_SECS)?;
 
     tracing::info!(
         target_device = %body.target_device_id,

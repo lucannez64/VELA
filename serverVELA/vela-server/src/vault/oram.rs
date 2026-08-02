@@ -69,6 +69,7 @@ pub async fn get_path(
     Query(query): Query<PathQuery>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<OramPathResponse>)> {
+    let tree_id = crate::ids::validate_id("tree_id", &tree_id)?.to_string();
     let indices = path_bucket_indices(query.height, leaf)?;
     let mut buckets = Vec::with_capacity(indices.len());
 
@@ -150,6 +151,7 @@ pub async fn put_path(
     session: AuthSession,
     Json(body): Json<PutOramPathRequest>,
 ) -> Result<(HeaderMap, Json<PutOramPathResponse>)> {
+    let tree_id = crate::ids::validate_id("tree_id", &tree_id)?.to_string();
     let expected_indices = path_bucket_indices(body.height, leaf)?;
 
     if body.buckets.len() != expected_indices.len() {

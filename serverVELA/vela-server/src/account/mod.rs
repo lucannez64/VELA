@@ -49,6 +49,31 @@ pub async fn post_register(
 
     rate_limit::check(&state.store, &format!("rl:register:ip:{ip}"), 5, 3600)?;
 
+    // The per-IP limit bounds one source, not a botnet rotating through
+    // addresses. An operator who set MAX_ACCOUNTS gets a hard ceiling too.
+    if let Some(max_accounts) = state.config.max_accounts {
+        let rows = state
+            .db
+            .query("SELECT COUNT(*) FROM users", ())
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let count = rows
+            .into_iter()
+            .next()
+            .transpose()
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .as_ref()
+            .and_then(|row| crate::db::row_val(row, 0).ok())
+            .and_then(|v| v.as_int64())
+            .unwrap_or(0);
+        if count as u64 >= max_accounts {
+            // Deliberately not "the server is full with N accounts": how many
+            // users a deployment has is not the caller's business.
+            return Err(AppError::BadRequest(
+                "this server is not accepting new accounts".into(),
+            ));
+        }
+    }
+
     let hybrid_ek = decode_b64_exact(&body.hybrid_ek, HYBRID_EK_LEN, "hybrid_ek")?;
     let hybrid_vk = decode_b64_exact(&body.hybrid_vk, HYBRID_VK_LEN, "hybrid_vk")?;
     let share_ek_b64 = body

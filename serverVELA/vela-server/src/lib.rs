@@ -10,6 +10,7 @@ pub mod data_lock;
 pub mod db;
 pub mod device;
 pub mod error;
+pub mod ids;
 pub mod middleware;
 pub mod migration;
 pub mod net;

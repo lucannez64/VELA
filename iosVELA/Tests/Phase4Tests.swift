@@ -20,12 +20,20 @@ final class Phase4Tests: XCTestCase {
     func testVaultChunkRoundTripBindsChunkID() {
         let rms = Data(repeating: 5, count: 32).base64EncodedString()
         let vaultJSON = "{\"items\":[]}"
-        guard let cipher = VelaCoreFFI.encryptVaultChunk(rmsBase64: rms, chunkID: "vault", vaultJSON: vaultJSON) else {
+        guard let cipher = VelaCoreFFI.encryptVaultChunk(rmsBase64: rms, chunkID: "vault", vaultJSON: vaultJSON, lamportClock: 1) else {
             return XCTFail("encrypt failed")
         }
-        XCTAssertEqual(VelaCoreFFI.decryptVaultChunk(rmsBase64: rms, chunkID: "vault", ciphertextBase64: cipher), vaultJSON)
+        XCTAssertEqual(
+            VelaCoreFFI.decryptVaultChunk(
+                rmsBase64: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 1),
+            vaultJSON)
         // A different chunk id derives a different key → must fail.
-        XCTAssertNil(VelaCoreFFI.decryptVaultChunk(rmsBase64: rms, chunkID: "other", ciphertextBase64: cipher))
+        XCTAssertNil(VelaCoreFFI.decryptVaultChunk(
+            rmsBase64: rms, chunkID: "other", ciphertextBase64: cipher, lamportClock: 1))
+        // And an older revision of the same chunk must fail too — the rollback
+        // the seal exists to stop (audit C-2).
+        XCTAssertNil(VelaCoreFFI.decryptVaultChunk(
+            rmsBase64: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 0))
     }
 
     /// Audit C-1: the identity comes back as a handle plus public halves. No

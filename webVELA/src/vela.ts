@@ -73,10 +73,29 @@ export function decryptVaultChunk(
   ).vault_json;
 }
 
-/** Encrypt a vault chunk for upload → base64 ciphertext (RW save). */
-export function encryptVaultChunk(chunkKeyB64: string, vaultJson: string): string {
+/**
+ * Encrypt a vault chunk for upload → base64 ciphertext (RW save).
+ *
+ * `chunkId` and `lamportClock` are sealed into the ciphertext so the server
+ * cannot serve an older revision back as if it were current (audit C-2, rollout
+ * step 3). `lamportClock` must be the clock actually sent with the upload, or
+ * the result will not decrypt.
+ */
+export function encryptVaultChunk(
+  chunkKeyB64: string,
+  vaultJson: string,
+  chunkId: string,
+  lamportClock: number,
+): string {
   return parse<{ ciphertext_b64: string }>(
-    encrypt_vault_chunk_json(JSON.stringify({ chunk_key_b64: chunkKeyB64, vault_json: vaultJson })),
+    encrypt_vault_chunk_json(
+      JSON.stringify({
+        chunk_key_b64: chunkKeyB64,
+        vault_json: vaultJson,
+        chunk_id: chunkId,
+        lamport_clock: lamportClock,
+      }),
+    ),
   ).ciphertext_b64;
 }
 
