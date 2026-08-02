@@ -106,6 +106,23 @@ enum VelaCoreFFI {
         return field(response, "vault_json")
     }
 
+    // MARK: - Web sessions
+
+    /// The per-chunk vault keys a read-write web session is granted, as
+    /// `chunk_id → base64(32-byte key)`. The browser gets these instead of the
+    /// RMS, so a leaked capsule yields vault chunks only — no identity, share,
+    /// audit or recovery key can be derived from it (audit D-2).
+    static func webSessionChunkKeys(rmsBase64: String) -> [String: String]? {
+        let request = json(["rms_b64": rmsBase64])
+        let response = request.withCString { consume(vela_ffi_web_session_chunk_keys_json($0)) }
+        guard let data = response.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let keys = obj["chunk_keys"] as? [String: String], !keys.isEmpty else {
+            return nil
+        }
+        return keys
+    }
+
     // MARK: - Enrollment
 
     /// Short out-of-band verification code for an enrollment code string.

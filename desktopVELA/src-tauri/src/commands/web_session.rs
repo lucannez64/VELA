@@ -6,27 +6,24 @@
 //!
 //! Capsule envelope (sealed plaintext, JSON):
 //! ```json
-//! { "v": 1, "mode": "ro", "vault": <VaultStore> }   // read-only snapshot
-//! { "v": 1, "mode": "rw", "rms_b64": "<base64 32B>" } // read-write live
+//! { "v": 1, "mode": "ro", "vault": <VaultStore> }              // read-only snapshot
+//! { "v": 2, "mode": "rw", "chunk_keys": { "<chunk id>": "<base64 32B>" } } // read-write live
 //! ```
+//!
+//! The read-write envelope carries the browser's per-chunk vault keys, never the
+//! RMS: a leaked capsule yields vault chunk contents only, not the root the whole
+//! key hierarchy (identity, share, audit, MAC, ORAM, recovery) derives from.
 
 use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::api::{ApiClient, WebSessionInfo};
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::AppState;
-
-/// Optional JSON form of the link code (older format). The current QR/code is
-/// just the bare `session_id`; we still accept a JSON blob containing one.
-#[derive(Debug, Deserialize)]
-pub struct WebSessionQr {
-    pub session_id: String,
-}
 
 const BASE32_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -55,33 +52,26 @@ fn key_fingerprint(raw_key: &[u8]) -> String {
     base32_encode(&hash[..8])
 }
 
-/// Extract the session id (and optional key fingerprint / link nonce) from the
-/// scanned/pasted code. Formats accepted:
-///   - `{session_id}#{fingerprint}#{link_nonce}` ← current QR format
-///   - `{session_id}#{fingerprint}`              ← previous QR format
-///   - bare UUID                                  ← old format (no fingerprint)
-///   - JSON `{"session_id": "..."}`               ← legacy format
-/// Returns `(session_id, fingerprint?, link_nonce?)`.
-fn parse_session_id(input: &str) -> Result<(String, Option<String>, Option<String>), String> {
+/// Extract the session id, key fingerprint and link nonce from the scanned/pasted
+/// code. The only accepted form is the full `{session_id}#{fingerprint}#{link_nonce}`:
+/// the shorter legacy forms let a code skip the key-substitution check (and the
+/// nonce binding) entirely, so they are rejected rather than silently downgraded.
+fn parse_session_id(input: &str) -> Result<(String, String, String), String> {
     let t = input.trim();
-    if t.starts_with('{') {
-        let qr: WebSessionQr =
-            serde_json::from_str(t).map_err(|e| format!("Invalid web access code: {e}"))?;
-        return Ok((qr.session_id, None, None));
-    }
     if t.is_empty() {
         return Err("Empty web access code".into());
     }
     let mut parts = t.splitn(3, '#');
     let id = parts.next().unwrap_or_default().to_string();
-    let fp = parts
-        .next()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    let link_nonce = parts
-        .next()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+    let fp = parts.next().unwrap_or_default().to_string();
+    let link_nonce = parts.next().unwrap_or_default().to_string();
+    if id.is_empty() || fp.is_empty() || link_nonce.is_empty() {
+        return Err(
+            "This web access code is incomplete or from an unsupported version. \
+             Reload the web page and scan the new code."
+                .into(),
+        );
+    }
     Ok((id, fp, link_nonce))
 }
 
@@ -124,16 +114,14 @@ pub async fn grant_web_session(
         .decode(ephemeral_pk_b64.as_bytes())
         .map_err(|_| "Invalid ephemeral key from server".to_string())?;
 
-    // Verify the key fingerprint if one was embedded in the QR.
-    // A mismatch means the server may have substituted a different key — abort.
-    if let Some(fp) = expected_fp {
-        let actual_fp = key_fingerprint(&ephemeral_pk);
-        if actual_fp != fp {
-            return Err(format!(
-                "Key fingerprint mismatch — possible server-side key substitution. \
-                 Expected {fp}, got {actual_fp}. Do not proceed."
-            ));
-        }
+    // Verify the key fingerprint from the QR against the key the server handed
+    // back. A mismatch means the server may have substituted its own key — abort.
+    let actual_fp = key_fingerprint(&ephemeral_pk);
+    if actual_fp != expected_fp {
+        return Err(format!(
+            "Key fingerprint mismatch — possible server-side key substitution. \
+             Expected {expected_fp}, got {actual_fp}. Do not proceed."
+        ));
     }
 
     // Build the capsule plaintext from the current (unlocked) state.
@@ -149,10 +137,18 @@ pub async fn grant_web_session(
                         "This browser did not offer read-write access; choose read-only.".into(),
                     );
                 }
+                // Per-chunk vault keys, not the RMS: the browser can read and
+                // rewrite the vault for the session, but never holds the root of
+                // the key hierarchy (audit D-2).
+                let chunk_keys: serde_json::Map<String, serde_json::Value> =
+                    vela_crypto::kdf::web_session_chunk_keys(&crypto.rms())
+                        .into_iter()
+                        .map(|(id, key)| (id, serde_json::json!(B64.encode(key.as_bytes()))))
+                        .collect();
                 serde_json::json!({
-                    "v": 1,
+                    "v": 2,
                     "mode": "rw",
-                    "rms_b64": B64.encode(crypto.rms()),
+                    "chunk_keys": chunk_keys,
                 })
             }
             _ => {
@@ -174,7 +170,7 @@ pub async fn grant_web_session(
             &mode,
             &capsule_b64,
             ttl_secs,
-            link_nonce.as_deref(),
+            &link_nonce,
         )
         .await
         .map_err(|e| format!("Failed to grant web access: {e}"))?;

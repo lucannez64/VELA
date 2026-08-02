@@ -7,10 +7,9 @@ name: security
 #                   (temp DATA_DIR, teardown via trap — never touches production).
 #
 # Gating status:
-#   - regression's IDOR/XFF defence test IS a hard gate.
-#   - regression's S-1 test is reported but NON-blocking (EXPECT_S1_OPEN=1) while
-#     the web-session grant hijack is open. Drop the flag once the fix lands.
-#   - static-scan reports known findings (S-2, M4 x3, L2, E-1, E-2) but does not
+#   - both regression tests (web-session grant binding, IDOR/XFF defence) ARE
+#     hard gates.
+#   - static-scan reports known findings (M4 x2, L2, E-1, E-2) but does not
 #     block, so existing issues don't stall unrelated PRs. After the findings are
 #     fixed, remove continue-on-error to make it a hard gate.
 
@@ -74,5 +73,5 @@ jobs:
       - name: Build server
         run: cargo build --manifest-path serverVELA/Cargo.toml
 
-      - name: Run exploit regression suite (S-1 reported, IDOR/XFF gates)
-        run: EXPECT_S1_OPEN=1 ./security/exploits/run-exploits.sh
+      - name: Run exploit regression suite (hard gate)
+        run: ./security/exploits/run-exploits.sh

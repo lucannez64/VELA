@@ -2,11 +2,6 @@ import CryptoKit
 import Foundation
 import SwiftUI
 
-/// Older JSON form of the link code. The current code is a bare `session_id`.
-struct WebSessionQR: Decodable {
-    let session_id: String
-}
-
 /// Drives the Phase 4 server flows: register/enroll this device, authenticate,
 /// two-way vault sync, sharing, and recovery-share setup — all over `VelaClient`.
 @MainActor
@@ -168,22 +163,20 @@ final class AccountViewModel: ObservableObject {
     func grantWebAccess(codeJSON: String, mode: String, ttlSecs: Int) {
         run("Approving web access") { [self] in
             guard account != nil else { throw Failure("register first") }
-            // The code is a bare session id (optionally with #fingerprint and
-            // #link_nonce suffixes); fetch the browser's ephemeral key from the
-            // server (keeps the QR small enough to scan).
+            // The code is `{session id}#{fingerprint}#{link_nonce}`; fetch the
+            // browser's ephemeral key from the server (keeps the QR small enough
+            // to scan).
             let (sessionID, expectedFP, linkNonce) = try parseWebSessionID(codeJSON)
             let client = client()
             let (ephemeralPK, webVK) = try await client.getWebSessionKeys(sessionID: sessionID)
 
-            // Verify fingerprint if present to detect server-side key substitution.
-            if let expected = expectedFP {
-                guard let keyData = Data(base64Encoded: ephemeralPK) else {
-                    throw Failure("Invalid ephemeral key from server")
-                }
-                let actual = ekFingerprint(keyData)
-                guard actual == expected else {
-                    throw Failure("Key fingerprint mismatch — possible server-side key substitution. Expected \(expected), got \(actual). Approval aborted.")
-                }
+            // Verify the fingerprint to detect server-side key substitution.
+            guard let keyData = Data(base64Encoded: ephemeralPK) else {
+                throw Failure("Invalid ephemeral key from server")
+            }
+            let actual = ekFingerprint(keyData)
+            guard actual == expectedFP else {
+                throw Failure("Key fingerprint mismatch — possible server-side key substitution. Expected \(expectedFP), got \(actual). Approval aborted.")
             }
 
             let envelope: String
@@ -192,7 +185,16 @@ final class AccountViewModel: ObservableObject {
                     throw Failure("This browser did not offer read-write access; choose read-only.")
                 }
                 guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
-                envelope = "{\"v\":1,\"mode\":\"rw\",\"rms_b64\":\"\(rms.base64EncodedString())\"}"
+                // Per-chunk vault keys, not the RMS: the browser can read and
+                // rewrite the vault for the session, but never holds the root of
+                // the key hierarchy (audit D-2).
+                guard let chunkKeys = VelaCoreFFI.webSessionChunkKeys(
+                    rmsBase64: rms.base64EncodedString()) else {
+                    throw Failure("Could not derive the session's vault keys")
+                }
+                let keysJSON = String(
+                    decoding: try JSONSerialization.data(withJSONObject: chunkKeys), as: UTF8.self)
+                envelope = "{\"v\":2,\"mode\":\"rw\",\"chunk_keys\":\(keysJSON)}"
             } else {
                 let itemsJSON = String(decoding: try JSONEncoder().encode(vault.items), as: UTF8.self)
                 envelope = "{\"v\":1,\"mode\":\"ro\",\"vault\":{\"items\":\(itemsJSON),\"tombstones\":[]}}"
@@ -213,23 +215,17 @@ final class AccountViewModel: ObservableObject {
         }
     }
 
-    /// The scanned/pasted code is `{id}#{fingerprint}#{link_nonce}`, `{id}#{fingerprint}`,
-    /// a bare id, or (older) a JSON object. Returns `(sessionID, fingerprint?, linkNonce?)`.
-    private func parseWebSessionID(_ code: String) throws -> (String, String?, String?) {
+    /// The scanned/pasted code must be the full `{id}#{fingerprint}#{link_nonce}`.
+    /// The shorter legacy forms skip the key-substitution check (no fingerprint)
+    /// or the browser binding (no nonce), so they are refused, not downgraded.
+    private func parseWebSessionID(_ code: String) throws -> (String, String, String) {
         let t = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.hasPrefix("{") {
-            guard let data = t.data(using: .utf8),
-                  let qr = try? JSONDecoder().decode(WebSessionQR.self, from: data) else {
-                throw Failure("Invalid web access code")
-            }
-            return (qr.session_id, nil, nil)
-        }
-        guard !t.isEmpty else { throw Failure("Empty web access code") }
         let parts = t.split(separator: "#", maxSplits: 2, omittingEmptySubsequences: false)
             .map(String.init)
-        let fp = parts.count > 1 && !parts[1].isEmpty ? parts[1] : nil
-        let nonce = parts.count > 2 && !parts[2].isEmpty ? parts[2] : nil
-        return (parts[0], fp, nonce)
+        guard parts.count == 3, !parts[0].isEmpty, !parts[1].isEmpty, !parts[2].isEmpty else {
+            throw Failure("This web access code is incomplete or from an unsupported version. Reload the web page and scan the new code.")
+        }
+        return (parts[0], parts[1], parts[2])
     }
 
     /// Compute the key fingerprint: base32(sha256(rawKeyBytes)[0:8]).

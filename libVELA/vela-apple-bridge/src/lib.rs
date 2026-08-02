@@ -102,6 +102,17 @@ struct AuthSignatureResponse {
 // Phase 4 ── sync / enrollment / recovery payloads ──────────────────────────────
 
 #[derive(Deserialize)]
+struct WebSessionChunkKeysRequest {
+    rms_b64: String,
+}
+#[derive(Serialize)]
+struct WebSessionChunkKeysResponse {
+    /// `chunk_id → base64(32-byte key)` for the chunks a read-write web session
+    /// is granted. The RMS itself never leaves the approver (audit D-2).
+    chunk_keys: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
 struct EncryptChunkRequest {
     rms_b64: String,
     chunk_id: String,
@@ -235,6 +246,13 @@ pub unsafe extern "C" fn vela_ffi_create_auth_signature_json(
     request_json: *const c_char,
 ) -> *mut c_char {
     json_result(|| create_auth_signature_json(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_web_session_chunk_keys_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| web_session_chunk_keys_json(c_str(request_json)?))
 }
 
 /// # Safety
@@ -389,6 +407,18 @@ fn create_auth_signature_json(request_json: &str) -> FfiResult<AuthSignatureResp
 fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
     let context = format!("{} || {:?}", CHUNK_KEY_CONTEXT, chunk_id.as_bytes());
     *kdf::derive(&context, rms).as_bytes()
+}
+
+/// Derive the per-chunk vault keys handed to a read-write web session, so the
+/// approver can seal those instead of the RMS (audit D-2).
+fn web_session_chunk_keys_json(request_json: &str) -> FfiResult<WebSessionChunkKeysResponse> {
+    let req: WebSessionChunkKeysRequest = serde_json::from_str(request_json)?;
+    let rms = decode_rms(&req.rms_b64)?;
+    let chunk_keys = kdf::web_session_chunk_keys(&rms)
+        .into_iter()
+        .map(|(id, key)| (id, B64.encode(key.as_bytes())))
+        .collect();
+    Ok(WebSessionChunkKeysResponse { chunk_keys })
 }
 
 fn encrypt_vault_chunk_json(request_json: &str) -> FfiResult<EncryptVaultResponse> {

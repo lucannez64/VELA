@@ -2,10 +2,12 @@
 //! vault (see `EPHEMERAL_WEB_ACCESS_DESIGN.md`).
 //!
 //! Flow: a browser `POST /web-session/start` (unauthenticated) with its ephemeral
-//! hybrid public keys, shows a QR, and polls `GET /web-session/:id`. An enrolled
-//! device scans the QR and `POST /web-session/:id/grant`s — choosing **mode**
+//! hybrid public keys, **the account id it wants access to** and the hash of a
+//! **poll secret only it holds**, shows a QR, and polls `GET /web-session/:id`
+//! (presenting that secret). An enrolled device of *that account* scans the QR
+//! and `POST /web-session/:id/grant`s — choosing **mode**
 //! (`ro` snapshot / `rw` live) and **TTL** — sealing a capsule (RO snapshot or the
-//! RW RMS) to the ephemeral KEM key. For RW the browser then proves possession of
+//! RW per-chunk vault keys) to the ephemeral KEM key. For RW the browser then proves possession of
 //! its ephemeral signing key at `POST /web-session/:id/token` and receives a
 //! PASETO whose absolute ceiling is the session expiry. Any device can revoke via
 //! `DELETE /web-session/:id`.
@@ -39,6 +41,10 @@ const EPHEMERAL_PK_LEN: usize = 1568 + 32;
 /// ML-DSA-87 vk (2592) + Ed25519 vk (32).
 const WEB_VK_LEN: usize = 2592 + 32;
 const LINK_NONCE_LEN: usize = 32;
+/// SHA-256 digest of the browser's poll secret.
+const POLL_SECRET_HASH_LEN: usize = 32;
+/// Header carrying the raw poll secret on `GET /web-session/:id`.
+const POLL_SECRET_HEADER: &str = "x-web-session-secret";
 
 const DEFAULT_TTL_SECS: i64 = 30 * 60; // 30 minutes
 const MIN_TTL_SECS: i64 = 60;
@@ -88,6 +94,14 @@ pub struct StartRequest {
     pub web_vk: Option<String>,
     /// Random nonce binding the scanned QR to this session (b64, 32 B).
     pub link_nonce: String,
+    /// The account this browser wants access to — typed by the user from their
+    /// app's Settings → Account. Only this user may read the session keys or
+    /// grant it, so seeing the QR is no longer enough to hijack the session.
+    pub approver_user_id: Uuid,
+    /// SHA-256 (b64, 32 B) of a secret only this browser holds. It must present
+    /// the secret to collect the capsule, so learning the `session_id` alone no
+    /// longer lets anyone race the browser for it.
+    pub poll_secret_hash: String,
 }
 
 #[derive(Serialize)]
@@ -106,20 +120,27 @@ pub async fn post_start(
 
     decode_exact(&body.ephemeral_pk, EPHEMERAL_PK_LEN, "ephemeral_pk")?;
     decode_exact(&body.link_nonce, LINK_NONCE_LEN, "link_nonce")?;
+    decode_exact(&body.poll_secret_hash, POLL_SECRET_HASH_LEN, "poll_secret_hash")?;
     if let Some(ref vk) = body.web_vk {
         decode_exact(vk, WEB_VK_LEN, "web_vk")?;
     }
 
+    // The committed approver is stored verbatim and never checked against the
+    // `users` table: this endpoint is unauthenticated, so confirming that an
+    // account exists would turn it into a user-enumeration oracle. A typo simply
+    // yields a session nobody can grant, which expires in 5 minutes.
     let id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     state
         .db
         .execute(
             "INSERT INTO web_sessions
-                (id, user_id, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
-             VALUES ($1, NULL, $2, $3, $4, NULL, 'pending', NULL, NULL, $5, NULL)",
+                (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
+             VALUES ($1, NULL, $2, $3, $4, $5, $6, NULL, 'pending', NULL, NULL, $7, NULL)",
             stoolap::params![
                 id.to_string(),
+                body.approver_user_id.to_string(),
+                body.poll_secret_hash,
                 body.ephemeral_pk,
                 body.web_vk.as_deref().unwrap_or(""), // empty = no RW signing key
                 body.link_nonce,
@@ -148,6 +169,12 @@ pub struct PollResponse {
 
 struct SessionRow {
     user_id: Option<Uuid>,
+    /// The account the browser committed to at `start` (the only user allowed to
+    /// grant). `None` only for rows written before the binding existed.
+    approver_user_id: Option<Uuid>,
+    /// SHA-256 of the browser's poll secret (b64). `None` only for rows written
+    /// before the check existed.
+    poll_secret_hash: Option<String>,
     web_vk: Option<String>,
     link_nonce: Option<String>,
     mode: Option<String>,
@@ -160,7 +187,8 @@ fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
     let rows = state
         .db
         .query(
-            "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at
+            "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at,
+                    approver_user_id, poll_secret_hash
              FROM web_sessions WHERE id = $1",
             stoolap::params![id.to_string()],
         )
@@ -189,9 +217,18 @@ fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
         .ok_or_else(|| AppError::Internal("status missing".into()))?;
     let capsule = crate::db::row_val(&row, 5)?.as_str().map(|s| s.to_string());
     let expires_at = crate::db::row_val(&row, 6)?.as_timestamp();
+    let approver_user_id = crate::db::row_val(&row, 7)?
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let poll_secret_hash = crate::db::row_val(&row, 8)?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
 
     Ok(SessionRow {
         user_id,
+        approver_user_id,
+        poll_secret_hash,
         web_vk,
         link_nonce,
         mode,
@@ -205,6 +242,35 @@ fn is_expired(expires_at: Option<DateTime<Utc>>) -> bool {
     expires_at.map(|e| Utc::now() > e).unwrap_or(false)
 }
 
+/// Verify the caller is the browser that started this session.
+///
+/// The poll endpoint is unauthenticated by design (the browser has no account),
+/// so possession of the secret registered at `start` is what stands in for
+/// identity. It never travels in the QR, so learning the `session_id` — from a
+/// URL, a log, a referrer — no longer lets anyone collect (and thereby destroy)
+/// the one-shot capsule. Same error for every failure, so nothing distinguishes
+/// a wrong secret from a session that does not exist.
+fn check_poll_secret(session: &SessionRow, headers: &HeaderMap) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
+    let unauthorized = || AppError::Unauthorized("web session not found".into());
+    let expected = session
+        .poll_secret_hash
+        .as_deref()
+        .and_then(|s| B64.decode(s.as_bytes()).ok())
+        .ok_or_else(unauthorized)?;
+    let presented = headers
+        .get(POLL_SECRET_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| B64.decode(v.as_bytes()).ok())
+        .ok_or_else(unauthorized)?;
+
+    if !ct_eq(Sha256::digest(&presented).as_slice(), &expected) {
+        return Err(unauthorized());
+    }
+    Ok(())
+}
+
 pub async fn get_session(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -214,7 +280,16 @@ pub async fn get_session(
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     rate_limit::web_session_poll_by_ip(&state.store, &ip)?;
 
-    let session = load_session(&state, id)?;
+    // A missing session and a wrong secret must be indistinguishable, or the
+    // 404 itself confirms that a `session_id` is live.
+    let session = match load_session(&state, id) {
+        Ok(session) => session,
+        Err(AppError::NotFound(_)) => {
+            return Err(AppError::Unauthorized("web session not found".into()))
+        }
+        Err(e) => return Err(e),
+    };
+    check_poll_secret(&session, &headers)?;
 
     if session.status == "granted" && is_expired(session.expires_at) {
         return Ok(Json(PollResponse {
@@ -264,8 +339,9 @@ pub struct KeysResponse {
 ///
 /// Lets the link QR carry only the (short) `session_id` instead of the ~2 KB
 /// public key — the approver fetches the key here, keeping the QR scannable. The
-/// keys are public; this is gated to the authenticated approver and to pending
-/// sessions.
+/// keys are public, but the lookup is scoped to the account the browser
+/// committed to at `start`: anyone else gets the same 404 as a nonexistent
+/// session, so a stray `session_id` reveals nothing about a pending link.
 pub async fn get_keys(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -276,8 +352,9 @@ pub async fn get_keys(
     let rows = state
         .db
         .query(
-            "SELECT ephemeral_pk, web_vk, status FROM web_sessions WHERE id = $1",
-            stoolap::params![id.to_string()],
+            "SELECT ephemeral_pk, web_vk, status FROM web_sessions
+             WHERE id = $1 AND approver_user_id = $2",
+            stoolap::params![id.to_string(), session.user_id.to_string()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let row = rows
@@ -317,7 +394,7 @@ pub struct GrantRequest {
     /// `"ro"` (snapshot) or `"rw"` (live).
     pub mode: String,
     /// Capsule sealed to the session's ephemeral KEM key: the RO snapshot or the
-    /// RW RMS (b64).
+    /// RW per-chunk vault keys (b64).
     pub capsule: String,
     /// Anti-phishing binding: the 32-byte link nonce (b64) the browser showed in
     /// the QR. Must match the nonce registered at `/web-session/start`.
@@ -360,6 +437,16 @@ pub async fn post_grant(
         ));
     }
 
+    // Authorization binding: the browser named the account it wants access to at
+    // `start`, and only that account may grant. Without this, the bearer token of
+    // *any* VELA user who saw the QR (shoulder-surf, screen share, leaked URL)
+    // was enough to hand the browser an attacker-controlled vault or RMS.
+    if existing.approver_user_id != Some(session.user_id) {
+        return Err(AppError::Forbidden(
+            "this web request was started for a different VELA account".into(),
+        ));
+    }
+
     // Anti-phishing binding: the QR the approver scanned must carry the same
     // link nonce the browser registered at start. Compared in constant time;
     // any failure yields the same error so an attacker cannot tell a missing
@@ -394,10 +481,12 @@ pub async fn post_grant(
     let n: i64 = state
         .db
         .execute(
+            // `approver_user_id` is re-checked here so the binding also holds
+            // against a concurrent grant, not just the read above.
             "UPDATE web_sessions
              SET user_id = $1, mode = $2, status = 'granted', capsule = $3,
                  approved_by = $4, expires_at = $5
-             WHERE id = $6 AND status = 'pending'",
+             WHERE id = $6 AND status = 'pending' AND approver_user_id = $7",
             stoolap::params![
                 session.user_id.to_string(),
                 mode,
@@ -405,6 +494,7 @@ pub async fn post_grant(
                 session.device_id.to_string(),
                 expires_at.to_rfc3339(),
                 id.to_string(),
+                session.user_id.to_string(),
             ],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -502,8 +592,10 @@ pub async fn delete_session(
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let existing = load_session(&state, id)?;
-    // Only the owner (granting user) may revoke a granted session.
-    if existing.user_id != Some(session.user_id) {
+    // Only the owner may revoke: the granting user for a granted session, or the
+    // committed approver for one still pending (declining the request).
+    let owner = existing.user_id.or(existing.approver_user_id);
+    if owner != Some(session.user_id) {
         return Err(AppError::NotFound("web session not found".into()));
     }
 

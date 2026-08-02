@@ -65,6 +65,18 @@ struct DecryptVaultResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct WebSessionChunkKeysRequest {
+    rms_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WebSessionChunkKeysResponse {
+    /// `chunk_id → base64(32-byte key)` for the chunks a read-write web session
+    /// is granted. The RMS itself never leaves the approver (audit D-2).
+    chunk_keys: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct EncryptChunkRequest {
     rms_b64: String,
     chunk_id: String,
@@ -247,6 +259,18 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVa
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| {
         decrypt_vault_chunk_json(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeWebSessionChunkKeysJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        web_session_chunk_keys_json(request)
     });
     jni_string(&mut env, &response)
 }
@@ -452,6 +476,20 @@ fn decrypt_vault_json(request_json: &str) -> anyhow_like::Result<DecryptVaultRes
 fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
     let context = format!("{} || {:?}", CHUNK_KEY_CONTEXT, chunk_id.as_bytes());
     *kdf::derive(&context, rms).as_bytes()
+}
+
+/// Derive the per-chunk vault keys handed to a read-write web session, so the
+/// approver can seal those instead of the RMS (audit D-2).
+fn web_session_chunk_keys_json(
+    request_json: &str,
+) -> anyhow_like::Result<WebSessionChunkKeysResponse> {
+    let request: WebSessionChunkKeysRequest = serde_json::from_str(request_json)?;
+    let rms = decode_rms(&request.rms_b64)?;
+    let chunk_keys = kdf::web_session_chunk_keys(&rms)
+        .into_iter()
+        .map(|(id, key)| (id, B64.encode(key.as_bytes())))
+        .collect();
+    Ok(WebSessionChunkKeysResponse { chunk_keys })
 }
 
 fn encrypt_vault_chunk_json(request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {

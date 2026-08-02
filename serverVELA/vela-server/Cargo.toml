@@ -60,6 +60,9 @@ base64 = "0.22"
 getrandom = "0.2"
 blake3 = "1"
 argon2 = "0.5"
+# Web-session poll secrets: the browser hashes with WebCrypto's SHA-256, so the
+# server must verify with the same function.
+sha2 = "0.10"
 
 # ── Error handling ─────────────────────────────────────────────────────────────
 thiserror = "1"

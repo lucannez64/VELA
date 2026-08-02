@@ -60,6 +60,36 @@ pub fn chunk_key(rms: &[u8], chunk_id: &[u8]) -> DerivedKey {
     derive(&context, rms)
 }
 
+/// How many `vault-data-NNNNNN` chunks a read-write web session is handed keys
+/// for. ~1 MiB of vault JSON each, so 32 covers any realistic vault while
+/// bounding both the capsule size and what a leaked capsule can ever decrypt.
+pub const WEB_SESSION_DATA_CHUNKS: u32 = 32;
+
+/// The chunk ids a read-write web session is granted keys for: the two legacy
+/// single-chunk ids other clients may still have written, plus the first
+/// [`WEB_SESSION_DATA_CHUNKS`] data chunks.
+pub fn web_session_chunk_ids() -> Vec<String> {
+    let mut ids = vec!["vault-main".to_string(), "vault".to_string()];
+    ids.extend((0..WEB_SESSION_DATA_CHUNKS).map(|i| format!("vault-data-{i:06}")));
+    ids
+}
+
+/// Per-chunk vault keys for a read-write web session, as `(chunk_id, key)`.
+///
+/// The browser gets these instead of the RMS (audit D-2). It can read and rewrite
+/// the vault for the session's lifetime, but never holds the root of the key
+/// hierarchy — no identity, share, audit, MAC, ORAM or recovery key can be
+/// derived from what it received, and nothing outside these chunk ids.
+pub fn web_session_chunk_keys(rms: &[u8]) -> Vec<(String, DerivedKey)> {
+    web_session_chunk_ids()
+        .into_iter()
+        .map(|id| {
+            let key = chunk_key(rms, id.as_bytes());
+            (id, key)
+        })
+        .collect()
+}
+
 /// Derive the MAC key from the RMS (HMAC-style integrity checks on vault metadata).
 pub fn mac_key(rms: &[u8]) -> DerivedKey {
     derive(contexts::MAC_KEY, rms)
@@ -122,5 +152,39 @@ mod tests {
             derive(contexts::VAULT_ENCRYPTION, rms).0
         );
         assert_eq!(audit_log_key(rms).0, derive(contexts::AUDIT_LOG, rms).0);
+    }
+
+    #[test]
+    fn web_session_chunk_keys_match_the_per_chunk_derivation() {
+        let ids = web_session_chunk_ids();
+        assert_eq!(ids.len() as u32, WEB_SESSION_DATA_CHUNKS + 2);
+        assert_eq!(ids[0], "vault-main");
+        assert_eq!(ids[2], "vault-data-000000"); // zero-padded to 6 digits
+
+        // Each granted key must be exactly the key that client writes chunks
+        // with, or the browser cannot read what the apps wrote.
+        for (id, key) in web_session_chunk_keys(FAKE_RMS) {
+            assert_eq!(key.0, chunk_key(FAKE_RMS, id.as_bytes()).0);
+        }
+    }
+
+    #[test]
+    fn web_session_keys_reveal_nothing_about_the_other_derivations() {
+        let granted: Vec<[u8; 32]> = web_session_chunk_keys(FAKE_RMS)
+            .into_iter()
+            .map(|(_, k)| k.0)
+            .collect();
+        for other in [
+            vault_encryption_key(FAKE_RMS).0,
+            audit_log_key(FAKE_RMS).0,
+            mac_key(FAKE_RMS).0,
+            share_encryption_key(FAKE_RMS).0,
+            oram_position_map_key(FAKE_RMS).0,
+            identity_signing_key_seed(FAKE_RMS).0,
+            device_identity_key_seed(FAKE_RMS).0,
+            chunk_key(FAKE_RMS, b"vault-data-000032").0, // outside the window
+        ] {
+            assert!(!granted.contains(&other));
+        }
     }
 }

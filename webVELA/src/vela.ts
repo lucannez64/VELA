@@ -39,24 +39,27 @@ export function createAuthSignature(skB64: string, deviceId: string, challengeB6
   ).signature_b64;
 }
 
-/** Decapsulate a sealed capsule (RO snapshot or RW RMS) → the inner JSON string. */
+/** Decapsulate a sealed capsule (RO snapshot or RW chunk keys) → the inner JSON string. */
 export function openShare(shareDkB64: string, capsuleB64: string): string {
   return parse<{ item_json: string }>(
     open_share_json(JSON.stringify({ share_dk_b64: shareDkB64, capsule_b64: capsuleB64 })),
   ).item_json;
 }
 
+// The chunk key is the one the approver granted for that exact chunk id; this
+// browser never holds the RMS the keys are derived from (audit D-2).
+
 /** Decrypt a vault chunk → its `VaultStore` JSON (RW live read). */
-export function decryptVaultChunk(rmsB64: string, chunkId: string, ciphertextB64: string): string {
+export function decryptVaultChunk(chunkKeyB64: string, ciphertextB64: string): string {
   return parse<{ vault_json: string }>(
-    decrypt_vault_chunk_json(JSON.stringify({ rms_b64: rmsB64, chunk_id: chunkId, ciphertext_b64: ciphertextB64 })),
+    decrypt_vault_chunk_json(JSON.stringify({ chunk_key_b64: chunkKeyB64, ciphertext_b64: ciphertextB64 })),
   ).vault_json;
 }
 
 /** Encrypt a vault chunk for upload → base64 ciphertext (RW save). */
-export function encryptVaultChunk(rmsB64: string, chunkId: string, vaultJson: string): string {
+export function encryptVaultChunk(chunkKeyB64: string, vaultJson: string): string {
   return parse<{ ciphertext_b64: string }>(
-    encrypt_vault_chunk_json(JSON.stringify({ rms_b64: rmsB64, chunk_id: chunkId, vault_json: vaultJson })),
+    encrypt_vault_chunk_json(JSON.stringify({ chunk_key_b64: chunkKeyB64, vault_json: vaultJson })),
   ).ciphertext_b64;
 }
 

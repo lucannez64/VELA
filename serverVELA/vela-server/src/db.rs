@@ -164,20 +164,30 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     db.execute(
         "CREATE TABLE IF NOT EXISTS web_sessions (
-            id            TEXT UNIQUE NOT NULL,
-            user_id       TEXT,
-            ephemeral_pk  TEXT NOT NULL,
-            web_vk        TEXT,
-            link_nonce    TEXT NOT NULL,
-            mode          TEXT,
-            status        TEXT NOT NULL,
-            capsule       TEXT,
-            approved_by   TEXT,
-            created_at    TIMESTAMP NOT NULL,
-            expires_at    TIMESTAMP
+            id                TEXT UNIQUE NOT NULL,
+            user_id           TEXT,
+            approver_user_id  TEXT,
+            poll_secret_hash  TEXT,
+            ephemeral_pk      TEXT NOT NULL,
+            web_vk            TEXT,
+            link_nonce        TEXT NOT NULL,
+            mode              TEXT,
+            status            TEXT NOT NULL,
+            capsule           TEXT,
+            approved_by       TEXT,
+            created_at        TIMESTAMP NOT NULL,
+            expires_at        TIMESTAMP
         )",
         (),
     )?;
+    // The account the browser committed to at `start`; only that user may read
+    // the session keys or grant it. Pre-existing pending rows have NULL here and
+    // fail closed (they live at most 5 minutes).
+    let _ = db.execute("ALTER TABLE web_sessions ADD COLUMN approver_user_id TEXT", ());
+    // SHA-256 of the secret only the browser that started the session holds; it
+    // must present the secret to collect the one-shot capsule. NULL on rows
+    // written before the check existed, which fail closed.
+    let _ = db.execute("ALTER TABLE web_sessions ADD COLUMN poll_secret_hash TEXT", ());
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status)",
         (),

@@ -1440,7 +1440,8 @@ fn web_access_modal(
                         .child(
                             "Temporarily open this vault in a browser, with no install and no \
                              permanent device. Access expires automatically and can be revoked \
-                             any time.",
+                             any time. The web page asks for your account ID first (Settings → \
+                             Account) — only this account can approve the code it then shows.",
                         ),
                 )
                 .child(fonts::tracked_text("WEB ACCESS CODE", px(10.), 0.15).text_xs().text_color(palette.outline))

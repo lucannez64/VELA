@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use vela_core::calculate_password_strength;
-use vela_crypto::{aead, kdf, kem, signing};
-
-const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
+use vela_crypto::{aead, kem, signing};
 
 // Argon2id parameters, matching SPEC.md §7.4 (3 iterations, 64 MiB, 4 lanes).
 const ARGON2_M_COST_KIB: u32 = 65536;
@@ -81,8 +79,9 @@ struct OpenShareResponse {
 
 #[derive(Deserialize)]
 struct EncryptChunkRequest {
-    rms_b64: String,
-    chunk_id: String,
+    /// The per-chunk key granted for this chunk id — **not** the RMS. A web
+    /// session never receives the root seed (audit D-2).
+    chunk_key_b64: String,
     vault_json: String,
 }
 
@@ -93,8 +92,8 @@ struct EncryptChunkResponse {
 
 #[derive(Deserialize)]
 struct DecryptChunkRequest {
-    rms_b64: String,
-    chunk_id: String,
+    /// The per-chunk key granted for this chunk id — **not** the RMS.
+    chunk_key_b64: String,
     ciphertext_b64: String,
 }
 
@@ -139,21 +138,19 @@ struct Argon2UnwrapResponse {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
-fn decode_rms(b64: &str) -> Result<[u8; 32], String> {
+/// Decode a 32-byte key handed to the browser in the grant capsule.
+///
+/// There is deliberately no `decode_rms` here: the browser is given the
+/// individual per-chunk vault keys the approver derived, never the RMS they come
+/// from, so no other key in the hierarchy is reachable from what a leaked
+/// capsule contains (audit D-2).
+fn decode_key(b64: &str) -> Result<[u8; 32], String> {
     let bytes = B64.decode(b64.as_bytes()).map_err(|e| e.to_string())?;
     let arr: [u8; 32] = bytes
         .as_slice()
         .try_into()
-        .map_err(|_| "rms must be 32 bytes".to_string())?;
+        .map_err(|_| "chunk key must be 32 bytes".to_string())?;
     Ok(arr)
-}
-
-/// Per-chunk vault key, byte-identical to the Apple/Android/desktop derivation so
-/// chunks written by any client decrypt here: `derive("vela chunk key v1" ||
-/// {:?}(chunk_id_bytes), rms)`.
-fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
-    let context = format!("{} || {:?}", CHUNK_KEY_CONTEXT, chunk_id.as_bytes());
-    *kdf::derive(&context, rms).as_bytes()
 }
 
 fn argon2_key(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
@@ -220,8 +217,7 @@ fn open_share_impl(request_json: &str) -> Result<OpenShareResponse, String> {
 
 fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, String> {
     let req: EncryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
-    let rms = decode_rms(&req.rms_b64)?;
-    let key = chunk_key(&rms, &req.chunk_id);
+    let key = decode_key(&req.chunk_key_b64)?;
     let ciphertext = aead::encrypt(&key, req.vault_json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(EncryptChunkResponse {
         ciphertext_b64: B64.encode(ciphertext),
@@ -230,9 +226,8 @@ fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, 
 
 fn decrypt_vault_chunk_impl(request_json: &str) -> Result<DecryptChunkResponse, String> {
     let req: DecryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
-    let rms = decode_rms(&req.rms_b64)?;
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes()).map_err(|e| e.to_string())?;
-    let key = chunk_key(&rms, &req.chunk_id);
+    let key = decode_key(&req.chunk_key_b64)?;
     let plaintext = aead::decrypt(&key, &ciphertext).map_err(|e| e.to_string())?;
     Ok(DecryptChunkResponse {
         vault_json: String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?,
@@ -310,20 +305,22 @@ pub fn create_auth_signature_json(request_json: &str) -> String {
     respond(create_auth_signature_impl(request_json))
 }
 
-/// Open a KEM-sealed capsule (RW RMS capsule or RO snapshot) with our ephemeral
+/// Open a KEM-sealed capsule (RW chunk-key capsule or RO snapshot) with our ephemeral
 /// secret key. Request `{ share_dk_b64, capsule_b64 }` → `{ item_json }`.
 #[wasm_bindgen]
 pub fn open_share_json(request_json: &str) -> String {
     respond(open_share_impl(request_json))
 }
 
-/// Encrypt a vault chunk. Request `{ rms_b64, chunk_id, vault_json }` → `{ ciphertext_b64 }`.
+/// Encrypt a vault chunk with the granted per-chunk key.
+/// Request `{ chunk_key_b64, vault_json }` → `{ ciphertext_b64 }`.
 #[wasm_bindgen]
 pub fn encrypt_vault_chunk_json(request_json: &str) -> String {
     respond(encrypt_vault_chunk_impl(request_json))
 }
 
-/// Decrypt a vault chunk. Request `{ rms_b64, chunk_id, ciphertext_b64 }` → `{ vault_json }`.
+/// Decrypt a vault chunk with the granted per-chunk key.
+/// Request `{ chunk_key_b64, ciphertext_b64 }` → `{ vault_json }`.
 #[wasm_bindgen]
 pub fn decrypt_vault_chunk_json(request_json: &str) -> String {
     respond(decrypt_vault_chunk_impl(request_json))
@@ -354,6 +351,7 @@ pub fn argon2_unwrap_json(request_json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vela_crypto::kdf;
 
     fn field(json: &str, key: &str) -> String {
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
@@ -388,30 +386,50 @@ mod tests {
 
     #[test]
     fn chunk_encrypt_decrypt_roundtrip() {
-        let rms_b64 = B64.encode([7u8; 32]);
+        let key_b64 = B64.encode(kdf::chunk_key(&[7u8; 32], b"vault-data-000000").as_bytes());
         let vault_json = "{\"items\":[],\"tombstones\":[]}";
         let enc = encrypt_vault_chunk_json(
-            &serde_json::json!({ "rms_b64": rms_b64, "chunk_id": "vault-data-0", "vault_json": vault_json }).to_string(),
+            &serde_json::json!({ "chunk_key_b64": key_b64, "vault_json": vault_json }).to_string(),
         );
         let ct = field(&enc, "ciphertext_b64");
         assert!(!ct.is_empty());
         let dec = decrypt_vault_chunk_json(
-            &serde_json::json!({ "rms_b64": rms_b64, "chunk_id": "vault-data-0", "ciphertext_b64": ct }).to_string(),
+            &serde_json::json!({ "chunk_key_b64": key_b64, "ciphertext_b64": ct }).to_string(),
         );
         assert_eq!(field(&dec, "vault_json"), vault_json);
     }
 
+    /// The granted keys are per chunk id: a key for one chunk cannot open
+    /// another, so a session only ever reaches the chunks it was granted.
     #[test]
-    fn chunk_wrong_id_fails() {
-        let rms_b64 = B64.encode([7u8; 32]);
+    fn chunk_key_from_another_chunk_fails() {
+        let rms = [7u8; 32];
         let enc = encrypt_vault_chunk_json(
-            &serde_json::json!({ "rms_b64": rms_b64, "chunk_id": "vault-data-0", "vault_json": "{}" }).to_string(),
+            &serde_json::json!({
+                "chunk_key_b64": B64.encode(kdf::chunk_key(&rms, b"vault-data-000000").as_bytes()),
+                "vault_json": "{}",
+            })
+            .to_string(),
         );
         let ct = field(&enc, "ciphertext_b64");
         let dec = decrypt_vault_chunk_json(
-            &serde_json::json!({ "rms_b64": rms_b64, "chunk_id": "vault-data-9", "ciphertext_b64": ct }).to_string(),
+            &serde_json::json!({
+                "chunk_key_b64": B64.encode(kdf::chunk_key(&rms, b"vault-data-000009").as_bytes()),
+                "ciphertext_b64": ct,
+            })
+            .to_string(),
         );
         assert!(!field(&dec, "error").is_empty());
+    }
+
+    /// The web bridge must decrypt exactly what the other clients wrote: the
+    /// approver derives these keys with `kdf::web_session_chunk_keys`.
+    #[test]
+    fn granted_keys_match_the_approver_derivation() {
+        let rms = [7u8; 32];
+        for (id, key) in kdf::web_session_chunk_keys(&rms) {
+            assert_eq!(key.as_bytes(), kdf::chunk_key(&rms, id.as_bytes()).as_bytes());
+        }
     }
 
     #[test]

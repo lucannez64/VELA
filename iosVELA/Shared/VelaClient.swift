@@ -217,14 +217,15 @@ actor VelaClient {
     struct GrantWebResponse: Decodable { let granted: Bool; let expires_at: String }
 
     /// Approve an ephemeral web session: deliver the sealed capsule with the
-    /// chosen mode and TTL. `linkNonce` is echoed back from the link code when
-    /// present so the server can bind the grant to the requesting browser.
+    /// chosen mode and TTL. `linkNonce` is echoed back from the link code so the
+    /// server can bind the grant to the requesting browser.
     /// Returns the server-clamped expiry (RFC3339).
     func grantWebSession(sessionID: String, mode: String,
                          capsuleBase64: String, ttlSecs: Int,
-                         linkNonce: String? = nil) async throws -> String {
-        var json: [String: Any] = ["mode": mode, "capsule": capsuleBase64, "ttl_secs": ttlSecs]
-        if let linkNonce = linkNonce { json["link_nonce"] = linkNonce }
+                         linkNonce: String) async throws -> String {
+        let json: [String: Any] = [
+            "mode": mode, "capsule": capsuleBase64, "ttl_secs": ttlSecs, "link_nonce": linkNonce,
+        ]
         let resp: GrantWebResponse = try await request(
             "POST", "/web-session/\(sessionID)/grant",
             json: json, auth: true)
