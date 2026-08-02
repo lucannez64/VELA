@@ -975,6 +975,35 @@ credit the existing hardening:
 
 ---
 
+## crypto / libVELA hardening sweep (#115)
+
+> **STATUS: DONE.** Four of the five were already closed by earlier work and are
+> verified rather than re-done: `chunk_key` builds its context by explicit byte
+> encoding instead of `{:?}`, the GF(2⁸) arithmetic in `shamir.rs` is branchless
+> and constant-time, `password.rs` no longer exists as a panicking path, and
+> `string_to_ptr` in the Android bridge returns an empty C string instead of
+> panicking across `extern "C"`. The one that remained:
+>
+> * **`VaultItem` no longer has a derived `Debug`.** It printed passwords, TOTP
+>   seeds, card numbers, CVVs, PINs, note contents and SSNs, so a single
+>   `tracing::debug!("{item:?}")` — in this crate, in a consumer, or in a test
+>   somebody forgot to delete — wrote them to a log. Logs get shipped, attached to
+>   bug reports and read by people who are not the vault's owner, so the fix
+>   belongs at the type rather than at each call site: there is now no way to
+>   format a `VaultItem` that reveals a secret, whoever writes the format string.
+>   Identifying metadata is kept, since an item you cannot identify is useless to
+>   debug with, and *whether* a login has a TOTP secret is kept while the seed is
+>   not. Both copies of the type (`vela-core` and `vela-desktop-core`) have it,
+>   each with a test that renders every variant and asserts each planted secret is
+>   absent.
+>
+> Plaintext `String` fields still have no `Zeroize`: `VaultItem`'s fields are
+> moved out by pattern matches all over the codebase, so a `Drop` impl would not
+> compile without reworking those call sites. Left open deliberately rather than
+> half-done.
+
+---
+
 ## Remediation priority
 
 1. ~~**Web-session grant (S-1 + S-4).** Bind the grant to the intended approver at `start`
