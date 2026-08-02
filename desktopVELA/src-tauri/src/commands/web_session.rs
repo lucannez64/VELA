@@ -137,19 +137,10 @@ pub async fn grant_web_session(
                         "This browser did not offer read-write access; choose read-only.".into(),
                     );
                 }
-                // Per-chunk vault keys, not the RMS: the browser can read and
-                // rewrite the vault for the session, but never holds the root of
-                // the key hierarchy (audit D-2).
-                let chunk_keys: serde_json::Map<String, serde_json::Value> =
-                    vela_crypto::kdf::web_session_chunk_keys(&crypto.rms())
-                        .into_iter()
-                        .map(|(id, key)| (id, serde_json::json!(B64.encode(key.as_bytes()))))
-                        .collect();
-                serde_json::json!({
-                    "v": 2,
-                    "mode": "rw",
-                    "chunk_keys": chunk_keys,
-                })
+                // Shared with the gpui build so both approvers ship the exact
+                // same capsule, and so the "no RMS leaves this device"
+                // invariant has one test rather than two copies (audit D-2).
+                vela_desktop_core::commands::web_session::rw_capsule_envelope(&crypto.rms())
             }
             _ => {
                 let vault = state.vault.read().clone();

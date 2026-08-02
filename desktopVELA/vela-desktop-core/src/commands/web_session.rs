@@ -66,6 +66,21 @@ fn parse_session_id(input: &str) -> Result<(String, String, String), String> {
     Ok((id, fp, link_nonce))
 }
 
+/// The read-write capsule's plaintext: the browser's **per-chunk vault keys**,
+/// never the RMS they are derived from (audit D-2).
+///
+/// Kept separate from the grant flow so the one invariant that matters — no key
+/// hierarchy root leaves this device — is a pure function with a test, rather
+/// than something buried in a network call.
+pub fn rw_capsule_envelope(rms: &[u8; 32]) -> serde_json::Value {
+    let chunk_keys: serde_json::Map<String, serde_json::Value> =
+        vela_crypto::kdf::web_session_chunk_keys(rms)
+            .into_iter()
+            .map(|(id, key)| (id, serde_json::json!(B64.encode(key.as_bytes()))))
+            .collect();
+    serde_json::json!({ "v": 2, "mode": "rw", "chunk_keys": chunk_keys })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrantResult {
     pub expires_at: String,
@@ -119,15 +134,7 @@ pub async fn grant_web_session(
                 if web_vk.is_empty() {
                     return Err("This browser did not offer read-write access; choose read-only.".into());
                 }
-                // Per-chunk vault keys, not the RMS: the browser can read and
-                // rewrite the vault for the session, but never holds the root of
-                // the key hierarchy (audit D-2).
-                let chunk_keys: serde_json::Map<String, serde_json::Value> =
-                    vela_crypto::kdf::web_session_chunk_keys(&crypto.rms())
-                        .into_iter()
-                        .map(|(id, key)| (id, serde_json::json!(B64.encode(key.as_bytes()))))
-                        .collect();
-                serde_json::json!({ "v": 2, "mode": "rw", "chunk_keys": chunk_keys })
+                rw_capsule_envelope(&crypto.rms())
             }
             _ => {
                 let vault = state.vault.read().clone();
@@ -189,6 +196,38 @@ mod tests {
         assert!(fp.chars().all(|c| BASE32_ALPHABET.contains(&(c as u8))));
         assert_eq!(fp, key_fingerprint(b"some-raw-key-material"));
         assert_ne!(fp, key_fingerprint(b"other-key"));
+    }
+
+    /// Audit D-2: a read-write grant must ship derived per-chunk keys and
+    /// nothing that can rebuild the key hierarchy.
+    #[test]
+    fn rw_envelope_ships_chunk_keys_and_never_the_rms() {
+        let rms = [7u8; 32];
+        let envelope = rw_capsule_envelope(&rms);
+
+        assert_eq!(envelope["v"], 2);
+        assert_eq!(envelope["mode"], "rw");
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        assert!(!serialized.contains("rms"), "no rms field of any spelling");
+        assert!(
+            !serialized.contains(&B64.encode(rms)),
+            "the seed itself must not appear anywhere in the capsule"
+        );
+
+        let keys = envelope["chunk_keys"].as_object().expect("chunk_keys map");
+        assert_eq!(keys.len(), vela_crypto::kdf::web_session_chunk_ids().len());
+
+        // Each entry is the key that client writes that chunk with, so the
+        // browser can actually read what the apps wrote...
+        for (id, value) in keys {
+            let expected = B64.encode(vela_crypto::kdf::chunk_key(&rms, id.as_bytes()).as_bytes());
+            assert_eq!(value.as_str().unwrap(), expected, "key for {id}");
+        }
+        // ...and nothing outside the granted window is reachable.
+        assert!(!keys.contains_key("vault-data-000032"));
+        assert!(keys.contains_key("vault-data-000000"));
+        assert!(keys.contains_key("vault-main"));
     }
 
     #[test]

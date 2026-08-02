@@ -959,26 +959,125 @@ async fn web_session_poll_requires_the_browsers_secret() {
     assert!(v.get("capsule").is_none(), "capsule is one-shot");
 }
 
+/// The committed approver may decline a session that is still pending — the
+/// browser's poll then reports `revoked` instead of hanging until the 5-minute
+/// reap. Before the binding existed there was no way to know who was entitled to
+/// do this, so pending sessions could not be revoked at all.
 #[tokio::test]
-async fn web_session_start_requires_an_approver_account() {
-    let app = app().await;
+async fn committed_approver_can_decline_a_pending_session() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
 
-    let body = serde_json::to_string(&json!({
-        "ephemeral_pk": B64.encode(vec![0u8; 1600]),
-        "link_nonce": B64.encode(vec![0u8; 32]),
-        // no approver_user_id — an unbound session could be granted by anyone
-    }))
-    .unwrap();
+    let (victim_id, victim_token) = seed_user_with_device(&state);
+    let (_attacker_id, attacker_token) = seed_user_with_device(&state);
+
+    let link_nonce = B64.encode(vec![7u8; 32]);
+    let resp = app
+        .clone()
+        .oneshot(web_session_start_req(victim_id, &link_nonce))
+        .await
+        .unwrap();
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let session_id = v["session_id"].as_str().unwrap().to_string();
+
+    let delete_req = |token: &str| {
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/web-session/{session_id}"))
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    // Not for anyone else, even while it has no granting user yet.
+    let resp = app.clone().oneshot(delete_req(&attacker_token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    let resp = app.clone().oneshot(delete_req(&victim_token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // The browser learns it was declined rather than waiting out the TTL.
+    let resp = app
+        .clone()
+        .oneshot(web_session_poll_req(&session_id))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["status"], "revoked");
+
+    // And a declined session cannot then be granted.
     let resp = app
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/web-session/start")
+                .uri(format!("/web-session/{session_id}/grant"))
                 .header("content-type", "application/json")
-                .body(Body::from(body))
+                .header("authorization", format!("Bearer {victim_token}"))
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "mode": "ro",
+                        "capsule": B64.encode(vec![0u8; 64]),
+                        "link_nonce": link_nonce,
+                    }))
+                    .unwrap(),
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn web_session_start_requires_an_approver_account() {
+    let app = vela_server::routes::build(helpers::test_state().await);
+
+    let start = |body: serde_json::Value| {
+        Request::builder()
+            .method("POST")
+            .uri("/web-session/start")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap()
+    };
+
+    // No approver — an unbound session could be granted by anyone.
+    let resp = app
+        .clone()
+        .oneshot(start(json!({
+            "ephemeral_pk": B64.encode(vec![0u8; 1600]),
+            "link_nonce": B64.encode(vec![0u8; 32]),
+            "poll_secret_hash": poll_secret_hash(),
+        })))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // No poll-secret commitment — the capsule could be collected by anyone who
+    // learns the session id.
+    let resp = app
+        .clone()
+        .oneshot(start(json!({
+            "ephemeral_pk": B64.encode(vec![0u8; 1600]),
+            "link_nonce": B64.encode(vec![0u8; 32]),
+            "approver_user_id": Uuid::new_v4(),
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A commitment that is not a SHA-256 digest is refused rather than stored.
+    let resp = app
+        .oneshot(start(json!({
+            "ephemeral_pk": B64.encode(vec![0u8; 1600]),
+            "link_nonce": B64.encode(vec![0u8; 32]),
+            "approver_user_id": Uuid::new_v4(),
+            "poll_secret_hash": B64.encode(vec![0u8; 16]),
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
