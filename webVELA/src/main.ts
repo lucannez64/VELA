@@ -166,10 +166,7 @@ async function sha256B64(valueB64: string): Promise<string> {
 }
 
 async function ekFingerprint(ekB64: string): Promise<string> {
-  const bytes = b64ToBytes(ekB64);
-  const buf = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buf).set(bytes);
-  const hash = await crypto.subtle.digest('SHA-256', buf);
+  const hash = await crypto.subtle.digest('SHA-256', b64ToBytes(ekB64));
   return base32Encode(new Uint8Array(hash).slice(0, 8));
 }
 
