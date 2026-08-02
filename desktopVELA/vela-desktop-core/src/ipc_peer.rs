@@ -181,7 +181,9 @@ pub fn identify_named_pipe<S: std::os::windows::io::AsRawHandle>(pipe: &S) -> Pe
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 
-    let handle = HANDLE(pipe.as_raw_handle() as isize);
+    // windows-rs 0.58 models HANDLE as a raw pointer, and RawHandle already is
+    // one — going via isize does not compile.
+    let handle = HANDLE(pipe.as_raw_handle());
     let mut pid: u32 = 0;
     // SAFETY: `handle` is a live pipe handle for the duration of the call.
     let ok = unsafe { GetNamedPipeClientProcessId(handle, &mut pid) }.is_ok();
