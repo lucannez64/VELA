@@ -87,16 +87,16 @@ class AutofillMatcherTest {
 
     @Test
     fun `a link the user made is honoured offline`() {
-        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab"))
-        assertEquals(listOf(linked), AutofillMatcher.match(listOf(linked) + vault, null, "com.ubercab"))
+        val linked = login("Acme", "https://acme.example", listOf("androidapp://com.acme.app"))
+        assertEquals(listOf(linked), AutofillMatcher.match(listOf(linked) + vault, null, "com.acme.app"))
     }
 
     @Test
     fun `a link only matches the package it names`() {
-        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab"))
+        val linked = login("Acme", "https://acme.example", listOf("androidapp://com.acme.app"))
         assertEquals(
             emptyList<VaultItem.Login>(),
-            AutofillMatcher.match(listOf(linked), null, "com.ubercab.evil"),
+            AutofillMatcher.match(listOf(linked), null, "com.acme.app.evil"),
         )
     }
 
@@ -124,27 +124,27 @@ class AutofillMatcherTest {
 
     @Test
     fun `a pinned link matches only while the app keeps that signing key`() {
-        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab?cert=$cert"))
+        val linked = login("Acme", "https://acme.example", listOf("androidapp://com.acme.app?cert=$cert"))
         val vault = listOf(linked)
 
         assertEquals(
             listOf(linked),
-            AutofillMatcher.match(vault, null, "com.ubercab", browsers, { setOf(cert) }),
+            AutofillMatcher.match(vault, null, "com.acme.app", browsers, { setOf(cert) }),
         )
         // Same package, someone else's key — an app that changed hands, or a
         // rebuild by an impostor.
         assertEquals(
             emptyList<VaultItem.Login>(),
-            AutofillMatcher.match(vault, null, "com.ubercab", browsers, { setOf(otherCert) }),
+            AutofillMatcher.match(vault, null, "com.acme.app", browsers, { setOf(otherCert) }),
         )
     }
 
     @Test
     fun `a pinned link fails closed when signatures cannot be read`() {
-        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab?cert=$cert"))
+        val linked = login("Acme", "https://acme.example", listOf("androidapp://com.acme.app?cert=$cert"))
         assertEquals(
             emptyList<VaultItem.Login>(),
-            AutofillMatcher.match(listOf(linked), null, "com.ubercab"),
+            AutofillMatcher.match(listOf(linked), null, "com.acme.app"),
         )
     }
 
@@ -152,32 +152,32 @@ class AutofillMatcherTest {
     fun `an unpinned link still matches on the package alone`() {
         // The older format, and the deliberate choice for an app the user runs
         // from a different store. It must keep working.
-        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab"))
+        val linked = login("Acme", "https://acme.example", listOf("androidapp://com.acme.app"))
         assertEquals(
             listOf(linked),
-            AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers, { setOf(otherCert) }),
+            AutofillMatcher.match(listOf(linked), null, "com.acme.app", browsers, { setOf(otherCert) }),
         )
     }
 
     @Test
     fun `a pinned link is matched case-insensitively on the fingerprint`() {
-        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab?cert=$cert"))
+        val linked = login("Acme", "https://acme.example", listOf("androidapp://com.acme.app?cert=$cert"))
         assertEquals(
             listOf(linked),
-            AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers, { setOf(cert.lowercase()) }),
+            AutofillMatcher.match(listOf(linked), null, "com.acme.app", browsers, { setOf(cert.lowercase()) }),
         )
     }
 
     @Test
     fun `link parsing round-trips both forms`() {
-        assertEquals("androidapp://com.ubercab", AppAssociations.appUri("com.ubercab"))
+        assertEquals("androidapp://com.acme.app", AppAssociations.appUri("com.acme.app"))
         assertEquals(
-            "androidapp://com.ubercab?cert=$cert",
-            AppAssociations.appUri("com.ubercab", cert),
+            "androidapp://com.acme.app?cert=$cert",
+            AppAssociations.appUri("com.acme.app", cert),
         )
-        assertEquals("com.ubercab", AppAssociations.packageFromUri("androidapp://com.ubercab?cert=$cert"))
-        assertEquals(cert, AppAssociations.certFromUri("androidapp://com.ubercab?cert=$cert"))
-        assertEquals(null, AppAssociations.certFromUri("androidapp://com.ubercab"))
+        assertEquals("com.acme.app", AppAssociations.packageFromUri("androidapp://com.acme.app?cert=$cert"))
+        assertEquals(cert, AppAssociations.certFromUri("androidapp://com.acme.app?cert=$cert"))
+        assertEquals(null, AppAssociations.certFromUri("androidapp://com.acme.app"))
     }
 
     @Test
@@ -221,8 +221,8 @@ class AutofillMatcherTest {
     @Test
     fun `local matches are answered without touching the network`() {
         var lookups = 0
-        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab"))
-        AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers, { emptySet() }) { _, _ -> lookups++; false }
+        val linked = login("Acme", "https://acme.example", listOf("androidapp://com.acme.app"))
+        AutofillMatcher.match(listOf(linked), null, "com.acme.app", browsers, { emptySet() }) { _, _ -> lookups++; false }
         assertEquals(0, lookups)
     }
 
@@ -285,8 +285,8 @@ class AutofillMatcherTest {
 
     @Test
     fun `app uris round trip`() {
-        assertEquals("androidapp://com.ubercab", AppAssociations.appUri("com.ubercab"))
-        assertEquals("com.ubercab", AppAssociations.packageFromUri("androidapp://com.ubercab"))
+        assertEquals("androidapp://com.acme.app", AppAssociations.appUri("com.acme.app"))
+        assertEquals("com.acme.app", AppAssociations.packageFromUri("androidapp://com.acme.app"))
         assertEquals(null, AppAssociations.packageFromUri("https://uber.com"))
         assertEquals(null, AppAssociations.packageFromUri("androidapp://"))
     }
