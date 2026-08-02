@@ -28,17 +28,35 @@ final class Phase4Tests: XCTestCase {
         XCTAssertNil(VelaCoreFFI.decryptVaultChunk(rmsBase64: rms, chunkID: "other", ciphertextBase64: cipher))
     }
 
-    func testGenerateIdentityHasAllKeys() {
-        guard let id = VelaCoreFFI.generateIdentity() else { return XCTFail("no identity") }
+    /// Audit C-1: the identity comes back as a handle plus public halves. No
+    /// private key crosses the FFI, and signing happens on the native side.
+    func testIdentityHandleSignsWithoutExposingKeys() {
+        let sealKey = Data(repeating: 4, count: 32)
+        guard let id = VelaCoreFFI.identityCreate(sealKey: sealKey) else {
+            return XCTFail("no identity")
+        }
         XCTAssertFalse(id.hybridEK.isEmpty)
         XCTAssertFalse(id.hybridVK.isEmpty)
-        XCTAssertFalse(id.hybridSK.isEmpty)
-        // Signing a challenge with the produced key succeeds.
-        let sig = VelaCoreFFI.createAuthSignature(
-            hybridSKBase64: id.hybridSK,
-            challengeBase64: Data(repeating: 9, count: 32).base64EncodedString(),
-            deviceID: "device-123")
-        XCTAssertNotNil(sig)
+        XCTAssertFalse(id.shareEK.isEmpty)
+        XCTAssertFalse(id.sealed.isEmpty)
+
+        let challenge = Data(repeating: 9, count: 32).base64EncodedString()
+        XCTAssertNotNil(VelaCoreFFI.identitySign(
+            handle: id.handle, challengeBase64: challenge, deviceID: "device-123"))
+
+        // Reopening the sealed blob yields the same device...
+        guard let reopened = VelaCoreFFI.identityOpen(sealKey: sealKey, sealedBase64: id.sealed) else {
+            return XCTFail("could not reopen the sealed identity")
+        }
+        XCTAssertEqual(reopened.hybridVK, id.hybridVK)
+        // ...but not with the wrong seal key.
+        XCTAssertNil(VelaCoreFFI.identityOpen(
+            sealKey: Data(repeating: 7, count: 32), sealedBase64: id.sealed))
+
+        // And a forgotten handle can no longer sign.
+        VelaCoreFFI.identityForget(handle: id.handle)
+        XCTAssertNil(VelaCoreFFI.identitySign(
+            handle: id.handle, challengeBase64: challenge, deviceID: "device-123"))
     }
 
     // MARK: Merge
@@ -69,8 +87,9 @@ final class Phase4Tests: XCTestCase {
         let store = AccountStore(directory: dir)
         XCTAssertNil(store.load())
 
-        let state = AccountState(serverURL: "https://vault.klyt.eu", userID: "u", deviceID: "d",
-                                 hybridEK: "ek", hybridVK: "vk", hybridSK: "sk", token: "tok")
+        var state = AccountState(serverURL: "https://vault.klyt.eu", userID: "u", deviceID: "d",
+                                 hybridEK: "ek", hybridVK: "vk", token: "tok")
+        state.sealedIdentity = "sealed-blob"
         try store.save(state)
         XCTAssertEqual(store.load(), state)
 

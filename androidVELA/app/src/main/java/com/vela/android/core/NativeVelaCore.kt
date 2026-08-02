@@ -75,40 +75,8 @@ object NativeVelaCore {
         return callNative { nativeEnrollmentVerificationCode(code) }
     }
 
-    fun generateServerIdentityJson(): String? {
-        return callNative {
-            val response = JSONObject(nativeGenerateServerIdentityJson())
-            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            response.toString()
-        }
-    }
 
-    /// Generate only a fresh share keypair (`{ share_ek_b64, share_dk_b64 }`).
-    /// Used to backfill share keys for identities created before sharing existed.
-    fun generateShareKeypairJson(): String? {
-        return callNative {
-            val response = JSONObject(nativeGenerateShareKeypairJson())
-            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            response.toString()
-        }
-    }
 
-    fun createAuthSignatureJson(
-        hybridSkB64: String,
-        challengeB64: String,
-        deviceId: String
-    ): String? {
-        return callNative {
-            val request = JSONObject()
-                .put("hybrid_sk_b64", hybridSkB64)
-                .put("challenge_b64", challengeB64)
-                .put("device_id", deviceId)
-                .toString()
-            val response = JSONObject(nativeCreateAuthSignatureJson(request))
-            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            response.toString()
-        }
-    }
 
     fun decryptRmsCapsule(transferKeyB64: String, capsuleB64: String): ByteArray? {
         return callNative {
@@ -153,6 +121,100 @@ object NativeVelaCore {
         }
     }
 
+    // ── Device identity handles (audit C-1) ──────────────────────────────────
+    //
+    // The signing key and the share decapsulation key never cross this boundary.
+    // Callers get a handle plus an opaque sealed blob to persist, and ask the
+    // native side to sign or to open a share. The seal key travels as a
+    // ByteArray so both sides can wipe it, unlike a String.
+
+    data class IdentityHandle(
+        val handle: Long,
+        val hybridEkB64: String,
+        val hybridVkB64: String,
+        val shareEkB64: String,
+        val sealedB64: String
+    )
+
+    private fun parseHandle(json: String): IdentityHandle {
+        val response = JSONObject(json)
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        return IdentityHandle(
+            handle = response.getLong("handle"),
+            hybridEkB64 = response.getString("hybrid_ek_b64"),
+            hybridVkB64 = response.getString("hybrid_vk_b64"),
+            shareEkB64 = response.getString("share_ek_b64"),
+            sealedB64 = response.getString("sealed_b64")
+        )
+    }
+
+    /// Generate a fresh device identity. The private halves stay native.
+    fun identityCreate(sealKey: ByteArray): IdentityHandle? = callNative {
+        parseHandle(nativeIdentityCreateJson(sealKey, "{}"))
+    }
+
+    /// Adopt existing key material — migrating a device that stored its keys in
+    /// the clear, or enrolling from a code that carries the signing key.
+    fun identityImport(
+        sealKey: ByteArray,
+        hybridSkB64: String,
+        shareDkB64: String = "",
+        hybridEkB64: String = ""
+    ): IdentityHandle? = callNative {
+        val request = JSONObject()
+            .put("hybrid_sk_b64", hybridSkB64)
+            .put("share_dk_b64", shareDkB64)
+            .put("hybrid_ek_b64", hybridEkB64)
+            .toString()
+        parseHandle(nativeIdentityImportJson(sealKey, request))
+    }
+
+    /// Reopen a persisted identity.
+    fun identityOpen(sealKey: ByteArray, sealedB64: String): IdentityHandle? = callNative {
+        val request = JSONObject().put("sealed_b64", sealedB64).toString()
+        parseHandle(nativeIdentityOpenJson(sealKey, request))
+    }
+
+    /// Sign a server auth challenge with the held signing key.
+    fun identitySign(handle: Long, deviceId: String, challengeB64: String): String? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("device_id", deviceId)
+            .put("challenge_b64", challengeB64)
+            .toString()
+        val response = JSONObject(nativeIdentitySignJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("signature")
+    }
+
+    /// Open a capsule sealed to this device's share key.
+    fun identityOpenShare(handle: Long, capsuleB64: String): String? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("capsule_b64", capsuleB64)
+            .toString()
+        val response = JSONObject(nativeIdentityOpenShareJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("item_json")
+    }
+
+    /// Replace the share keypair; returns the new public half and sealed blob.
+    fun identityRotateShareKey(sealKey: ByteArray, handle: Long): Pair<String, String>? = callNative {
+        val request = JSONObject().put("handle", handle).toString()
+        val response = JSONObject(nativeIdentityRotateShareKeyJson(sealKey, request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("share_ek_b64") to response.getString("sealed_b64")
+    }
+
+    /// Drop a handle, wiping its keys. Called on lock/sign-out.
+    fun identityForget(handle: Long) {
+        callNative { nativeIdentityForgetJson(JSONObject().put("handle", handle).toString()) }
+    }
+
+    fun identityForgetAll() {
+        callNative { nativeIdentityForgetAllJson("{}") }
+    }
+
     /// Seal `itemJson` for a recipient using their share public key (base64, 1600 B).
     /// Returns base64 capsule on success, null on error.
     fun sealShare(recipientShareEkB64: String, itemJson: String): String? {
@@ -167,19 +229,6 @@ object NativeVelaCore {
         }
     }
 
-    /// Open a share capsule sealed by a sender using our share secret key (base64, 3200 B).
-    /// Returns the decrypted item JSON on success, null on error.
-    fun openShare(shareDkB64: String, capsuleB64: String): String? {
-        return callNative {
-            val request = JSONObject()
-                .put("share_dk_b64", shareDkB64)
-                .put("capsule_b64", capsuleB64)
-                .toString()
-            val response = JSONObject(nativeOpenShareJson(request))
-            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            response.getString("item_json")
-        }
-    }
 
     /// Split the RMS into an [n]-share, [threshold]-of-[n] Shamir scheme
     /// (SPEC.md §4.3: recovery uses a 2-of-3 split). Returns each share
@@ -227,14 +276,18 @@ object NativeVelaCore {
     private external fun nativeDecryptVaultJson(rms: ByteArray, requestJson: String): String
     private external fun nativeEncryptVaultChunkJson(rms: ByteArray, requestJson: String): String
     private external fun nativeDecryptVaultChunkJson(rms: ByteArray, requestJson: String): String
-    private external fun nativeGenerateServerIdentityJson(): String
-    private external fun nativeGenerateShareKeypairJson(): String
-    private external fun nativeCreateAuthSignatureJson(requestJson: String): String
     private external fun nativeDecryptRmsCapsuleJson(requestJson: String, rmsOut: ByteArray): String
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
     private external fun nativeWebSessionChunkKeysJson(rms: ByteArray, requestJson: String): String
+    private external fun nativeIdentityCreateJson(sealKey: ByteArray, requestJson: String): String
+    private external fun nativeIdentityImportJson(sealKey: ByteArray, requestJson: String): String
+    private external fun nativeIdentityOpenJson(sealKey: ByteArray, requestJson: String): String
+    private external fun nativeIdentityRotateShareKeyJson(sealKey: ByteArray, requestJson: String): String
+    private external fun nativeIdentitySignJson(requestJson: String): String
+    private external fun nativeIdentityOpenShareJson(requestJson: String): String
+    private external fun nativeIdentityForgetJson(requestJson: String): String
+    private external fun nativeIdentityForgetAllJson(requestJson: String): String
     private external fun nativeSealShareJson(requestJson: String): String
-    private external fun nativeOpenShareJson(requestJson: String): String
     private external fun nativeSplitRecoveryJson(rms: ByteArray, requestJson: String): String
     private external fun nativeCombineRecoveryJson(requestJson: String, rmsOut: ByteArray): String
 }

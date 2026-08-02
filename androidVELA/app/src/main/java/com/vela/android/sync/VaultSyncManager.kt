@@ -71,14 +71,13 @@ class VaultSyncManager(
 
         updateServer(effectiveServerUrl, "")
         val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
-        identityStore.save(
-            ServerIdentity(
-                userId = null,
-                deviceId = payload.deviceId,
-                hybridEkB64 = payload.hybridEkB64,
-                hybridVkB64 = payload.hybridVkB64,
-                hybridSkB64 = payload.hybridSkB64
-            )
+        // The enrollment code carries the signing key the enrolling device
+        // generated; hand it to the native side once and never hold it here.
+        identityStore.importFromEnrollment(
+            deviceId = payload.deviceId,
+            hybridSkB64 = payload.hybridSkB64,
+            hybridEkB64 = payload.hybridEkB64,
+            hybridVkB64 = payload.hybridVkB64
         )
 
         val token = authenticateOrRegister(client)
@@ -160,26 +159,18 @@ class VaultSyncManager(
         val rms = NativeVelaCore.combineRecovery(listOf(share1B64, recovered.shareB64))
             ?: error("Native VELA bridge could not reconstruct the vault key")
 
-        val identityJson = NativeVelaCore.generateServerIdentityJson()
-            ?: error("Native VELA bridge cannot generate device identity")
-        val identity = JSONObject(identityJson)
-        val hybridEk = identity.getString("hybrid_ek_b64")
-        val hybridVk = identity.getString("hybrid_vk_b64")
-        val hybridSk = identity.getString("hybrid_sk_b64")
+        // Generated behind a handle: only the public halves come back here.
+        val identity = identityStore.getOrCreate()
 
-        val deviceId = client.enrollDeviceViaRecovery(userId, recovered.recoveryGrant, hybridEk, hybridVk, deviceName)
-
-        identityStore.save(
-            ServerIdentity(
-                userId = userId,
-                deviceId = deviceId,
-                hybridEkB64 = hybridEk,
-                hybridVkB64 = hybridVk,
-                hybridSkB64 = hybridSk,
-                shareEkB64 = identity.optString("share_ek_b64"),
-                shareDkB64 = identity.optString("share_dk_b64")
-            )
+        val deviceId = client.enrollDeviceViaRecovery(
+            userId,
+            recovered.recoveryGrant,
+            identity.hybridEkB64,
+            identity.hybridVkB64,
+            deviceName
         )
+
+        identityStore.save(identity.copy(userId = userId, deviceId = deviceId))
 
         val token = authenticateOrRegister(client)
         updateServer(effectiveServerUrl, token)
@@ -397,15 +388,9 @@ class VaultSyncManager(
     private fun ensureShareKey(client: AndroidVelaApiClient, token: String) {
         val identity = identityStore.load() ?: return
         if (identity.shareEkB64.isNotBlank()) return
-        val json = com.vela.android.core.NativeVelaCore.generateShareKeypairJson() ?: return
-        val parsed = org.json.JSONObject(json)
-        val shareEk = parsed.optString("share_ek_b64")
-        val shareDk = parsed.optString("share_dk_b64")
-        if (shareEk.isBlank() || shareDk.isBlank()) return
-        runCatching {
-            client.putMyShareEk(token, shareEk)
-            identityStore.save(identity.copy(shareEkB64 = shareEk, shareDkB64 = shareDk))
-        }
+        // The new secret half stays native; only its public key comes back.
+        val shareEk = identityStore.rotateShareKey() ?: return
+        runCatching { client.putMyShareEk(token, shareEk) }
     }
 
     private fun authenticateOrRegister(client: AndroidVelaApiClient): String {
@@ -419,16 +404,19 @@ class VaultSyncManager(
 
         val deviceId = identity.deviceId ?: error("Server identity has no device id")
         val challenge = client.getChallenge()
-        val signatureJson = com.vela.android.core.NativeVelaCore.createAuthSignatureJson(
-            hybridSkB64 = identity.hybridSkB64,
-            challengeB64 = challenge.challengeB64,
-            deviceId = deviceId
+        // Signed natively through the handle — the signing key never comes back
+        // across the boundary to be signed with here (audit C-1).
+        val identityHandle = identityStore.handle()
+            ?: error("Device identity is unavailable; re-enroll this device")
+        val signature = com.vela.android.core.NativeVelaCore.identitySign(
+            handle = identityHandle,
+            deviceId = deviceId,
+            challengeB64 = challenge.challengeB64
         ) ?: error("Native VELA bridge cannot create server auth signature")
-        val signature = org.json.JSONObject(signatureJson)
         val verified = client.verifySignature(
             deviceId = deviceId,
             challengeB64 = challenge.challengeB64,
-            signature = signature.getString("signature")
+            signature = signature
         )
         identityStore.save(identity.copy(userId = verified.userId))
         return verified.token

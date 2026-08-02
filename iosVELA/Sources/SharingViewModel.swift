@@ -35,13 +35,15 @@ final class SharingViewModel: ObservableObject {
     func refresh() {
         run("Loading shares") { [self] in
             guard let client = account.makeClient() else { throw Fail("register first") }
-            guard let shareDK = account.account?.shareDK, !shareDK.isEmpty else { throw Fail("no share key — re-register the device") }
+            guard let identityHandle = account.identityHandle() else {
+                throw Fail("no share key — re-register the device")
+            }
             let inbox = try await client.shareInbox()
             let linked = try await client.linkedShares()
             await account.adoptToken(from: client)
 
             received = inbox.items.map { item in
-                let decoded = openCapsule(item.capsule, shareDK: shareDK)
+                let decoded = openCapsule(item.capsule, identityHandle: identityHandle)
                 return ReceivedShare(id: item.id, from: item.sender_user_id,
                                      itemName: decoded?.name ?? "Shared item",
                                      itemType: decoded?.kind.displayName ?? "Item", item: decoded)
@@ -89,8 +91,8 @@ final class SharingViewModel: ObservableObject {
         }
     }
 
-    private func openCapsule(_ capsule: String, shareDK: String) -> VaultItem? {
-        guard let itemJSON = VelaCoreFFI.openShare(shareDKBase64: shareDK, capsuleBase64: capsule) else { return nil }
+    private func openCapsule(_ capsule: String, identityHandle: UInt64) -> VaultItem? {
+        guard let itemJSON = VelaCoreFFI.identityOpenShare(handle: identityHandle, capsuleBase64: capsule) else { return nil }
         let data = Data(itemJSON.utf8)
         return try? JSONDecoder().decode(VaultItem.self, from: data)
     }

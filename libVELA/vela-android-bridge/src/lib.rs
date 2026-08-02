@@ -16,7 +16,6 @@ use vela_crypto::aead;
 use vela_crypto::kdf;
 use vela_crypto::kem;
 use vela_crypto::shamir;
-use vela_crypto::signing;
 use zeroize::Zeroize;
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
@@ -70,11 +69,65 @@ struct DecryptVaultResponse {
     vault_json: String,
 }
 
+/// Everything an identity handle exposes: the public halves, plus the sealed
+/// blob the app persists. No private key appears here — that is the point
+/// (audit C-1).
 #[derive(Debug, Serialize, Deserialize)]
-struct WebSessionChunkKeysRequest {
-    /// C-ABI only; the JNI entry points pass the RMS as bytes (audit C-1).
+struct IdentityHandleResponse {
+    handle: u64,
+    hybrid_ek_b64: String,
+    hybrid_vk_b64: String,
+    share_ek_b64: String,
+    /// AEAD blob under the caller's seal key. Opaque to the app.
+    sealed_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityImportRequest {
+    hybrid_sk_b64: String,
     #[serde(default)]
-    rms_b64: String,
+    share_dk_b64: String,
+    #[serde(default)]
+    hybrid_ek_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityOpenRequest {
+    sealed_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentitySignRequest {
+    handle: u64,
+    device_id: String,
+    challenge_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityOpenShareRequest {
+    handle: u64,
+    capsule_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityRotateShareKeyRequest {
+    handle: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityRotateShareKeyResponse {
+    share_ek_b64: String,
+    sealed_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityHandleRequest {
+    handle: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OkResponse2 {
+    ok: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,21 +156,6 @@ struct DecryptChunkRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GenerateIdentityResponse {
-    hybrid_ek_b64: String,
-    hybrid_vk_b64: String,
-    hybrid_sk_b64: String,
-    share_ek_b64: String,
-    share_dk_b64: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ShareKeypairResponse {
-    share_ek_b64: String,
-    share_dk_b64: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 struct SealShareRequest {
     recipient_share_ek_b64: String,
     item_json: String,
@@ -129,21 +167,8 @@ struct SealShareResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct OpenShareRequest {
-    share_dk_b64: String,
-    capsule_b64: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 struct OpenShareResponse {
     item_json: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AuthSignatureRequest {
-    hybrid_sk_b64: String,
-    challenge_b64: String,
-    device_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -281,6 +306,108 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVa
     jni_string(&mut env, &response)
 }
 
+// The JNI entry points that returned `hybrid_sk_b64` / `share_dk_b64`, or took
+// them as arguments, are gone: there is no longer a way for the app to obtain a
+// private key from this bridge (audit C-1). The C-ABI equivalents remain for the
+// desktop/test harness, which is Rust on both sides.
+
+// ── Identity handle entry points ────────────────────────────────────────────
+//
+// `seal_key` is a JNI byte array, so both sides can wipe it; the private keys it
+// protects never appear on the JVM heap at all (audit C-1).
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityCreateJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    seal_key: JByteArray,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result_with_secret(&mut env, seal_key, request_json, |key, request| {
+        identity_create(key, request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityImportJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    seal_key: JByteArray,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result_with_secret(&mut env, seal_key, request_json, |key, request| {
+        identity_import(key, request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityOpenJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    seal_key: JByteArray,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result_with_secret(&mut env, seal_key, request_json, |key, request| {
+        identity_open(key, request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityRotateShareKeyJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    seal_key: JByteArray,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result_with_secret(&mut env, seal_key, request_json, |key, request| {
+        identity_rotate_share_key(key, request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentitySignJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| identity_sign(request));
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityOpenShareJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| identity_open_share(request));
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityForgetJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| identity_forget(request));
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityForgetAllJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| identity_forget_all(request));
+    jni_string(&mut env, &response)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeWebSessionChunkKeysJson(
     mut env: JNIEnv,
@@ -290,46 +417,6 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeWebSessio
 ) -> jstring {
     let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
         web_session_chunk_keys_with_rms(rms, request)
-    });
-    jni_string(&mut env, &response)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeGenerateServerIdentityJson(
-    mut env: JNIEnv,
-    _object: JObject,
-) -> jstring {
-    let response = match generate_server_identity() {
-        Ok(value) => {
-            serde_json::to_string(&value).unwrap_or_else(|error| error_json(&error.to_string()))
-        }
-        Err(error) => error_json(&error.to_string()),
-    };
-    jni_string(&mut env, &response)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeGenerateShareKeypairJson(
-    mut env: JNIEnv,
-    _object: JObject,
-) -> jstring {
-    let response = match generate_share_keypair() {
-        Ok(value) => {
-            serde_json::to_string(&value).unwrap_or_else(|error| error_json(&error.to_string()))
-        }
-        Err(error) => error_json(&error.to_string()),
-    };
-    jni_string(&mut env, &response)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCreateAuthSignatureJson(
-    mut env: JNIEnv,
-    _object: JObject,
-    request_json: JString,
-) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        create_auth_signature_json(request)
     });
     jni_string(&mut env, &response)
 }
@@ -366,16 +453,6 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeSealShare
     request_json: JString,
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| seal_share_json(request));
-    jni_string(&mut env, &response)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenShareJson(
-    mut env: JNIEnv,
-    _object: JObject,
-    request_json: JString,
-) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| open_share_json(request));
     jni_string(&mut env, &response)
 }
 
@@ -566,72 +643,116 @@ fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
     *kdf::derive(&context, rms).as_bytes()
 }
 
-/// Derive the per-chunk vault keys handed to a read-write web session, so the
-/// approver can seal those instead of the RMS (audit D-2).
-fn web_session_chunk_keys_json(
+// ── Identity handles (audit C-1) ─────────────────────────────────────────────
+//
+// The app holds a `u64` and an opaque sealed blob; the signing key and the share
+// decapsulation key never cross the JNI boundary in either direction. The seal
+// key arrives as a byte array the caller can wipe, never as a `String`.
+
+fn identity_response(
+    identity: vela_crypto::identity::DeviceIdentity,
+    seal_key: &[u8],
+) -> anyhow_like::Result<IdentityHandleResponse> {
+    let seal_key = raw_key32(seal_key)?;
+    let sealed = identity.seal(&seal_key)?;
+    let publics = identity.publics().clone();
+    let handle = vela_crypto::identity::register(identity);
+    Ok(IdentityHandleResponse {
+        handle,
+        hybrid_ek_b64: B64.encode(publics.hybrid_ek),
+        hybrid_vk_b64: B64.encode(publics.hybrid_vk),
+        share_ek_b64: B64.encode(publics.share_ek),
+        sealed_b64: B64.encode(sealed),
+    })
+}
+
+fn raw_key32(bytes: &[u8]) -> anyhow_like::Result<[u8; 32]> {
+    bytes
+        .try_into()
+        .map_err(|_| anyhow_like::Error::from("seal key must be 32 bytes".to_string()))
+}
+
+fn identity_create(seal_key: &[u8], _request: &str) -> anyhow_like::Result<IdentityHandleResponse> {
+    identity_response(vela_crypto::identity::DeviceIdentity::generate()?, seal_key)
+}
+
+fn identity_import(seal_key: &[u8], request_json: &str) -> anyhow_like::Result<IdentityHandleResponse> {
+    let request: IdentityImportRequest = serde_json::from_str(request_json)?;
+    let signing_sk = B64.decode(request.hybrid_sk_b64.as_bytes())?;
+    let share_dk = if request.share_dk_b64.is_empty() {
+        None
+    } else {
+        Some(B64.decode(request.share_dk_b64.as_bytes())?)
+    };
+    let hybrid_ek = if request.hybrid_ek_b64.is_empty() {
+        None
+    } else {
+        Some(B64.decode(request.hybrid_ek_b64.as_bytes())?)
+    };
+    let identity = vela_crypto::identity::DeviceIdentity::import(
+        &signing_sk,
+        share_dk.as_deref(),
+        hybrid_ek.as_deref(),
+    )?;
+    identity_response(identity, seal_key)
+}
+
+fn identity_open(seal_key: &[u8], request_json: &str) -> anyhow_like::Result<IdentityHandleResponse> {
+    let request: IdentityOpenRequest = serde_json::from_str(request_json)?;
+    let sealed = B64.decode(request.sealed_b64.as_bytes())?;
+    let key = raw_key32(seal_key)?;
+    let identity = vela_crypto::identity::DeviceIdentity::open(&sealed, &key)?;
+    identity_response(identity, seal_key)
+}
+
+fn identity_sign(request_json: &str) -> anyhow_like::Result<AuthSignatureResponse> {
+    let request: IdentitySignRequest = serde_json::from_str(request_json)?;
+    let challenge = B64.decode(request.challenge_b64.as_bytes())?;
+    let signature = vela_crypto::identity::with_identity(request.handle, |identity| {
+        identity.sign_auth(&request.device_id, &challenge)
+    })?;
+    Ok(AuthSignatureResponse {
+        signature: B64.encode(signature),
+    })
+}
+
+fn identity_open_share(request_json: &str) -> anyhow_like::Result<OpenShareResponse> {
+    let request: IdentityOpenShareRequest = serde_json::from_str(request_json)?;
+    let capsule = B64.decode(request.capsule_b64.as_bytes())?;
+    let plaintext = vela_crypto::identity::with_identity(request.handle, |identity| {
+        identity.open_share(&capsule)
+    })?;
+    Ok(OpenShareResponse {
+        item_json: String::from_utf8(plaintext)?,
+    })
+}
+
+fn identity_rotate_share_key(
+    seal_key: &[u8],
     request_json: &str,
-) -> anyhow_like::Result<WebSessionChunkKeysResponse> {
-    let request: WebSessionChunkKeysRequest = serde_json::from_str(request_json)?;
-    let rms = decode_rms(&request.rms_b64)?;
-    let chunk_keys = kdf::web_session_chunk_keys(&rms)
-        .into_iter()
-        .map(|(id, key)| (id, B64.encode(key.as_bytes())))
-        .collect();
-    Ok(WebSessionChunkKeysResponse { chunk_keys })
-}
-
-fn encrypt_vault_chunk_json(request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {
-    let request: EncryptChunkRequest = serde_json::from_str(request_json)?;
-    let rms = decode_rms(&request.rms_b64)?;
-    let _: VaultStore = serde_json::from_str(&request.vault_json)?;
-    let key = chunk_key(&rms, &request.chunk_id);
-    let ciphertext = aead::encrypt(&key, request.vault_json.as_bytes())?;
-    Ok(EncryptVaultResponse {
-        ciphertext_b64: B64.encode(ciphertext),
+) -> anyhow_like::Result<IdentityRotateShareKeyResponse> {
+    let request: IdentityRotateShareKeyRequest = serde_json::from_str(request_json)?;
+    let key = raw_key32(seal_key)?;
+    let (share_ek, sealed) = vela_crypto::identity::with_identity(request.handle, |identity| {
+        let share_ek = identity.rotate_share_key();
+        Ok((share_ek, identity.seal(&key)?))
+    })?;
+    Ok(IdentityRotateShareKeyResponse {
+        share_ek_b64: B64.encode(share_ek),
+        sealed_b64: B64.encode(sealed),
     })
 }
 
-fn decrypt_vault_chunk_json(request_json: &str) -> anyhow_like::Result<DecryptVaultResponse> {
-    let request: DecryptChunkRequest = serde_json::from_str(request_json)?;
-    let rms = decode_rms(&request.rms_b64)?;
-    let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
-    let key = chunk_key(&rms, &request.chunk_id);
-    let plaintext = aead::decrypt(&key, &ciphertext)?;
-    let vault_json = String::from_utf8(plaintext.to_vec())?;
-    Ok(DecryptVaultResponse { vault_json })
-}
-
-fn generate_server_identity() -> anyhow_like::Result<GenerateIdentityResponse> {
-    // `hybrid_ek` must be a real KEM public key, not filler bytes — it is
-    // signed and transmitted to the server as this device's identity. The
-    // matching secret key is intentionally not persisted: nothing in the
-    // current protocol encapsulates under hybrid_ek (the RMS capsule uses a
-    // symmetric transfer_key instead), so a public key with no stored
-    // private counterpart is inert, not insecure.
-    let (hybrid_ek_pk, _unused_hybrid_ek_sk) = kem::generate_keypair();
-    let hybrid_ek = hybrid_ek_pk.to_bytes();
-
-    let (signing_vk, signing_sk) = signing::generate_keypair()?;
-    let hybrid_vk = signing_vk.to_bytes().to_vec();
-    let hybrid_sk = signing_sk.into_bytes();
-
-    let (share_pk, share_sk) = kem::generate_keypair();
-
-    Ok(GenerateIdentityResponse {
-        hybrid_ek_b64: B64.encode(hybrid_ek),
-        hybrid_vk_b64: B64.encode(hybrid_vk),
-        hybrid_sk_b64: B64.encode(hybrid_sk),
-        share_ek_b64: B64.encode(share_pk.to_bytes()),
-        share_dk_b64: B64.encode(share_sk.to_bytes()),
+fn identity_forget(request_json: &str) -> anyhow_like::Result<OkResponse2> {
+    let request: IdentityHandleRequest = serde_json::from_str(request_json)?;
+    Ok(OkResponse2 {
+        ok: vela_crypto::identity::forget(request.handle),
     })
 }
 
-fn generate_share_keypair() -> anyhow_like::Result<ShareKeypairResponse> {
-    let (share_pk, share_sk) = kem::generate_keypair();
-    Ok(ShareKeypairResponse {
-        share_ek_b64: B64.encode(share_pk.to_bytes()),
-        share_dk_b64: B64.encode(share_sk.to_bytes()),
-    })
+fn identity_forget_all(_request_json: &str) -> anyhow_like::Result<OkResponse2> {
+    vela_crypto::identity::forget_all();
+    Ok(OkResponse2 { ok: true })
 }
 
 fn seal_share_json(request_json: &str) -> anyhow_like::Result<SealShareResponse> {
@@ -642,24 +763,6 @@ fn seal_share_json(request_json: &str) -> anyhow_like::Result<SealShareResponse>
     Ok(SealShareResponse {
         capsule_b64: B64.encode(capsule),
     })
-}
-
-fn open_share_json(request_json: &str) -> anyhow_like::Result<OpenShareResponse> {
-    let req: OpenShareRequest = serde_json::from_str(request_json)?;
-    let dk_bytes = B64.decode(req.share_dk_b64.as_bytes())?;
-    let sk = kem::HybridSecretKey::from_bytes(&dk_bytes)?;
-    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
-    let plaintext = kem::open_share(&sk, &capsule)?;
-    Ok(OpenShareResponse {
-        item_json: String::from_utf8(plaintext)?,
-    })
-}
-
-fn create_auth_signature_json(request_json: &str) -> anyhow_like::Result<AuthSignatureResponse> {
-    let request: AuthSignatureRequest = serde_json::from_str(request_json)?;
-    let hybrid_sk = B64.decode(request.hybrid_sk_b64.as_bytes())?;
-    let challenge = B64.decode(request.challenge_b64.as_bytes())?;
-    create_auth_signature(&hybrid_sk, &challenge, &request.device_id)
 }
 
 /// Same as [`decrypt_rms_capsule_json`] but yields the raw RMS for the
@@ -711,15 +814,6 @@ fn decrypt_enrollment_package_json(
     })
 }
 
-fn split_recovery_json(request_json: &str) -> anyhow_like::Result<SplitRecoveryResponse> {
-    let request: SplitRecoveryRequest = serde_json::from_str(request_json)?;
-    let rms = decode_rms(&request.rms_b64)?;
-    let shares = shamir::split(&rms, request.threshold, request.n)?;
-    Ok(SplitRecoveryResponse {
-        shares_b64: shares.iter().map(|s| B64.encode(s.to_bytes())).collect(),
-    })
-}
-
 fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecoveryResponse> {
     let request: CombineRecoveryRequest = serde_json::from_str(request_json)?;
     let shares: Vec<shamir::Share> = request
@@ -733,19 +827,6 @@ fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecov
     let secret = shamir::reconstruct(&shares, 32)?;
     Ok(CombineRecoveryResponse {
         rms_b64: B64.encode(secret),
-    })
-}
-
-fn create_auth_signature(
-    hybrid_sk: &[u8],
-    challenge: &[u8],
-    device_id: &str,
-) -> anyhow_like::Result<AuthSignatureResponse> {
-    let sk = signing::HybridSigningKey::from_bytes(hybrid_sk)?;
-    let message = signing::auth_message(device_id, challenge);
-    let signature = signing::sign(&sk, &message)?;
-    Ok(AuthSignatureResponse {
-        signature: B64.encode(signature.to_bytes()),
     })
 }
 
@@ -1048,7 +1129,7 @@ mod tests {
             "n": 3,
         })
         .to_string();
-        let split = split_recovery_json(&split_request).unwrap();
+        let split = split_recovery_with_rms(&rms, &split_request).unwrap();
         assert_eq!(split.shares_b64.len(), 3);
 
         // Any 2 of the 3 shares must reconstruct the original RMS.
@@ -1069,7 +1150,7 @@ mod tests {
             "n": 3,
         })
         .to_string();
-        let split = split_recovery_json(&split_request).unwrap();
+        let split = split_recovery_with_rms(&rms, &split_request).unwrap();
 
         let combine_request = serde_json::json!({
             "shares_b64": [split.shares_b64[0].clone()],
@@ -1078,10 +1159,55 @@ mod tests {
         assert!(combine_recovery_json(&combine_request).is_err());
     }
 
+    /// The identity the app registers with the server is still the right shape,
+    /// now that it is created behind a handle and only its public halves are
+    /// returned (audit C-1).
     #[test]
-    fn generate_server_identity_returns_server_sized_keys() {
-        let identity = generate_server_identity().unwrap();
-        assert_eq!(B64.decode(identity.hybrid_ek_b64).unwrap().len(), 1600);
-        assert_eq!(B64.decode(identity.hybrid_vk_b64).unwrap().len(), 2624);
+    fn identity_handle_returns_server_sized_public_keys_and_no_secrets() {
+        let seal_key = [5u8; 32];
+        let created = identity_create(&seal_key, "{}").unwrap();
+
+        assert_eq!(B64.decode(&created.hybrid_ek_b64).unwrap().len(), 1600);
+        assert_eq!(B64.decode(&created.hybrid_vk_b64).unwrap().len(), 2624);
+        assert_eq!(B64.decode(&created.share_ek_b64).unwrap().len(), 1600);
+
+        let serialized = serde_json::to_string(&created).unwrap();
+        for forbidden in ["hybrid_sk", "share_dk", "private"] {
+            assert!(
+                !serialized.contains(forbidden),
+                "the handle response must not carry {forbidden}"
+            );
+        }
+
+        // The handle can sign and can be revoked; the app never sees the key.
+        let sign_request = serde_json::json!({
+            "handle": created.handle,
+            "device_id": "device-1",
+            "challenge_b64": B64.encode(b"challenge"),
+        })
+        .to_string();
+        assert!(!identity_sign(&sign_request).unwrap().signature.is_empty());
+
+        let forget_request = serde_json::json!({ "handle": created.handle }).to_string();
+        assert!(identity_forget(&forget_request).unwrap().ok);
+        assert!(identity_sign(&sign_request).is_err(), "a forgotten handle cannot sign");
+    }
+
+    /// Reopening the sealed blob has to yield the same device, or an app restart
+    /// would silently lose the identity.
+    #[test]
+    fn a_sealed_identity_reopens_as_the_same_device() {
+        let seal_key = [6u8; 32];
+        let created = identity_create(&seal_key, "{}").unwrap();
+
+        let open_request = serde_json::json!({ "sealed_b64": created.sealed_b64 }).to_string();
+        let reopened = identity_open(&seal_key, &open_request).unwrap();
+
+        assert_eq!(reopened.hybrid_vk_b64, created.hybrid_vk_b64);
+        assert_eq!(reopened.share_ek_b64, created.share_ek_b64);
+        assert_ne!(reopened.handle, created.handle, "a new handle each time");
+
+        // A different seal key must not open it.
+        assert!(identity_open(&[9u8; 32], &open_request).is_err());
     }
 }

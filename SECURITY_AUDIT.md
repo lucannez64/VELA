@@ -85,10 +85,15 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | open |
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | open |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | open |
-| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **PARTIAL** (RMS crosses as bytes; identity keys still strings) |
+| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
 | C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | open |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | open |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | open |
+| P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
+
+`P-` denotes a protocol-level finding — one that lives in the shape of the
+handshake rather than in any single component's code. P-1 was found while
+closing C-1 (see below).
 
 (Lower-severity / hardening items are listed in the final section.)
 
@@ -570,20 +575,36 @@ corrupted/synced/imported entry suffices. (Companion issue: `velaEscapeHtml`
 
 ### C-1 — Private keys / RMS cross the JNI/FFI boundary as immutable base64 `String`s  ·  **HIGH**
 
-> **STATUS: PARTIALLY FIXED — the RMS no longer crosses as a string.** Every JNI
-> entry point that consumes the RMS (vault and per-chunk encrypt/decrypt, web
-> session chunk keys, Shamir split) now takes it as a `ByteArray`, and the Rust
-> copy is wiped on drop (`SecretBytes`). The paths that *return* a recovered RMS
-> (RMS capsule decrypt, Shamir combine) write into a caller-provided `ByteArray`
-> instead of returning base64 in the JSON. Kotlin callers already held the RMS as
-> a `ByteArray` and wipe it with `fill(0)`, so the un-zeroizable base64 `String`
-> is gone from the RMS path entirely.
+> **STATUS: FIXED, in two parts.**
 >
-> **Still open:** `generate_server_identity` returns the hybrid signing key and
-> share decapsulation key as base64 strings, and `ServerIdentityStore` persists
-> them that way. Fixing that is a storage-format change (opaque handles + a
-> Rust-side keystore), tracked separately. iOS has the same string-based FFI
-> shape and is tracked with it.
+> **The RMS.** Every JNI entry point that consumes it (vault and per-chunk
+> encrypt/decrypt, web session chunk keys, Shamir split) takes a `ByteArray`, and
+> the Rust copy is wiped on drop (`SecretBytes`). The paths that *return* a
+> recovered RMS (capsule decrypt, Shamir combine) write into a caller-provided
+> array instead of returning base64. Kotlin already held the RMS as a `ByteArray`
+> and wipes it with `fill(0)`.
+>
+> **The long-term keys.** `vela_crypto::identity` now owns the device signing key
+> and the share decapsulation key. Callers get an opaque `IdentityHandle` plus the
+> public halves, ask the core to `sign_auth` or `open_share`, and persist only a
+> `DeviceIdentity::seal` blob — AEAD under a 32-byte key that itself crosses as
+> bytes, never a string. Both bridges expose it (`nativeIdentity*` on Android,
+> `vela_ffi_identity_*` on iOS) and **the entry points that used to hand out or
+> accept a private key are deleted**, so there is no longer a path that can
+> produce one: `generate_server_identity`, `generate_share_keypair`,
+> `create_auth_signature(hybrid_sk)` and `open_share(share_dk)` are gone from both
+> ABIs.
+>
+> Storage changed with it. Android's `ServerIdentity` and iOS's `AccountState`
+> keep identifiers, public keys and a sealed blob; the seal key lives in
+> EncryptedSharedPreferences / the Keychain. Devices holding the old plaintext
+> keys migrate on first load — read once, sealed natively, originals deleted.
+>
+> **Residual:** enrollment still transports a signing key inside the enrollment
+> code, so it exists as a string for the moment it is imported. That is the
+> protocol's shape, not the bridge's — and the protocol has a larger problem than
+> the string does: the same code also carries the key to the RMS capsule. Tracked
+> as **P-1**.
 
 **Locations**
 - `libVELA/vela-android-bridge/src/lib.rs:82-88, 426-429, 478-501` (key material returned as base64 strings)
@@ -601,6 +622,82 @@ share decapsulation key, and RMS → full vault compromise.
 
 **Recommendation.** Stop shipping private keys/RMS through JNI strings. Keep key material behind
 opaque Rust handles and perform all crypto in Rust, returning only the result.
+
+---
+
+### P-1 — The enrollment code is vault-equivalent and carries a permanent device identity  ·  **HIGH**
+
+**Locations**
+- `desktopVELA/vela-desktop-core/src/commands/devices.rs:230-286` (the primary builds the payload)
+- `serverVELA/vela-server/src/device/invitation.rs` (package storage, 15-min TTL, one-shot fetch)
+- `serverVELA/vela-server/src/device/capsule.rs` (one-shot RMS capsule download)
+- `iosVELA/Shared/EnrollmentCode.swift`, `androidVELA/.../VaultSyncManager.kt:65-90` (the joining side)
+
+**Description.** When a device enrolls another, the **primary generates the joining
+device's entire identity keypair** and ships the private half to it. The payload is
+
+```json
+{ "device_id": …, "hybrid_ek": …, "hybrid_vk": …, "hybrid_sk": …,
+  "transfer_key": …, "server_url": … }
+```
+
+encrypted under a random `package_key`, uploaded to `/device/enrollment-package`,
+and the QR carries only the locator `{server_url, token, package_key}`.
+
+Two things travel in there, and each is worse than a session credential:
+
+1. `hybrid_sk` — the joining device's **permanent** signing key. Anyone who reads
+   it can authenticate as that device until it is explicitly revoked.
+2. `transfer_key` — the symmetric key the RMS capsule is encrypted under. Anyone
+   who reads it, and who can fetch the capsule, has **the RMS, and therefore the
+   entire vault, forever** (the RMS does not rotate — see D-2/§9).
+
+So possession of an enrollment code is possession of the vault. The code is
+exactly as sensitive as the master secret it delivers, but it is handled like a
+pairing code: displayed on screen, photographed, sometimes pasted.
+
+**Defences present.** 15-minute package TTL, `get_del` one-shot package fetch,
+one-shot capsule download (`SELECT … then clear`, snapshot-isolated so a race
+cannot serve it twice), the primary must be authenticated and signs the
+enrollment, per-IP rate limits, and a short verification code the user compares.
+These bound the *window*; none of them change what the code is worth inside it.
+
+**Exploitation.** Any capture of the code within its TTL — shoulder-surf of the
+QR, a screenshot in a chat, a screen share, a photo — followed by fetching the
+package and the capsule before the legitimate device does. The legitimate device
+then fails, which is the user's only signal, and by then the attacker holds both
+the RMS and a device identity.
+
+**Relationship to C-1.** C-1's remediation left one residue: the signing key
+exists as a string on the joining device for the moment it is imported. That
+residue is *not* the problem here and fixing it in isolation buys almost nothing —
+the blob it comes from already hands over the vault. This finding is the reason
+that residue exists, and it is the one worth fixing.
+
+**Recommendation — device-generated keys with a server-mediated rendezvous.**
+Keep the current UX direction (primary displays, joining device scans) and change
+what the code carries:
+
+1. The code carries a **one-time enrollment grant** and the server URL. Nothing else.
+2. The joining device generates its own identity keypair — the private half never
+   leaves it — and presents its **public** keys under that grant.
+3. The primary polls, displays a fingerprint of the joining device's key, and on
+   the user's confirmation enrolls it and uploads the RMS capsule **KEM-sealed to
+   that device's `hybrid_ek`** instead of to a symmetric key from the code.
+
+An intercepted code then buys an attacker the ability to *attempt* an enrollment,
+not the vault: the capsule is unreadable without the key the joining device
+generated. The residual risk shifts from "someone saw the code" to "the user
+confirmed the wrong fingerprint" — the same class as S-1, so the same
+countermeasures apply: bind the grant, keep it one-shot and short-lived, and make
+the fingerprint comparison a real step rather than a decoration.
+
+**Cost.** Server: pending-enrollment state and endpoints, plus KEM sealing of the
+capsule. Clients: both roles on four platforms. Compatibility: enrollment codes
+are ephemeral so nothing stored needs migrating, but installs mix, so the v2 path
+must ship alongside v3 until old builds age out. Tests: server integration, an
+enrollment-grant-hijack regression alongside the S-1 one, and `vela-e2e`'s
+enrollment driver.
 
 ---
 
@@ -747,9 +844,13 @@ credit the existing hardening:
    both platforms now verify the user (LocalAuthentication / `UserConsentVerifier`) *before*
    any key is read, and macOS reuses the evaluated context for the Keychain read so there is
    one prompt, not two. Needs one manual pass on real hardware for each.
-5. **Crypto JNI (C-1).** *Partially done* — the RMS crosses JNI as bytes now. The long-term
-   identity/share private keys still cross (and persist) as strings; that needs opaque handles
-   plus a storage-format change.
+5. ~~**Crypto JNI (C-1).**~~ **Done** — the RMS crosses as bytes, and the identity/share private
+   keys now live behind opaque handles with sealed storage on both mobile platforms; the entry
+   points that could hand out a private key are deleted.
+6. **Enrollment protocol (P-1).** Stop shipping the joining device's private key and the RMS
+   transfer key inside the enrollment code: device-generated keys, a one-time grant, and a
+   capsule KEM-sealed to the joining device. Highest-value remaining item — an enrollment code is
+   currently worth the whole vault.
 6. **Extension credential bypass (E-1).** Remove/gate `nativeMessage`/`getNativeMessage`.
 7. **AEAD binding (C-2) + authenticated shares (C-3) + `VelaByteBuffer` UB (C-4).**
 8. The lower-severity items above are opportunistic hardening.
