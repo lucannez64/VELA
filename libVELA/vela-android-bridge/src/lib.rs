@@ -1005,10 +1005,26 @@ fn error_json(error: &str) -> String {
     .unwrap_or_else(|_| "{\"error\":\"bridge error\"}".to_string())
 }
 
+/// Hand a string to C, never panicking.
+///
+/// Both fallbacks used to end in `.expect(...)`, and an unwind across
+/// `extern "C"` is undefined behaviour — the fact that an empty `CString` cannot
+/// realistically fail is not a guarantee the compiler or a future refactor
+/// respects (audit L2). `CString::new` only fails on an interior NUL, so the
+/// fallback strips them and the last resort is built without any fallible call.
 fn string_to_ptr(value: &str) -> *mut c_char {
-    CString::new(value)
-        .unwrap_or_else(|_| CString::new("").expect("empty CString"))
-        .into_raw()
+    if let Ok(c_string) = CString::new(value) {
+        return c_string.into_raw();
+    }
+    let without_nul: Vec<u8> = value.bytes().filter(|byte| *byte != 0).collect();
+    if let Ok(c_string) = CString::new(without_nul) {
+        return c_string.into_raw();
+    }
+    // Unreachable — the bytes above contain no NUL — but expressed without a
+    // panic so no path out of this function can unwind into C.
+    let mut empty = Vec::with_capacity(1);
+    empty.push(0u8);
+    Box::into_raw(empty.into_boxed_slice()) as *mut c_char
 }
 
 /// Hand a `Vec` to C as a pointer + length.

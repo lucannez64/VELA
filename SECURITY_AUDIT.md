@@ -893,7 +893,7 @@ credit the existing hardening:
 | desktop | `commands/audit.rs:18-179` | Renderer can forge audit entries (action whitelist, but arbitrary `details`) |
 | desktop | `store.rs:296-318` | Legacy plaintext identity-keys file silently re-encrypted (only `warn!`) |
 | extension | `manifests/*.json:56,60-69` | Unused `webNavigation` permission; `web_accessible_resources` enables fingerprinting |
-| extension | `content/content-script.js:1020` | Unescaped `location.href` hostname in `innerHTML` (URL spec makes `<>"'&` impossible, but inconsistent) |
+| extension | ~~`content/content-script.js`~~ | ~~Unescaped interpolation~~ **FIXED** — `velaEscapeHtml` had the same quote bug as the popup's escaper (E-2) while five attribute sites relied on it, including the save prompt's page-supplied username and password |
 | extension | `native-messaging/vela-native-messaging-host.py:81-97` | Windows IPC-auth file check is a no-op; capability token is a static bearer with no HMAC/nonce |
 | android | ~~`build.gradle.kts:49-54`~~ | ~~No R8/minification → `Log.d` metadata ships~~ **FIXED** — R8 on, with JNI keep rules and log stripping |
 | android | `sync/SyncSettingsStore.kt:84-88` | Server URL accepts `http://` (OS blocks cleartext, but failure is silent) |
@@ -1109,7 +1109,8 @@ python3 security/scan.py          # Rust checks only
 VELA_BASE=http://127.0.0.1:8553 VELA_TEST_TOKEN=<paseto> security/zap/run-zap.sh
 ```
 
-Current expected result: `scan.py` reports 3 findings (M4 ×2, L2) — `get_session` is now
+Current expected result: `scan.py` reports 2 findings (M4 ×2 — the `{:?}` chunk-key
+context, which needs a coordinated re-key; see C-2 rollout step 3) — `get_session` is now
 allowlisted (S-2 fixed: it authenticates with the browser's poll secret) and the WASM bridge's
 `{:?}` derivation is gone with the RMS export (D-2) — semgrep-js reports 7 (E-2 ×4, E-1, 2 review
 points), `cargo-audit` clean on all workspaces. **The scan should be green again only after M4,

@@ -643,7 +643,13 @@
     if (!fillScript || !fillScript.script || !fillScript.script.length) return;
     fillScript.script.forEach((op, index) => {
       setTimeout(() => {
-        let element = document.querySelector(`[data-opid="${op.opid}"]`) || document.querySelector(`[opid="${op.opid}"]`);
+        // CSS.escape, not escapeHtml: this is a selector, not markup. A `"` in
+        // an opid would end the attribute value and change which element the
+        // selector matches — or throw — rather than inject HTML, but the fix is
+        // the same shape and costs nothing.
+        let element =
+          document.querySelector(`[data-opid="${CSS.escape(String(op.opid ?? ""))}"]`) ||
+          document.querySelector(`[opid="${CSS.escape(String(op.opid ?? ""))}"]`);
         if (!element) {
           const allElements = document.querySelectorAll("[opid]");
           for (let i = 0; i < allElements.length; i++) {
@@ -1407,6 +1413,10 @@
     overlay.className = "vela-overlay";
 
     function renderModal() {
+      // Clamped to the range the slider itself declares. `opts` is round-tripped
+      // through storage, so treating its length as a number rather than trusting
+      // it into an attribute keeps a corrupted value from reaching the markup.
+      const sliderLength = Math.min(64, Math.max(8, Number(opts.length) || 20));
       overlay.innerHTML = `
         <div class="vela-modal vela-autofill-animate-slide-up vela-gen-modal">
           <div class="vela-modal-header">
@@ -1437,8 +1447,8 @@
             <div class="vela-gen-option-row vela-gen-length-row">
               <label class="vela-gen-option-label">Length</label>
               <div class="vela-gen-length-control">
-                <input class="vela-gen-slider" id="vela-gen-length" data-vela-ui="true" type="range" min="8" max="64" value="${opts.length}" step="1"/>
-                <span class="vela-gen-length-value" id="vela-gen-length-val">${opts.length}</span>
+                <input class="vela-gen-slider" id="vela-gen-length" data-vela-ui="true" type="range" min="8" max="64" value="${velaEscapeHtml(sliderLength)}" step="1"/>
+                <span class="vela-gen-length-value" id="vela-gen-length-val">${velaEscapeHtml(sliderLength)}</span>
               </div>
             </div>
 
@@ -1647,10 +1657,26 @@
     try { return new URL(url).hostname; } catch (_) { return url; }
   }
 
+  /// Escape for both text and attribute contexts.
+  ///
+  /// The `textContent`/`innerHTML` round trip this used to do escapes `&`, `<`
+  /// and `>` but **not quotes**, and five call sites interpolate into attribute
+  /// values — including the save prompt's username and password, which come
+  /// straight from the page's form fields. A `"` in one of those broke out of
+  /// the attribute and injected markup into VELA's own overlay (same defect as
+  /// audit E-2, which was fixed in the popup but not here).
   function velaEscapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = String(str);
-    return div.innerHTML;
+    return String(str ?? "").replace(
+      /[&<>"']/g,
+      (character) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[character],
+    );
   }
 
   function velaRemoveModal(id) {
