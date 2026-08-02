@@ -13,11 +13,33 @@ import kotlinx.coroutines.launch
 /**
  * Copies a sensitive value (password, CVV, PIN, TOTP code, ...) to the system
  * clipboard, marks it EXTRA_IS_SENSITIVE so the OS doesn't preview it, and
- * clears it again after [CLEAR_DELAY_MS] so it doesn't sit there indefinitely
+ * clears it again after [clearDelayMillis] so it doesn't sit there indefinitely
  * for any other app to read.
+ *
+ * The clipboard is the largest live-secret surface on Android: while a password
+ * sits there, every app with focus can read it, and on older releases the OS
+ * itself previews it. Thirty seconds was the industry default and is longer than
+ * pasting takes; fifteen is still comfortably enough and halves the window. It
+ * is a setting because "long enough to paste" genuinely differs — someone typing
+ * a code into a hardware terminal needs longer than someone pasting into the
+ * next field.
  */
 object SecureClipboard {
-    private const val CLEAR_DELAY_MS = 30_000L
+    /** Seconds the copied value may live. Bounds, not preferences: below the
+     *  minimum the feature stops working, above the maximum it stops being a
+     *  clearing clipboard. */
+    const val MIN_CLEAR_SECONDS = 5
+    const val MAX_CLEAR_SECONDS = 120
+    const val DEFAULT_CLEAR_SECONDS = 15
+
+    /// Set at startup from the user's setting; the default applies until then.
+    @Volatile
+    var clearDelaySeconds: Int = DEFAULT_CLEAR_SECONDS
+        set(value) {
+            field = value.coerceIn(MIN_CLEAR_SECONDS, MAX_CLEAR_SECONDS)
+        }
+
+    private val clearDelayMillis: Long get() = clearDelaySeconds * 1000L
 
     // Bumped on every copy so a stale delayed-clear from a previous copy
     // never wipes out a clip the user copied after it.
@@ -36,7 +58,7 @@ object SecureClipboard {
 
         val myGeneration = ++generation
         scope.launch {
-            delay(CLEAR_DELAY_MS)
+            delay(clearDelayMillis)
             if (myGeneration == generation) {
                 clearIfStillOurs(clipboardManager, value)
             }
