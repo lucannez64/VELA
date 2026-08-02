@@ -161,9 +161,8 @@ function base32Encode(bytes: Uint8Array): string {
 /** base64(SHA-256(base64-decoded input)) — used for the poll-secret commitment. */
 async function sha256B64(valueB64: string): Promise<string> {
   const bytes = b64ToBytes(valueB64);
-  const buf = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buf).set(bytes);
-  return bytesToB64(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)));
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return bytesToB64(new Uint8Array(hash));
 }
 
 async function ekFingerprint(ekB64: string): Promise<string> {
