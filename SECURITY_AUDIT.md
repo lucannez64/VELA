@@ -82,7 +82,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code | **FIXED** (per-chunk vault keys instead of the RMS) |
 | D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | **FIXED** (LocalAuthentication evaluation + ACL) |
 | D-5 | **High** | desktop | **Windows "Hello" was never invoked** — credential read only (found while fixing D-3) | code | **FIXED** (UserConsentVerifier gates every read) |
-| D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | open |
+| D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | partly fixed |
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
@@ -570,6 +570,31 @@ user, with no user interaction.
 ---
 
 ### D-4 — IPC returns plaintext passwords to any same-uid caller  ·  **MEDIUM**
+
+> **STATUS: PARTLY FIXED.** The capability token no longer buys plaintext on its
+> own. Releasing a credential now needs two things the token is not:
+>
+> * **The kernel's word on who connected.** `SO_PEERCRED` (Linux),
+>   `LOCAL_PEERCRED`/`LOCAL_PEERPID` (macOS) and `GetNamedPipeClientProcessId`
+>   (Windows) identify the peer; a connection the kernel does not confirm is
+>   ours is refused outright, and an unidentifiable peer counts as not-ours
+>   rather than as benign. This does not stop code already running as the user,
+>   but it makes the caller nameable, which is what the rest depends on.
+> * **A fresh user-presence proof**, valid 2 minutes and bound to the calling
+>   pid, so a second process cannot ride on the confirmation the user gave their
+>   browser, and locking the vault revokes it. Presence is proved without
+>   touching the RMS — a new `verify_presence` path distinct from the unlock one,
+>   which would otherwise cache a key as a side effect.
+>
+> Metadata (names, usernames, URLs) is deliberately left ungated: it is not the
+> secret, and gating it would put a prompt in front of every suggestion.
+>
+> **What remains.** Linux has no general user-presence API; fprintd is the only
+> factor drivable without a desktop-specific agent, so a machine with no
+> fingerprint reader reports `Unavailable` and the release proceeds on the peer
+> check alone. Closing that needs an in-app confirmation dialog in both
+> frontends. The native-messaging host's static bearer (E-1's neighbour) is also
+> untouched. Tracked in #106.
 
 **Location.** `desktopVELA/vela-desktop-core/src/ipc.rs:294-312`
 

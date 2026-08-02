@@ -39,6 +39,47 @@ pub enum BiometricProvider {
     None,
 }
 
+/// Result of asking the user to prove they are there, right now.
+///
+/// Distinct from [BiometricAuthResult] because this proves *presence* and
+/// nothing else: it never reads or caches the RMS. It exists for decisions that
+/// are not unlocking — releasing a plaintext credential over IPC, say — where
+/// reusing the unlock path would both be wrong and have the side effect of
+/// caching a key.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PresenceOutcome {
+    Confirmed,
+    /// The user said no, or the prompt failed. Carries something showable.
+    Denied(String),
+    /// This machine has no user-presence factor. Callers must decide what that
+    /// means for them rather than reading it as either answer.
+    Unavailable,
+}
+
+/// Ask the OS to confirm the user is present, with `reason` shown to them.
+///
+/// Blocking: it puts a system prompt on screen and waits. Call it off any
+/// thread that must stay responsive.
+pub fn verify_presence(reason: &str) -> PresenceOutcome {
+    #[cfg(windows)]
+    {
+        windows_biometric::verify_presence_for(reason)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_biometric::verify_presence_for(reason)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_biometric::verify_presence_for(reason)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = reason;
+        PresenceOutcome::Unavailable
+    }
+}
+
 impl Default for BiometricEnrollmentStatus {
     fn default() -> Self {
         Self {
@@ -71,6 +112,17 @@ pub mod windows_biometric {
         to_wide_string(s)
     }
 
+    /// Prove the user is present, for something other than unlocking.
+    pub fn verify_presence_for(reason: &str) -> PresenceOutcome {
+        if !hello_available() {
+            return PresenceOutcome::Unavailable;
+        }
+        match prompt_user_presence(reason) {
+            Ok(()) => PresenceOutcome::Confirmed,
+            Err(message) => PresenceOutcome::Denied(message),
+        }
+    }
+
     /// Ask Windows Hello to verify the device owner.
     ///
     /// Reading the credential or the TPM-sealed key is not an authentication:
@@ -80,6 +132,10 @@ pub mod windows_biometric {
     /// the provider was reported as "Windows Hello" while Hello was never
     /// invoked. Nothing reads a key until this returns `Ok`.
     fn verify_user_presence() -> Result<(), String> {
+        prompt_user_presence("Verify your identity to unlock your VELA vault")
+    }
+
+    fn prompt_user_presence(reason: &str) -> Result<(), String> {
         use windows::core::{factory, HSTRING};
         use windows::Foundation::IAsyncOperation;
         use windows::Security::Credentials::UI::{
@@ -88,7 +144,7 @@ pub mod windows_biometric {
         use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
         use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
-        let message = HSTRING::from("Verify your identity to unlock your VELA vault");
+        let message = HSTRING::from(reason);
 
         // A non-packaged desktop app has to parent the prompt to a window of
         // its own, or it can end up behind the app (or refuse to show).
@@ -482,6 +538,22 @@ pub mod linux_biometric {
         }
     }
 
+    /// Prove the user is present, for something other than unlocking.
+    ///
+    /// Linux has no general user-presence API. fprintd is the only factor we
+    /// can drive without a desktop-specific agent, so a machine without a
+    /// fingerprint reader reports Unavailable rather than pretending.
+    pub fn verify_presence_for(reason: &str) -> PresenceOutcome {
+        let _ = reason; // fprintd renders its own prompt.
+        if !(tpm::fprint::is_fprint_available() && tpm::fprint::has_enrolled_fingers()) {
+            return PresenceOutcome::Unavailable;
+        }
+        match tpm::fprint::verify() {
+            Ok(()) => PresenceOutcome::Confirmed,
+            Err(e) => PresenceOutcome::Denied(format!("Fingerprint verification failed: {e}")),
+        }
+    }
+
     pub fn authenticate() -> BiometricAuthResult {
         if tpm::fprint::is_fprint_available() && tpm::fprint::has_enrolled_fingers() {
             match tpm::fprint::verify() {
@@ -862,10 +934,32 @@ pub mod macos_biometric {
         }
     }
 
+    /// Prove the user is present, for something other than unlocking.
+    ///
+    /// Deliberately drops the evaluated `LAContext` instead of reusing it: this
+    /// path must not be able to read a key, only to answer "is the owner here".
+    pub fn verify_presence_for(reason: &str) -> PresenceOutcome {
+        let factor = available_factor();
+        if factor.policy().is_none() {
+            return PresenceOutcome::Unavailable;
+        }
+        match evaluate_presence_with_reason(factor, reason) {
+            Ok(_context) => PresenceOutcome::Confirmed,
+            Err(message) => PresenceOutcome::Denied(message),
+        }
+    }
+
     /// Verify the device owner with whatever factor this Mac has, returning the
     /// evaluated context so the caller can read the Keychain without prompting
     /// a second time.
     fn evaluate_presence(factor: Factor) -> Result<Retained<LAContext>, String> {
+        evaluate_presence_with_reason(factor, REASON)
+    }
+
+    fn evaluate_presence_with_reason(
+        factor: Factor,
+        reason: &str,
+    ) -> Result<Retained<LAContext>, String> {
         let policy = factor
             .policy()
             .ok_or_else(|| "No biometric is available on this Mac.".to_string())?;
@@ -876,7 +970,7 @@ pub mod macos_biometric {
                 .map_err(|e| e.localizedDescription().to_string())?;
         }
 
-        let reason = NSString::from_str(REASON);
+        let reason = NSString::from_str(reason);
         let (tx, rx) = mpsc::channel::<Result<(), String>>();
         let name = factor.name();
         let reply = StackBlock::new(move |granted: Bool, error: *mut NSError| {

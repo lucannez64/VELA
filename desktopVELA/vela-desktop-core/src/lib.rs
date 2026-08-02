@@ -9,6 +9,7 @@ pub mod device;
 pub mod favicon;
 pub mod host;
 pub mod ipc;
+pub mod ipc_peer;
 pub mod rclone;
 pub mod session;
 pub mod settings;
@@ -95,9 +96,41 @@ pub struct AppState {
     /// Bumped on every lock/unlock. Sync captures it and aborts if it changes
     /// mid-flight (vault locked during sync).
     pub session_generation: AtomicU64,
+    /// When the user last proved presence for a plaintext credential release
+    /// over IPC, and to which caller (audit D-4). Not persisted: a restart
+    /// should cost a fresh confirmation.
+    plaintext_release: RwLock<Option<(Option<u32>, std::time::Instant)>>,
 }
 
+/// How long one user-presence confirmation covers further plaintext releases to
+/// the same caller.
+///
+/// A prompt per filled field would train people to approve without reading,
+/// which is worse than no prompt; a window this short still means an idle
+/// machine cannot be drained by something that read the capability file.
+pub const PLAINTEXT_RELEASE_TTL: std::time::Duration = std::time::Duration::from_secs(120);
+
 impl AppState {
+    /// Whether `pid` already proved presence recently. Tied to the caller, so a
+    /// second process cannot ride on a confirmation the user gave the browser.
+    pub fn plaintext_release_is_fresh(&self, pid: Option<u32>) -> bool {
+        match *self.plaintext_release.read() {
+            Some((granted_to, at)) => {
+                granted_to == pid && pid.is_some() && at.elapsed() < PLAINTEXT_RELEASE_TTL
+            }
+            None => false,
+        }
+    }
+
+    pub fn record_plaintext_release(&self, pid: Option<u32>) {
+        *self.plaintext_release.write() = Some((pid, std::time::Instant::now()));
+    }
+
+    /// Locking the vault must also end any standing release grant.
+    pub fn clear_plaintext_release(&self) {
+        *self.plaintext_release.write() = None;
+    }
+
     pub fn is_extension_connected(&self) -> bool {
         self.extension_connected.load(Ordering::Relaxed)
     }
@@ -153,6 +186,7 @@ impl AppState {
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
             session_generation: AtomicU64::new(0),
+            plaintext_release: RwLock::new(None),
         }
     }
 
@@ -315,6 +349,7 @@ pub enum RateLimitResult {
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
             session_generation: AtomicU64::new(0),
+            plaintext_release: RwLock::new(None),
         }
     }
 }

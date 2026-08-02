@@ -43,6 +43,11 @@ ciborium = "0.2"
 # of by hand-transcription.
 webauthn-rs-proto = "=0.5.5"
 
+[target.'cfg(unix)'.dependencies]
+# SO_PEERCRED / LOCAL_PEERCRED on the IPC socket, so a caller is identified by
+# the kernel rather than by a bearer token it may have read off disk (audit D-4).
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 arboard = "3"
 windows = { version = "0.58", features = [
