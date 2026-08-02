@@ -52,12 +52,47 @@ pub fn audit_log_key(rms: &[u8]) -> DerivedKey {
     derive(contexts::AUDIT_LOG, rms)
 }
 
+/// The derivation context for a chunk key.
+///
+/// Spelled out rather than `format!("{:?}", chunk_id)`. `Debug` is a
+/// programmer-facing convenience with no stability guarantee — if its output for
+/// `&[u8]` ever changed, every existing chunk key would change with it and every
+/// vault on disk would stop opening. This produces the identical bytes
+/// (`… || [118, 97, …]`), so nothing is re-keyed; it just stops the derivation
+/// depending on a contract nobody promised (audit crypto M4).
+fn chunk_key_context(chunk_id: &[u8]) -> String {
+    let mut context = String::with_capacity(contexts::CHUNK_KEY.len() + 6 + chunk_id.len() * 5);
+    context.push_str(contexts::CHUNK_KEY);
+    context.push_str(" || [");
+    for (index, byte) in chunk_id.iter().enumerate() {
+        if index > 0 {
+            context.push_str(", ");
+        }
+        context.push_str(itoa(*byte).as_str());
+    }
+    context.push(']');
+    context
+}
+
+/// `u8` → decimal, without pulling in a formatting machinery whose output could
+/// itself drift.
+fn itoa(value: u8) -> String {
+    let mut out = String::with_capacity(3);
+    if value >= 100 {
+        out.push((b'0' + value / 100) as char);
+    }
+    if value >= 10 {
+        out.push((b'0' + (value / 10) % 10) as char);
+    }
+    out.push((b'0' + value % 10) as char);
+    out
+}
+
 /// Derive a per-chunk encryption key from the RMS.
 ///
 /// Uses context "vela chunk key v1" with the chunk ID appended for domain separation.
 pub fn chunk_key(rms: &[u8], chunk_id: &[u8]) -> DerivedKey {
-    let context = format!("{} || {:?}", contexts::CHUNK_KEY, chunk_id);
-    derive(&context, rms)
+    derive(&chunk_key_context(chunk_id), rms)
 }
 
 /// How many `vault-data-NNNNNN` chunks a read-write web session is handed keys
@@ -152,6 +187,32 @@ mod tests {
             derive(contexts::VAULT_ENCRYPTION, rms).0
         );
         assert_eq!(audit_log_key(rms).0, derive(contexts::AUDIT_LOG, rms).0);
+    }
+
+    /// The context must be byte-identical to what `{:?}` produced, or every
+    /// vault already on disk stops opening. Compared against the exact
+    /// expression that was replaced — so if `Debug` for `&[u8]` ever changes,
+    /// this fails loudly instead of silently re-keying someone's vault.
+    #[test]
+    fn chunk_key_context_is_byte_identical_to_the_debug_format() {
+        let cases: [&[u8]; 7] = [
+            b"",
+            b"vault",
+            b"vault-main",
+            b"vault-data-000000",
+            b"vault-data-999999",
+            &[0, 1, 9, 10, 99, 100, 255],
+            "chunk-é-\u{1F512}".as_bytes(),
+        ];
+        for chunk_id in cases {
+            let expected = format!("{} || {:?}", contexts::CHUNK_KEY, chunk_id);
+            assert_eq!(chunk_key_context(chunk_id), expected, "context for {chunk_id:?}");
+            assert_eq!(
+                chunk_key(FAKE_RMS, chunk_id).0,
+                derive(&expected, FAKE_RMS).0,
+                "derived key for {chunk_id:?}"
+            );
+        }
     }
 
     #[test]

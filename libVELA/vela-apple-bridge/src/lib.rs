@@ -13,7 +13,6 @@ use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
 use vela_crypto::{aead, kdf, kem, shamir};
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
-const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
 
 type FfiResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
 
@@ -149,6 +148,10 @@ struct EncryptChunkRequest {
 struct DecryptChunkRequest {
     rms_b64: String,
     chunk_id: String,
+    /// Revision the server claimed for this chunk. Verified for sealed
+    /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
+    #[serde(default)]
+    lamport_clock: i64,
     ciphertext_b64: String,
 }
 
@@ -435,9 +438,13 @@ fn seal_share_json(request_json: &str) -> FfiResult<SealShareResponse> {
 /// Per-chunk vault key, matching the Android bridge / desktop derivation so the
 /// same encrypted chunk is interoperable across clients:
 /// `derive("vela chunk key v1" || {:?}(chunk_id_bytes), rms)`.
+/// Delegates to `vela_crypto`, which owns the derivation context.
+///
+/// This used to build the context here with `{:?}`, in a second copy that had to
+/// stay byte-identical to the core's by hand — two places to get a key
+/// derivation exactly right (audit crypto M4).
 fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
-    let context = format!("{} || {:?}", CHUNK_KEY_CONTEXT, chunk_id.as_bytes());
-    *kdf::derive(&context, rms).as_bytes()
+    *kdf::chunk_key(rms, chunk_id.as_bytes()).as_bytes()
 }
 
 /// Derive the per-chunk vault keys handed to a read-write web session, so the
@@ -573,7 +580,7 @@ fn decrypt_vault_chunk_json(request_json: &str) -> FfiResult<DecryptVaultRespons
     let rms = decode_rms(&req.rms_b64)?;
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let plaintext = aead::decrypt(&key, &ciphertext)?;
+    let plaintext = aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)?;
     Ok(DecryptVaultResponse {
         vault_json: String::from_utf8(plaintext.to_vec())?,
     })

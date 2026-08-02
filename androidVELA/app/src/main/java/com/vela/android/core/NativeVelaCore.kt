@@ -54,11 +54,21 @@ object NativeVelaCore {
         }
     }
 
-    fun decryptVaultChunkJson(rms: ByteArray, chunkId: String, ciphertext: ByteArray): String? {
+    /// `lamportClock` is the revision the server claimed for this chunk. It is
+    /// verified for ciphertexts sealed with associated data and ignored for the
+    /// older unbound ones, so this reads both while the fleet upgrades
+    /// (audit C-2, rollout step 2).
+    fun decryptVaultChunkJson(
+        rms: ByteArray,
+        chunkId: String,
+        ciphertext: ByteArray,
+        lamportClock: Long = 0
+    ): String? {
         return callNative {
             val request = JSONObject()
                 .put("chunk_id", chunkId)
                 .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
+                .put("lamport_clock", lamportClock)
                 .toString()
             val response = JSONObject(nativeDecryptVaultChunkJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }

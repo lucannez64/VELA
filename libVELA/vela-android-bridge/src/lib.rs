@@ -19,7 +19,6 @@ use vela_crypto::shamir;
 use zeroize::Zeroize;
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
-const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
 
 #[repr(C)]
 pub struct VelaByteBuffer {
@@ -153,6 +152,10 @@ struct DecryptChunkRequest {
     rms_b64: String,
     chunk_id: String,
     ciphertext_b64: String,
+    /// Revision the server claimed for this chunk. Verified for sealed
+    /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
+    #[serde(default)]
+    lamport_clock: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -596,7 +599,12 @@ fn decrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &request.chunk_id);
-    let plaintext = aead::decrypt(&key, &ciphertext)?;
+    let plaintext = aead::open_vault_chunk(
+        &key,
+        &ciphertext,
+        &request.chunk_id,
+        request.lamport_clock,
+    )?;
     Ok(DecryptVaultResponse {
         vault_json: String::from_utf8(plaintext.to_vec())?,
     })
@@ -644,9 +652,13 @@ fn decrypt_vault_json(request_json: &str) -> anyhow_like::Result<DecryptVaultRes
     Ok(DecryptVaultResponse { vault_json })
 }
 
+/// Delegates to `vela_crypto`, which owns the derivation context.
+///
+/// This used to build the context here with `{:?}`, in a second copy that had to
+/// stay byte-identical to the core's by hand — two places to get a key
+/// derivation exactly right (audit crypto M4).
 fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
-    let context = format!("{} || {:?}", CHUNK_KEY_CONTEXT, chunk_id.as_bytes());
-    *kdf::derive(&context, rms).as_bytes()
+    *kdf::chunk_key(rms, chunk_id.as_bytes()).as_bytes()
 }
 
 // ── Identity handles (audit C-1) ─────────────────────────────────────────────
@@ -996,10 +1008,26 @@ fn error_json(error: &str) -> String {
     .unwrap_or_else(|_| "{\"error\":\"bridge error\"}".to_string())
 }
 
+/// Hand a string to C, never panicking.
+///
+/// Both fallbacks used to end in `.expect(...)`, and an unwind across
+/// `extern "C"` is undefined behaviour — the fact that an empty `CString` cannot
+/// realistically fail is not a guarantee the compiler or a future refactor
+/// respects (audit L2). `CString::new` only fails on an interior NUL, so the
+/// fallback strips them and the last resort is built without any fallible call.
 fn string_to_ptr(value: &str) -> *mut c_char {
-    CString::new(value)
-        .unwrap_or_else(|_| CString::new("").expect("empty CString"))
-        .into_raw()
+    if let Ok(c_string) = CString::new(value) {
+        return c_string.into_raw();
+    }
+    let without_nul: Vec<u8> = value.bytes().filter(|byte| *byte != 0).collect();
+    if let Ok(c_string) = CString::new(without_nul) {
+        return c_string.into_raw();
+    }
+    // Unreachable — the bytes above contain no NUL — but expressed without a
+    // panic so no path out of this function can unwind into C.
+    let mut empty = Vec::with_capacity(1);
+    empty.push(0u8);
+    Box::into_raw(empty.into_boxed_slice()) as *mut c_char
 }
 
 /// Hand a `Vec` to C as a pointer + length.

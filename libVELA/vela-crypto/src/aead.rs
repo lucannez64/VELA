@@ -41,6 +41,30 @@ pub fn vault_chunk_aad(chunk_id: &str, lamport_clock: i64) -> Vec<u8> {
     aad
 }
 
+/// Open a vault chunk written in either format.
+///
+/// Step 2 of the C-2 rollout: every client must *read* both shapes before any
+/// client starts writing the sealed one, or the first device to upgrade writes
+/// chunks its owner's other devices cannot open. Sealed blobs are self-describing
+/// (`VAE1`), so this needs no flag — it just tries the binding when it is there.
+///
+/// `lamport_clock` is the revision the server claimed for this chunk. For a
+/// sealed blob it is verified: a relabelled or replayed ciphertext fails to
+/// open. For a legacy blob it is unused, which is exactly the gap the rollout
+/// closes.
+pub fn open_vault_chunk(
+    key: &[u8; 32],
+    blob: &[u8],
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    if is_sealed(blob) {
+        open(key, blob, &vault_chunk_aad(chunk_id, lamport_clock))
+    } else {
+        decrypt(key, blob)
+    }
+}
+
 /// Encrypt with associated data bound to the ciphertext.
 ///
 /// The AEAD tag covers `aad`, so a ciphertext that arrives labelled as a
@@ -195,6 +219,38 @@ mod tests {
         // And neither opens through the other's path.
         assert!(open(&AAD_KEY, &legacy, &vault_chunk_aad("vault", 1)).is_err());
         assert!(decrypt(&AAD_KEY, &sealed).is_err());
+    }
+
+    /// Both formats have to open through one call, or the fleet cannot upgrade
+    /// one client at a time.
+    #[test]
+    fn open_vault_chunk_reads_both_formats() {
+        let legacy = encrypt(&AAD_KEY, b"old chunk").unwrap();
+        let sealed = seal(
+            &AAD_KEY,
+            b"new chunk",
+            &vault_chunk_aad("vault-data-000000", 12),
+        )
+        .unwrap();
+
+        assert_eq!(
+            open_vault_chunk(&AAD_KEY, &legacy, "vault-data-000000", 12)
+                .unwrap()
+                .as_slice(),
+            b"old chunk"
+        );
+        assert_eq!(
+            open_vault_chunk(&AAD_KEY, &sealed, "vault-data-000000", 12)
+                .unwrap()
+                .as_slice(),
+            b"new chunk"
+        );
+
+        // A legacy blob ignores the labels — that is the gap the rollout
+        // closes — but a sealed one holds the server to them.
+        assert!(open_vault_chunk(&AAD_KEY, &legacy, "vault-data-000009", 1).is_ok());
+        assert!(open_vault_chunk(&AAD_KEY, &sealed, "vault-data-000009", 12).is_err());
+        assert!(open_vault_chunk(&AAD_KEY, &sealed, "vault-data-000000", 11).is_err());
     }
 
     #[test]

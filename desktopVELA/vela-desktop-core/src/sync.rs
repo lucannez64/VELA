@@ -429,7 +429,8 @@ async fn download_vault_from_manifest(
                 *token.lock().await = new_t;
             }
             reject_rollback(&chunk_id, lamport, seen_lamport)?;
-            let chunk = decrypt(&key, &ciphertext).map_err(|e| format!("Failed to decrypt chunk {chunk_id}: {e}"))?;
+            let chunk = vela_crypto::aead::open_vault_chunk(&key, &ciphertext, &chunk_id, lamport)
+                .map_err(|e| format!("Failed to decrypt chunk {chunk_id}: {e}"))?;
             Ok::<_, String>((idx, chunk, lamport))
         }));
     }

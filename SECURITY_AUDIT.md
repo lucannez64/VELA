@@ -86,7 +86,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
-| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (rollback refused on desktop; AAD binding staged) |
+| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (rollback refused on all clients; writers not yet flipped) |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | **FIXED** (tagged shares; tampering is an error) |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
 | P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
@@ -733,13 +733,20 @@ enrollment driver.
 > **STATUS: PARTIALLY FIXED — the detection half is in, the binding half is
 > staged.** The finding has two parts and they have very different blast radii.
 >
-> **Done: a client refuses an older revision.** Per-chunk lamport clocks only
-> increase, so a value below what the device already recorded is a rollback, not
-> a stale cache. `sync.rs` now compares every downloaded chunk against the
-> `sync_meta.json` it already persists and refuses to overwrite newer local data.
-> This needed no format change and no coordination between clients, so it ships
-> now. (Desktop only so far — the same check belongs in the Android, iOS and web
-> sync loops, each of which tracks its own clocks.)
+> **Done: every client refuses an older revision.** Per-chunk lamport clocks only
+> increase, so a value below what a device already recorded is a rollback, not a
+> stale cache. Desktop compares each downloaded chunk against the
+> `sync_meta.json` it already persists; Android checks the manifest against the
+> clock in `SyncSettingsStore`; iOS keeps the same baseline in the App Group's
+> defaults so the extension shares it. Each refuses to overwrite newer local
+> data, and each says how to clear the baseline — a vault reset elsewhere
+> legitimately restarts the clocks. The web client is session-scoped with no
+> baseline to compare against, so it has none.
+>
+> **Done: every client reads both ciphertext formats.** `aead::open_vault_chunk`
+> picks the path from the blob's own `VAE1` marker, and all four clients now pass
+> the chunk id and claimed revision down to it. That is rollout step 2 — the
+> release that has to be everywhere *before* any writer starts sealing.
 >
 > **Staged: binding the revision into the ciphertext.** `aead::seal`/`open` and
 > `vault_chunk_aad` are in `vela-crypto` with tests, self-describing via a
@@ -886,14 +893,14 @@ credit the existing hardening:
 | desktop | `commands/audit.rs:18-179` | Renderer can forge audit entries (action whitelist, but arbitrary `details`) |
 | desktop | `store.rs:296-318` | Legacy plaintext identity-keys file silently re-encrypted (only `warn!`) |
 | extension | `manifests/*.json:56,60-69` | Unused `webNavigation` permission; `web_accessible_resources` enables fingerprinting |
-| extension | `content/content-script.js:1020` | Unescaped `location.href` hostname in `innerHTML` (URL spec makes `<>"'&` impossible, but inconsistent) |
+| extension | ~~`content/content-script.js`~~ | ~~Unescaped interpolation~~ **FIXED** — `velaEscapeHtml` had the same quote bug as the popup's escaper (E-2) while five attribute sites relied on it, including the save prompt's page-supplied username and password |
 | extension | `native-messaging/vela-native-messaging-host.py:81-97` | Windows IPC-auth file check is a no-op; capability token is a static bearer with no HMAC/nonce |
 | android | ~~`build.gradle.kts:49-54`~~ | ~~No R8/minification → `Log.d` metadata ships~~ **FIXED** — R8 on, with JNI keep rules and log stripping |
 | android | `sync/SyncSettingsStore.kt:84-88` | Server URL accepts `http://` (OS blocks cleartext, but failure is silent) |
 | android | `security/SecureClipboard.kt:20` | 30s clipboard exposure window (industry-standard, but the largest live-secret surface) |
 | crypto | ~~`shamir.rs:19-56`~~ | ~~Variable-time GF(2⁸) arithmetic~~ **FIXED** — fixed-iteration, branch-free multiply and exponentiation |
 | crypto | ~~`password_kdf.rs:31-33` vs `vela-wasm-bridge/src/lib.rs:19-21`~~ | ~~Argon2id params diverge~~ **FIXED** — blobs record their own cost (v3), the default is 64 MiB/t=3, and the divergent WASM copy was dead code (removed) |
-| crypto | `kdf.rs:58-61` | `chunk_key` context built from `{:?}` debug formatting (unstable contract; raw-bytes vs string divergence between bridges) |
+| crypto | ~~`kdf.rs:58-61`~~ | ~~`chunk_key` context from `{:?}`~~ **FIXED** — context built explicitly, byte-identical (no re-key), and both bridge copies now delegate to it |
 | crypto | `vela-core/src/vault.rs:46-106` | `VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s |
 | crypto | ~~`password.rs:106`~~ | ~~`getrandom(...).expect(...)` panics across `extern "C"`~~ **FIXED** — returns `PasswordError` |
 
@@ -1102,7 +1109,12 @@ python3 security/scan.py          # Rust checks only
 VELA_BASE=http://127.0.0.1:8553 VELA_TEST_TOKEN=<paseto> security/zap/run-zap.sh
 ```
 
-Current expected result: `scan.py` reports 3 findings (M4 ×2, L2) — `get_session` is now
+Current expected result: **clean**. `scan.py` reports 0, semgrep-js reports 0,
+`cargo-audit` and `cargo-deny` clean on all five workspaces — so `security.yml`
+drops `continue-on-error` and the scan is a hard gate. Note the R2 rule itself
+was fixed while clearing it: its pattern was `\{:?\}`, where the `?` makes the
+*colon* optional, so it matched `{}` and never `{:?}`. It fired on the real
+findings only because those lines happened to contain a `{}` as well — `get_session` is now
 allowlisted (S-2 fixed: it authenticates with the browser's poll secret) and the WASM bridge's
 `{:?}` derivation is gone with the RMS export (D-2) — semgrep-js reports 7 (E-2 ×4, E-1, 2 review
 points), `cargo-audit` clean on all workspaces. **The scan should be green again only after M4,

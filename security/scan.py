@@ -99,7 +99,45 @@ def check_missing_authsession():
 
 
 # ── R2: {:?} debug formatting in crypto code ─────────────────────────────────
-DEBUG_FMT = re.compile(r'format!\([^)]*"[^"]*\{:?\}[^"]*"')
+# Debug formatting inside a format string: `{:?}`, `{:#?}`, `{name:?}`, `{0:?}`.
+#
+# The previous pattern was `\{:?\}`, where the `?` makes the *colon* optional —
+# so it matched `{}` and never `{:?}`. It only ever fired on derivation contexts
+# that happened to also contain a `{}`, and `format!("ctx {:?}", id)` — the exact
+# thing this rule is named for — was invisible to it.
+DEBUG_FMT = re.compile(r'format!\s*\([^;]*?\{[^{}"]*:#?\?\}')
+
+# Debug output only matters where it becomes a *contract*: a KDF context, an
+# info/domain-separation string, a salt. In an error message it is fine, and
+# flagging those trains people to ignore the rule.
+DERIVATION_SITE = re.compile(
+    r"let\s+\w*(context|ctx|info|domain|salt)\w*\s*[:=]"
+    r"|derive\w*\s*\(|new_keyed\s*\(|update\s*\(",
+    re.IGNORECASE,
+)
+CFG_TEST = re.compile(r"^\s*#\[cfg\(test\)\]")
+
+
+def test_module_span(lines):
+    """Line numbers (1-based, inclusive) covered by `#[cfg(test)] mod … { … }`.
+
+    The rule is about *derivation* code: a `{:?}` in a test is usually the
+    opposite of a finding — `kdf.rs` compares its explicit context builder
+    against the very `format!("{:?}")` it replaced, which is what proves no
+    vault gets re-keyed. Flagging that would push someone to delete the check.
+    """
+    spans = set()
+    for index, line in enumerate(lines):
+        if not CFG_TEST.match(line):
+            continue
+        depth, started = 0, False
+        for offset in range(index, len(lines)):
+            depth += lines[offset].count("{") - lines[offset].count("}")
+            started = started or "{" in lines[offset]
+            spans.add(offset + 1)
+            if started and depth <= 0:
+                break
+    return spans
 
 
 def check_debug_format_crypto():
@@ -111,8 +149,12 @@ def check_debug_format_crypto():
                 if not fn.endswith(".rs"):
                     continue
                 path = os.path.join(dirpath, fn)
-                for i, raw in enumerate(open(path, encoding="utf-8"), 1):
-                    if DEBUG_FMT.search(raw):
+                lines = open(path, encoding="utf-8").read().splitlines()
+                in_tests = test_module_span(lines)
+                for i, raw in enumerate(lines, 1):
+                    if i in in_tests:
+                        continue
+                    if DEBUG_FMT.search(raw) and DERIVATION_SITE.search(raw):
                         add("R2 debug-format-crypto", "WARN", path, i,
                             "Debug formatting (`{:?}`) in crypto/derivation code — "
                             "not a stable serialization contract (audit crypto M4).")
