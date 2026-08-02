@@ -47,10 +47,29 @@ export function openShare(shareDkB64: string, capsuleB64: string): string {
 // The chunk key is the one the approver granted for that exact chunk id; this
 // browser never holds the RMS the keys are derived from (audit D-2).
 
-/** Decrypt a vault chunk → its `VaultStore` JSON (RW live read). */
-export function decryptVaultChunk(chunkKeyB64: string, ciphertextB64: string): string {
+/**
+ * Decrypt a vault chunk → its `VaultStore` JSON (RW live read).
+ *
+ * `chunkId` and `lamportClock` are the labels the server put on this chunk.
+ * They are verified for ciphertexts sealed with associated data and ignored for
+ * the older unbound ones, so this reads both while the fleet upgrades
+ * (audit C-2, rollout step 2).
+ */
+export function decryptVaultChunk(
+  chunkKeyB64: string,
+  ciphertextB64: string,
+  chunkId: string,
+  lamportClock: number,
+): string {
   return parse<{ vault_json: string }>(
-    decrypt_vault_chunk_json(JSON.stringify({ chunk_key_b64: chunkKeyB64, ciphertext_b64: ciphertextB64 })),
+    decrypt_vault_chunk_json(
+      JSON.stringify({
+        chunk_key_b64: chunkKeyB64,
+        ciphertext_b64: ciphertextB64,
+        chunk_id: chunkId,
+        lamport_clock: lamportClock,
+      }),
+    ),
   ).vault_json;
 }
 

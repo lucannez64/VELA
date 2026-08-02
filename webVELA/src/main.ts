@@ -455,7 +455,7 @@ async function loadReadWrite(expiresAt?: string) {
   for (const id of readIds) {
     const ct = await authed.getChunk(id);
     if (!ct) continue;
-    json += decryptVaultChunk(chunkKeyFor(id), bytesToB64(ct));
+    json += decryptVaultChunk(chunkKeyFor(id), bytesToB64(ct), id, man.get(id)?.lamport ?? 0);
   }
   items = json ? ((JSON.parse(json) as { items?: Record<string, unknown>[] }).items ?? []) : [];
   showVault({ editable: true, expiresAt });

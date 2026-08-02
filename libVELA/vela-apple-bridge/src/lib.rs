@@ -149,6 +149,10 @@ struct EncryptChunkRequest {
 struct DecryptChunkRequest {
     rms_b64: String,
     chunk_id: String,
+    /// Revision the server claimed for this chunk. Verified for sealed
+    /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
+    #[serde(default)]
+    lamport_clock: i64,
     ciphertext_b64: String,
 }
 
@@ -573,7 +577,7 @@ fn decrypt_vault_chunk_json(request_json: &str) -> FfiResult<DecryptVaultRespons
     let rms = decode_rms(&req.rms_b64)?;
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let plaintext = aead::decrypt(&key, &ciphertext)?;
+    let plaintext = aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)?;
     Ok(DecryptVaultResponse {
         vault_json: String::from_utf8(plaintext.to_vec())?,
     })

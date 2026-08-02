@@ -17,7 +17,52 @@ struct SyncEngine {
 
     enum SyncError: LocalizedError {
         case crypto
-        var errorDescription: String? { "vault encryption failed" }
+        case rollback(serverClock: Int, lastSeen: Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .crypto:
+                return "vault encryption failed"
+            case let .rollback(serverClock, lastSeen):
+                return "The server returned an older revision of this vault "
+                    + "(clock \(serverClock), last seen \(lastSeen)). Refusing to "
+                    + "overwrite newer local data. If you reset this vault on "
+                    + "another device, sign out and back in here."
+            }
+        }
+    }
+
+    /// Highest chunk revision this device has accepted, kept in the App Group so
+    /// the extension shares the same baseline.
+    private static let lastSeenClockKey = "vela.sync.lastSeenLamport"
+
+    private static func sharedDefaults() -> UserDefaults {
+        UserDefaults(suiteName: AppGroup.identifier) ?? .standard
+    }
+
+    /// Refuse a manifest that puts the whole vault behind the revision this
+    /// device already synced.
+    ///
+    /// The sync server is untrusted, and replaying older ciphertexts used to be
+    /// invisible: deleted credentials reappear and rotated passwords revert
+    /// (audit C-2). Lamport clocks only ever increase, so a maximum below the
+    /// recorded one is a rollback, not a stale read. A vault reset and
+    /// re-created elsewhere legitimately restarts its clocks, which is why the
+    /// message says how to clear the local baseline.
+    private func rejectRollback(manifest: SyncManifest) throws {
+        let lastSeen = Self.sharedDefaults().integer(forKey: Self.lastSeenClockKey)
+        guard lastSeen > 0 else { return }
+        let serverMax = manifest.chunks.map { $0.lamport_clock }.max() ?? 0
+        if serverMax < lastSeen {
+            throw SyncError.rollback(serverClock: serverMax, lastSeen: lastSeen)
+        }
+    }
+
+    private func recordSeenClock(_ clock: Int) {
+        let defaults = Self.sharedDefaults()
+        if clock > defaults.integer(forKey: Self.lastSeenClockKey) {
+            defaults.set(clock, forKey: Self.lastSeenClockKey)
+        }
     }
 
     static func dataChunkID(_ index: Int) -> String {
@@ -66,11 +111,17 @@ struct SyncEngine {
             readIDs = []
         }
 
+        try rejectRollback(manifest: manifest)
+        recordSeenClock(manifest.chunks.map { $0.lamport_clock }.max() ?? 0)
+
         var remoteJSON = ""
         for id in readIDs {
             let fetched = try await client.getChunk(id)
             if let piece = VelaCoreFFI.decryptVaultChunk(
-                rmsBase64: rmsB64, chunkID: id, ciphertextBase64: fetched.ciphertextBase64) {
+                rmsBase64: rmsB64,
+                chunkID: id,
+                ciphertextBase64: fetched.ciphertextBase64,
+                lamportClock: Int64(byID[id]?.lamport_clock ?? 0)) {
                 remoteJSON += piece
             }
         }
@@ -102,6 +153,7 @@ struct SyncEngine {
                 _ = try await client.putChunk(
                     id, ciphertextBase64: cipherB64, ifMatch: existing?.version ?? 0, lamportClock: lamport)
             }
+            recordSeenClock(lamport)
 
             // Drop stale data chunks (vault shrank) and any legacy single chunks.
             for chunk in manifest.chunks {

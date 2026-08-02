@@ -170,8 +170,22 @@ enum VelaCoreFFI {
         return field(response, "ciphertext_b64")
     }
 
-    static func decryptVaultChunk(rmsBase64: String, chunkID: String, ciphertextBase64: String) -> String? {
-        let request = json(["rms_b64": rmsBase64, "chunk_id": chunkID, "ciphertext_b64": ciphertextBase64])
+    /// `lamportClock` is the revision the server claimed for this chunk. It is
+    /// verified for ciphertexts sealed with associated data and ignored for the
+    /// older unbound ones, so this reads both while the fleet upgrades
+    /// (audit C-2, rollout step 2).
+    static func decryptVaultChunk(
+        rmsBase64: String,
+        chunkID: String,
+        ciphertextBase64: String,
+        lamportClock: Int64 = 0
+    ) -> String? {
+        let request = json([
+            "rms_b64": rmsBase64,
+            "chunk_id": chunkID,
+            "ciphertext_b64": ciphertextBase64,
+            "lamport_clock": lamportClock,
+        ])
         let response = request.withCString { consume(vela_ffi_decrypt_vault_chunk_json($0)) }
         return field(response, "vault_json")
     }

@@ -90,6 +90,12 @@ struct DecryptChunkRequest {
     /// The per-chunk key granted for this chunk id — **not** the RMS.
     chunk_key_b64: String,
     ciphertext_b64: String,
+    /// Chunk id and the revision the server claimed for it. Verified for sealed
+    /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
+    #[serde(default)]
+    chunk_id: String,
+    #[serde(default)]
+    lamport_clock: i64,
 }
 
 #[derive(Serialize)]
@@ -185,7 +191,9 @@ fn decrypt_vault_chunk_impl(request_json: &str) -> Result<DecryptChunkResponse, 
     let req: DecryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes()).map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
-    let plaintext = aead::decrypt(&key, &ciphertext).map_err(|e| e.to_string())?;
+    let plaintext =
+        aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)
+            .map_err(|e| e.to_string())?;
     Ok(DecryptChunkResponse {
         vault_json: String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?,
     })

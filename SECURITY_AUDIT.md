@@ -86,7 +86,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
-| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (rollback refused on desktop; AAD binding staged) |
+| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (rollback refused on all clients; writers not yet flipped) |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | **FIXED** (tagged shares; tampering is an error) |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
 | P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
@@ -733,13 +733,20 @@ enrollment driver.
 > **STATUS: PARTIALLY FIXED — the detection half is in, the binding half is
 > staged.** The finding has two parts and they have very different blast radii.
 >
-> **Done: a client refuses an older revision.** Per-chunk lamport clocks only
-> increase, so a value below what the device already recorded is a rollback, not
-> a stale cache. `sync.rs` now compares every downloaded chunk against the
-> `sync_meta.json` it already persists and refuses to overwrite newer local data.
-> This needed no format change and no coordination between clients, so it ships
-> now. (Desktop only so far — the same check belongs in the Android, iOS and web
-> sync loops, each of which tracks its own clocks.)
+> **Done: every client refuses an older revision.** Per-chunk lamport clocks only
+> increase, so a value below what a device already recorded is a rollback, not a
+> stale cache. Desktop compares each downloaded chunk against the
+> `sync_meta.json` it already persists; Android checks the manifest against the
+> clock in `SyncSettingsStore`; iOS keeps the same baseline in the App Group's
+> defaults so the extension shares it. Each refuses to overwrite newer local
+> data, and each says how to clear the baseline — a vault reset elsewhere
+> legitimately restarts the clocks. The web client is session-scoped with no
+> baseline to compare against, so it has none.
+>
+> **Done: every client reads both ciphertext formats.** `aead::open_vault_chunk`
+> picks the path from the blob's own `VAE1` marker, and all four clients now pass
+> the chunk id and claimed revision down to it. That is rollout step 2 — the
+> release that has to be everywhere *before* any writer starts sealing.
 >
 > **Staged: binding the revision into the ciphertext.** `aead::seal`/`open` and
 > `vault_chunk_aad` are in `vela-crypto` with tests, self-describing via a

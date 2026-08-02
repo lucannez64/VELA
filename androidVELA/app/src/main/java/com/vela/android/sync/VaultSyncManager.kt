@@ -425,6 +425,30 @@ class VaultSyncManager(
     private fun authenticatedToken(client: AndroidVelaApiClient, cachedToken: String): String =
         cachedToken.ifBlank { authenticateOrRegister(client) }
 
+    /**
+     * Refuse a manifest that puts every chunk behind the revision this device
+     * already synced.
+     *
+     * The sync server is untrusted, and replaying older ciphertexts used to be
+     * invisible: deleted credentials reappear and rotated passwords revert
+     * (audit C-2). Lamport clocks only ever increase, so a maximum below what
+     * was last recorded is a rollback rather than a stale read. A vault that was
+     * reset and re-created elsewhere legitimately restarts its clocks — that is
+     * why the message says how to clear the local baseline.
+     */
+    private fun rejectRollback(manifest: SyncManifest) {
+        val lastSeen = settingsStore.settings.value.lamportClock
+        if (lastSeen <= 0) return
+        val serverMax = manifest.chunks.maxOfOrNull { it.lamportClock } ?: return
+        if (serverMax < lastSeen) {
+            error(
+                "The server returned an older revision of this vault (clock $serverMax, " +
+                    "last seen $lastSeen). Refusing to overwrite newer local data. If you " +
+                    "reset this vault on another device, sign out and back in here."
+            )
+        }
+    }
+
     private suspend fun downloadRemoteVault(
         client: AndroidVelaApiClient,
         startToken: String,
@@ -432,6 +456,7 @@ class VaultSyncManager(
         chunkIds: List<String>,
         manifest: SyncManifest
     ): RemoteVaultDownload = coroutineScope {
+        rejectRollback(manifest)
         var tokenRef = startToken
         val tokenMutex = Mutex()
 
@@ -442,12 +467,11 @@ class VaultSyncManager(
                 downloaded.newToken?.let { newToken ->
                     tokenMutex.withLock { tokenRef = newToken }
                 }
-                val json = NativeVelaCore.decryptVaultChunkJson(rms, chunkId, downloaded.ciphertext)
-                    ?: error("Native VELA bridge could not decrypt server vault chunk $chunkId")
-                Triple(index, json, Pair(
-                    chunkId,
-                    manifest.chunks.firstOrNull { it.chunkId == chunkId }
-                ))
+                val entry = manifest.chunks.firstOrNull { it.chunkId == chunkId }
+                val json = NativeVelaCore.decryptVaultChunkJson(
+                    rms, chunkId, downloaded.ciphertext, entry?.lamportClock ?: 0
+                ) ?: error("Native VELA bridge could not decrypt server vault chunk $chunkId")
+                Triple(index, json, Pair(chunkId, entry))
             }
         }.awaitAll()
 
