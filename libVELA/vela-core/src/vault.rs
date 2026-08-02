@@ -43,7 +43,7 @@ pub struct VaultMeta {
     pub share_recipient: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "item_type", rename_all = "camelCase")]
 pub enum VaultItem {
     Login {
@@ -114,6 +114,59 @@ pub enum VaultItem {
         breaches: Vec<BreachEntry>,
     },
 }
+
+/// Redacted `Debug`, because the derived one printed the secrets.
+///
+/// A single `tracing::debug!("{item:?}")` anywhere — in this crate, in a
+/// consumer, in a test someone leaves in — put passwords, card numbers, CVVs and
+/// SSNs into a log file. Logs get shipped, attached to bug reports and read by
+/// people who are not the vault's owner, so the fix is at the type: there is no
+/// formatting of a `VaultItem` that reveals a secret, whoever writes it (audit,
+/// crypto hardening).
+///
+/// The non-secret metadata is kept — an item you cannot identify is useless to
+/// debug with.
+impl std::fmt::Debug for VaultItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const REDACTED: &str = "[REDACTED]";
+        let mut out = f.debug_struct("VaultItem");
+        out.field("kind", &self.item_type())
+            .field("id", &self.id())
+            .field("name", &self.name());
+        match self {
+            VaultItem::Login { url, username, totp, .. } => {
+                out.field("url", url)
+                    .field("username", username)
+                    .field("password", &REDACTED)
+                    // Whether a login *has* a TOTP secret is metadata; the seed
+                    // is not.
+                    .field("totp", &totp.as_ref().map(|_| REDACTED));
+            }
+            VaultItem::CreditCard { exp, .. } => {
+                out.field("number", &REDACTED)
+                    .field("exp", exp)
+                    .field("cvv", &REDACTED)
+                    .field("pin", &REDACTED);
+            }
+            VaultItem::SecureNote { .. } => {
+                out.field("content", &REDACTED);
+            }
+            VaultItem::Identity { first_name, last_name, .. } => {
+                out.field("first_name", first_name)
+                    .field("last_name", last_name)
+                    .field("ssn", &REDACTED);
+            }
+            VaultItem::FileBlob { filename, mime, .. } => {
+                out.field("filename", filename).field("mime", mime);
+            }
+            VaultItem::BreachMonitor { email, breach_count, .. } => {
+                out.field("email", email).field("breach_count", breach_count);
+            }
+        }
+        out.finish()
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Tombstone {
@@ -431,6 +484,76 @@ mod tests {
             totp: None,
             app_ids: Vec::new(),
         }
+    }
+
+    #[test]
+    fn debug_never_prints_a_secret() {
+        let now = Utc::now();
+        let meta = |id: &str| VaultMeta {
+            id: id.to_string(),
+            name: "Bank".into(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+            last_modified_device: None,
+            favorite: false,
+            shared: false,
+            share_recipient: None,
+        };
+
+        let items = vec![
+            VaultItem::Login {
+                meta: meta("1"),
+                url: "https://bank.example".into(),
+                username: "ada".into(),
+                pass: "hunter2-SECRET".into(),
+                totp: Some("JBSWY3DPEHPK3PXP".into()),
+                app_ids: Vec::new(),
+            },
+            VaultItem::CreditCard {
+                meta: meta("2"),
+                number: "4111111111111111".into(),
+                exp: "12/30".into(),
+                cvv: "987".into(),
+                pin: Some("4242".into()),
+                cardholder_name: None,
+            },
+            VaultItem::SecureNote {
+                meta: meta("3"),
+                title: "t".into(),
+                content: "the recovery phrase is SECRET".into(),
+            },
+            VaultItem::Identity {
+                meta: meta("4"),
+                first_name: "Ada".into(),
+                last_name: "Lovelace".into(),
+                ssn: "078-05-1120".into(),
+            },
+        ];
+
+        for item in &items {
+            let rendered = format!("{item:?}");
+            for secret in [
+                "hunter2-SECRET",
+                "JBSWY3DPEHPK3PXP",
+                "4111111111111111",
+                "987",
+                "4242",
+                "the recovery phrase is SECRET",
+                "078-05-1120",
+            ] {
+                assert!(
+                    !rendered.contains(secret),
+                    "Debug leaked {secret:?} in {rendered}"
+                );
+            }
+            // Still identifiable, or it would be useless for debugging.
+            assert!(rendered.contains("Bank"), "lost the name: {rendered}");
+        }
+
+        // Whether a TOTP exists is metadata worth keeping; the seed is not.
+        let with_totp = format!("{:?}", items[0]);
+        assert!(with_totp.contains("totp: Some"), "{with_totp}");
     }
 
     #[test]
