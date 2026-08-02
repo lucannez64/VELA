@@ -227,7 +227,7 @@ class SharingRepository(
                 // rewrite the vault for the session, but never holds the root of
                 // the key hierarchy (audit D-2).
                 val chunkKeys = try {
-                    NativeVelaCore.webSessionChunkKeys(Base64.getEncoder().encodeToString(rms))
+                    NativeVelaCore.webSessionChunkKeys(rms)
                         ?: error("Native VELA bridge is required for web access")
                 } finally {
                     rms.fill(0)

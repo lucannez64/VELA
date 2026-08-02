@@ -109,6 +109,39 @@ pub fn recovery_initiate_by_ip(store: &Store, ip: &str) -> Result<()> {
     check(store, &format!("rl:recover:init:ip:{ip}"), 10, HOUR_SECS)
 }
 
+/// 5 recovery initiations/hour per (IP, user).
+///
+/// This is the per-victim throttle, and it is keyed on the *source* as well as
+/// the target on purpose. A cap keyed on `user_id` alone is attacker-controlled
+/// input on an unauthenticated endpoint: anyone could spend a victim's whole
+/// hourly budget from any IP and lock them out of recovery precisely when they
+/// need it (audit S-3). Scoped this way, each source can only ever throttle
+/// itself, exactly like the `/auth/verify` failure counters above.
+pub fn recovery_initiate_by_ip_user(store: &Store, ip: &str, user_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:recover:init:ip_user:{ip}:{user_id}"),
+        5,
+        HOUR_SECS,
+    )
+}
+
+/// 50 recovery initiations/hour per user, across all sources.
+///
+/// A backstop against a *distributed* churn of one user's WebAuthn state, not a
+/// per-user quota: at 5/hour/IP it takes ten hostile sources to reach, while a
+/// legitimate user retrying from one or two devices never comes close. Each
+/// initiation stores state under its own `recovery_id`, so churn costs storage
+/// rather than correctness.
+pub fn recovery_initiate_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:recover:init:user:{user_id}"),
+        50,
+        HOUR_SECS,
+    )
+}
+
 /// 120 share sends/hour per sender (anti inbox-flooding of a targeted recipient).
 pub fn share_send_by_sender(store: &Store, sender: &str) -> Result<()> {
     check(store, &format!("rl:share:send:user:{sender}"), 120, HOUR_SECS)

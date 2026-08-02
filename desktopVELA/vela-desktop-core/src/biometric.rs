@@ -655,9 +655,12 @@ fn authenticate_inner() -> BiometricAuthResult {
     }
     #[cfg(target_os = "macos")]
     {
-        // macOS has no Touch ID integration yet; the honest capability is a
-        // Keychain read, which is gated by the OS keychain ACL prompt. The
-        // enrollment probe below reports exactly this capability.
+        // The Keychain item carries a user-presence ACL, so macOS itself
+        // prompts for Touch ID (or the login password) before handing the RMS
+        // back: the read *is* the presence proof. Previously this was a plain
+        // Keychain read that any code running as the user — including a
+        // compromised renderer calling `authenticate()` — could complete
+        // silently (audit D-3).
         match crate::device::tpm::retrieve_from_tpm() {
             Ok(rms) => {
                 if let Ok(mut guard) = CACHED_RMS.lock() {
@@ -670,14 +673,24 @@ fn authenticate_inner() -> BiometricAuthResult {
                     uses_password: false,
                 }
             }
-            Err(_) => BiometricAuthResult {
-                success: false,
-                error_message: Some(
-                    "No vault key in Keychain. Please use your master password.".to_string(),
-                ),
-                retry_count: None,
-                uses_password: false,
-            },
+            Err(_) => {
+                // Fail closed on a pre-ACL item rather than reading it: that
+                // read would prove nothing. One master-password unlock
+                // re-stores the key under the ACL (see
+                // `migrate_unprotected_stored_rms`) and Touch ID works after.
+                let message = if crate::device::tpm::has_unprotected_stored_rms() {
+                    "Touch ID protection for this vault needs to be set up. Unlock with your \
+                     master password once, then Touch ID will work."
+                } else {
+                    "No vault key in Keychain. Please use your master password."
+                };
+                BiometricAuthResult {
+                    success: false,
+                    error_message: Some(message.to_string()),
+                    retry_count: None,
+                    uses_password: false,
+                }
+            }
         }
     }
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
@@ -708,6 +721,30 @@ pub fn store_rms(rms: &[u8; 32]) -> anyhow::Result<()> {
     {
         let _ = rms;
         Ok(())
+    }
+}
+
+/// Re-store the RMS under the OS's user-presence protection if the platform is
+/// still holding an older, unprotected copy.
+///
+/// Only macOS has such a copy: items written before the user-presence ACL
+/// existed are readable by anything running as the user. Call this after an
+/// unlock that authenticated the user by other means (master password), which is
+/// what makes the one unprotected read on the migration path acceptable. No-op
+/// everywhere else.
+pub fn migrate_unprotected_stored_rms(rms: &[u8; 32]) {
+    #[cfg(target_os = "macos")]
+    {
+        if crate::device::tpm::has_unprotected_stored_rms() {
+            match crate::device::tpm::store_in_tpm(rms) {
+                Ok(()) => tracing::info!("Migrated Keychain RMS to a user-presence ACL"),
+                Err(e) => tracing::warn!("Could not migrate the Keychain RMS: {e}"),
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = rms;
     }
 }
 

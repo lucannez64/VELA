@@ -15,13 +15,17 @@ object NativeVelaCore {
         return callNative { nativeVersion() }
     }
 
+    // The RMS crosses JNI as a ByteArray, never as a base64 String: JVM strings
+    // are immutable, may be interned, are never zeroized, and survive in heap
+    // dumps and crash reports (audit C-1). Callers wipe their array with
+    // `fill(0)`; the Rust side wipes its copy on drop.
+
     fun encryptVaultJson(rms: ByteArray, vaultJson: String): String? {
         return callNative {
             val request = JSONObject()
-                .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("vault_json", vaultJson)
                 .toString()
-            val response = JSONObject(nativeEncryptVaultJson(request))
+            val response = JSONObject(nativeEncryptVaultJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("ciphertext_b64")
         }
@@ -30,10 +34,9 @@ object NativeVelaCore {
     fun decryptVaultJson(rms: ByteArray, ciphertext: ByteArray): String? {
         return callNative {
             val request = JSONObject()
-                .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
                 .toString()
-            val response = JSONObject(nativeDecryptVaultJson(request))
+            val response = JSONObject(nativeDecryptVaultJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("vault_json")
         }
@@ -42,11 +45,10 @@ object NativeVelaCore {
     fun encryptVaultChunkJson(rms: ByteArray, chunkId: String, vaultJson: String): String? {
         return callNative {
             val request = JSONObject()
-                .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("chunk_id", chunkId)
                 .put("vault_json", vaultJson)
                 .toString()
-            val response = JSONObject(nativeEncryptVaultChunkJson(request))
+            val response = JSONObject(nativeEncryptVaultChunkJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("ciphertext_b64")
         }
@@ -55,11 +57,10 @@ object NativeVelaCore {
     fun decryptVaultChunkJson(rms: ByteArray, chunkId: String, ciphertext: ByteArray): String? {
         return callNative {
             val request = JSONObject()
-                .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("chunk_id", chunkId)
                 .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
                 .toString()
-            val response = JSONObject(nativeDecryptVaultChunkJson(request))
+            val response = JSONObject(nativeDecryptVaultChunkJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             response.getString("vault_json")
         }
@@ -115,9 +116,15 @@ object NativeVelaCore {
                 .put("transfer_key_b64", transferKeyB64)
                 .put("capsule_b64", capsuleB64)
                 .toString()
-            val response = JSONObject(nativeDecryptRmsCapsuleJson(request))
-            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            Base64.getDecoder().decode(response.getString("rms_b64"))
+            // The RMS comes back through this array, not through the JSON: a
+            // base64 String would be another un-zeroizable copy (audit C-1).
+            val rms = ByteArray(32)
+            val response = JSONObject(nativeDecryptRmsCapsuleJson(request, rms))
+            response.optString("error").takeIf { it.isNotBlank() }?.let {
+                rms.fill(0)
+                error(it)
+            }
+            rms
         }
     }
 
@@ -137,10 +144,9 @@ object NativeVelaCore {
     /// `chunk_id → base64(32-byte key)`. The browser gets these instead of the
     /// RMS, so a leaked capsule yields vault chunks only — no identity, share,
     /// audit or recovery key can be derived from it (audit D-2).
-    fun webSessionChunkKeys(rmsB64: String): Map<String, String>? {
+    fun webSessionChunkKeys(rms: ByteArray): Map<String, String>? {
         return callNative {
-            val request = JSONObject().put("rms_b64", rmsB64).toString()
-            val response = JSONObject(nativeWebSessionChunkKeysJson(request))
+            val response = JSONObject(nativeWebSessionChunkKeysJson(rms, "{}"))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             val keys = response.getJSONObject("chunk_keys")
             keys.keys().asSequence().associateWith { keys.getString(it) }
@@ -182,11 +188,10 @@ object NativeVelaCore {
     fun splitRecovery(rms: ByteArray, threshold: Int, n: Int): List<String>? {
         return callNative {
             val request = JSONObject()
-                .put("rms_b64", Base64.getEncoder().encodeToString(rms))
                 .put("threshold", threshold)
                 .put("n", n)
                 .toString()
-            val response = JSONObject(nativeSplitRecoveryJson(request))
+            val response = JSONObject(nativeSplitRecoveryJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
             val shares = response.getJSONArray("shares_b64")
             (0 until shares.length()).map { shares.getString(it) }
@@ -201,9 +206,13 @@ object NativeVelaCore {
             val request = JSONObject()
                 .put("shares_b64", org.json.JSONArray(sharesB64))
                 .toString()
-            val response = JSONObject(nativeCombineRecoveryJson(request))
-            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            Base64.getDecoder().decode(response.getString("rms_b64"))
+            val rms = ByteArray(32)
+            val response = JSONObject(nativeCombineRecoveryJson(request, rms))
+            response.optString("error").takeIf { it.isNotBlank() }?.let {
+                rms.fill(0)
+                error(it)
+            }
+            rms
         }
     }
 
@@ -214,18 +223,18 @@ object NativeVelaCore {
 
     private external fun nativeVersion(): String
     private external fun nativeEnrollmentVerificationCode(code: String): String
-    private external fun nativeEncryptVaultJson(requestJson: String): String
-    private external fun nativeDecryptVaultJson(requestJson: String): String
-    private external fun nativeEncryptVaultChunkJson(requestJson: String): String
-    private external fun nativeDecryptVaultChunkJson(requestJson: String): String
+    private external fun nativeEncryptVaultJson(rms: ByteArray, requestJson: String): String
+    private external fun nativeDecryptVaultJson(rms: ByteArray, requestJson: String): String
+    private external fun nativeEncryptVaultChunkJson(rms: ByteArray, requestJson: String): String
+    private external fun nativeDecryptVaultChunkJson(rms: ByteArray, requestJson: String): String
     private external fun nativeGenerateServerIdentityJson(): String
     private external fun nativeGenerateShareKeypairJson(): String
     private external fun nativeCreateAuthSignatureJson(requestJson: String): String
-    private external fun nativeDecryptRmsCapsuleJson(requestJson: String): String
+    private external fun nativeDecryptRmsCapsuleJson(requestJson: String, rmsOut: ByteArray): String
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
-    private external fun nativeWebSessionChunkKeysJson(requestJson: String): String
+    private external fun nativeWebSessionChunkKeysJson(rms: ByteArray, requestJson: String): String
     private external fun nativeSealShareJson(requestJson: String): String
     private external fun nativeOpenShareJson(requestJson: String): String
-    private external fun nativeSplitRecoveryJson(requestJson: String): String
-    private external fun nativeCombineRecoveryJson(requestJson: String): String
+    private external fun nativeSplitRecoveryJson(rms: ByteArray, requestJson: String): String
+    private external fun nativeCombineRecoveryJson(requestJson: String, rmsOut: ByteArray): String
 }

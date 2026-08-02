@@ -335,6 +335,7 @@ fn main() {
 
         let bounds = Bounds::centered(None, size(px(1024.), px(720.)), cx);
         let app_state_for_tray = app_state.clone();
+        let app_state_for_auto_lock = app_state.clone();
         let app_state_for_ipc = app_state.clone();
         let app_state_for_quick_search = app_state.clone();
         let app_state = app_state.clone();
@@ -370,6 +371,23 @@ fn main() {
         // running independently (confirmed via ksni's source: `Service::
         // run`'s future captures its own `Arc` clone, not tied to `Handle`).
         let (tray_tx, tray_rx) = std::sync::mpsc::channel::<tray::TrayCommand>();
+
+        // Enforce auto-lock on the clock, not on the next user action: an idle
+        // app used to keep the RMS, crypto context, decrypted vault and last
+        // copied secret in RAM long past the deadline (audit D-1). Reuses the
+        // tray's `Locked` command, so an expiry clears the clipboard and toasts
+        // through exactly the same path as "Lock Now".
+        {
+            let lock_tx = tray_tx.clone();
+            vela_desktop_core::commands::session::spawn_auto_lock_watchdog(
+                app_state_for_auto_lock,
+                move || {
+                    tracing::info!("Session expired — auto-locking");
+                    let _ = lock_tx.send(tray::TrayCommand::Locked);
+                },
+            );
+        }
+
         cx.spawn(async move |_cx| {
             let vela_tray = tray::VelaTray::new(app_state_for_tray, tray_runtime_handle, tray_tx);
             match vela_tray.spawn().await {

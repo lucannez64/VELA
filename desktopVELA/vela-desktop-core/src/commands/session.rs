@@ -219,6 +219,47 @@ pub fn lock_session(state: &Arc<AppState>) {
     state.bump_session_generation();
 }
 
+/// How often the auto-lock watchdog checks for expiry. Short enough that
+/// secrets do not outlive the deadline by anything a user would notice, long
+/// enough to stay free in CPU terms.
+pub const AUTO_LOCK_TICK: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// One watchdog pass: lock the vault if the session's deadline has passed.
+///
+/// Returns whether it locked. Expiry used to be evaluated only when a command
+/// happened to run, so an idle app kept the RMS, the crypto context, the
+/// decrypted vault and the last copied secret in plaintext RAM long past
+/// `auto_lock_minutes` — a memory dump (`gcore`, swap, hibernation image, crash
+/// report) then yields the whole vault (audit D-1).
+pub fn auto_lock_if_expired(state: &Arc<AppState>) -> bool {
+    let expired = {
+        let session = state.session.read();
+        session.active && session.is_expired()
+    };
+    if expired {
+        lock_session(state);
+    }
+    expired
+}
+
+/// Run [`auto_lock_if_expired`] forever on its own thread, calling `on_locked`
+/// after each lock so the UI layer can do its own cleanup (clear the clipboard,
+/// emit `session-locked`, show a toast).
+///
+/// A plain OS thread rather than a runtime task: locking is synchronous, and
+/// this has to work identically under Tauri and gpui.
+pub fn spawn_auto_lock_watchdog<F>(state: Arc<AppState>, on_locked: F)
+where
+    F: Fn() + Send + 'static,
+{
+    std::thread::spawn(move || loop {
+        std::thread::sleep(AUTO_LOCK_TICK);
+        if auto_lock_if_expired(&state) {
+            on_locked();
+        }
+    });
+}
+
 pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, String> {
     state.check_unlock_throttle()?;
 
@@ -337,6 +378,12 @@ pub async fn unlock_session_with_password(
         let Some(rms) = biometric::authenticate_with_password(&password) else {
             return Err("Invalid password".to_string());
         };
+
+        // The password just proved who this is, which is the one moment it is
+        // safe to touch a pre-ACL platform key: re-store it under the OS's
+        // user-presence protection so the next biometric unlock actually proves
+        // presence (audit D-3). No-op unless such a key exists.
+        biometric::migrate_unprotected_stored_rms(&rms);
 
         let crypto = Crypto::new(&rms);
 
@@ -706,4 +753,40 @@ pub async fn reset_vault(
 
 pub fn get_device_id(state: &Arc<AppState>) -> Result<String, String> {
     state.store.load_device_id().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit D-1: expiry must be enforced by the clock, not by the next command
+    /// the user happens to run.
+    #[test]
+    fn auto_lock_wipes_secrets_once_the_deadline_passes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[7u8; 32]);
+        assert!(state.is_unlocked());
+
+        // Still inside the window: the watchdog leaves the session alone.
+        assert!(!auto_lock_if_expired(&state));
+        assert!(state.is_unlocked());
+
+        // Deadline passes with the app idle — no command runs, nothing touches
+        // the session but the watchdog.
+        {
+            let mut session = state.session.write();
+            session.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+        }
+        let generation = state.session_generation();
+
+        assert!(auto_lock_if_expired(&state));
+        assert!(!state.is_unlocked());
+        assert!(state.crypto.read().is_none(), "crypto context wiped");
+        assert!(!state.session.read().active, "session marked locked");
+        assert_ne!(state.session_generation(), generation, "in-flight work aborts");
+
+        // Idempotent: a locked session is not re-locked on the next tick.
+        assert!(!auto_lock_if_expired(&state));
+    }
 }

@@ -1278,6 +1278,7 @@ dependencies = [
  "serde_json",
  "vela-core",
  "vela-crypto",
+ "zeroize",
 ]
 
 [[package]]

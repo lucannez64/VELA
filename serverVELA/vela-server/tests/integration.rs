@@ -410,6 +410,47 @@ async fn recovery_initiate_unknown_user_returns_404() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// Audit S-3: `/recovery/initiate` is unauthenticated and `user_id` is
+/// attacker-controlled, so the per-victim cap must be keyed on the source too.
+/// A third party burning the limit from its own IP must not lock the victim out
+/// of their own recovery.
+#[tokio::test]
+async fn recovery_initiate_limit_cannot_be_burned_for_someone_else() {
+    let app = vela_server::routes::build(helpers::test_state().await);
+    let victim = Uuid::new_v4();
+
+    let initiate = |ip: [u8; 4]| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/recovery/initiate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&json!({ "user_id": victim })).unwrap(),
+            ))
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from((ip, 44444))));
+        req
+    };
+
+    // The attacker spends its own (ip, user) budget: 5 through, then throttled.
+    const ATTACKER: [u8; 4] = [203, 0, 113, 5];
+    for i in 1..=5 {
+        let resp = app.clone().oneshot(initiate(ATTACKER)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "attacker call {i}");
+    }
+    let resp = app.clone().oneshot(initiate(ATTACKER)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // The victim, on a different IP, is unaffected — 404 because the account
+    // does not exist, which is the answer they would get anyway.
+    let resp = app
+        .oneshot(initiate([198, 51, 100, 9]))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn enroll_device_without_grant_returns_401() {
     let app = app().await;

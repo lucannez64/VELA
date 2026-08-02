@@ -351,11 +351,28 @@ pub mod tpm {
 #[cfg(target_os = "macos")]
 pub mod tpm {
     use security_framework::passwords::{
-        delete_generic_password, get_generic_password, set_generic_password,
+        delete_generic_password, generic_password, set_generic_password_options,
     };
+    use security_framework::passwords_options::{AccessControlOptions, PasswordOptions};
 
     const KEYCHAIN_SERVICE: &str = "VELA_RMS_Store";
-    const KEYCHAIN_ACCOUNT: &str = "vela-user";
+    /// Account holding the RMS under a user-presence ACL. Distinct from the
+    /// legacy account so the two can coexist during migration.
+    const KEYCHAIN_ACCOUNT: &str = "vela-user-presence";
+    /// Pre-ACL account: readable with nothing but the login keychain being
+    /// unlocked, i.e. by any code running as the user. Read once, migrated, and
+    /// deleted (audit D-3).
+    const LEGACY_KEYCHAIN_ACCOUNT: &str = "vela-user";
+
+    /// The item is bound to "the user is here, right now": Touch ID if enrolled,
+    /// otherwise the device passcode/login password. macOS enforces this on
+    /// every read, which is what makes a successful read a presence proof
+    /// rather than just a keychain lookup.
+    fn presence_options() -> PasswordOptions {
+        let mut options = PasswordOptions::new_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        options.set_access_control_options(AccessControlOptions::USER_PRESENCE);
+        options
+    }
 
     pub fn is_tpm_available() -> bool {
         is_secure_enclave_available()
@@ -379,6 +396,12 @@ pub mod tpm {
         delete_from_secure_enclave()
     }
 
+    /// True while a pre-ACL Keychain item is still present, i.e. an RMS copy
+    /// readable without proving user presence (audit D-3).
+    pub fn has_unprotected_stored_rms() -> bool {
+        has_legacy_unprotected_key()
+    }
+
     fn is_secure_enclave_available() -> bool {
         let output = std::process::Command::new("sh")
             .args(["-c", "ioreg -l | grep -c 'AppleSecureEnclave'"])
@@ -395,8 +418,27 @@ pub mod tpm {
         }
     }
 
+    /// Whether a key is stored — deliberately an attribute-only query, so
+    /// probing for a key never triggers a Touch ID prompt.
     fn is_sec_key_available() -> bool {
-        get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).is_ok()
+        use security_framework::item::{ItemClass, ItemSearchOptions};
+        ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(KEYCHAIN_SERVICE)
+            .account(KEYCHAIN_ACCOUNT)
+            .search()
+            .is_ok()
+    }
+
+    /// Whether a pre-ACL item is still present and needs migrating.
+    pub(crate) fn has_legacy_unprotected_key() -> bool {
+        use security_framework::item::{ItemClass, ItemSearchOptions};
+        ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(KEYCHAIN_SERVICE)
+            .account(LEGACY_KEYCHAIN_ACCOUNT)
+            .search()
+            .is_ok()
     }
 
     // The RMS is passed to the Security framework in memory — it never
@@ -404,35 +446,56 @@ pub mod tpm {
     fn store_in_secure_enclave(key: &[u8; 32]) -> Result<(), Box<dyn std::error::Error>> {
         // Replace any existing item so behaviour matches the old `-U` update.
         let _ = delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
-        set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, key)?;
+        set_generic_password_options(key, presence_options())?;
+        // Whatever is written now supersedes the pre-ACL copy; leaving that one
+        // around would keep an unprotected RMS on disk forever.
+        let _ = delete_generic_password(KEYCHAIN_SERVICE, LEGACY_KEYCHAIN_ACCOUNT);
         Ok(())
     }
 
+    /// Read the RMS. Fails unless the user proves presence to macOS.
     fn retrieve_from_secure_enclave() -> Result<[u8; 32], Box<dyn std::error::Error>> {
-        let key = get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)?;
+        let key = generic_password(presence_options())?;
+        parse_key(&key)
+    }
 
+    /// Read a pre-ACL item, if one is still there.
+    ///
+    /// This read is *not* presence-gated — that is exactly the weakness being
+    /// migrated away from — so it is only ever called on a path that has already
+    /// authenticated the user another way, and the caller immediately re-stores
+    /// the key under the presence ACL.
+    pub(crate) fn retrieve_legacy_unprotected() -> Result<[u8; 32], Box<dyn std::error::Error>> {
+        let key = generic_password(PasswordOptions::new_generic_password(
+            KEYCHAIN_SERVICE,
+            LEGACY_KEYCHAIN_ACCOUNT,
+        ))?;
+        parse_key(&key)
+    }
+
+    fn parse_key(key: &[u8]) -> Result<[u8; 32], Box<dyn std::error::Error>> {
         if key.len() == 32 {
             let mut result = [0u8; 32];
-            result.copy_from_slice(&key);
+            result.copy_from_slice(key);
             return Ok(result);
         }
 
         // Legacy migration: older versions stored the RMS base64-encoded via
-        // `security add-generic-password -w`. Decode and re-store as raw bytes.
+        // `security add-generic-password -w`. Decode; the caller re-stores.
         use base64::{engine::general_purpose::STANDARD, Engine};
-        let b64 = String::from_utf8(key.clone())?;
+        let b64 = String::from_utf8(key.to_vec())?;
         let decoded = STANDARD.decode(b64.trim())?;
         if decoded.len() != 32 {
             return Err(format!("Invalid key length: {}", key.len()).into());
         }
         let mut result = [0u8; 32];
         result.copy_from_slice(&decoded);
-        store_in_secure_enclave(&result)?;
         Ok(result)
     }
 
     fn delete_from_secure_enclave() -> anyhow::Result<()> {
         let _ = delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        let _ = delete_generic_password(KEYCHAIN_SERVICE, LEGACY_KEYCHAIN_ACCOUNT);
         Ok(())
     }
 }

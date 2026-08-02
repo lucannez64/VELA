@@ -43,14 +43,13 @@ pub async fn post_initiate(
 ) -> Result<Json<InitiateResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     rate_limit::recovery_initiate_by_ip(&state.store, &ip)?;
-    // Per-user cap (5/hour) so a distributed attacker cannot churn the victim's
-    // recovery state even from many IPs.
-    rate_limit::check(
-        &state.store,
-        &format!("rl:recover:init:user:{}", body.user_id),
-        5,
-        3600,
-    )?;
+    // Per-victim throttle, keyed on the source as well as the target: `user_id`
+    // is unauthenticated request-body data, so a cap on it alone let anyone burn
+    // a victim's hourly budget from any IP and lock them out of recovery
+    // (audit S-3). The per-user cap below is a distributed-churn backstop set
+    // high enough that a legitimate user cannot hit it.
+    rate_limit::recovery_initiate_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
+    rate_limit::recovery_initiate_by_user(&state.store, &body.user_id.to_string())?;
 
     ensure_recovery_share_exists(&state, body.user_id)?;
     let passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)?

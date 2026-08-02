@@ -41,10 +41,12 @@ pub async fn check_enrollment() -> Result<BiometricEnrollmentStatus, String> {
 
 #[command]
 pub async fn enroll() -> Result<BiometricEnrollmentStatus, String> {
-    Ok(BiometricEnrollmentStatus {
-        enrolled: true,
-        provider: crate::biometric::BiometricProvider::WindowsHello,
-    })
+    // Report what this platform actually offers. Claiming Windows Hello
+    // everywhere told macOS and Linux users their vault was protected by a
+    // biometric that was never consulted (audit D-3).
+    tokio::task::spawn_blocking(|| do_check())
+        .await
+        .map_err(|e| format!("Enrollment probe panicked: {}", e))
 }
 
 #[command]

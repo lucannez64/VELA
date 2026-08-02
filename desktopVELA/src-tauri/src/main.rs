@@ -250,6 +250,24 @@ fn main() {
             }
 
             let state = app.state::<Arc<AppState>>();
+
+            // Enforce auto-lock on the clock, not on the next user action: an
+            // idle app used to keep the RMS, crypto context, decrypted vault
+            // and last copied secret in RAM long past the deadline (audit D-1).
+            // `session-locked` is the same event the lock command emits, so the
+            // frontend clears the clipboard and in-memory items exactly as it
+            // does for a manual lock.
+            {
+                let app_handle = app.handle().clone();
+                vela_desktop_core::commands::session::spawn_auto_lock_watchdog(
+                    state.inner().clone(),
+                    move || {
+                        info!("Session expired — auto-locking");
+                        let _ = app_handle.emit("session-locked", ());
+                    },
+                );
+            }
+
             let ipc_server = IpcServer::new(state.ipc_capability.clone());
             let host: Arc<dyn vela_desktop::host::Host> =
                 Arc::new(TauriHost(app.handle().clone()));
