@@ -950,6 +950,42 @@ credit the existing hardening:
 
 ---
 
+## Server hardening sweep (#113)
+
+> **STATUS: DONE.** All seven items. Two were already closed by earlier work —
+> `/health` no longer names its backends, and the two share-recipient errors were
+> already collapsed onto one message. The rest:
+>
+> * **`chunk_id` / `tree_id` are validated** (`src/ids.rs`): 1–128 characters,
+>   ASCII alphanumerics plus `-`, `_`, `.`, no leading dot and no `..`. The 414
+>   hyper used to return on a huge URI was an artefact of the HTTP stack, not a
+>   check — and it stops applying over HTTP/2 and HTTP/3, where there is no
+>   request line to overflow. Excluding `/` and `:` also means an id can never
+>   reshape a sled key, and excluding non-ASCII means two ids that render
+>   identically cannot both exist.
+> * **`CF-Visitor` is parsed as JSON** instead of substring-matched. The old test
+>   also matched `"scheme":"https"` appearing anywhere else in the value, so a
+>   value whose real scheme was `http` could satisfy it. Only honoured from a
+>   trusted proxy, so this was bounded rather than exploitable — but a check that
+>   a coincidence can satisfy is not a check.
+> * **Device revocation blocks before it records.** The auth middleware gates on
+>   the sled sentinel and per-JTI markers, not on the SQL `revoked` column, so
+>   writing SQL first left a window where the row said revoked and every existing
+>   token still worked — precisely during the seconds someone is revoking a
+>   device they believe is compromised. Reordered so a failure leaves the device
+>   locked out rather than marked-but-live.
+> * **Exponential backoff on the web-session RW token proof.** The flat 10/min let
+>   a guesser grind at the ephemeral-key proof at a steady rate forever;
+>   `/auth/verify` has had backoff since the spec asked for it, and the same
+>   curve now applies here, scoped per session so one caller cannot throttle
+>   another.
+> * **Optional global account cap** (`MAX_ACCOUNTS`). Per-IP registration limits
+>   bound one source, not a botnet rotating addresses. Off by default, because a
+>   public deployment should not silently stop accepting users; the refusal does
+>   not disclose the current account count.
+
+---
+
 ## Remediation priority
 
 1. ~~**Web-session grant (S-1 + S-4).** Bind the grant to the intended approver at `start`

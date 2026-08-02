@@ -205,13 +205,51 @@ pub fn web_session_token_by_session(store: &Store, session_id: &str) -> Result<(
 /// Returns `Err(AppError::RateLimited)` if this (ip, device) pair is still in
 /// a backoff window.
 pub fn check_verify_backoff(store: &Store, ip: &str, device_id: &str) -> Result<()> {
-    let backoff_key = format!("rl:verify:backoff:{ip}:{device_id}");
-    let ttl = store.ttl(&backoff_key)?;
+    check_backoff(store, &format!("verify:{ip}:{device_id}"))
+}
+
+/// Whether `scope` is currently in a backoff window.
+///
+/// `scope` names whatever the guessing target is — an (ip, device) pair, a web
+/// session id — and only ever throttles that scope, so one caller can never put
+/// another into backoff.
+pub fn check_backoff(store: &Store, scope: &str) -> Result<()> {
+    let ttl = store.ttl(&format!("rl:backoff:{scope}"))?;
     if ttl > 0 {
         return Err(AppError::RateLimited(format!(
             "exponential backoff active — retry after {ttl}s"
         )));
     }
+    Ok(())
+}
+
+/// Record a failed proof against `scope` and set/extend its backoff window.
+///
+/// Same curve as authenticated device verification: nothing for the first two
+/// failures, then 1s, 2s, 4s … capped below 5 minutes. A legitimate client
+/// fails this at most once (a stale challenge); anything grinding at it slows
+/// down geometrically.
+pub fn record_backoff_failure(store: &Store, scope: &str) -> Result<()> {
+    let backoff_key = format!("rl:backoff:{scope}");
+    let streak_key = format!("rl:streak:{scope}");
+
+    let streak = store.incr_expire(&streak_key, 1, 300)?;
+    let eff_streak = streak.min(10);
+    if eff_streak >= 3 {
+        let exp = (eff_streak - 3).min(8);
+        let delay_secs: u64 = (1u64 << exp).min(300);
+        store.set_ex(&backoff_key, &[1u8], delay_secs)?;
+        if streak < 12 {
+            tracing::warn!(scope, streak, delay_secs, "backoff applied");
+        }
+    }
+    Ok(())
+}
+
+/// Clear a scope's streak after it succeeds.
+pub fn reset_backoff(store: &Store, scope: &str) -> Result<()> {
+    let _ = store.del(&format!("rl:streak:{scope}"))?;
+    let _ = store.del(&format!("rl:backoff:{scope}"))?;
     Ok(())
 }
 
@@ -223,8 +261,8 @@ pub fn check_verify_backoff(store: &Store, ip: &str, device_id: &str) -> Result<
 /// otherwise it gets incremented twice per failure and the documented
 /// "5 failed proofs/min" limit silently trips after 3.
 pub fn record_verify_failure(store: &Store, ip: &str, device_id: &str) -> Result<()> {
-    let backoff_key = format!("rl:verify:backoff:{ip}:{device_id}");
-    let streak_key = format!("rl:verify:streak:{ip}:{device_id}");
+    let backoff_key = format!("rl:backoff:verify:{ip}:{device_id}");
+    let streak_key = format!("rl:streak:verify:{ip}:{device_id}");
 
     let streak = store.incr_expire(&streak_key, 1, 300)?;
 
@@ -253,8 +291,8 @@ pub fn record_verify_failure(store: &Store, ip: &str, device_id: &str) -> Result
 
 /// Reset consecutive-failure streak after successful authentication.
 pub fn reset_verify_streak(store: &Store, ip: &str, device_id: &str) -> Result<()> {
-    let streak_key = format!("rl:verify:streak:{ip}:{device_id}");
-    let backoff_key = format!("rl:verify:backoff:{ip}:{device_id}");
+    let streak_key = format!("rl:streak:verify:{ip}:{device_id}");
+    let backoff_key = format!("rl:backoff:verify:{ip}:{device_id}");
     let _ = store.del(&streak_key)?;
     let _ = store.del(&backoff_key)?;
     Ok(())

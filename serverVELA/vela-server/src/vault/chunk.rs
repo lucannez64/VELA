@@ -18,6 +18,7 @@ pub async fn get_chunk(
     Path(id): Path<String>,
     session: AuthSession,
 ) -> Result<impl IntoResponse> {
+    let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
     let rows = state
         .db
         .query(
@@ -63,6 +64,7 @@ pub async fn put_chunk(
     headers_in: HeaderMap,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
+    let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
     if body.len() > state.config.max_chunk_bytes {
         return Err(AppError::BadRequest(format!(
             "chunk exceeds maximum size of {} bytes",
@@ -199,6 +201,7 @@ pub async fn delete_chunk(
     session: AuthSession,
     headers_in: HeaderMap,
 ) -> Result<impl IntoResponse> {
+    let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
     let if_match: i64 = headers_in
         .get("if-match")
         .or_else(|| headers_in.get("If-Match"))
