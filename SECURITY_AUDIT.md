@@ -86,7 +86,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
-| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (rollback refused on all clients; writers not yet flipped) |
+| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (vault chunks bound end to end; audit chunks and share blobs are not) |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | **FIXED** (tagged shares; tampering is an error) |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
 | P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
@@ -817,15 +817,26 @@ enrollment driver.
 > the chunk id and claimed revision down to it. That is rollout step 2 — the
 > release that has to be everywhere *before* any writer starts sealing.
 >
-> **Staged: binding the revision into the ciphertext.** `aead::seal`/`open` and
-> `vault_chunk_aad` are in `vela-crypto` with tests, self-describing via a
-> `VAE1` magic so old and new ciphertexts are distinguishable. They are
-> deliberately **not wired into any client yet**: vault chunks are shared between
-> a user's devices, so a client that starts sealing produces ciphertexts its
-> other devices cannot open. The rollout is (1) land the primitive — this change,
-> (2) teach every client to *read* both formats, (3) once a release with (2) is
-> everywhere, flip the writers. Doing it in one step would strand whoever
-> updates last.
+> **Done: every client seals what it writes.** Rollout step 3. Each vault chunk
+> is now sealed against its own id and the exact clock it is stored under, on
+> all four clients and in the e2e harness, so a replayed revision fails to
+> decrypt rather than being silently accepted. The clock therefore has to be
+> settled *before* encryption — iOS and the web client numbered chunks after
+> encrypting them and were reordered.
+>
+> The bridges take `lamport_clock` as a required field rather than a defaulted
+> one: a caller that forgot it would otherwise seal against clock 0 and upload
+> something nothing could ever read, which is a worse failure than a parse
+> error. The rollout order was (1) land the primitive, (2) teach every client to
+> *read* both formats — shipped in desktop and Android v0.1.261 — and (3) flip
+> the writers, which is this change. Readers keep accepting the legacy format
+> forever, so chunks written before the flip stay readable.
+>
+> **Still unbound: audit chunks and share blobs.** The audit-log chunk is read
+> with the legacy `decrypt` on every client, so sealing it would need the same
+> two-phase rollout again; until then the server can still roll the audit log
+> back. `SHARE_ENCRYPTION` and `MAC_KEY` contexts are likewise unbound. Tracked
+> in #109.
 
 **Location.** `libVELA/vela-crypto/src/aead.rs:21-36` (no AAD parameter; all callers pass empty)
 
@@ -972,6 +983,42 @@ credit the existing hardening:
 | crypto | ~~`kdf.rs:58-61`~~ | ~~`chunk_key` context from `{:?}`~~ **FIXED** — context built explicitly, byte-identical (no re-key), and both bridge copies now delegate to it |
 | crypto | `vela-core/src/vault.rs:46-106` | `VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s |
 | crypto | ~~`password.rs:106`~~ | ~~`getrandom(...).expect(...)` panics across `extern "C"`~~ **FIXED** — returns `PasswordError` |
+
+---
+
+## Server hardening sweep (#113)
+
+> **STATUS: DONE.** All seven items. Two were already closed by earlier work —
+> `/health` no longer names its backends, and the two share-recipient errors were
+> already collapsed onto one message. The rest:
+>
+> * **`chunk_id` / `tree_id` are validated** (`src/ids.rs`): 1–128 characters,
+>   ASCII alphanumerics plus `-`, `_`, `.`, no leading dot and no `..`. The 414
+>   hyper used to return on a huge URI was an artefact of the HTTP stack, not a
+>   check — and it stops applying over HTTP/2 and HTTP/3, where there is no
+>   request line to overflow. Excluding `/` and `:` also means an id can never
+>   reshape a sled key, and excluding non-ASCII means two ids that render
+>   identically cannot both exist.
+> * **`CF-Visitor` is parsed as JSON** instead of substring-matched. The old test
+>   also matched `"scheme":"https"` appearing anywhere else in the value, so a
+>   value whose real scheme was `http` could satisfy it. Only honoured from a
+>   trusted proxy, so this was bounded rather than exploitable — but a check that
+>   a coincidence can satisfy is not a check.
+> * **Device revocation blocks before it records.** The auth middleware gates on
+>   the sled sentinel and per-JTI markers, not on the SQL `revoked` column, so
+>   writing SQL first left a window where the row said revoked and every existing
+>   token still worked — precisely during the seconds someone is revoking a
+>   device they believe is compromised. Reordered so a failure leaves the device
+>   locked out rather than marked-but-live.
+> * **Exponential backoff on the web-session RW token proof.** The flat 10/min let
+>   a guesser grind at the ephemeral-key proof at a steady rate forever;
+>   `/auth/verify` has had backoff since the spec asked for it, and the same
+>   curve now applies here, scoped per session so one caller cannot throttle
+>   another.
+> * **Optional global account cap** (`MAX_ACCOUNTS`). Per-IP registration limits
+>   bound one source, not a botnet rotating addresses. Off by default, because a
+>   public deployment should not silently stop accepting users; the refusal does
+>   not disclose the current account count.
 
 ---
 

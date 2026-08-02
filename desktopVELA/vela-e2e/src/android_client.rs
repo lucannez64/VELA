@@ -397,8 +397,18 @@ impl AndroidClient {
                     max_lamport = max_lamport.max(clock);
                 }
             }
+            // This chunk's own clock, not the running maximum: the seal binds
+            // the revision the chunk was stored under, so reading it back with
+            // a different one is the rollback check doing its job.
+            let chunk_lamport = headers
+                .get("x-lamport-clock")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<i64>().ok())
+                .or_else(|| entry.map(|e| e.lamport_clock))
+                .unwrap_or(0);
             let key = chunk_key(&self.rms, chunk_id);
-            let plaintext = aead::decrypt(&key, &ciphertext).map_err(|e| format!("decrypt chunk {chunk_id}: {e}"))?;
+            let plaintext = aead::open_vault_chunk(&key, &ciphertext, chunk_id, chunk_lamport)
+                .map_err(|e| format!("decrypt chunk {chunk_id}: {e}"))?;
             json.push_str(&String::from_utf8(plaintext.to_vec()).map_err(|e| format!("chunk {chunk_id} not utf8: {e}"))?);
         }
         let vault = serde_json::from_str::<VaultStore>(&json).map_err(|e| format!("parse vault: {e}"))?;
@@ -426,7 +436,14 @@ impl AndroidClient {
             let chunk_lamport = lamport_assignments[index];
             let remote_version = manifest_by_id.get(&chunk_id).map(|c| c.version).unwrap_or(0);
             let key = chunk_key(&self.rms, &chunk_id);
-            let ciphertext = aead::encrypt(&key, chunk.as_bytes()).map_err(|e| format!("encrypt chunk {chunk_id}: {e}"))?;
+            // Seals against id + clock like the real client, so the e2e test
+            // exercises the format users actually upload (audit C-2).
+            let ciphertext = aead::seal(
+                &key,
+                chunk.as_bytes(),
+                &aead::vault_chunk_aad(&chunk_id, chunk_lamport),
+            )
+            .map_err(|e| format!("encrypt chunk {chunk_id}: {e}"))?;
             let resp = self
                 .http
                 .put(format!("{}/vault/chunk/{}", self.base_url, chunk_id))

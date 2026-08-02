@@ -490,7 +490,15 @@ async fn upload_vault_chunks(
         let chunk_id = vault_chunk_id(idx);
         let version = manifest_meta.get(&chunk_id).map(|m| m.version).unwrap_or(0);
         let key = chunk_key_bytes(state, &chunk_id)?;
-        let ciphertext = encrypt(&key, chunk).map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
+        // Sealed against this chunk's id and the clock it is about to be stored
+        // under, so the server cannot hand any of it back later as if it were
+        // current (audit C-2).
+        let ciphertext = vela_crypto::aead::seal(
+            &key,
+            chunk,
+            &vela_crypto::aead::vault_chunk_aad(&chunk_id, chunk_lamport),
+        )
+        .map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
         let client = client.clone();
         let token = shared_token.clone();
         let chunk_id_clone = chunk_id.clone();

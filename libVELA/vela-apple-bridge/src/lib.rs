@@ -143,6 +143,11 @@ struct EncryptChunkRequest {
     rms_b64: String,
     chunk_id: String,
     vault_json: String,
+    /// The clock this chunk will be stored under, bound into the ciphertext so
+    /// the server cannot replay an older revision (audit C-2). Not defaulted:
+    /// a caller that forgets it would seal against clock 0 and write something
+    /// nothing can read.
+    lamport_clock: i64,
 }
 #[derive(Deserialize)]
 struct DecryptChunkRequest {
@@ -569,7 +574,11 @@ fn encrypt_vault_chunk_json(request_json: &str) -> FfiResult<EncryptVaultRespons
     let rms = decode_rms(&req.rms_b64)?;
     let _: VaultStore = serde_json::from_str(&req.vault_json)?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let ciphertext = aead::encrypt(&key, req.vault_json.as_bytes())?;
+    let ciphertext = aead::seal(
+        &key,
+        req.vault_json.as_bytes(),
+        &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
+    )?;
     Ok(EncryptVaultResponse {
         ciphertext_b64: B64.encode(ciphertext),
     })
@@ -832,13 +841,20 @@ mod tests {
         let vault_json = r#"{"items":[],"tombstones":[]}"#;
         let enc = call(
             vela_ffi_encrypt_vault_chunk_json,
-            &serde_json::json!({"rms_b64": rms, "chunk_id": "vault", "vault_json": vault_json}).to_string(),
+            &serde_json::json!({
+                "rms_b64": rms, "chunk_id": "vault", "vault_json": vault_json, "lamport_clock": 7
+            })
+            .to_string(),
         );
         let enc: EncryptVaultResponse = serde_json::from_str(&enc).unwrap();
 
         let dec = call(
             vela_ffi_decrypt_vault_chunk_json,
-            &serde_json::json!({"rms_b64": rms, "chunk_id": "vault", "ciphertext_b64": enc.ciphertext_b64}).to_string(),
+            &serde_json::json!({
+                "rms_b64": rms, "chunk_id": "vault",
+                "ciphertext_b64": enc.ciphertext_b64, "lamport_clock": 7
+            })
+            .to_string(),
         );
         let dec: DecryptVaultResponse = serde_json::from_str(&dec).unwrap();
         assert_eq!(dec.vault_json, vault_json);
@@ -846,9 +862,25 @@ mod tests {
         // A different chunk_id derives a different key → must not decrypt.
         let wrong = call(
             vela_ffi_decrypt_vault_chunk_json,
-            &serde_json::json!({"rms_b64": rms, "chunk_id": "other", "ciphertext_b64": enc.ciphertext_b64}).to_string(),
+            &serde_json::json!({
+                "rms_b64": rms, "chunk_id": "other",
+                "ciphertext_b64": enc.ciphertext_b64, "lamport_clock": 7
+            })
+            .to_string(),
         );
         assert!(wrong.contains("error"), "chunk_id must bind the key: {wrong}");
+
+        // An older revision replayed at the same id must not decrypt either —
+        // that is the rollback this seal exists to stop (audit C-2).
+        let replayed = call(
+            vela_ffi_decrypt_vault_chunk_json,
+            &serde_json::json!({
+                "rms_b64": rms, "chunk_id": "vault",
+                "ciphertext_b64": enc.ciphertext_b64, "lamport_clock": 6
+            })
+            .to_string(),
+        );
+        assert!(replayed.contains("error"), "clock must bind the ciphertext: {replayed}");
     }
 
     #[test]

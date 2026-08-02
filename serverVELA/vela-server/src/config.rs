@@ -21,6 +21,15 @@ pub struct Config {
     pub paseto_public_key: Vec<u8>,
     pub max_body_bytes: usize,
     pub max_chunk_bytes: usize,
+    /// Hard ceiling on registered accounts, or `None` for no ceiling.
+    ///
+    /// Registration is rate-limited per IP, which bounds one source but not a
+    /// botnet: rotating addresses could fill the disk with accounts on a server
+    /// whose operator only ever wanted to serve their own household. Unset by
+    /// default, because a public deployment should not silently stop accepting
+    /// users — this is opt-in for the self-hosted case (audit, server
+    /// hardening).
+    pub max_accounts: Option<u64>,
     pub cors_origins: Vec<String>,
     pub allow_wildcard_cors: bool,
     pub allow_insecure_lan: bool,
@@ -120,6 +129,13 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1024 * 1024);
 
+        // 0 and empty both read as "no limit", so MAX_ACCOUNTS=0 does not
+        // accidentally lock everyone out.
+        let max_accounts = std::env::var("MAX_ACCOUNTS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0);
+
         let cors_origins: Vec<String> = std::env::var("CORS_ORIGINS")
             .unwrap_or_else(|_| webauthn_rp_origin.clone())
             .split(',')
@@ -168,6 +184,7 @@ impl Config {
             paseto_public_key: pk_bytes,
             max_body_bytes,
             max_chunk_bytes,
+            max_accounts,
             cors_origins,
             allow_wildcard_cors,
             allow_insecure_lan,

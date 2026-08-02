@@ -530,6 +530,12 @@ pub async fn post_token(
     Json(body): Json<TokenRequest>,
 ) -> Result<Json<TokenResponse>> {
     rate_limit::web_session_token_by_session(&state.store, &id.to_string())?;
+    // The flat 10/min let a guesser keep trying the ephemeral-key proof at a
+    // steady rate indefinitely. `/auth/verify` has had exponential backoff on
+    // consecutive failures since the spec asked for it; this proof is the same
+    // shape and now gets the same treatment.
+    let backoff_scope = format!("websession:token:{id}");
+    rate_limit::check_backoff(&state.store, &backoff_scope)?;
 
     let session = load_session(&state, id)?;
     if session.status != "granted" {
@@ -568,7 +574,12 @@ pub async fn post_token(
         .decode(&body.challenge)
         .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
 
-    verify_auth_signature(&web_vk, &challenge_bytes, &id.to_string(), &body.signature)?;
+    if let Err(e) = verify_auth_signature(&web_vk, &challenge_bytes, &id.to_string(), &body.signature)
+    {
+        rate_limit::record_backoff_failure(&state.store, &backoff_scope)?;
+        return Err(e);
+    }
+    rate_limit::reset_backoff(&state.store, &backoff_scope)?;
 
     // device_id = session_id; hard_cap = session expiry, so renewals never outlive
     // the granted TTL and revocation via `device:revoked:<session_id>` applies.
