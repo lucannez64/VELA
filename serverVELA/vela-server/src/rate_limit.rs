@@ -109,6 +109,13 @@ pub fn recovery_initiate_by_ip(store: &Store, ip: &str) -> Result<()> {
     check(store, &format!("rl:recover:init:ip:{ip}"), 10, HOUR_SECS)
 }
 
+/// Per-(IP, user) recovery-initiation cap. Public so tests assert the documented
+/// number rather than a copy of it.
+pub const RECOVERY_INITIATE_PER_IP_USER_HOURLY: u64 = 5;
+
+/// Global per-user recovery-initiation cap, across every source.
+pub const RECOVERY_INITIATE_PER_USER_HOURLY: u64 = 50;
+
 /// 5 recovery initiations/hour per (IP, user).
 ///
 /// This is the per-victim throttle, and it is keyed on the *source* as well as
@@ -121,7 +128,7 @@ pub fn recovery_initiate_by_ip_user(store: &Store, ip: &str, user_id: &str) -> R
     check(
         store,
         &format!("rl:recover:init:ip_user:{ip}:{user_id}"),
-        5,
+        RECOVERY_INITIATE_PER_IP_USER_HOURLY,
         HOUR_SECS,
     )
 }
@@ -137,7 +144,7 @@ pub fn recovery_initiate_by_user(store: &Store, user_id: &str) -> Result<()> {
     check(
         store,
         &format!("rl:recover:init:user:{user_id}"),
-        50,
+        RECOVERY_INITIATE_PER_USER_HOURLY,
         HOUR_SECS,
     )
 }

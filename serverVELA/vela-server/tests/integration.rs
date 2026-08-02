@@ -433,9 +433,9 @@ async fn recovery_initiate_limit_cannot_be_burned_for_someone_else() {
         req
     };
 
-    // The attacker spends its own (ip, user) budget: 5 through, then throttled.
+    // The attacker spends its own (ip, user) budget, then is throttled.
     const ATTACKER: [u8; 4] = [203, 0, 113, 5];
-    for i in 1..=5 {
+    for i in 1..=vela_server::rate_limit::RECOVERY_INITIATE_PER_IP_USER_HOURLY {
         let resp = app.clone().oneshot(initiate(ATTACKER)).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND, "attacker call {i}");
     }
@@ -449,6 +449,46 @@ async fn recovery_initiate_limit_cannot_be_burned_for_someone_else() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// The other half of S-3: keying the cap on `(ip, user)` must not remove the
+/// bound on *distributed* churn of one user's recovery state. Each source stays
+/// under its own per-(ip, user) and per-IP budgets here, so the only limiter
+/// that can fire is the global per-user backstop.
+#[tokio::test]
+async fn recovery_initiate_still_bounds_distributed_churn_per_user() {
+    let app = vela_server::routes::build(helpers::test_state().await);
+    let victim = Uuid::new_v4();
+    let cap = vela_server::rate_limit::RECOVERY_INITIATE_PER_USER_HOURLY;
+
+    // One request per source, so neither per-source limiter is in play.
+    let initiate = |n: u64| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/recovery/initiate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&json!({ "user_id": victim })).unwrap(),
+            ))
+            .unwrap();
+        let ip = [10, 0, (n / 256) as u8, (n % 256) as u8];
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from((ip, 44444))));
+        req
+    };
+
+    for n in 0..cap {
+        let resp = app.clone().oneshot(initiate(n)).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "call {n} should pass the limiters (404 = unknown account)"
+        );
+    }
+
+    // One source past the cap, from an IP that has spent nothing itself.
+    let resp = app.oneshot(initiate(cap)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
