@@ -135,6 +135,7 @@ mod tests {
             paseto_public_key: Vec::new(),
             max_body_bytes: 0,
             max_chunk_bytes: 0,
+            max_accounts: None,
             cors_origins: Vec::new(),
             allow_wildcard_cors: false,
             allow_insecure_lan: false,

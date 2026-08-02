@@ -144,12 +144,15 @@ struct SyncEngine {
 
             for (index, piece) in pieces.enumerated() {
                 let id = Self.dataChunkID(index)
-                guard let cipherB64 = VelaCoreFFI.encryptVaultChunk(
-                    rmsBase64: rmsB64, chunkID: id, vaultJSON: piece) else {
-                    throw SyncError.crypto
-                }
+                // The clock has to be settled *before* sealing: it is bound into
+                // the ciphertext, so encrypting first and numbering afterwards
+                // would produce a chunk nothing can read (audit C-2).
                 let existing = byID[id]
                 lamport = max(lamport, existing?.lamport_clock ?? 0) + 1
+                guard let cipherB64 = VelaCoreFFI.encryptVaultChunk(
+                    rmsBase64: rmsB64, chunkID: id, vaultJSON: piece, lamportClock: lamport) else {
+                    throw SyncError.crypto
+                }
                 _ = try await client.putChunk(
                     id, ciphertextBase64: cipherB64, ifMatch: existing?.version ?? 0, lamportClock: lamport)
             }

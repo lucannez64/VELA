@@ -523,7 +523,7 @@ class VaultSyncManager(
             val chunkId = vaultChunkId(index)
             val chunkLamport = lamportAssignments[index]
             val remote = manifestById[chunkId]
-            val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(rms, chunkId, chunk)
+            val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(rms, chunkId, chunk, chunkLamport)
                 ?: error("Native VELA bridge is required for server sync")
             async {
                 val token = tokenMutex.withLock { tokenRef }

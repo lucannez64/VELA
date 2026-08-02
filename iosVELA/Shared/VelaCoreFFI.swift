@@ -164,8 +164,20 @@ enum VelaCoreFFI {
 
     // MARK: - Sync (per-chunk)
 
-    static func encryptVaultChunk(rmsBase64: String, chunkID: String, vaultJSON: String) -> String? {
-        let request = json(["rms_b64": rmsBase64, "chunk_id": chunkID, "vault_json": vaultJSON])
+    /// `lamportClock` is the revision this chunk is about to be stored under. It
+    /// is sealed into the ciphertext so the server cannot serve an older
+    /// revision back as if it were current (audit C-2, rollout step 3). It must
+    /// be the clock actually sent with the upload, or the result will not
+    /// decrypt.
+    static func encryptVaultChunk(
+        rmsBase64: String, chunkID: String, vaultJSON: String, lamportClock: Int
+    ) -> String? {
+        let request = json([
+            "rms_b64": rmsBase64,
+            "chunk_id": chunkID,
+            "vault_json": vaultJSON,
+            "lamport_clock": lamportClock,
+        ])
         let response = request.withCString { consume(vela_ffi_encrypt_vault_chunk_json($0)) }
         return field(response, "ciphertext_b64")
     }
@@ -178,7 +190,11 @@ enum VelaCoreFFI {
         rmsBase64: String,
         chunkID: String,
         ciphertextBase64: String,
-        lamportClock: Int64 = 0
+        // No default. Defaulting it to 0 meant a caller that forgot it got a
+        // silent decryption failure against any sealed chunk — which is exactly
+        // what happened to this file's own test once writers started sealing
+        // (audit C-2).
+        lamportClock: Int64
     ) -> String? {
         let request = json([
             "rms_b64": rmsBase64,
