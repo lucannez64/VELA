@@ -900,7 +900,7 @@ credit the existing hardening:
 | android | `security/SecureClipboard.kt:20` | 30s clipboard exposure window (industry-standard, but the largest live-secret surface) |
 | crypto | ~~`shamir.rs:19-56`~~ | ~~Variable-time GF(2⁸) arithmetic~~ **FIXED** — fixed-iteration, branch-free multiply and exponentiation |
 | crypto | ~~`password_kdf.rs:31-33` vs `vela-wasm-bridge/src/lib.rs:19-21`~~ | ~~Argon2id params diverge~~ **FIXED** — blobs record their own cost (v3), the default is 64 MiB/t=3, and the divergent WASM copy was dead code (removed) |
-| crypto | `kdf.rs:58-61` | `chunk_key` context built from `{:?}` debug formatting (unstable contract; raw-bytes vs string divergence between bridges) |
+| crypto | ~~`kdf.rs:58-61`~~ | ~~`chunk_key` context from `{:?}`~~ **FIXED** — context built explicitly, byte-identical (no re-key), and both bridge copies now delegate to it |
 | crypto | `vela-core/src/vault.rs:46-106` | `VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s |
 | crypto | ~~`password.rs:106`~~ | ~~`getrandom(...).expect(...)` panics across `extern "C"`~~ **FIXED** — returns `PasswordError` |
 
@@ -1109,8 +1109,12 @@ python3 security/scan.py          # Rust checks only
 VELA_BASE=http://127.0.0.1:8553 VELA_TEST_TOKEN=<paseto> security/zap/run-zap.sh
 ```
 
-Current expected result: `scan.py` reports 2 findings (M4 ×2 — the `{:?}` chunk-key
-context, which needs a coordinated re-key; see C-2 rollout step 3) — `get_session` is now
+Current expected result: **clean**. `scan.py` reports 0, semgrep-js reports 0,
+`cargo-audit` and `cargo-deny` clean on all five workspaces — so `security.yml`
+drops `continue-on-error` and the scan is a hard gate. Note the R2 rule itself
+was fixed while clearing it: its pattern was `\{:?\}`, where the `?` makes the
+*colon* optional, so it matched `{}` and never `{:?}`. It fired on the real
+findings only because those lines happened to contain a `{}` as well — `get_session` is now
 allowlisted (S-2 fixed: it authenticates with the browser's poll secret) and the WASM bridge's
 `{:?}` derivation is gone with the RMS export (D-2) — semgrep-js reports 7 (E-2 ×4, E-1, 2 review
 points), `cargo-audit` clean on all workspaces. **The scan should be green again only after M4,

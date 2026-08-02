@@ -9,9 +9,9 @@ name: security
 # Gating status:
 #   - both regression tests (web-session grant binding, IDOR/XFF defence) ARE
 #     hard gates.
-#   - static-scan reports known findings (M4 x2, L2, E-1, E-2) but does not
-#     block, so existing issues don't stall unrelated PRs. After the findings are
-#     fixed, remove continue-on-error to make it a hard gate.
+#   - static-scan IS a hard gate now: the findings it used to report (M4, L2,
+#     E-1, E-2) are fixed, so a new one means a regression rather than a known
+#     issue. Do not reintroduce continue-on-error to get a PR through.
 
 on:
   pull_request:
@@ -59,9 +59,8 @@ jobs:
           python3 -m pip install --quiet semgrep
           semgrep --version
 
-      - name: Run static scan (reports known findings; not yet a hard gate)
+      - name: Run static scan (hard gate)
         run: ./security/run-scan.sh
-        continue-on-error: true
 
   regression:
     runs-on: ubuntu-latest

@@ -19,7 +19,6 @@ use vela_crypto::shamir;
 use zeroize::Zeroize;
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
-const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
 
 #[repr(C)]
 pub struct VelaByteBuffer {
@@ -653,9 +652,13 @@ fn decrypt_vault_json(request_json: &str) -> anyhow_like::Result<DecryptVaultRes
     Ok(DecryptVaultResponse { vault_json })
 }
 
+/// Delegates to `vela_crypto`, which owns the derivation context.
+///
+/// This used to build the context here with `{:?}`, in a second copy that had to
+/// stay byte-identical to the core's by hand — two places to get a key
+/// derivation exactly right (audit crypto M4).
 fn chunk_key(rms: &[u8; 32], chunk_id: &str) -> [u8; 32] {
-    let context = format!("{} || {:?}", CHUNK_KEY_CONTEXT, chunk_id.as_bytes());
-    *kdf::derive(&context, rms).as_bytes()
+    *kdf::chunk_key(rms, chunk_id.as_bytes()).as_bytes()
 }
 
 // ── Identity handles (audit C-1) ─────────────────────────────────────────────
