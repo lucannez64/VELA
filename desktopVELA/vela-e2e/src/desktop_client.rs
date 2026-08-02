@@ -86,6 +86,7 @@ impl DesktopClient {
             username: username.to_string(),
             pass: password.to_string(),
             totp: None,
+            app_ids: Vec::new(),
         });
     }
 

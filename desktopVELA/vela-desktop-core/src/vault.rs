@@ -55,6 +55,14 @@ pub enum VaultItem {
         pass: String,
         #[serde(default)]
         totp: Option<String>,
+        /// Mobile apps the user linked to this login (`androidapp://<package>`).
+        ///
+        /// Desktop never sets these, but it must carry them: this struct is what
+        /// desktop deserializes the synced vault into and re-serializes on the
+        /// next write, so a field it does not know about is a field it deletes
+        /// from every one of the user's devices (audit A-2).
+        #[serde(default, alias = "appIds")]
+        app_ids: Vec<String>,
     },
     CreditCard {
         #[serde(flatten)]
@@ -276,6 +284,25 @@ impl VaultItem {
         let mut new = self.clone();
         new.meta_mut().updated_at = new_updated_at;
         new
+    }
+
+    /// Keeps app associations the caller did not send.
+    ///
+    /// Desktop has no UI for `androidapp://` links — they are made on the phone
+    /// (audit A-2) — so an edit that simply does not mention them means
+    /// "unchanged", not "unlink". Without this, editing a login on a laptop
+    /// would quietly detach every phone app from it on the next sync.
+    pub fn preserving_app_ids(mut self, existing: &VaultItem) -> Self {
+        if let (
+            VaultItem::Login { app_ids, .. },
+            VaultItem::Login { app_ids: previous, .. },
+        ) = (&mut self, existing)
+        {
+            if app_ids.is_empty() {
+                *app_ids = previous.clone();
+            }
+        }
+        self
     }
 
     pub fn with_shared_status(&self, shared: bool, share_recipient: Option<String>) -> Self {
@@ -603,6 +630,7 @@ mod tests {
             username: user.into(),
             pass: pass.into(),
             totp: None,
+            app_ids: Vec::new(),
         }
     }
 
@@ -668,6 +696,45 @@ mod tests {
     }
 
     #[test]
+    fn editing_a_login_here_keeps_the_app_links_made_on_a_phone() {
+        let mut linked = login("1", "Uber", "https://uber.com", "ada", "p");
+        if let VaultItem::Login { app_ids, .. } = &mut linked {
+            app_ids.push("androidapp://com.ubercab".into());
+        }
+
+        // What a desktop edit sends back: same item, no app_ids field.
+        let edited = login("1", "Uber", "https://uber.com", "ada", "p2")
+            .preserving_app_ids(&linked);
+
+        match edited {
+            VaultItem::Login { app_ids, pass, .. } => {
+                assert_eq!(pass, "p2", "the actual edit still applies");
+                assert_eq!(app_ids, vec!["androidapp://com.ubercab".to_string()]);
+            }
+            _ => panic!("expected a login"),
+        }
+    }
+
+    #[test]
+    fn app_links_sent_by_the_caller_win() {
+        let mut previous = login("1", "Uber", "https://uber.com", "ada", "p");
+        if let VaultItem::Login { app_ids, .. } = &mut previous {
+            app_ids.push("androidapp://com.old".into());
+        }
+        let mut incoming = login("1", "Uber", "https://uber.com", "ada", "p");
+        if let VaultItem::Login { app_ids, .. } = &mut incoming {
+            app_ids.push("androidapp://com.ubercab".into());
+        }
+
+        match incoming.preserving_app_ids(&previous) {
+            VaultItem::Login { app_ids, .. } => {
+                assert_eq!(app_ids, vec!["androidapp://com.ubercab".to_string()]);
+            }
+            _ => panic!("expected a login"),
+        }
+    }
+
+    #[test]
     fn is_received_share_semantics() {
         let received = login("1", "n", "u", "u", "p").with_shared_status(true, None);
         assert!(received.is_received_share());
@@ -691,6 +758,7 @@ mod tests {
             username: "carol".into(),
             pass: "p".into(),
             totp: None,
+            app_ids: Vec::new(),
         });
 
         assert_eq!(vault.search("GIT").len(), 2);

@@ -86,6 +86,13 @@ struct VaultItem: Codable, Identifiable, Equatable {
     var username: String?
     var password: String?
     var totp: String?
+    /// Apps the user linked to this login, as `androidapp://<package>`.
+    ///
+    /// iOS never sets this — it is Android's app association (audit A-2) — but
+    /// it is decoded and re-encoded so editing an item on an iPhone does not
+    /// delete the links its owner made on their phone. Optional, so it is simply
+    /// absent on items that have none.
+    var app_ids: [String]?
 
     // credit card
     var number: String?

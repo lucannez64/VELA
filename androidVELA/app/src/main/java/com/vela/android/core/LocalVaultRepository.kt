@@ -2,6 +2,7 @@ package com.vela.android.core
 
 import android.content.Context
 import android.util.Log
+import com.vela.android.autofill.AutofillMatcher
 import com.vela.android.security.EncryptedVaultStore
 import com.vela.android.security.SecureVaultManager
 import com.vela.android.sync.SyncSettingsStore
@@ -16,7 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.net.URI
 import java.time.Instant
 import java.util.Locale
 
@@ -125,76 +125,30 @@ class LocalVaultRepository(
         }
     }
 
+    /**
+     * Logins that may be offered for an autofill request.
+     *
+     * The rules live in [AutofillMatcher]; [assetLinksVerifier] supplies the
+     * network half (Digital Asset Links) when a verifier has been installed.
+     */
     fun findAutofillLogins(webDomain: String?, packageName: String?): List<VaultItem.Login> {
-        val domains = buildSet {
-            webDomain?.takeIf { it.isNotBlank() }?.let { add(it) }
-            packageName?.takeIf { it.isNotBlank() }?.let {
-                add(it)
-                domainFromPackageName(it)?.let { d -> add(d) }
-            }
-        }
-        val logins = _items.value.filterIsInstance<VaultItem.Login>()
-        return if (domains.isEmpty()) logins else logins.filter { login ->
-            domains.any { domain -> domainsMatch(domain, login.url) }
-        }
-    }
-
-    private fun domainsMatch(current: String, stored: String): Boolean {
-        val currentHost = hostOf(current) ?: current.lowercase(Locale.US)
-        val storedHost = hostOf(stored) ?: stored.lowercase(Locale.US)
-        if (currentHost == storedHost) return true
-        if (currentHost.isIpAddress()) return false
-        val currentParts = currentHost.split(".")
-        val storedParts = storedHost.split(".")
-        if (storedParts.size < 2 || storedParts.size > currentParts.size) return false
-        return currentParts.takeLast(storedParts.size) == storedParts
-    }
-
-    private fun domainFromPackageName(pkg: String): String? {
-        val known = mapOf(
-            "com.instagram.android" to "instagram.com",
-            "com.zhiliaoapp.musically" to "tiktok.com",
-            "com.whatsapp" to "whatsapp.com",
-            "com.facebook.orca" to "facebook.com",
-            "com.facebook.katana" to "facebook.com",
-            "com.snapchat.android" to "snapchat.com",
-            "com.linkedin.android" to "linkedin.com",
-            "com.pinterest" to "pinterest.com",
-            "com.reddit.frontpage" to "reddit.com",
-            "com.spotify.music" to "spotify.com",
-            "com.netflix.mediaclient" to "netflix.com",
-            "com.amazon.mShop.android.shopping" to "amazon.com",
-            "com.paypal.android.p2pmobile" to "paypal.com",
-            "com.ubercab" to "uber.com",
-            "com.airbnb.android" to "airbnb.com",
-            "com.discord" to "discord.com",
-            "com.twitch.android.app" to "twitch.tv",
-            "com.ebay.mobile" to "ebay.com",
-            "com.dropbox.android" to "dropbox.com",
-            "com.slack" to "slack.com",
-            "com.skype.raider" to "skype.com",
-            "com.vkontakte.android" to "vk.com",
-            "com.telegram.messenger" to "telegram.org"
+        val verifier = assetLinksVerifier
+        return AutofillMatcher.match(
+            logins = _items.value.filterIsInstance<VaultItem.Login>(),
+            webDomain = webDomain,
+            packageName = packageName,
+            verifyAssetLinks = verifier ?: { _, _ -> false },
         )
-        known[pkg]?.let { return it }
-
-        val parts = pkg.split(".")
-        if (parts.size >= 3 && parts[0] == "com") {
-            return "${parts[1]}.com"
-        }
-        return null
     }
 
-    private fun hostOf(value: String): String? {
-        val normalized = if (value.startsWith("http://") || value.startsWith("https://")) {
-            value
-        } else {
-            "https://$value"
-        }
-        return runCatching { URI(normalized).host?.removePrefix("www.")?.lowercase(Locale.US) }.getOrNull()
-    }
+    /**
+     * Asks a site whether it vouches for an app. Installed by the autofill
+     * service, which has a Context; null everywhere else, so the matcher simply
+     * falls back to locally-known associations.
+     */
+    var assetLinksVerifier: ((String, String) -> Boolean)? = null
 
-    private fun String.isIpAddress(): Boolean = split(".").all { it.toIntOrNull() in 0..255 }
+    private fun hostOf(value: String): String? = AutofillMatcher.hostOf(value)
 
     private fun persistIfUnlocked() {
         val rms = secureVaultManager.currentRmsCopy() ?: return

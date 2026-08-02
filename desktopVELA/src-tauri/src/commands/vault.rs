@@ -171,15 +171,18 @@ pub async fn update_item(
     // (save_vault no-ops) while still returning success.
     require_unlocked(&state)?;
 
-    // Block edits on items received via share (shared=true, no share_recipient).
-    {
+    // Block edits on items received via share (shared=true, no share_recipient),
+    // and carry forward fields this client has no UI for.
+    let item = {
         let vault = state.vault.read();
-        if let Some(existing) = vault.get_item(item.id()) {
-            if existing.is_received_share() {
+        match vault.get_item(item.id()) {
+            Some(existing) if existing.is_received_share() => {
                 return Err("Cannot modify a received shared item".to_string());
             }
+            Some(existing) => item.preserving_app_ids(existing),
+            None => item,
         }
-    }
+    };
     let (updated, item_type) = {
         let mut vault = state.vault.write();
         let updated = item.with_updated_at(Utc::now());
@@ -611,6 +614,7 @@ pub async fn import_vault_bitwarden_json(
                 username: entry.username,
                 pass: entry.password,
                 totp: entry.otp,
+                app_ids: Vec::new(),
             };
 
             vault.add_item(item);

@@ -29,6 +29,19 @@ import java.time.Instant
 import java.util.Locale
 
 class VelaAutofillService : AutofillService() {
+
+    override fun onCreate() {
+        super.onCreate()
+        // Give the matcher a way to ask sites which apps they vouch for. Only
+        // the service has a Context, and only autofill needs the answer. If the
+        // repositories are somehow not up yet, matching just falls back to
+        // locally-known associations rather than taking autofill down with it.
+        runCatching {
+            val verifier = AssetLinksVerifier(applicationContext)
+            VelaRepositories.vault.assetLinksVerifier = verifier::verify
+        }.onFailure { Log.w(TAG, "asset link verification unavailable") }
+    }
+
     override fun onFillRequest(
         request: FillRequest,
         cancellationSignal: android.os.CancellationSignal,
@@ -54,14 +67,20 @@ class VelaAutofillService : AutofillService() {
 
             if (!VelaRepositories.security.session.value.unlocked) {
                 Log.d(TAG, "onFillRequest: vault locked, showing unlock prompt")
-                val lockedDomain = fields.firstNotNullOfOrNull { it.webDomain } ?: structure.activityComponent?.packageName
-                callback.onSuccess(buildLockedResponse(fillable, lockedDomain, structure.activityComponent?.packageName))
+                val lockedPackage = structure.activityComponent?.packageName
+                callback.onSuccess(
+                    buildLockedResponse(fillable, fields.claimedWebDomain(), lockedPackage)
+                )
                 return
             }
 
             val packageName = structure.activityComponent?.packageName
-            val domain = fields.firstNotNullOfOrNull { it.webDomain } ?: packageName
-            val candidates = VelaRepositories.vault.findAutofillLogins(domain, packageName)
+            // The claimed domain is passed through as claimed: whether it may be
+            // believed is [AutofillMatcher]'s decision, not ours. Do not collapse
+            // it onto the package name — that is what let any app ask for any
+            // site's credentials (audit A-2).
+            val candidates = VelaRepositories.vault
+                .findAutofillLogins(fields.claimedWebDomain(), packageName)
             // NOTE: never log `domain` or candidate names/urls/usernames here —
             // logcat is readable via ADB / READ_LOGS and leaks which sites the
             // user has credentials for.
@@ -109,16 +128,34 @@ class VelaAutofillService : AutofillService() {
                 return
             }
 
-            val domain = fields.firstNotNullOfOrNull { it.webDomain }
+            val claimedDomain = fields.claimedWebDomain()
             val packageName = structure.activityComponent?.packageName
-            val target = domain?.takeIf { it.isNotBlank() } ?: packageName.orEmpty()
+            val fromBrowser = AppAssociations.isBrowser(packageName)
+
+            // What the login is *for*. A browser is showing a site, so the site is
+            // the target; anything else is an app, and the URL it claims is not
+            // ours to believe — but the package it runs as is.
+            val target = when {
+                fromBrowser -> claimedDomain ?: packageName.orEmpty()
+                packageName != null -> AppAssociations.curatedDomain(packageName) ?: packageName
+                else -> claimedDomain.orEmpty()
+            }
             if (target.isBlank()) {
                 callback.onFailure("No app or website target found")
                 return
             }
 
+            // Saving a password *from* an app is the user telling us these belong
+            // together — the confirmation the association needs (audit A-2). It is
+            // recorded on the item so the pairing survives without any guessing.
+            val appIds = if (!fromBrowser && packageName != null) {
+                listOf(AppAssociations.appUri(packageName))
+            } else {
+                emptyList()
+            }
+
             val existing = VelaRepositories.vault
-                .findAutofillLogins(domain, packageName)
+                .findAutofillLogins(claimedDomain, packageName)
                 .firstOrNull { it.username.equals(username.orEmpty(), ignoreCase = true) }
             val now = Instant.now()
             if (existing == null) {
@@ -132,26 +169,33 @@ class VelaAutofillService : AutofillService() {
                         ),
                         url = target,
                         username = username.orEmpty(),
-                        password = password
+                        password = password,
+                        appIds = appIds
                     )
                 )
                 // NOTE: never log `target` (domain/package) or the item name here —
                 // logcat is readable via ADB / READ_LOGS and leaks which sites the
                 // user has credentials for.
                 Log.d(TAG, "onSaveRequest: created new login")
-            } else if (existing.password != password) {
-                VelaRepositories.vault.updateItem(
-                    existing.copy(
-                        password = password,
-                        meta = existing.meta.copy(
-                            updatedAt = now,
-                            lastModifiedDevice = "android-local"
+            } else {
+                val mergedAppIds = (existing.appIds + appIds).distinct()
+                val passwordChanged = existing.password != password
+                val linkAdded = mergedAppIds.size != existing.appIds.size
+                if (passwordChanged || linkAdded) {
+                    VelaRepositories.vault.updateItem(
+                        existing.copy(
+                            password = password,
+                            appIds = mergedAppIds,
+                            meta = existing.meta.copy(
+                                updatedAt = now,
+                                lastModifiedDevice = "android-local"
+                            )
                         )
                     )
-                )
-                Log.d(TAG, "onSaveRequest: updated existing login")
-            } else {
-                Log.d(TAG, "onSaveRequest: unchanged login, ignored")
+                    Log.d(TAG, "onSaveRequest: updated existing login")
+                } else {
+                    Log.d(TAG, "onSaveRequest: unchanged login, ignored")
+                }
             }
             callback.onSuccess()
         } catch (e: Exception) {
@@ -419,6 +463,16 @@ object AutofillStructureParser {
         }
     }
 }
+
+/**
+ * The `webDomain` the filled app claims, if any.
+ *
+ * Returned raw and unfiltered on purpose: any app can set this field, so
+ * deciding whether to believe it belongs in one place ([AutofillMatcher]), not
+ * scattered across every caller.
+ */
+private fun List<ParsedAutofillField>.claimedWebDomain(): String? =
+    firstNotNullOfOrNull { it.webDomain?.takeIf { domain -> domain.isNotBlank() } }
 
 private fun List<ParsedAutofillField>.valueFor(id: AutofillId): String? {
     return firstOrNull { it.autofillId == id }?.valueText?.trim()?.takeIf { it.isNotBlank() }

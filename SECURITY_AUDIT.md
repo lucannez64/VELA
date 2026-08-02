@@ -76,7 +76,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | S-3 | Medium | server | Recovery-initiation per-user DoS (rate limit keyed on `user_id` only) | **[DYN-VERIFIED]** | **FIXED** (per-victim cap keyed on the source too) |
 | S-4 | Medium | server | `/web-session/:id/keys` not ownership-scoped (enabler for S-1) | code | **FIXED** (scoped to the committed approver) |
 | A-1 | **High** | android | Exported `MainActivity` leaks plaintext creds to any caller | code | **FIXED** (one-time token proves the intent is ours) |
-| A-2 | Medium | android | `com.<x>` package name auto-maps to `<x>.com` (autofill phishing) | code | open |
+| A-2 | Medium | android | `com.<x>` package name auto-maps to `<x>.com` (autofill phishing) | code | fixed |
 | A-3 | Medium | android | Release silently debug-signed when keystore missing | code | **FIXED** (release build fails without a keystore) |
 | D-1 | **High** | desktop | Auto-lock is lazy — secrets persist in RAM past expiry | code | **FIXED** (watchdog thread locks on the deadline) |
 | D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code | **FIXED** (per-chunk vault keys instead of the RMS) |
@@ -318,6 +318,29 @@ permission.
 ---
 
 ### A-2 — Autofill phishing via `domainFromPackageName` heuristic  ·  **MEDIUM**
+
+> **STATUS: FIXED.** The heuristic is deleted. A saved login is now offered to an
+> app only when something outside the request vouches for the pairing, in
+> `AutofillMatcher` (pure, and tested against the attack directly):
+>
+> 1. **The user linked the app.** Saving a password from an app records
+>    `androidapp://<package>` on the item (`app_ids`, carried by every client so a
+>    desktop edit cannot delete it). Works offline; the user is the trust anchor.
+> 2. **Digital Asset Links.** `AssetLinksVerifier` fetches
+>    `https://<domain>/.well-known/assetlinks.json` over https with redirects
+>    disabled and requires `delegate_permission/common.get_login_creds` naming the
+>    package *and* a SHA-256 fingerprint matching how the installed app is actually
+>    signed — so a re-signed impostor with the same package name fails. Answers are
+>    cached in Keystore-backed storage (30 days positive, 1 day negative) and the
+>    lookup never blocks the fill request.
+> 3. **A curated app→site list**, as data, for well-known apps. Every entry is a
+>    hand-verified trust statement, not a rule.
+> 4. **A browser allowlist.** `webDomain` is set by the app being filled, so any
+>    app could claim `paypal.com`. It is now believed only from a known browser —
+>    or from a non-browser whose claim its own site confirms via asset links.
+>
+> An app nobody has vouched for gets no suggestions, where it previously got the
+> whole vault when the request identified nothing.
 
 **Location.** `androidVELA/app/src/main/java/com/vela/android/core/LocalVaultRepository.kt:153-186`
 
@@ -918,8 +941,10 @@ credit the existing hardening:
    still hands over long-lived *vault* keys, so it remains "I trust this device" until vault
    re-keying (§9) exists.
 2. ~~**Android `MainActivity` (A-1).**~~ **Done** — an unlock intent must redeem a one-time token
-   minted by our own Autofill service. **A-2 is still open**: remove the `com.<x>`→`<x>.com`
-   package heuristic.
+   minted by our own Autofill service. ~~**A-2**~~ **Done** — the `com.<x>`→`<x>.com` heuristic is
+   gone; an app is matched to a login only via a user-made link, Digital Asset Links (package
+   *and* signing-cert fingerprint), or a curated list, and `webDomain` is believed only from a
+   browser.
 3. ~~**Desktop auto-lock (D-1).**~~ **Done** — a watchdog thread locks on the deadline and the
    frontends clear the clipboard through their existing lock paths.
 4. ~~**macOS biometric (D-3)**~~ **and Windows Hello (D-5, found while fixing it).** **Done** —
