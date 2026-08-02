@@ -40,10 +40,21 @@ const actionLabels: Record<string, { label: string; icon: string; color: string 
   item_deleted: { label: 'Item deleted', icon: 'delete', color: 'text-red-400' },
   password_generated: { label: 'Password generated', icon: 'password', color: 'text-primary' },
   settings_changed: { label: 'Settings changed', icon: 'settings', color: 'text-on-surface-variant' },
+  // Red on purpose: this one reports that something already went wrong, not a
+  // routine action.
+  plaintext_identity_keys_migrated: {
+    label: 'Device keys were stored unencrypted',
+    icon: 'warning',
+    color: 'text-red-400',
+  },
 };
 
 function getActionDetails(action: AuditAction): string | null {
   switch (action.action_type) {
+    case 'plaintext_identity_keys_migrated':
+      return "This device's signing keys were found in cleartext and have been encrypted. "
+        + 'Anything that could read the data directory before now had them — consider '
+        + 're-enrolling this device.';
     case 'vault_sync': return action.chunk_count != null ? `${action.chunk_count} chunk(s)` : null;
     case 'device_enrolled': return action.device_id ? `Device ${action.device_id.slice(0, 8)}…` : null;
     case 'device_revoked': return action.device_id ? `Device ${action.device_id.slice(0, 8)}…` : null;

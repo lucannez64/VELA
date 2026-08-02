@@ -42,9 +42,21 @@ pub struct IdentityKeysStore {
 
 pub struct Store {
     store_path: PathBuf,
+    /// Set when a legacy plaintext identity-keys file was found and migrated.
+    /// Read once by the unlock path, which turns it into an audit entry the
+    /// user can actually see.
+    plaintext_identity_migrated: std::sync::atomic::AtomicBool,
 }
 
 impl Store {
+    /// Whether a plaintext identity-keys file was migrated since the last call,
+    /// clearing the flag. Consumed by the unlock path so the user is told once
+    /// per occurrence rather than on every read.
+    pub fn take_plaintext_identity_migration(&self) -> bool {
+        self.plaintext_identity_migrated
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn new() -> anyhow::Result<Self> {
         let project_dirs = ProjectDirs::from("com", "vela", "VELA")
             .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
@@ -55,6 +67,7 @@ impl Store {
 
         Ok(Self {
             store_path: data_dir,
+            plaintext_identity_migrated: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -64,7 +77,10 @@ impl Store {
     pub fn new_at(path: PathBuf) -> anyhow::Result<Self> {
         fs::create_dir_all(&path)?;
         restrict_directory(&path)?;
-        Ok(Self { store_path: path })
+        Ok(Self {
+            store_path: path,
+            plaintext_identity_migrated: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     pub fn store_path(&self) -> &PathBuf {
@@ -301,6 +317,8 @@ impl Store {
             tracing::warn!(
                 "Identity keys file is plaintext; migrating to encrypted format now"
             );
+            self.plaintext_identity_migrated
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             serde_json::from_slice(&bytes)?
         } else {
             let key = Self::derive_identity_file_key(crypto);
@@ -527,6 +545,22 @@ mod tests {
 
         // A different RMS cannot read them.
         assert!(store.load_identity_keys(&test_crypto()).is_err());
+    }
+
+    #[test]
+    fn the_plaintext_migration_flag_is_reported_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new_at(dir.path().to_path_buf()).unwrap();
+
+        assert!(!store.take_plaintext_identity_migration(), "nothing migrated yet");
+        store
+            .plaintext_identity_migrated
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(store.take_plaintext_identity_migration());
+        assert!(
+            !store.take_plaintext_identity_migration(),
+            "taking it clears it, so the user is told once rather than on every read"
+        );
     }
 
     #[test]

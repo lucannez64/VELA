@@ -79,12 +79,19 @@ fn action_label_icon(action: &AuditAction) -> (&'static str, &'static str) {
         AuditAction::PasswordGenerated { .. } => ("Password generated", "password"),
         AuditAction::SettingsChanged => ("Settings changed", "settings"),
         AuditAction::WebSessionGranted { .. } => ("Web session granted", "devices"),
+        AuditAction::PlaintextIdentityKeysMigrated => {
+            ("Device keys were stored unencrypted", "warning")
+        }
     }
 }
 
 fn action_color(action: &AuditAction, palette: &Palette) -> gpui::Hsla {
     match action {
-        AuditAction::DeviceRevoked { .. } | AuditAction::ItemDeleted { .. } => palette.error,
+        // Red on purpose: this one is telling the user something already went
+        // wrong, not reporting a routine action.
+        AuditAction::DeviceRevoked { .. }
+        | AuditAction::ItemDeleted { .. }
+        | AuditAction::PlaintextIdentityKeysMigrated => palette.error,
         AuditAction::VaultCreated
         | AuditAction::DeviceEnrolled { .. }
         | AuditAction::ShareReceived { .. } => palette.secondary,
@@ -96,6 +103,10 @@ fn action_color(action: &AuditAction, palette: &Palette) -> gpui::Hsla {
 /// Port of the original's `getActionDetails`.
 fn action_details(action: &AuditAction) -> Option<String> {
     match action {
+        AuditAction::PlaintextIdentityKeysMigrated => Some(
+            "This device's signing keys were found in cleartext and have been encrypted. Anything that could read the data directory before now had them — consider re-enrolling this device."
+                .to_string(),
+        ),
         AuditAction::VaultSync { chunk_count } => Some(format!("{chunk_count} chunk(s)")),
         AuditAction::DeviceEnrolled { device_id, .. } => Some(format!("Device {}…", short_id(device_id))),
         AuditAction::DeviceRevoked { device_id, .. } => Some(format!("Device {}…", short_id(device_id))),
