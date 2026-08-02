@@ -154,7 +154,7 @@ private fun LinkedAppRow(
                 entry.packageName,
                 color = VelaColors.TextMuted,
                 fontSize = 11.sp,
-                fontFamily = MonoFont,
+                fontFamily = MonoFont.medium.fontFamily,
             )
             if (!installed) {
                 Text("Not installed", color = VelaColors.TextMuted, fontSize = 11.sp)
@@ -275,7 +275,7 @@ private fun AppPickerRow(
                 entry.packageName,
                 color = VelaColors.TextMuted,
                 fontSize = 11.sp,
-                fontFamily = MonoFont,
+                fontFamily = MonoFont.medium.fontFamily,
             )
         }
         if (linked) {
