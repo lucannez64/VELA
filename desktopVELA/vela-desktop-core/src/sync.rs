@@ -76,6 +76,31 @@ fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), St
     Ok(())
 }
 
+/// Refuse a chunk the server hands back at an older revision than we last saw.
+///
+/// The sync server is untrusted by design, and nothing in the protocol stopped
+/// it from replaying an earlier ciphertext for a chunk: deleted credentials
+/// reappear, rotated passwords revert, and the client cannot tell (audit C-2).
+/// Lamport clocks only ever increase for a given chunk — each writer sets
+/// `max(previous, local) + 1` — so a value below what this device already
+/// recorded is not a stale cache, it is a rollback.
+///
+/// This is the half that needs no format change. The other half, binding the
+/// revision into the ciphertext so a *relabelled* blob also fails, needs every
+/// client to seal and open with the same associated data; see
+/// `vela_crypto::aead::vault_chunk_aad`.
+fn reject_rollback(chunk_id: &str, server_lamport: i64, last_seen: Option<i64>) -> Result<(), String> {
+    // Never synced this chunk on this device: nothing to compare against.
+    let Some(seen) = last_seen else { return Ok(()) };
+    if server_lamport < seen {
+        return Err(format!(
+            "Server returned an older revision of {chunk_id} (clock {server_lamport}, \
+             last seen {seen}). Refusing to overwrite newer local data."
+        ));
+    }
+    Ok(())
+}
+
 fn chunk_key_bytes(state: &AppState, chunk_id: &str) -> Result<[u8; 32], String> {
     let crypto_guard = state.crypto.read();
     let crypto = crypto_guard.as_ref().ok_or_else(|| "Crypto not initialized".to_string())?;
@@ -368,6 +393,9 @@ async fn download_vault_from_manifest(
     token: &mut String,
     manifest: &crate::api::SyncManifest,
 ) -> Result<Option<(crate::vault::VaultStore, i64)>, String> {
+    // What this device last accepted for each chunk, to catch a server that
+    // serves an older revision back (audit C-2).
+    let local_meta = load_local_sync_meta(state);
     let ids = ordered_vault_chunk_ids(manifest);
     let ids = if ids.is_empty() && manifest.chunks.iter().any(|entry| entry.chunk_id == LEGACY_VAULT_MAIN_CHUNK_ID) {
         vec![LEGACY_VAULT_MAIN_CHUNK_ID.to_string()]
@@ -388,6 +416,10 @@ async fn download_vault_from_manifest(
         let client = client.clone();
         let token = shared_token.clone();
         let key = chunk_key_bytes(state, &chunk_id)?;
+        let seen_lamport = local_meta
+            .chunks
+            .get(&chunk_id)
+            .map(|meta| meta.lamport_clock);
 
         handles.push(tokio::spawn(async move {
             let t = token.lock().await.clone();
@@ -396,6 +428,7 @@ async fn download_vault_from_manifest(
             if let Some(new_t) = new_tok {
                 *token.lock().await = new_t;
             }
+            reject_rollback(&chunk_id, lamport, seen_lamport)?;
             let chunk = decrypt(&key, &ciphertext).map_err(|e| format!("Failed to decrypt chunk {chunk_id}: {e}"))?;
             Ok::<_, String>((idx, chunk, lamport))
         }));
@@ -889,6 +922,26 @@ pub fn set_server_url(state: &AppState, url: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Audit C-2: the sync server is untrusted, and replaying an older
+    /// ciphertext for a chunk used to be invisible — deleted credentials
+    /// reappear, rotated passwords revert.
+    #[test]
+    fn a_server_serving_an_older_revision_is_refused() {
+        // Same or newer is normal: another device wrote, or nothing changed.
+        assert!(reject_rollback("vault-data-000000", 7, Some(7)).is_ok());
+        assert!(reject_rollback("vault-data-000000", 8, Some(7)).is_ok());
+
+        // Lower than what this device already accepted is a rollback, not a
+        // stale cache: per-chunk lamport clocks only ever increase.
+        let error = reject_rollback("vault-data-000000", 6, Some(7))
+            .expect_err("must refuse to overwrite newer local data");
+        assert!(error.contains("older revision"), "{error}");
+        assert!(error.contains("vault-data-000000"), "{error}");
+
+        // A chunk this device has never synced has nothing to compare against.
+        assert!(reject_rollback("vault-data-000009", 1, None).is_ok());
+    }
     use super::*;
     use crate::vault::{VaultMeta, VaultStore};
 

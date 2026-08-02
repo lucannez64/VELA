@@ -86,7 +86,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
-| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | open |
+| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (rollback refused on desktop; AAD binding staged) |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | **FIXED** (tagged shares; tampering is an error) |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
 | P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
@@ -729,6 +729,27 @@ enrollment driver.
 ---
 
 ### C-2 — No AAD/version binding on AEAD ciphertexts → silent rollback  ·  **MEDIUM**
+
+> **STATUS: PARTIALLY FIXED — the detection half is in, the binding half is
+> staged.** The finding has two parts and they have very different blast radii.
+>
+> **Done: a client refuses an older revision.** Per-chunk lamport clocks only
+> increase, so a value below what the device already recorded is a rollback, not
+> a stale cache. `sync.rs` now compares every downloaded chunk against the
+> `sync_meta.json` it already persists and refuses to overwrite newer local data.
+> This needed no format change and no coordination between clients, so it ships
+> now. (Desktop only so far — the same check belongs in the Android, iOS and web
+> sync loops, each of which tracks its own clocks.)
+>
+> **Staged: binding the revision into the ciphertext.** `aead::seal`/`open` and
+> `vault_chunk_aad` are in `vela-crypto` with tests, self-describing via a
+> `VAE1` magic so old and new ciphertexts are distinguishable. They are
+> deliberately **not wired into any client yet**: vault chunks are shared between
+> a user's devices, so a client that starts sealing produces ciphertexts its
+> other devices cannot open. The rollout is (1) land the primitive — this change,
+> (2) teach every client to *read* both formats, (3) once a release with (2) is
+> everywhere, flip the writers. Doing it in one step would strand whoever
+> updates last.
 
 **Location.** `libVELA/vela-crypto/src/aead.rs:21-36` (no AAD parameter; all callers pass empty)
 
