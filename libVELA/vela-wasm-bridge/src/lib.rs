@@ -318,14 +318,39 @@ mod tests {
         let key_b64 = B64.encode(kdf::chunk_key(&[7u8; 32], b"vault-data-000000").as_bytes());
         let vault_json = "{\"items\":[],\"tombstones\":[]}";
         let enc = encrypt_vault_chunk_json(
-            &serde_json::json!({ "chunk_key_b64": key_b64, "vault_json": vault_json }).to_string(),
+            &serde_json::json!({
+                "chunk_key_b64": key_b64,
+                "vault_json": vault_json,
+                "chunk_id": "vault-data-000000",
+                "lamport_clock": 4,
+            })
+            .to_string(),
         );
         let ct = field(&enc, "ciphertext_b64");
         assert!(!ct.is_empty());
         let dec = decrypt_vault_chunk_json(
-            &serde_json::json!({ "chunk_key_b64": key_b64, "ciphertext_b64": ct }).to_string(),
+            &serde_json::json!({
+                "chunk_key_b64": key_b64,
+                "ciphertext_b64": ct,
+                "chunk_id": "vault-data-000000",
+                "lamport_clock": 4,
+            })
+            .to_string(),
         );
         assert_eq!(field(&dec, "vault_json"), vault_json);
+
+        // An older revision of the same chunk must not open — the rollback the
+        // seal exists to stop (audit C-2).
+        let replayed = decrypt_vault_chunk_json(
+            &serde_json::json!({
+                "chunk_key_b64": key_b64,
+                "ciphertext_b64": ct,
+                "chunk_id": "vault-data-000000",
+                "lamport_clock": 3,
+            })
+            .to_string(),
+        );
+        assert!(replayed.contains("error"), "clock must bind the ciphertext: {replayed}");
     }
 
     /// The granted keys are per chunk id: a key for one chunk cannot open

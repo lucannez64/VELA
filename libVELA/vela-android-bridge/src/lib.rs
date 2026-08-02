@@ -1100,8 +1100,12 @@ mod tests {
 
         let encrypted = encrypt_vault_chunk_with_rms(
             &rms,
-            &serde_json::json!({ "chunk_id": "vault-data-000000", "vault_json": vault_json })
-                .to_string(),
+            &serde_json::json!({
+                "chunk_id": "vault-data-000000",
+                "vault_json": vault_json,
+                "lamport_clock": 3,
+            })
+            .to_string(),
         )
         .expect("encrypt");
         let decrypted = decrypt_vault_chunk_with_rms(
@@ -1109,6 +1113,7 @@ mod tests {
             &serde_json::json!({
                 "chunk_id": "vault-data-000000",
                 "ciphertext_b64": encrypted.ciphertext_b64,
+                "lamport_clock": 3,
             })
             .to_string(),
         )
