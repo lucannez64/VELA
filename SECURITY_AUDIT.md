@@ -335,9 +335,19 @@ permission.
 >    lookup never blocks the fill request.
 > 3. **A curated app→site list**, as data, for well-known apps. Every entry is a
 >    hand-verified trust statement, not a rule.
-> 4. **A browser allowlist.** `webDomain` is set by the app being filled, so any
->    app could claim `paypal.com`. It is now believed only from a known browser —
->    or from a non-browser whose claim its own site confirms via asset links.
+> 4. **A signature-pinned browser allowlist.** `webDomain` is set by the app being
+>    filled, so any app could claim `paypal.com`. It is now believed only from a
+>    browser — and "is a browser" is decided by signing certificate, not by package
+>    name, since `com.android.chrome` is squattable on a third-party store just as
+>    `com.paypal.anything` was. `BrowserAllowlist` ships Google's published
+>    privileged-apps list (`gstatic.com/gpm-passkeys-privileged-apps/apps.json`,
+>    79 packages with SHA-256 fingerprints — the same list Android uses to decide
+>    who may assert a web origin for passkeys) plus the privacy forks it omits. A
+>    non-browser can still justify the domain it claims, but only via its own
+>    site's asset links. Five real browsers that neither list names (Tor, Kiwi,
+>    Ecosia, Opera GX, UC) stay on package name alone, documented as the weaker
+>    tier — dropping them would collapse every password saved in them onto a
+>    pseudo-app entry, which is worse than the narrow impersonation risk.
 >
 > An app nobody has vouched for gets no suggestions, where it previously got the
 > whole vault when the request identified nothing.

@@ -1,14 +1,10 @@
 package com.vela.android.autofill
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.content.pm.Signature
-import android.os.Build
 import android.util.Log
 import com.vela.android.sync.EncryptedPrefs
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -59,7 +55,7 @@ class AssetLinksVerifier(private val context: Context) {
         if (!inFlight.add(key)) return
         executor.execute {
             try {
-                val fingerprints = signingFingerprints(packageName)
+                val fingerprints = AppSignatures.sha256(context, packageName)
                 val verified = fingerprints.isNotEmpty() &&
                     runCatching { fetchAndCheck(domain, packageName, fingerprints) }
                         .onFailure { Log.d(TAG, "asset link lookup failed") }
@@ -109,32 +105,6 @@ class AssetLinksVerifier(private val context: Context) {
         }
     }
 
-    /** SHA-256 of every certificate the installed [packageName] is signed with. */
-    private fun signingFingerprints(packageName: String): Set<String> = runCatching {
-        val pm = context.packageManager
-        val signatures: Array<Signature> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val signing = pm.getPackageInfo(
-                packageName,
-                PackageManager.GET_SIGNING_CERTIFICATES
-            ).signingInfo
-            when {
-                signing == null -> emptyArray()
-                // Rotated keys count: the app is still the one the site named.
-                signing.hasMultipleSigners() -> signing.apkContentsSigners ?: emptyArray()
-                else -> signing.signingCertificateHistory ?: emptyArray()
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            pm.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures ?: emptyArray()
-        }
-
-        signatures.map { signature ->
-            MessageDigest.getInstance("SHA-256")
-                .digest(signature.toByteArray())
-                .joinToString(":") { byte -> "%02X".format(byte) }
-        }.toSet()
-    }.getOrDefault(emptySet())
-
     private fun cacheKey(domain: String, packageName: String) =
         "dal:" + domain.lowercase(Locale.US) + ":" + packageName.lowercase(Locale.US)
 
@@ -164,7 +134,7 @@ class AssetLinksVerifier(private val context: Context) {
             fingerprints: Set<String>
         ): Boolean {
             if (fingerprints.isEmpty()) return false
-            val ours = fingerprints.mapNotNull { it.normalizedFingerprint() }.toSet()
+            val ours = fingerprints.mapNotNull { AppSignatures.normalize(it) }.toSet()
             val statements = runCatching { JSONArray(json) }.getOrNull() ?: return false
 
             for (index in 0 until statements.length()) {
@@ -182,17 +152,13 @@ class AssetLinksVerifier(private val context: Context) {
 
                 val listed = target.optJSONArray("sha256_cert_fingerprints") ?: continue
                 val theirs = (0 until listed.length())
-                    .mapNotNull { listed.optString(it).normalizedFingerprint() }
+                    .mapNotNull { AppSignatures.normalize(listed.optString(it)) }
                     .toSet()
                 // The package must match *and* be signed by a key the site named.
                 if (theirs.intersect(ours).isNotEmpty()) return true
             }
             return false
         }
-
-        /** `AB:CD:…` uppercase, however the site chose to write it. */
-        private fun String.normalizedFingerprint(): String? =
-            trim().uppercase(Locale.US).replace(" ", "").takeIf { it.isNotEmpty() }
 
         /** Reads at most [limit] chars, so a hostile server cannot stream forever. */
         private fun java.io.Reader.readAtMost(limit: Int): String {

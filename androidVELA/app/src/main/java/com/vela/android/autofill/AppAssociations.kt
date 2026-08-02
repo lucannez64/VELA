@@ -20,6 +20,9 @@ import java.util.Locale
  *
  * The old `com.<x>` → `<x>.com` fallback is gone; matching nothing is the
  * correct answer for an app nobody has vouched for.
+ *
+ * Browsers are a separate question — they claim a *site* rather than being one —
+ * and live in [BrowserAllowlist].
  */
 object AppAssociations {
 
@@ -33,45 +36,6 @@ object AppAssociations {
             ?.substring(ANDROID_APP_SCHEME.length)
             ?.lowercase(Locale.US)
             ?.takeIf { it.isNotBlank() }
-
-    /**
-     * Browsers whose `webDomain` may be believed.
-     *
-     * `AssistStructure` fields are filled in by the app being autofilled, and
-     * any app can call `ViewStructure.setWebDomain()` — so an app that simply
-     * declares `webDomain = "paypal.com"` would otherwise be offered PayPal
-     * credentials. Only a browser is in a position to report the origin it is
-     * actually showing, so only a browser is believed.
-     */
-    private val BROWSER_PACKAGES = setOf(
-        "com.android.chrome",
-        "com.chrome.beta",
-        "com.chrome.dev",
-        "com.chrome.canary",
-        "com.google.android.apps.chrome",
-        "org.mozilla.firefox",
-        "org.mozilla.firefox_beta",
-        "org.mozilla.fenix",
-        "org.mozilla.focus",
-        "com.microsoft.emmx",
-        "com.brave.browser",
-        "com.brave.browser_beta",
-        "com.opera.browser",
-        "com.opera.mini.native",
-        "com.opera.gx",
-        "com.sec.android.app.sbrowser",
-        "com.duckduckgo.mobile.android",
-        "com.vivaldi.browser",
-        "com.kiwibrowser.browser",
-        "org.chromium.chrome",
-        "com.UCMobile.intl",
-        "com.yandex.browser",
-        "com.ecosia.android",
-        "org.torproject.torbrowser",
-    )
-
-    fun isBrowser(packageName: String?): Boolean =
-        packageName != null && BROWSER_PACKAGES.contains(packageName.lowercase(Locale.US))
 
     /**
      * Well-known app → site pairs, as data rather than a branch in a repository.

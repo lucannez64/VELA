@@ -29,6 +29,9 @@ object AutofillMatcher {
     private const val MAX_ASSET_LINK_LOOKUPS = 8
 
     /**
+     * @param isTrustedBrowser see [BrowserAllowlist]. Defaults to "not a browser",
+     *   so a caller that cannot check signatures never grants browser trust by
+     *   omission.
      * @param verifyAssetLinks `(domain, packageName) -> vouched`, see
      *   [AssetLinksVerifier]. Defaults to "no network answer", which is also the
      *   right behaviour offline: matching falls back to the local evidence.
@@ -37,6 +40,7 @@ object AutofillMatcher {
         logins: List<VaultItem.Login>,
         webDomain: String?,
         packageName: String?,
+        isTrustedBrowser: (String) -> Boolean = { false },
         verifyAssetLinks: (String, String) -> Boolean = { _, _ -> false },
     ): List<VaultItem.Login> {
         val pkg = packageName?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotEmpty() }
@@ -47,7 +51,7 @@ object AutofillMatcher {
             if (claimedDomain != null) {
                 // A browser reports the origin it is actually displaying; that is
                 // the one case where the field means what it says.
-                if (pkg == null || AppAssociations.isBrowser(pkg)) {
+                if (pkg == null || isTrustedBrowser(pkg)) {
                     add(claimedDomain)
                 } else if (hostOf(claimedDomain)?.let { verifyAssetLinks(it, pkg) } == true) {
                     // Not a browser, but the site it names vouches for this exact

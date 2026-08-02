@@ -133,20 +133,37 @@ class LocalVaultRepository(
      */
     fun findAutofillLogins(webDomain: String?, packageName: String?): List<VaultItem.Login> {
         val verifier = assetLinksVerifier
+        val browsers = browserAllowlist
         return AutofillMatcher.match(
             logins = _items.value.filterIsInstance<VaultItem.Login>(),
             webDomain = webDomain,
             packageName = packageName,
+            isTrustedBrowser = browsers ?: { false },
             verifyAssetLinks = verifier ?: { _, _ -> false },
         )
     }
 
     /**
-     * Asks a site whether it vouches for an app. Installed by the autofill
-     * service, which has a Context; null everywhere else, so the matcher simply
-     * falls back to locally-known associations.
+     * Asks a site whether it vouches for an app. Installed at startup, where
+     * there is a Context; null in tests, so the matcher simply falls back to
+     * locally-known associations.
      */
     var assetLinksVerifier: ((String, String) -> Boolean)? = null
+
+    /**
+     * Whether a package is a browser whose claimed `webDomain` may be believed —
+     * signing certificate checked, not just the name. Installed alongside
+     * [assetLinksVerifier]; absent means "nothing is a browser", which is the
+     * safe direction.
+     */
+    var browserAllowlist: ((String) -> Boolean)? = null
+
+    /** See [browserAllowlist]. */
+    fun isTrustedBrowser(packageName: String?): Boolean {
+        val check = browserAllowlist ?: return false
+        val pkg = packageName?.takeIf { it.isNotBlank() } ?: return false
+        return check(pkg)
+    }
 
     private fun hostOf(value: String): String? = AutofillMatcher.hostOf(value)
 
@@ -201,6 +218,11 @@ object VelaRepositories {
             secureVaultManager = security,
             encryptedVaultStore = EncryptedVaultStore(context.applicationContext.filesDir.resolve("vault"))
         )
+        // Autofill decides where credentials may go; both answers need a Context,
+        // and neither belongs in the repository itself (audit A-2).
+        val appContext = context.applicationContext
+        vault.assetLinksVerifier = com.vela.android.autofill.AssetLinksVerifier(appContext)::verify
+        vault.browserAllowlist = com.vela.android.autofill.BrowserAllowlist(appContext)::isTrustedBrowser
         syncSettings = SyncSettingsStore(context.applicationContext)
         vault.onLocalChange = { syncSettings.markLocalChanged() }
         serverIdentity = com.vela.android.sync.ServerIdentityStore(context.applicationContext)

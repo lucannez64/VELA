@@ -30,18 +30,6 @@ import java.util.Locale
 
 class VelaAutofillService : AutofillService() {
 
-    override fun onCreate() {
-        super.onCreate()
-        // Give the matcher a way to ask sites which apps they vouch for. Only
-        // the service has a Context, and only autofill needs the answer. If the
-        // repositories are somehow not up yet, matching just falls back to
-        // locally-known associations rather than taking autofill down with it.
-        runCatching {
-            val verifier = AssetLinksVerifier(applicationContext)
-            VelaRepositories.vault.assetLinksVerifier = verifier::verify
-        }.onFailure { Log.w(TAG, "asset link verification unavailable") }
-    }
-
     override fun onFillRequest(
         request: FillRequest,
         cancellationSignal: android.os.CancellationSignal,
@@ -130,7 +118,7 @@ class VelaAutofillService : AutofillService() {
 
             val claimedDomain = fields.claimedWebDomain()
             val packageName = structure.activityComponent?.packageName
-            val fromBrowser = AppAssociations.isBrowser(packageName)
+            val fromBrowser = VelaRepositories.vault.isTrustedBrowser(packageName)
 
             // What the login is *for*. A browser is showing a site, so the site is
             // the target; anything else is an app, and the URL it claims is not

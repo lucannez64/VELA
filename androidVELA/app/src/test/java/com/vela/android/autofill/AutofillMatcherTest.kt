@@ -30,6 +30,10 @@ class AutofillMatcherTest {
         )
     }
 
+    /** Stands in for [BrowserAllowlist], which checks signing certificates. */
+    private val browsers: (String) -> Boolean =
+        { it == "com.android.chrome" || it == "org.mozilla.firefox" }
+
     private val paypal = login("PayPal", "https://paypal.com")
     private val bank = login("Bank", "https://bank.example")
     private val vault = listOf(paypal, bank)
@@ -47,7 +51,7 @@ class AutofillMatcherTest {
     @Test
     fun `a non-browser app cannot claim a domain`() {
         // Any app may call ViewStructure.setWebDomain("paypal.com").
-        val result = AutofillMatcher.match(vault, "paypal.com", "com.evil.app")
+        val result = AutofillMatcher.match(vault, "paypal.com", "com.evil.app", browsers)
         assertEquals(emptyList<VaultItem.Login>(), result)
     }
 
@@ -66,13 +70,19 @@ class AutofillMatcherTest {
 
     @Test
     fun `a browser is believed about the site it is showing`() {
-        assertEquals(listOf(paypal), AutofillMatcher.match(vault, "paypal.com", "com.android.chrome"))
-        assertEquals(listOf(paypal), AutofillMatcher.match(vault, "https://www.paypal.com/signin", "org.mozilla.firefox"))
+        assertEquals(listOf(paypal), AutofillMatcher.match(vault, "paypal.com", "com.android.chrome", browsers))
+        assertEquals(
+            listOf(paypal),
+            AutofillMatcher.match(vault, "https://www.paypal.com/signin", "org.mozilla.firefox", browsers),
+        )
     }
 
     @Test
     fun `a browser showing another site does not get this login`() {
-        assertEquals(emptyList<VaultItem.Login>(), AutofillMatcher.match(vault, "evil.example", "com.android.chrome"))
+        assertEquals(
+            emptyList<VaultItem.Login>(),
+            AutofillMatcher.match(vault, "evil.example", "com.android.chrome", browsers),
+        )
     }
 
     @Test
@@ -111,7 +121,7 @@ class AutofillMatcherTest {
 
     @Test
     fun `a site that vouches for the app unlocks its login`() {
-        val result = AutofillMatcher.match(vault, null, "com.bank.official") { domain, pkg ->
+        val result = AutofillMatcher.match(vault, null, "com.bank.official", browsers) { domain, pkg ->
             domain == "bank.example" && pkg == "com.bank.official"
         }
         assertEquals(listOf(bank), result)
@@ -121,7 +131,7 @@ class AutofillMatcherTest {
     fun `asset links let a WebView app justify the domain it claims`() {
         // Not on the curated list and not a browser: the only thing standing
         // behind the claim is the site's own statement.
-        val result = AutofillMatcher.match(vault, "bank.example", "com.bank.official") { domain, pkg ->
+        val result = AutofillMatcher.match(vault, "bank.example", "com.bank.official", browsers) { domain, pkg ->
             domain == "bank.example" && pkg == "com.bank.official"
         }
         assertEquals(listOf(bank), result)
@@ -129,7 +139,7 @@ class AutofillMatcherTest {
 
     @Test
     fun `a site vouching for one app says nothing about another`() {
-        val result = AutofillMatcher.match(vault, "bank.example", "com.evil.app") { domain, pkg ->
+        val result = AutofillMatcher.match(vault, "bank.example", "com.evil.app", browsers) { domain, pkg ->
             domain == "bank.example" && pkg == "com.bank.official"
         }
         assertEquals(emptyList<VaultItem.Login>(), result)
@@ -139,7 +149,7 @@ class AutofillMatcherTest {
     fun `local matches are answered without touching the network`() {
         var lookups = 0
         val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab"))
-        AutofillMatcher.match(listOf(linked), null, "com.ubercab") { _, _ -> lookups++; false }
+        AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers) { _, _ -> lookups++; false }
         assertEquals(0, lookups)
     }
 
@@ -147,7 +157,7 @@ class AutofillMatcherTest {
     fun `asset link lookups are capped per request`() {
         val many = (1..50).map { login("Site $it", "https://site$it.example") }
         var lookups = 0
-        AutofillMatcher.match(many, null, "com.some.app") { _, _ -> lookups++; false }
+        AutofillMatcher.match(many, null, "com.some.app", browsers) { _, _ -> lookups++; false }
         assertTrue("expected a bounded number of lookups, got $lookups", lookups in 1..8)
     }
 
@@ -177,15 +187,27 @@ class AutofillMatcherTest {
         assertFalse(AutofillMatcher.domainsMatch("", "paypal.com"))
     }
 
-    // ── Browser allowlist ──────────────────────────────────────────────────
+    // ── Browser trust ──────────────────────────────────────────────────────
 
     @Test
-    fun `browser allowlist is exact`() {
-        assertTrue(AppAssociations.isBrowser("com.android.chrome"))
-        assertTrue(AppAssociations.isBrowser("COM.ANDROID.CHROME"))
-        assertFalse(AppAssociations.isBrowser("com.android.chrome.evil"))
-        assertFalse(AppAssociations.isBrowser("com.evil.chrome"))
-        assertFalse(AppAssociations.isBrowser(null))
+    fun `an app that only looks like a browser is not one`() {
+        // BrowserAllowlist answers this by signing certificate, so an impostor
+        // named com.android.chrome fails there and arrives here as "not a browser".
+        val impostor: (String) -> Boolean = { false }
+        assertEquals(
+            emptyList<VaultItem.Login>(),
+            AutofillMatcher.match(vault, "paypal.com", "com.android.chrome", impostor),
+        )
+    }
+
+    @Test
+    fun `browser trust is never granted by omission`() {
+        // The default must be "not a browser": a caller that forgets to supply
+        // the check must not thereby believe every claimed domain.
+        assertEquals(
+            emptyList<VaultItem.Login>(),
+            AutofillMatcher.match(vault, "paypal.com", "com.android.chrome"),
+        )
     }
 
     @Test
