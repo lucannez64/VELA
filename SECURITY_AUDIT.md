@@ -344,10 +344,11 @@ permission.
 >    79 packages with SHA-256 fingerprints — the same list Android uses to decide
 >    who may assert a web origin for passkeys) plus the privacy forks it omits. A
 >    non-browser can still justify the domain it claims, but only via its own
->    site's asset links. Five real browsers that neither list names (Tor, Kiwi,
->    Ecosia, Opera GX, UC) stay on package name alone, documented as the weaker
->    tier — dropping them would collapse every password saved in them onto a
->    pseudo-app entry, which is worse than the narrow impersonation risk.
+>    site's asset links. There is no name-only tier: a browser on neither list
+>    gets no browser trust, since a package name is precisely what this finding
+>    is about. The cost is real and tracked separately — passwords saved in an
+>    unpinned browser (Tor, Kiwi, Ecosia, Opera GX, UC) are filed under its
+>    package rather than the site, and are then offered across every site in it.
 >
 > An app nobody has vouched for gets no suggestions, where it previously got the
 > whole vault when the request identified nothing.

@@ -34,6 +34,12 @@ import org.json.JSONObject
  *    `bitwarden/android`'s `fido2_privileged_community.json`.
  *
  * Refresh both by re-downloading; they are data, and nothing here needs to change.
+ *
+ * A browser on neither list gets no browser trust — there is no name-only tier,
+ * because a package name is the thing this finding is about. The cost is real:
+ * passwords saved in such a browser are filed under its package rather than the
+ * site, and are then offered across every site in it. See issue on unpinned
+ * browsers; the fix is a published fingerprint, not a looser rule here.
  */
 class BrowserAllowlist(private val context: Context) {
 
@@ -52,12 +58,12 @@ class BrowserAllowlist(private val context: Context) {
     }
 
     private fun evaluate(pkg: String): Boolean {
-        pinned[pkg]?.let { expected ->
-            val actual = AppSignatures.sha256(context, pkg)
-            if (actual.isEmpty()) return false
-            return expected.intersect(actual).isNotEmpty()
-        }
-        return pkg in NAME_ONLY_BROWSERS
+        // No pinned fingerprint, no trust. A package name on its own is exactly
+        // what this finding is about, so there is no weaker tier to fall back to.
+        val expected = pinned[pkg] ?: return false
+        val actual = AppSignatures.sha256(context, pkg)
+        if (actual.isEmpty()) return false
+        return expected.intersect(actual).isNotEmpty()
     }
 
     private fun loadPinned(): Map<String, Set<String>> {
@@ -80,24 +86,6 @@ class BrowserAllowlist(private val context: Context) {
         private val ASSETS = listOf(
             "privileged_browsers_google.json",
             "privileged_browsers_community.json",
-        )
-
-        /**
-         * Real browsers that neither list names, kept on package name alone.
-         *
-         * Weaker than a pinned entry, and deliberately so: dropping them would
-         * mean every password saved in Tor Browser collapsing onto one pseudo-app
-         * entry instead of the site it belongs to, which is a worse outcome than
-         * the narrow risk that someone sideloads an impostor under one of these
-         * exact names. Move an entry out of here the moment it gains a published
-         * fingerprint.
-         */
-        internal val NAME_ONLY_BROWSERS = setOf(
-            "com.ecosia.android",
-            "com.kiwibrowser.browser",
-            "com.opera.gx",
-            "com.ucmobile.intl",
-            "org.torproject.torbrowser",
         )
 
         /**

@@ -66,12 +66,28 @@ class BrowserAllowlistTest {
     }
 
     @Test
-    fun `the name-only tier does not overlap the pinned entries`() {
-        // An entry in both would be pointless at best and, if the pinned copy
-        // ever failed to match, misleading about how it is being trusted.
-        for (pkg in BrowserAllowlist.NAME_ONLY_BROWSERS) {
-            assertFalse("$pkg is pinned; drop it from the name-only tier", shipped.containsKey(pkg))
+    fun `packages are lowercase so lookups can find them`() {
+        // isTrustedBrowser lowercases the incoming package before the lookup.
+        for (pkg in shipped.keys) {
             assertEquals("$pkg must be lowercase to be looked up", pkg.lowercase(), pkg)
+        }
+    }
+
+    @Test
+    fun `browsers on neither list get no trust at all`() {
+        // There is no name-only tier: a package name is the thing A-2 is about.
+        // These five are real browsers that neither list names, so they are
+        // simply absent — and absent means untrusted, with the cost that
+        // passwords saved in them are filed under the package rather than the
+        // site. If a refresh ever pins one, move it out of this test.
+        for (pkg in listOf(
+            "com.ecosia.android",
+            "com.kiwibrowser.browser",
+            "com.opera.gx",
+            "com.ucmobile.intl",
+            "org.torproject.torbrowser",
+        )) {
+            assertFalse("$pkg is pinned now — update this test", shipped.containsKey(pkg))
         }
     }
 
