@@ -1086,6 +1086,33 @@ credit the existing hardening:
 
 ---
 
+## Desktop hardening sweep (#114)
+
+> **STATUS: DONE.** Four of the seven were already closed by earlier work and are
+> verified rather than re-done: `shell.open` is restricted to `^https?://`, the
+> TOTP commands refuse while locked, `reset_vault`'s ladder is documented and the
+> typed-`DELETE`-alone path is deliberate (a server challenge is
+> cryptographically impossible when the RMS cannot be unwrapped), and
+> `generate_password` already draws without modulo bias. The rest:
+>
+> * **`log_audit_event` is deleted.** The renderer could append entries: the
+>   action was whitelisted but `details` was arbitrary, so anything reaching the
+>   IPC could write plausible history into the one record a user consults after a
+>   compromise — or bury a real entry under noise. Nothing in either frontend
+>   called it. Like the `nativeMessage` handlers in E-1, it was attack surface and
+>   nothing else, so it is gone rather than hardened.
+> * **Plaintext `http://localhost:*` is out of the renderer's `connect-src`.**
+>   Nothing in the frontend fetches anything — the server is reached from the Rust
+>   side — so it was permission granted for no caller.
+> * **A cleartext identity-keys file now tells the user.** It was migrated to
+>   encrypted storage with only a `warn!`. Re-encrypting does not undo that
+>   anything with read access to the data directory had the device's private
+>   signing keys, and only the user can decide whether to re-enroll the device —
+>   which they cannot do from a log line they never see. It is now an audit entry,
+>   shown in red in both frontends, saying what happened and what it means.
+
+---
+
 ## Remediation priority
 
 1. ~~**Web-session grant (S-1 + S-4).** Bind the grant to the intended approver at `start`

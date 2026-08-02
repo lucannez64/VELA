@@ -204,6 +204,18 @@ pub async fn get_session_status(state: &Arc<AppState>) -> Result<SessionStatus, 
 /// notify the UI — callers (Tauri command wrapper, gpui action) do that in
 /// whatever toolkit-specific way applies (`app.emit(...)`, direct view state
 /// update, ...).
+/// Turn a plaintext identity-keys migration into something the user can see.
+///
+/// Re-encrypting the keys does not undo the fact that anything with read access
+/// to the data directory had the device's private signing keys. Only the user
+/// can decide whether that warrants re-enrolling the device, and they cannot
+/// decide it from a `warn!` line they will never read.
+fn note_plaintext_identity_migration(state: &Arc<AppState>) {
+    if state.store.take_plaintext_identity_migration() {
+        record_audit_event(state, AuditAction::PlaintextIdentityKeysMigrated);
+    }
+}
+
 pub fn lock_session(state: &Arc<AppState>) {
     record_audit_event(state, AuditAction::VaultLocked);
     let mut session = state.session.write();
@@ -340,6 +352,7 @@ pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, Stri
         }
 
         record_audit_event(&app_state2, AuditAction::VaultUnlocked);
+        note_plaintext_identity_migration(&app_state2);
 
         Ok::<_, String>((device_name, device_id))
     })
@@ -432,6 +445,7 @@ pub async fn unlock_session_with_password(
         }
 
         record_audit_event(&app_state2, AuditAction::VaultUnlocked);
+        note_plaintext_identity_migration(&app_state2);
 
         Ok::<_, String>((device_name, device_id))
     })

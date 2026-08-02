@@ -42,9 +42,21 @@ pub struct IdentityKeysStore {
 
 pub struct Store {
     store_path: PathBuf,
+    /// Set when a legacy plaintext identity-keys file was found and migrated.
+    /// Read once by the unlock path, which turns it into an audit entry the
+    /// user can actually see.
+    plaintext_identity_migrated: std::sync::atomic::AtomicBool,
 }
 
 impl Store {
+    /// Whether a plaintext identity-keys file was migrated since the last call,
+    /// clearing the flag. Consumed by the unlock path so the user is told once
+    /// per occurrence rather than on every read.
+    pub fn take_plaintext_identity_migration(&self) -> bool {
+        self.plaintext_identity_migrated
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn new() -> anyhow::Result<Self> {
         let project_dirs = ProjectDirs::from("com", "vela", "VELA")
             .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
@@ -55,6 +67,7 @@ impl Store {
 
         Ok(Self {
             store_path: data_dir,
+            plaintext_identity_migrated: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -64,7 +77,10 @@ impl Store {
     pub fn new_at(path: PathBuf) -> anyhow::Result<Self> {
         fs::create_dir_all(&path)?;
         restrict_directory(&path)?;
-        Ok(Self { store_path: path })
+        Ok(Self {
+            store_path: path,
+            plaintext_identity_migrated: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     pub fn store_path(&self) -> &PathBuf {
@@ -294,18 +310,39 @@ impl Store {
         }
 
         let bytes = fs::read(&identity_path)?;
-        let store: IdentityKeysStore = if bytes.first() == Some(&b'{') {
-            // Legacy plaintext identity file (private signing keys in the
-            // clear!). Load it, then immediately re-encrypt below — never
-            // silently keep using plaintext.
-            tracing::warn!(
-                "Identity keys file is plaintext; migrating to encrypted format now"
-            );
-            serde_json::from_slice(&bytes)?
-        } else {
-            let key = Self::derive_identity_file_key(crypto);
-            let plaintext = decrypt(&key, &bytes)?;
-            serde_json::from_slice(&plaintext)?
+
+        // Try to decrypt before assuming anything about the format.
+        //
+        // This used to sniff the first byte for '{'. An encrypted blob opens
+        // with a 24-byte random nonce, so once every 256 writes that byte *is*
+        // '{' (0x7B) — and the loader then took a perfectly good ciphertext for
+        // a legacy plaintext file, failed to parse it as JSON, and the vault
+        // could not load its identity keys at all. CI caught it as a flaky
+        // test; it was a real 1-in-256 failure in this function.
+        //
+        // Decryption is a decision, not a guess: a legacy plaintext file will
+        // never satisfy the AEAD tag, and a real ciphertext always will.
+        let key = Self::derive_identity_file_key(crypto);
+        let store: IdentityKeysStore = match decrypt(&key, &bytes) {
+            Ok(plaintext) => serde_json::from_slice(&plaintext)?,
+            Err(decrypt_error) => {
+                // Not ours to decrypt. Either a legacy plaintext file (private
+                // signing keys in the clear!) or a file we have no key for.
+                match serde_json::from_slice::<IdentityKeysStore>(&bytes) {
+                    Ok(legacy) => {
+                        tracing::warn!(
+                            "Identity keys file is plaintext; migrating to encrypted format now"
+                        );
+                        self.plaintext_identity_migrated
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                        legacy
+                    }
+                    // Report the decryption failure, not the JSON one: the file
+                    // is encrypted and we could not open it, which is the
+                    // actionable half.
+                    Err(_) => return Err(decrypt_error.into()),
+                }
+            }
         };
         self.save_identity_keys_full(
             &store.hybrid_ek,
@@ -530,13 +567,66 @@ mod tests {
     }
 
     #[test]
+    fn the_plaintext_migration_flag_is_reported_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new_at(dir.path().to_path_buf()).unwrap();
+
+        assert!(!store.take_plaintext_identity_migration(), "nothing migrated yet");
+        store
+            .plaintext_identity_migrated
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(store.take_plaintext_identity_migration());
+        assert!(
+            !store.take_plaintext_identity_migration(),
+            "taking it clears it, so the user is told once rather than on every read"
+        );
+    }
+
+    #[test]
+    fn an_encrypted_file_that_happens_to_start_with_a_brace_still_loads() {
+        // The loader used to decide "is this plaintext?" from the first byte.
+        // An encrypted blob opens with a random nonce, so once every 256 writes
+        // that byte is '{' and a perfectly good ciphertext was taken for legacy
+        // JSON — the vault then failed to load its identity keys at all.
+        //
+        // Rewriting until the nonce starts with '{' makes that case certain
+        // instead of one-in-256, so this fails deterministically if the sniffing
+        // ever comes back.
+        let (_dir, store) = test_store();
+        let crypto = test_crypto();
+        let path = store.store_path().join(IDENTITY_KEYS_FILE);
+
+        let mut attempts = 0;
+        loop {
+            store
+                .save_identity_keys_full(b"ek", b"vk", b"sk", b"sek", b"sdk", &crypto)
+                .unwrap();
+            if fs::read(&path).unwrap().first() == Some(&b'{') {
+                break;
+            }
+            attempts += 1;
+            assert!(attempts < 10_000, "never produced a nonce starting with '{{'");
+        }
+
+        let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();
+        assert_eq!(loaded.hybrid_sk, b"sk");
+        assert!(
+            !store.take_plaintext_identity_migration(),
+            "a ciphertext must not be reported as a plaintext migration"
+        );
+    }
+
+    #[test]
     fn legacy_plaintext_identity_file_is_migrated_to_encrypted() {
         let (_dir, store) = test_store();
         let crypto = test_crypto();
+        // Distinctive enough that finding it in the file below means it is
+        // really there, rather than two bytes of ciphertext coinciding.
+        const SECRET: &[u8] = b"PRIVATE-SIGNING-KEY-MATERIAL";
         let legacy = IdentityKeysStore {
             hybrid_ek: b"ek".to_vec(),
             hybrid_vk: b"vk".to_vec(),
-            hybrid_sk: b"sk".to_vec(),
+            hybrid_sk: SECRET.to_vec(),
             share_ek: vec![],
             share_dk: vec![],
         };
@@ -550,8 +640,26 @@ mod tests {
         assert_eq!(loaded.hybrid_ek, b"ek");
 
         // After load, the file must have been re-encrypted in place.
+        //
+        // Testing the *first byte* for '{' was a 1-in-256 flake: an encrypted
+        // blob opens with a random nonce, which is '{' (0x7B) once every 256
+        // runs. It also was not the property that matters. These are: the key
+        // material is no longer readable in the file, the file no longer parses
+        // as the plaintext format, and the encrypted form still loads.
         let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
-        assert_ne!(raw.first(), Some(&b'{'), "migration must re-encrypt");
+        assert!(
+            !raw.windows(SECRET.len()).any(|window| window == SECRET),
+            "private key is still in the clear after migration"
+        );
+        assert!(
+            serde_json::from_slice::<IdentityKeysStore>(&raw).is_err(),
+            "file still parses as the plaintext format"
+        );
+        assert_eq!(
+            store.load_identity_keys(&crypto).unwrap().unwrap().hybrid_sk,
+            SECRET,
+            "the migrated file must still load"
+        );
     }
 
     #[test]

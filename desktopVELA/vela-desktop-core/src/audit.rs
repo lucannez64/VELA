@@ -51,6 +51,15 @@ pub enum AuditAction {
         item_type: String,
     },
     SettingsChanged,
+    /// This install was found storing its device signing keys in cleartext and
+    /// they have now been encrypted.
+    ///
+    /// Recorded rather than only logged: whoever had read access to the data
+    /// directory before this ran had those keys, and re-encrypting them does not
+    /// undo that. The user is the only one who can decide whether to re-enroll
+    /// the device, and they cannot decide it from a `warn!` they never see
+    /// (audit, desktop hardening).
+    PlaintextIdentityKeysMigrated,
     WebSessionGranted {
         mode: String,
         ttl_secs: i64,
@@ -206,6 +215,13 @@ mod tests {
     fn audit_action_serde_uses_snake_case_tag() {
         let json = serde_json::to_value(AuditAction::VaultLocked).unwrap();
         assert_eq!(json, serde_json::json!({ "action_type": "vault_locked" }));
+
+        // Both frontends key their label tables off this string, so it is part
+        // of the contract, not an implementation detail.
+        assert_eq!(
+            serde_json::to_value(AuditAction::PlaintextIdentityKeysMigrated).unwrap(),
+            serde_json::json!({ "action_type": "plaintext_identity_keys_migrated" })
+        );
 
         let json = serde_json::to_value(AuditAction::ItemAdded { item_type: "login".into() }).unwrap();
         assert_eq!(

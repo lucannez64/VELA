@@ -351,7 +351,6 @@ fn main() {
             commands::web_session::list_web_sessions,
             commands::web_session::revoke_web_session,
             commands::audit::get_audit_log,
-            commands::audit::log_audit_event,
             commands::audit::clear_audit_log,
             commands::settings::get_settings,
             commands::settings::update_settings,
