@@ -111,7 +111,9 @@ fun VelaNavHost(
     onUpdateSyncServer: (String, String) -> Unit,
     onUpdateSyncPreferences: (Boolean, Int) -> Unit,
     autoLockMinutes: Int,
+    clipboardClearSeconds: Int,
     onUpdateAutoLockMinutes: (Int) -> Unit,
+    onUpdateClipboardClearSeconds: (Int) -> Unit,
     onNavigateToEnroll: () -> Unit,
     onEnrollDevice: (String, String) -> Unit,
     onNavigateToRecover: () -> Unit,
@@ -413,7 +415,9 @@ fun VelaNavHost(
                     onLock = onLock,
                     onReset = onReset,
                     autoLockMinutes = autoLockMinutes,
+                    clipboardClearSeconds = clipboardClearSeconds,
                     onUpdateAutoLockMinutes = onUpdateAutoLockMinutes,
+                    onUpdateClipboardClearSeconds = onUpdateClipboardClearSeconds,
                     themeSetting = themeSetting,
                     onThemeChange = onThemeChange
                 )

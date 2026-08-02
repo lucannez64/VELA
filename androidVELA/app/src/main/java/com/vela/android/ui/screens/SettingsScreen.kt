@@ -63,6 +63,7 @@ import com.vela.android.ui.components.VelaListItem
 import com.vela.android.ui.components.VelaTextField
 import com.vela.android.ui.components.SegmentedControl
 import com.vela.android.ui.components.VelaSwitch
+import com.vela.android.sync.SyncSettingsStore
 import com.vela.android.ui.theme.VelaColors
 import com.vela.android.ui.theme.VelaThemes
 
@@ -85,7 +86,9 @@ fun SettingsScreen(
     onLock: () -> Unit,
     onReset: () -> Unit,
     autoLockMinutes: Int,
+    clipboardClearSeconds: Int,
     onUpdateAutoLockMinutes: (Int) -> Unit,
+    onUpdateClipboardClearSeconds: (Int) -> Unit,
     themeSetting: String,
     onThemeChange: (String) -> Unit
 ) {
@@ -178,6 +181,8 @@ fun SettingsScreen(
                 )
                 Spacer(Modifier.height(16.dp))
                 SegmentedAutoLock(autoLockMinutes, onUpdateAutoLockMinutes)
+                Spacer(Modifier.height(16.dp))
+                SegmentedClipboardClear(clipboardClearSeconds, onUpdateClipboardClearSeconds)
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -235,9 +240,18 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             VelaCard {
                 VelaTextField(value = editUrl, onValueChange = { editUrl = it }, label = "Server URL", placeholder = "https://your-server.com")
+                val urlProblem = SyncSettingsStore.serverUrlProblem(editUrl)
+                if (urlProblem != null) {
+                    Text(
+                        urlProblem,
+                        color = VelaColors.WarningAmber,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
                 Row {
-                    VelaButton(text = "Save", onClick = { onUpdateSyncServer(editUrl, "") }, style = VelaButtonStyle.Primary, fullWidth = false, modifier = Modifier.weight(1f))
+                    VelaButton(text = "Save", onClick = { onUpdateSyncServer(editUrl, "") }, style = VelaButtonStyle.Primary, fullWidth = false, enabled = urlProblem == null, modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(10.dp))
                     VelaButton(
                         text = if (syncState.syncing) "Syncing..." else "Sync Now",
@@ -396,6 +410,25 @@ private fun SegmentedAutoLock(autoLockMinutes: Int, onUpdateAutoLockMinutes: (In
             options = listOf(1 to "1m", 5 to "5m", 15 to "15m", 30 to "30m"),
             selected = autoLockMinutes,
             onSelect = onUpdateAutoLockMinutes
+        )
+    }
+}
+
+@Composable
+private fun SegmentedClipboardClear(seconds: Int, onUpdate: (Int) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("Clear clipboard", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            "While a copied password sits on the clipboard, any app can read it",
+            fontSize = 12.sp,
+            color = VelaColors.TextMuted,
+        )
+        Spacer(Modifier.height(10.dp))
+        SegmentedControl(
+            options = listOf(5 to "5s", 15 to "15s", 30 to "30s", 60 to "60s"),
+            selected = seconds,
+            onSelect = onUpdate
         )
     }
 }

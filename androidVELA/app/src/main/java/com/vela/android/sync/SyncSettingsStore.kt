@@ -84,10 +84,35 @@ class SyncSettingsStore(context: Context) {
     private fun normalizeServerUrl(url: String): String {
         val trimmed = url.trim().trimEnd('/')
         if (trimmed.isEmpty()) return ""
-        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "https://$trimmed"
+        // A bare host means https, never http.
+        return if (trimmed.startsWith("https://")) trimmed else "https://" + trimmed.removePrefix("http://")
     }
 
     companion object {
+
+        /**
+         * Why an entered server URL is unusable, or null if it is fine.
+         *
+         * `http://` was accepted here and then blocked at runtime by the OS's
+         * cleartext policy, so the sync simply failed with a network error and
+         * nothing said why. Rejecting it at the point the user types it is the
+         * difference between "this is not allowed, and here is the reason" and
+         * an unexplained failure much later.
+         */
+        fun serverUrlProblem(url: String): String? {
+            val trimmed = url.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return null
+            if (trimmed.startsWith("http://", ignoreCase = true)) {
+                return "VELA only syncs over HTTPS. Your vault is encrypted either way, " +
+                    "but cleartext leaks which server you use and when."
+            }
+            val host = trimmed.removePrefix("https://").substringBefore('/').substringBefore(':')
+            if (host.isBlank() || !host.contains('.')) {
+                return "Enter a full server address, for example https://vault.example.com"
+            }
+            return null
+        }
+
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_BEARER_TOKEN = "bearer_token"
         private const val KEY_CHUNK_ID = "chunk_id"

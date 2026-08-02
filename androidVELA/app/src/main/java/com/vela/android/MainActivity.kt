@@ -69,6 +69,7 @@ class MainActivity : FragmentActivity() {
                 val syncSettings by VelaRepositories.syncSettings.settings.collectAsState()
                 val syncState by VelaRepositories.sync.state.collectAsState()
                 val autoLockMinutes by VelaRepositories.autoLock.autoLockMinutes.collectAsState()
+                val clipboardClearSeconds by VelaRepositories.autoLock.clipboardClearSeconds.collectAsState()
                 val coreStatus = SharedCore.status()
 
                 val isUnlocked = secureSession.unlocked
@@ -173,7 +174,9 @@ class MainActivity : FragmentActivity() {
                         restartBackgroundSync()
                     },
                     autoLockMinutes = autoLockMinutes,
+                    clipboardClearSeconds = clipboardClearSeconds,
                     onUpdateAutoLockMinutes = { minutes -> VelaRepositories.autoLock.setAutoLockMinutes(minutes) },
+                    onUpdateClipboardClearSeconds = { VelaRepositories.autoLock.setClipboardClearSeconds(it) },
                     onNavigateToEnroll = {},
                     onEnrollDevice = { serverUrl, enrollmentCode ->
                         // Was invoked directly on the caller's (UI) thread —
