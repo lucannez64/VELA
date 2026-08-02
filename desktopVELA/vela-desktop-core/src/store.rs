@@ -567,10 +567,13 @@ mod tests {
     fn legacy_plaintext_identity_file_is_migrated_to_encrypted() {
         let (_dir, store) = test_store();
         let crypto = test_crypto();
+        // Distinctive enough that finding it in the file below means it is
+        // really there, rather than two bytes of ciphertext coinciding.
+        const SECRET: &[u8] = b"PRIVATE-SIGNING-KEY-MATERIAL";
         let legacy = IdentityKeysStore {
             hybrid_ek: b"ek".to_vec(),
             hybrid_vk: b"vk".to_vec(),
-            hybrid_sk: b"sk".to_vec(),
+            hybrid_sk: SECRET.to_vec(),
             share_ek: vec![],
             share_dk: vec![],
         };
@@ -584,8 +587,26 @@ mod tests {
         assert_eq!(loaded.hybrid_ek, b"ek");
 
         // After load, the file must have been re-encrypted in place.
+        //
+        // Testing the *first byte* for '{' was a 1-in-256 flake: an encrypted
+        // blob opens with a random nonce, which is '{' (0x7B) once every 256
+        // runs. It also was not the property that matters. These are: the key
+        // material is no longer readable in the file, the file no longer parses
+        // as the plaintext format, and the encrypted form still loads.
         let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
-        assert_ne!(raw.first(), Some(&b'{'), "migration must re-encrypt");
+        assert!(
+            !raw.windows(SECRET.len()).any(|window| window == SECRET),
+            "private key is still in the clear after migration"
+        );
+        assert!(
+            serde_json::from_slice::<IdentityKeysStore>(&raw).is_err(),
+            "file still parses as the plaintext format"
+        );
+        assert_eq!(
+            store.load_identity_keys(&crypto).unwrap().unwrap().hybrid_sk,
+            SECRET,
+            "the migrated file must still load"
+        );
     }
 
     #[test]
