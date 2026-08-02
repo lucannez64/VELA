@@ -324,8 +324,15 @@ permission.
 > `AutofillMatcher` (pure, and tested against the attack directly):
 >
 > 1. **The user linked the app.** Saving a password from an app records
->    `androidapp://<package>` on the item (`app_ids`, carried by every client so a
->    desktop edit cannot delete it). Works offline; the user is the trust anchor.
+>    `androidapp://<package>?cert=<SHA-256>` on the item (`app_ids`, carried by
+>    every client so a desktop edit cannot delete it), pinned to the signing key
+>    the app has at that moment so the grant does not transfer if the package
+>    later ships from someone else. Works offline; the user is the trust anchor.
+>    The Android item screen lists the links, revokes them, and adds new ones —
+>    a grant that cannot be inspected or withdrawn is not one the user controls.
+>    Pinning is optional there, because it is not always right: the same app from
+>    F-Droid and from Play is signed differently, and a user who switches builds
+>    should not silently lose autofill. An unpinned link is shown as such.
 > 2. **Digital Asset Links.** `AssetLinksVerifier` fetches
 >    `https://<domain>/.well-known/assetlinks.json` over https with redirects
 >    disabled and requires `delegate_permission/common.get_login_creds` naming the

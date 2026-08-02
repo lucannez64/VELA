@@ -32,6 +32,9 @@ object AutofillMatcher {
      * @param isTrustedBrowser see [BrowserAllowlist]. Defaults to "not a browser",
      *   so a caller that cannot check signatures never grants browser trust by
      *   omission.
+     * @param installedSignatures the SHA-256 fingerprints the requesting app is
+     *   actually signed with, for links that pinned one. Defaults to none, so a
+     *   pinned link fails closed rather than degrading to name-only trust.
      * @param verifyAssetLinks `(domain, packageName) -> vouched`, see
      *   [AssetLinksVerifier]. Defaults to "no network answer", which is also the
      *   right behaviour offline: matching falls back to the local evidence.
@@ -41,11 +44,15 @@ object AutofillMatcher {
         webDomain: String?,
         packageName: String?,
         isTrustedBrowser: (String) -> Boolean = { false },
+        installedSignatures: (String) -> Set<String> = { emptySet() },
         verifyAssetLinks: (String, String) -> Boolean = { _, _ -> false },
     ): List<VaultItem.Login> {
         val pkg = packageName?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotEmpty() }
         val claimedDomain = webDomain?.trim()?.takeIf { it.isNotEmpty() }
-        val appUri = pkg?.let { AppAssociations.appUri(it) }
+
+        // Resolved once: a link that pinned a signing key only counts if the app
+        // asking is still signed with it.
+        val actualSignatures by lazy { pkg?.let(installedSignatures).orEmpty() }
 
         val trustedDomains = buildSet {
             if (claimedDomain != null) {
@@ -64,7 +71,7 @@ object AutofillMatcher {
 
         val local = logins.filter { login ->
             // 1. The user linked this app to this login. Strongest signal there is.
-            (appUri != null && login.appIds.any { it.equals(appUri, ignoreCase = true) }) ||
+            (pkg != null && login.appIds.any { linkGrants(it, pkg, actualSignatures) }) ||
                 // 2. Saved from this app before the link existed: the URL *is* the
                 //    package name. Still the user's own data, so still honoured.
                 (pkg != null && login.url.trim().equals(pkg, ignoreCase = true)) ||
@@ -79,6 +86,21 @@ object AutofillMatcher {
         val vouched = hosts.filter { host -> verifyAssetLinks(host, pkg) }.toSet()
         if (vouched.isEmpty()) return emptyList()
         return logins.filter { login -> hostOf(login.url)?.let { it in vouched } == true }
+    }
+
+    /**
+     * Whether an `androidapp://…` link on an item grants this request.
+     *
+     * The package must match, and — when the link pinned a signing certificate —
+     * the app must still be signed with it. An unpinned link is honoured on the
+     * package name alone: that is what the user chose, and it is the only form
+     * that existed before pinning did.
+     */
+    fun linkGrants(link: String, packageName: String, signatures: Set<String>): Boolean {
+        val linked = AppAssociations.packageFromUri(link) ?: return false
+        if (!linked.equals(packageName, ignoreCase = true)) return false
+        val pinned = AppAssociations.certFromUri(link) ?: return true
+        return signatures.any { AppSignatures.normalize(it) == pinned }
     }
 
     /**

@@ -43,8 +43,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.core.VaultItem
+import com.vela.android.core.VelaRepositories
 import com.vela.android.security.SecureClipboard
 import com.vela.android.ui.components.FaviconIcon
+import com.vela.android.ui.components.LinkedAppsSection
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
@@ -159,6 +161,15 @@ fun ItemDetailScreen(
                 is VaultItem.CreditCard -> CardFields(item, context, scope)
                 is VaultItem.SecureNote -> NoteFields(item)
                 else -> {}
+            }
+
+            if (item is VaultItem.Login) {
+                Spacer(Modifier.height(16.dp))
+                LinkedAppsSection(
+                    appIds = item.appIds,
+                    onLink = { pkg, pin -> VelaRepositories.vault.linkApp(item.id, pkg, pin) },
+                    onUnlink = { link -> VelaRepositories.vault.unlinkApp(item.id, link) },
+                )
             }
 
             Spacer(Modifier.height(24.dp))

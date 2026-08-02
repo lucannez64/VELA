@@ -2,6 +2,7 @@ package com.vela.android.core
 
 import android.content.Context
 import android.util.Log
+import com.vela.android.autofill.AppAssociations
 import com.vela.android.autofill.AutofillMatcher
 import com.vela.android.security.EncryptedVaultStore
 import com.vela.android.security.SecureVaultManager
@@ -139,7 +140,62 @@ class LocalVaultRepository(
             webDomain = webDomain,
             packageName = packageName,
             isTrustedBrowser = browsers ?: { false },
+            installedSignatures = installedSignatures ?: { emptySet() },
             verifyAssetLinks = verifier ?: { _, _ -> false },
+        )
+    }
+
+    /**
+     * Signing certificates of an installed app, for links that pinned one.
+     * Installed alongside the other autofill lookups; absent means no signature
+     * is ever confirmed, so pinned links fail closed.
+     */
+    var installedSignatures: ((String) -> Set<String>)? = null
+
+    /**
+     * Grant [packageName] the right to be offered [itemId].
+     *
+     * This is the user speaking, so it is the strongest signal the matcher has —
+     * which is why [pinSigningKey] exists. Pinning records the certificate the
+     * app is signed with today, so the grant does not transfer if the package
+     * later ships from someone else's key. Leaving it off keeps the grant on the
+     * package name, which is what a user running the same app from a different
+     * store needs (F-Droid and Play sign differently).
+     */
+    fun linkApp(itemId: String, packageName: String, pinSigningKey: Boolean): Boolean {
+        val login = _items.value.filterIsInstance<VaultItem.Login>().firstOrNull { it.id == itemId }
+            ?: return false
+        val fingerprint = if (pinSigningKey) {
+            installedSignatures?.invoke(packageName)?.firstOrNull() ?: return false
+        } else {
+            null
+        }
+        val link = AppAssociations.appUri(packageName, fingerprint)
+
+        // Replace any existing link for this package: the user is restating the
+        // grant, not adding a second one.
+        val kept = login.appIds.filter {
+            !AppAssociations.packageFromUri(it).equals(packageName.lowercase(Locale.US), ignoreCase = true)
+        }
+        updateItem(
+            login.copy(
+                appIds = kept + link,
+                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+            )
+        )
+        return true
+    }
+
+    /** Revoke a grant. The link string is what the UI listed, so it round-trips. */
+    fun unlinkApp(itemId: String, link: String) {
+        val login = _items.value.filterIsInstance<VaultItem.Login>().firstOrNull { it.id == itemId }
+            ?: return
+        if (link !in login.appIds) return
+        updateItem(
+            login.copy(
+                appIds = login.appIds - link,
+                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+            )
         )
     }
 
@@ -223,6 +279,7 @@ object VelaRepositories {
         val appContext = context.applicationContext
         vault.assetLinksVerifier = com.vela.android.autofill.AssetLinksVerifier(appContext)::verify
         vault.browserAllowlist = com.vela.android.autofill.BrowserAllowlist(appContext)::isTrustedBrowser
+        vault.installedSignatures = { pkg -> com.vela.android.autofill.AppSignatures.sha256(appContext, pkg) }
         syncSettings = SyncSettingsStore(context.applicationContext)
         vault.onLocalChange = { syncSettings.markLocalChanged() }
         serverIdentity = com.vela.android.sync.ServerIdentityStore(context.applicationContext)

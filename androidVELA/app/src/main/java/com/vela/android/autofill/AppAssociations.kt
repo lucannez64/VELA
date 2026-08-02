@@ -26,16 +26,42 @@ import java.util.Locale
  */
 object AppAssociations {
 
-    /** `androidapp://com.example` — the URI form stored on a vault item. */
+    /**
+     * `androidapp://com.example` — the URI form stored on a vault item, with an
+     * optional `?cert=<SHA-256>` pinning the app's signing certificate.
+     *
+     * A link is the user saying "this app may have this password". Without a
+     * fingerprint that grant rides on the package name, which survives an app
+     * changing hands or being rebuilt by someone else; with one, it is the same
+     * check asset links and the browser allowlist make. Both forms are kept
+     * because pinning is not always right: the same app signed by F-Droid and by
+     * Play has different keys, and a user who switches builds should not silently
+     * lose autofill. Unpinned is the older format, so it must keep working
+     * forever regardless.
+     */
     const val ANDROID_APP_SCHEME = "androidapp://"
 
-    fun appUri(packageName: String): String = ANDROID_APP_SCHEME + packageName.lowercase(Locale.US)
+    private const val CERT_PARAM = "?cert="
+
+    fun appUri(packageName: String, certFingerprint: String? = null): String {
+        val base = ANDROID_APP_SCHEME + packageName.lowercase(Locale.US)
+        val cert = certFingerprint?.let { AppSignatures.normalize(it) } ?: return base
+        return base + CERT_PARAM + cert
+    }
 
     fun packageFromUri(uri: String): String? =
         uri.takeIf { it.startsWith(ANDROID_APP_SCHEME, ignoreCase = true) }
             ?.substring(ANDROID_APP_SCHEME.length)
+            ?.substringBefore('?')
             ?.lowercase(Locale.US)
             ?.takeIf { it.isNotBlank() }
+
+    /** The pinned signing certificate, or null for a link that trusts the name alone. */
+    fun certFromUri(uri: String): String? =
+        uri.takeIf { it.startsWith(ANDROID_APP_SCHEME, ignoreCase = true) }
+            ?.substringAfter(CERT_PARAM, "")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { AppSignatures.normalize(it) }
 
     /**
      * Well-known app → site pairs, as data rather than a branch in a repository.

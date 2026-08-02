@@ -117,11 +117,84 @@ class AutofillMatcherTest {
         assertEquals(listOf(legacy), AutofillMatcher.match(listOf(legacy) + vault, null, "com.some.app"))
     }
 
+    // ── Pinned links ───────────────────────────────────────────────────────
+
+    private val cert = "AB:CD:" + "00:".repeat(29) + "FF"
+    private val otherCert = "FF:EE:" + "11:".repeat(29) + "00"
+
+    @Test
+    fun `a pinned link matches only while the app keeps that signing key`() {
+        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab?cert=$cert"))
+        val vault = listOf(linked)
+
+        assertEquals(
+            listOf(linked),
+            AutofillMatcher.match(vault, null, "com.ubercab", browsers, { setOf(cert) }),
+        )
+        // Same package, someone else's key — an app that changed hands, or a
+        // rebuild by an impostor.
+        assertEquals(
+            emptyList<VaultItem.Login>(),
+            AutofillMatcher.match(vault, null, "com.ubercab", browsers, { setOf(otherCert) }),
+        )
+    }
+
+    @Test
+    fun `a pinned link fails closed when signatures cannot be read`() {
+        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab?cert=$cert"))
+        assertEquals(
+            emptyList<VaultItem.Login>(),
+            AutofillMatcher.match(listOf(linked), null, "com.ubercab"),
+        )
+    }
+
+    @Test
+    fun `an unpinned link still matches on the package alone`() {
+        // The older format, and the deliberate choice for an app the user runs
+        // from a different store. It must keep working.
+        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab"))
+        assertEquals(
+            listOf(linked),
+            AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers, { setOf(otherCert) }),
+        )
+    }
+
+    @Test
+    fun `a pinned link is matched case-insensitively on the fingerprint`() {
+        val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab?cert=$cert"))
+        assertEquals(
+            listOf(linked),
+            AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers, { setOf(cert.lowercase()) }),
+        )
+    }
+
+    @Test
+    fun `link parsing round-trips both forms`() {
+        assertEquals("androidapp://com.ubercab", AppAssociations.appUri("com.ubercab"))
+        assertEquals(
+            "androidapp://com.ubercab?cert=$cert",
+            AppAssociations.appUri("com.ubercab", cert),
+        )
+        assertEquals("com.ubercab", AppAssociations.packageFromUri("androidapp://com.ubercab?cert=$cert"))
+        assertEquals(cert, AppAssociations.certFromUri("androidapp://com.ubercab?cert=$cert"))
+        assertEquals(null, AppAssociations.certFromUri("androidapp://com.ubercab"))
+    }
+
+    @Test
+    fun `linkGrants is the whole rule in one place`() {
+        assertTrue(AutofillMatcher.linkGrants("androidapp://com.a", "com.a", emptySet()))
+        assertFalse(AutofillMatcher.linkGrants("androidapp://com.a", "com.b", emptySet()))
+        assertFalse(AutofillMatcher.linkGrants("https://uber.com", "com.a", emptySet()))
+        assertTrue(AutofillMatcher.linkGrants("androidapp://com.a?cert=$cert", "com.a", setOf(cert)))
+        assertFalse(AutofillMatcher.linkGrants("androidapp://com.a?cert=$cert", "com.a", setOf(otherCert)))
+        assertFalse(AutofillMatcher.linkGrants("androidapp://com.a?cert=$cert", "com.a", emptySet()))
+    }
+
     // ── Digital Asset Links ────────────────────────────────────────────────
 
     @Test
     fun `a site that vouches for the app unlocks its login`() {
-        val result = AutofillMatcher.match(vault, null, "com.bank.official", browsers) { domain, pkg ->
+        val result = AutofillMatcher.match(vault, null, "com.bank.official", browsers, { emptySet() }) { domain, pkg ->
             domain == "bank.example" && pkg == "com.bank.official"
         }
         assertEquals(listOf(bank), result)
@@ -131,7 +204,7 @@ class AutofillMatcherTest {
     fun `asset links let a WebView app justify the domain it claims`() {
         // Not on the curated list and not a browser: the only thing standing
         // behind the claim is the site's own statement.
-        val result = AutofillMatcher.match(vault, "bank.example", "com.bank.official", browsers) { domain, pkg ->
+        val result = AutofillMatcher.match(vault, "bank.example", "com.bank.official", browsers, { emptySet() }) { domain, pkg ->
             domain == "bank.example" && pkg == "com.bank.official"
         }
         assertEquals(listOf(bank), result)
@@ -139,7 +212,7 @@ class AutofillMatcherTest {
 
     @Test
     fun `a site vouching for one app says nothing about another`() {
-        val result = AutofillMatcher.match(vault, "bank.example", "com.evil.app", browsers) { domain, pkg ->
+        val result = AutofillMatcher.match(vault, "bank.example", "com.evil.app", browsers, { emptySet() }) { domain, pkg ->
             domain == "bank.example" && pkg == "com.bank.official"
         }
         assertEquals(emptyList<VaultItem.Login>(), result)
@@ -149,7 +222,7 @@ class AutofillMatcherTest {
     fun `local matches are answered without touching the network`() {
         var lookups = 0
         val linked = login("Uber", "https://uber.com", listOf("androidapp://com.ubercab"))
-        AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers) { _, _ -> lookups++; false }
+        AutofillMatcher.match(listOf(linked), null, "com.ubercab", browsers, { emptySet() }) { _, _ -> lookups++; false }
         assertEquals(0, lookups)
     }
 
@@ -157,7 +230,7 @@ class AutofillMatcherTest {
     fun `asset link lookups are capped per request`() {
         val many = (1..50).map { login("Site $it", "https://site$it.example") }
         var lookups = 0
-        AutofillMatcher.match(many, null, "com.some.app", browsers) { _, _ -> lookups++; false }
+        AutofillMatcher.match(many, null, "com.some.app", browsers, { emptySet() }) { _, _ -> lookups++; false }
         assertTrue("expected a bounded number of lookups, got $lookups", lookups in 1..8)
     }
 

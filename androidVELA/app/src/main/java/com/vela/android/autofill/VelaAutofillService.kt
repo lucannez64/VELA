@@ -135,9 +135,13 @@ class VelaAutofillService : AutofillService() {
 
             // Saving a password *from* an app is the user telling us these belong
             // together — the confirmation the association needs (audit A-2). It is
-            // recorded on the item so the pairing survives without any guessing.
+            // recorded on the item so the pairing survives without any guessing,
+            // pinned to the signing key the app has right now so the grant does
+            // not transfer if the package later ships from someone else. The user
+            // can relax that to name-only from the item screen.
             val appIds = if (!fromBrowser && packageName != null) {
-                listOf(AppAssociations.appUri(packageName))
+                val fingerprint = AppSignatures.sha256(this, packageName).firstOrNull()
+                listOf(AppAssociations.appUri(packageName, fingerprint))
             } else {
                 emptyList()
             }
