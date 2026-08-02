@@ -6,6 +6,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release signing inputs, read before `android {}` so the task-graph guard at
+// the bottom of this file can see them too.
+val releaseKeystorePath = (project.findProperty("velaKeystoreFile") as String?)
+    ?: System.getenv("VELA_KEYSTORE_FILE")
+val hasReleaseKeystore =
+    !releaseKeystorePath.isNullOrBlank() && File(releaseKeystorePath).exists()
+val allowDebugSigning = ((project.findProperty("velaAllowDebugSigning") as String?)
+    ?: System.getenv("VELA_ALLOW_DEBUG_SIGNING"))?.toBoolean() ?: false
+
 android {
     namespace = "com.vela.android"
     compileSdk = 35
@@ -27,13 +36,15 @@ android {
 
     // Stable release signing: when a keystore is supplied (CI secrets, via
     // -Pvela* properties or VELA_* env vars) sign with it so every build is
-    // mutually upgradeable. Otherwise fall back to the per-machine debug key so
-    // local `assembleRelease` still works.
-    val releaseKeystorePath = (project.findProperty("velaKeystoreFile") as String?)
-        ?: System.getenv("VELA_KEYSTORE_FILE")
-
+    // mutually upgradeable.
+    //
+    // There used to be a silent fallback to the per-machine debug key, so a
+    // "release" APK could ship signed with a well-known key — installable over
+    // nothing and trivially impersonated by a rebuilt APK (audit A-3). A release
+    // build without a keystore now fails; a developer who wants a locally
+    // signed one opts in explicitly with -PvelaAllowDebugSigning=true.
     signingConfigs {
-        if (!releaseKeystorePath.isNullOrBlank() && File(releaseKeystorePath).exists()) {
+        if (hasReleaseKeystore) {
             create("release") {
                 storeFile = File(releaseKeystorePath)
                 storePassword = (project.findProperty("velaKeystorePassword") as String?)
@@ -49,7 +60,19 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("release")
-                ?: signingConfigs.getByName("debug")
+                ?: if (allowDebugSigning) signingConfigs.getByName("debug") else null
+
+            // Shrink, obfuscate, and strip the debug logging that used to ship
+            // in release APKs (audit A-3). `proguard-rules.pro` carries the
+            // keep rules for the one thing here resolved by name at runtime —
+            // the JNI bridge — and the `-assumenosideeffects` block that
+            // removes `Log.d`/`Log.v` and their string constants.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 
@@ -215,3 +238,21 @@ tasks.matching { it.name == "preBuild" || (it.name.startsWith("merge") && it.nam
     .configureEach {
         dependsOn("buildRustBridge")
     }
+
+// Checked at task-graph time rather than during configuration: failing in the
+// `android {}` block would break `assembleDebug` and even `gradlew tasks`,
+// which is how an over-eager guard turns into "the build is broken" instead of
+// "this release is unsigned" (audit A-3).
+gradle.taskGraph.whenReady {
+    val buildingRelease = allTasks.any { task ->
+        task.project == project &&
+            (task.name.startsWith("assembleRelease") || task.name.startsWith("bundleRelease"))
+    }
+    if (buildingRelease && !hasReleaseKeystore && !allowDebugSigning) {
+        throw GradleException(
+            "Release build requires a signing keystore. Set velaKeystoreFile / " +
+                "VELA_KEYSTORE_FILE (plus password, alias, key password), or pass " +
+                "-PvelaAllowDebugSigning=true to knowingly build a debug-signed release."
+        )
+    }
+}

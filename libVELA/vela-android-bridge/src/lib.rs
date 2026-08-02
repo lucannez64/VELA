@@ -497,9 +497,15 @@ pub unsafe extern "C" fn vela_bridge_free_string(ptr: *mut c_char) {
 }
 
 #[no_mangle]
+/// # Safety
+/// `buffer` must have come from this library and must not be freed twice.
+/// Sound only because [`vec_to_buffer`] guarantees `capacity == len`.
 pub unsafe extern "C" fn vela_bridge_free_bytes(buffer: VelaByteBuffer) {
     if !buffer.ptr.is_null() && buffer.len > 0 {
-        drop(Vec::from_raw_parts(buffer.ptr, buffer.len, buffer.len));
+        drop(Box::from_raw(std::slice::from_raw_parts_mut(
+            buffer.ptr,
+            buffer.len,
+        )));
     }
 }
 
@@ -996,12 +1002,20 @@ fn string_to_ptr(value: &str) -> *mut c_char {
         .into_raw()
 }
 
-fn vec_to_buffer(mut bytes: Vec<u8>) -> VelaByteBuffer {
+/// Hand a `Vec` to C as a pointer + length.
+///
+/// The boxed slice is what makes this sound: a `Vec` can hold `capacity > len`,
+/// and `vela_bridge_free_bytes` rebuilds it with `capacity = len`, so the
+/// allocator would be told a different layout than it handed out — undefined
+/// behaviour (audit C-4). `into_boxed_slice` shrinks the allocation so the two
+/// are equal by construction, and the C ABI stays as it is.
+fn vec_to_buffer(bytes: Vec<u8>) -> VelaByteBuffer {
+    let mut boxed = bytes.into_boxed_slice();
     let buffer = VelaByteBuffer {
-        ptr: bytes.as_mut_ptr(),
-        len: bytes.len(),
+        ptr: boxed.as_mut_ptr(),
+        len: boxed.len(),
     };
-    std::mem::forget(bytes);
+    std::mem::forget(boxed);
     buffer
 }
 
@@ -1014,6 +1028,23 @@ mod anyhow_like {
 mod tests {
     use super::*;
     use std::ffi::CString;
+
+    /// Audit C-4: a `Vec` with spare capacity must still round-trip through the
+    /// C ABI without lying to the allocator about the layout.
+    #[test]
+    fn byte_buffers_survive_a_round_trip_with_spare_capacity() {
+        let mut bytes = Vec::with_capacity(4096);
+        bytes.extend_from_slice(b"ciphertext");
+        assert!(bytes.capacity() > bytes.len(), "the case that used to be UB");
+
+        let buffer = vec_to_buffer(bytes);
+        assert_eq!(buffer.len, b"ciphertext".len());
+        let seen = unsafe { std::slice::from_raw_parts(buffer.ptr, buffer.len) };
+        assert_eq!(seen, b"ciphertext");
+
+        // Under Miri or a hardened allocator, a capacity mismatch aborts here.
+        unsafe { vela_bridge_free_bytes(buffer) };
+    }
 
     #[test]
     fn password_strength_bridge_returns_json() {

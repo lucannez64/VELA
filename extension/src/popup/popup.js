@@ -159,24 +159,24 @@ function renderLogins() {
     const domain = login.url ? extractDomain(login.url) : "";
 
     return `
-      <li class="login-item" data-login-id="${login.id || ""}">
-        <div class="login-icon">${initial}</div>
+      <li class="login-item" data-login-id="${escapeHtml(login.id || "")}">
+        <div class="login-icon">${escapeHtml(initial)}</div>
         <div class="login-info">
           <div class="login-name">${escapeHtml(name)}</div>
           <div class="login-url">${escapeHtml(domain)}</div>
         </div>
         <div class="login-actions">
-          <button class="icon-btn" title="Copy Username" data-action="copy-username" data-login-id="${login.id || ""}">
+          <button class="icon-btn" title="Copy Username" data-action="copy-username" data-login-id="${escapeHtml(login.id || "")}">
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
             </svg>
           </button>
-          <button class="icon-btn" title="Copy Password" data-action="copy-password" data-login-id="${login.id || ""}">
+          <button class="icon-btn" title="Copy Password" data-action="copy-password" data-login-id="${escapeHtml(login.id || "")}">
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
             </svg>
           </button>
-          <button class="icon-btn" title="Auto-fill" data-action="autofill" data-login-id="${login.id || ""}">
+          <button class="icon-btn" title="Auto-fill" data-action="autofill" data-login-id="${escapeHtml(login.id || "")}">
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
             </svg>
@@ -344,10 +344,26 @@ function showNotification(message) {
   }, 2000);
 }
 
+/// Escape for both text and attribute contexts.
+///
+/// The previous implementation round-tripped through `textContent`/`innerHTML`,
+/// which escapes `&`, `<` and `>` but **not quotes** — fine for text, unsafe the
+/// moment the result lands inside an attribute. Everything interpolated into the
+/// popup's markup comes from the vault, i.e. from whatever a website put in a
+/// saved item's name or id, so a single `"` was enough to break out of an
+/// attribute in privileged popup context (audit E-2).
 function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+  return String(text ?? "").replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character],
+  );
 }
 
 function extractDomain(url) {

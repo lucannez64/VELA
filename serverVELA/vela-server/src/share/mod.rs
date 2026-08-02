@@ -38,6 +38,14 @@ pub struct SendResponse {
     pub share_id: Uuid,
 }
 
+/// One message for every "this recipient can't receive a share" case.
+///
+/// Distinguishing "no such user" from "user has no share key" let anyone with an
+/// account probe which user ids exist — the ids are UUIDs, but they travel in
+/// share links and audit entries, so confirming one is worth something to an
+/// attacker (audit, share-recipient enumeration).
+const SHARE_RECIPIENT_UNAVAILABLE: &str = "recipient cannot receive shares";
+
 pub async fn post_send(
     State(state): State<AppState>,
     session: AuthSession,
@@ -54,7 +62,7 @@ pub async fn post_send(
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     if exists_rows.into_iter().next().is_none() {
-        return Err(AppError::NotFound("recipient user not found".into()));
+        return Err(AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()));
     }
 
     let capsule_bytes = B64
@@ -504,14 +512,14 @@ pub async fn get_recipient_ek(
     let row = rows
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::NotFound("user not found".into()))?
+        .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let ek_v = crate::db::row_val(&row, 0)?;
     let share_ek = ek_v
         .as_str()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::NotFound("user has no share key registered".into()))?
+        .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?
         .to_string();
 
     let mut headers = HeaderMap::new();

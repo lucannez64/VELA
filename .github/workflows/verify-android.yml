@@ -60,3 +60,13 @@ jobs:
       - name: Run unit tests
         working-directory: androidVELA
         run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      # The release build is the only one that runs R8, and a missing keep rule
+      # shows up as a crash on a user's phone rather than a build failure — so
+      # exercise it here. `velaAllowDebugSigning` is the documented opt-out for
+      # builds with no keystore, which is every PR (audit A-3).
+      - name: Build release APK (exercises R8 shrinking + keep rules)
+        working-directory: androidVELA
+        run: |
+          ./gradlew :app:assembleRelease -PvelaAllowDebugSigning=true \
+            --no-daemon --stacktrace

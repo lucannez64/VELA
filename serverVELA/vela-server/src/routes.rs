@@ -304,6 +304,11 @@ async fn health(
 
     let all_ok = db_ok && sled_ok;
 
+    // Which backend is unhealthy is operator information, not public
+    // information: unauthenticated callers used to learn that this deployment
+    // runs stoolap and sled and which one is failing, which is a free hint for
+    // anyone deciding what to attack. The detail goes to the logs above; the
+    // response says up or down.
     (
         if all_ok {
             axum::http::StatusCode::OK
@@ -312,8 +317,6 @@ async fn health(
         },
         axum::Json(serde_json::json!({
             "status": if all_ok { "ok" } else { "degraded" },
-            "stoolap": if db_ok { "ok" } else { "error" },
-            "sled": if sled_ok { "ok" } else { "error" },
         })),
     )
 }

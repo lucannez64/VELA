@@ -199,9 +199,6 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "getAvailableLogins":
       handleGetAvailableLogins(data, sender, sendResponse);
       break;
-    case "nativeMessage":
-      handleNativeMessage(data, sendResponse);
-      break;
     case "checkDesktopConnection":
       checkDesktopConnection(sendResponse);
       return true;
@@ -435,14 +432,14 @@ function requestLogins(domain, userInitiated) {
   return promise;
 }
 
-async function handleNativeMessage(data, sendResponse) {
-  try {
-    const response = await sendNativeMessage(data);
-    sendResponse(response || { success: false });
-  } catch (error) {
-    sendResponse({ success: false, error: error.message });
-  }
-}
+// `nativeMessage` / `getNativeMessage` used to live here: they forwarded an
+// arbitrary caller-supplied payload straight to the native messaging host,
+// skipping `authorizeCredentialRequest` that every other credential path goes
+// through — so anything able to reach the extension's message API could ask the
+// desktop app for whatever those handlers would carry (audit E-1). Nothing in
+// this extension sent them. If a future feature needs a native call, give it a
+// named command that authorizes like `handleGetLogins` does, rather than a
+// general-purpose passthrough.
 
 async function handleOpenDesktop(command, sendResponse) {
   try {
@@ -587,11 +584,6 @@ function handleAutofillMessage(message, port) {
       break;
     case "fillForm":
       port.postMessage({ command: "fillFormResponse", ...data });
-      break;
-    case "getNativeMessage":
-      sendNativeMessage(data).then((response) => {
-        port.postMessage({ command: "nativeMessageResponse", ...response });
-      });
       break;
   }
 }
