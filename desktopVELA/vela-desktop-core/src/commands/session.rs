@@ -216,6 +216,9 @@ pub fn lock_session(state: &Arc<AppState>) {
     *vault = crate::vault::VaultStore::new();
 
     biometric::clear_cached_rms();
+    // A standing "the user confirmed a fill" grant must not outlive the unlocked
+    // session it was given during (audit D-4).
+    state.clear_plaintext_release();
     state.bump_session_generation();
 }
 

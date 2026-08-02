@@ -7,6 +7,7 @@ use tracing::{error, info, warn};
 
 use crate::host::Host;
 use crate::vault::VaultItem;
+use crate::ipc_peer::PeerIdentity;
 
 const IPC_AUTH_FILE: &str = "ipc_auth.json";
 const MAX_IPC_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -193,13 +194,14 @@ pub mod server {
         mut stream: S,
         host: Arc<dyn Host>,
         capability: String,
+        peer: PeerIdentity,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
         let message = read_frame(&mut stream).await?;
         let response = match serde_json::from_slice::<IpcMessage>(&message) {
-            Ok(message) => process_message(message, &host, &capability).await,
+            Ok(message) => process_message(message, &host, &capability, &peer).await,
             Err(e) => {
                 warn!("Rejected malformed IPC message: {}", e);
                 IpcMessage::error("Malformed IPC message".to_string())
@@ -209,6 +211,47 @@ pub mod server {
         write_frame(&mut stream, &body).await?;
         stream.shutdown().await?;
         Ok(())
+    }
+
+    /// May this caller be handed plaintext credentials right now?
+    ///
+    /// Two conditions, and the token is neither of them:
+    ///
+    ///  * the kernel says the peer runs as us — a token read out of
+    ///    `ipc_auth.json` by something running as another user is not enough; and
+    ///  * the user proved presence within [PRESENCE_TTL]. One prompt covers a
+    ///    short burst of fills, because a prompt per field would train people to
+    ///    approve without reading, but it does not cover an idle machine.
+    ///
+    /// Where the platform offers no presence check at all, that half cannot be
+    /// enforced and the release proceeds on the peer check alone; the residual
+    /// gap is the one the issue calls out and is recorded in SECURITY_AUDIT.
+    fn authorize_plaintext_release(host: &Arc<dyn Host>, peer: &PeerIdentity) -> Result<(), String> {
+        if !peer.is_same_user() {
+            return Err("This request did not come from your own session.".to_string());
+        }
+
+        let state = host.state();
+        if state.plaintext_release_is_fresh(peer.pid) {
+            return Ok(());
+        }
+
+        match crate::biometric::verify_presence(&format!(
+            "Confirm to let {} fill a saved password",
+            peer.describe()
+        )) {
+            crate::biometric::PresenceOutcome::Confirmed => {
+                state.record_plaintext_release(peer.pid);
+                Ok(())
+            }
+            crate::biometric::PresenceOutcome::Denied(message) => Err(message),
+            crate::biometric::PresenceOutcome::Unavailable => {
+                // No user-presence factor on this machine. The peer check still
+                // applies; say nothing misleading about what was verified.
+                state.record_plaintext_release(peer.pid);
+                Ok(())
+            }
+        }
     }
 
     async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Vec<u8>> {
@@ -239,6 +282,7 @@ pub mod server {
         message: IpcMessage,
         host: &Arc<dyn Host>,
         capability: &str,
+        peer: &PeerIdentity,
     ) -> IpcMessage {
         info!("Processing IPC message: {:?}", message.msg_type);
 
@@ -257,13 +301,17 @@ pub mod server {
                 host.focus_main_window();
                 IpcMessage::pong()
             }
-            IpcMessageType::AutofillRequest => handle_autofill_request(&message, host).await,
+            IpcMessageType::AutofillRequest => handle_autofill_request(&message, host, peer).await,
             IpcMessageType::SaveCredentials => handle_save_credentials(&message, host).await,
             _ => IpcMessage::error("Unknown message type".to_string()),
         }
     }
 
-    async fn handle_autofill_request(message: &IpcMessage, host: &Arc<dyn Host>) -> IpcMessage {
+    async fn handle_autofill_request(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
         let url = message
             .payload
             .get("domain")
@@ -289,9 +337,19 @@ pub mod server {
             }
         }
 
+        // Releasing plaintext is the one thing on this socket that a stolen
+        // capability file would be worth stealing for, so it is the one thing
+        // the token alone does not buy (audit D-4). The caller has to be a
+        // process the kernel says is ours, and the user has to have proved
+        // presence recently — the token proves neither.
         let vault = state.vault.read();
         let items = vault.search_by_domain(&base_domain);
         if user_initiated {
+            if let Err(reason) = authorize_plaintext_release(host, peer) {
+                warn!("Refused plaintext credential release to {}", peer.describe());
+                drop(vault);
+                return IpcMessage::error(reason);
+            }
             let items_clone: Vec<_> = items.into_iter().cloned().collect();
             return autofill_response(items_clone, false);
         }
@@ -505,11 +563,12 @@ pub mod server {
 
             let host = host.clone();
             let capability = capability.clone();
+            let peer = crate::ipc_peer::identify_named_pipe(&server);
             tokio::spawn(async move {
                 host.state()
                     .extension_connected
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = handle_connection(server, host.clone(), capability).await {
+                if let Err(e) = handle_connection(server, host.clone(), capability, peer).await {
                     error!("IPC connection error: {}", e);
                 }
                 host.state()
@@ -546,13 +605,20 @@ pub mod server {
                     continue;
                 }
             };
+            let peer = crate::ipc_peer::identify_unix(&stream);
+            // The socket is already 0600, so this should be unreachable — which
+            // is exactly why it is cheap to enforce and worth enforcing.
+            if !peer.is_same_user() {
+                warn!("Refused IPC connection from another user: {}", peer.describe());
+                continue;
+            }
             let host = host.clone();
             let capability = capability.clone();
             tokio::spawn(async move {
                 host.state()
                     .extension_connected
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = handle_connection(stream, host.clone(), capability).await {
+                if let Err(e) = handle_connection(stream, host.clone(), capability, peer).await {
                     error!("IPC connection error: {}", e);
                 }
                 host.state()
@@ -578,6 +644,16 @@ pub mod server {
         use crate::vault::{VaultItem, VaultMeta};
         use crate::AppState;
         use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// A peer identical to what the kernel reports for a genuine local
+        /// connection: this process, running as this user.
+        fn test_peer() -> PeerIdentity {
+            PeerIdentity {
+                pid: Some(std::process::id()),
+                uid: Some(crate::ipc_peer::current_uid()),
+                exe: std::env::current_exe().ok(),
+            }
+        }
 
         struct MockHost {
             state: Arc<AppState>,
@@ -683,12 +759,12 @@ pub mod server {
             let host: Arc<dyn Host> = host;
 
             let no_cap = IpcMessage { msg_type: IpcMessageType::Ping, payload: serde_json::json!({}), capability: None };
-            let resp = process_message(no_cap, &host, "real-cap").await;
+            let resp = process_message(no_cap, &host, "real-cap", &test_peer()).await;
             assert_eq!(resp.msg_type, IpcMessageType::Error);
             assert_eq!(resp.payload["message"], "Unauthorized IPC request");
 
             let wrong = message(IpcMessageType::Ping, serde_json::json!({}), "nope");
-            let resp = process_message(wrong, &host, "real-cap").await;
+            let resp = process_message(wrong, &host, "real-cap", &test_peer()).await;
             assert_eq!(resp.payload["message"], "Unauthorized IPC request");
         }
 
@@ -697,11 +773,11 @@ pub mod server {
             let (_dir, mock) = MockHost::new(false);
             let host: Arc<dyn Host> = mock.clone();
 
-            let resp = process_message(message(IpcMessageType::Ping, serde_json::json!({}), "cap"), &host, "cap").await;
+            let resp = process_message(message(IpcMessageType::Ping, serde_json::json!({}), "cap"), &host, "cap", &test_peer()).await;
             assert_eq!(resp.msg_type, IpcMessageType::Pong);
             assert_eq!(resp.payload["connected"], true);
 
-            let resp = process_message(message(IpcMessageType::OpenVault, serde_json::json!({}), "cap"), &host, "cap").await;
+            let resp = process_message(message(IpcMessageType::OpenVault, serde_json::json!({}), "cap"), &host, "cap", &test_peer()).await;
             assert_eq!(resp.msg_type, IpcMessageType::Pong);
             assert_eq!(mock.focuses(), 1, "open_vault surfaces the main window");
 
@@ -709,9 +785,89 @@ pub mod server {
                 message(IpcMessageType::BiometricChallenge, serde_json::json!({}), "cap"),
                 &host,
                 "cap",
+                &test_peer(),
             )
             .await;
             assert_eq!(resp.payload["message"], "Unknown message type");
+        }
+
+        #[tokio::test]
+        async fn plaintext_is_refused_to_a_peer_the_kernel_says_is_someone_else() {
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+            let stranger = PeerIdentity { pid: Some(1), uid: Some(crate::ipc_peer::current_uid() + 1), exe: None };
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::AutofillRequest,
+                    serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &stranger,
+            )
+            .await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error, "a valid token must not be enough");
+        }
+
+        #[tokio::test]
+        async fn plaintext_is_refused_when_the_peer_cannot_be_identified() {
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::AutofillRequest,
+                    serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &PeerIdentity::default(),
+            )
+            .await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error, "unknown peer must not read as ours");
+        }
+
+        #[tokio::test]
+        async fn metadata_does_not_need_a_presence_confirmation() {
+            // Names and usernames are not the secret; only the plaintext path is
+            // gated, so a locked-down machine still gets useful suggestions.
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::AutofillRequest,
+                    serde_json::json!({ "domain": "https://github.com", "user_initiated": false }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &PeerIdentity::default(),
+            )
+            .await;
+
+            assert_ne!(resp.msg_type, IpcMessageType::Error);
+        }
+
+        #[test]
+        fn a_release_grant_is_tied_to_one_caller_and_expires() {
+            let dir = tempfile::tempdir().unwrap();
+            let state = Arc::new(AppState::for_test(dir.path()));
+
+            assert!(!state.plaintext_release_is_fresh(Some(42)), "nothing granted yet");
+
+            state.record_plaintext_release(Some(42));
+            assert!(state.plaintext_release_is_fresh(Some(42)));
+            assert!(!state.plaintext_release_is_fresh(Some(43)), "another process cannot ride on it");
+            assert!(!state.plaintext_release_is_fresh(None), "an unidentified caller cannot either");
+
+            state.clear_plaintext_release();
+            assert!(!state.plaintext_release_is_fresh(Some(42)), "locking revokes it");
         }
 
         #[tokio::test]
@@ -724,7 +880,7 @@ pub mod server {
                 serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap").await;
+            let resp = process_message(req, &host, "cap", &test_peer()).await;
             assert_eq!(resp.msg_type, IpcMessageType::AutofillResponse);
             assert_eq!(resp.payload["requires_biometric"], true);
             assert_eq!(resp.payload["items"].as_array().unwrap().len(), 0);
@@ -764,7 +920,7 @@ pub mod server {
                 serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap").await;
+            let resp = process_message(req, &host, "cap", &test_peer()).await;
             let items = resp.payload["items"].as_array().unwrap();
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["password"], "s3cret");
@@ -775,7 +931,7 @@ pub mod server {
                 serde_json::json!({ "domain": "https://github.com/login", "user_initiated": false }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap").await;
+            let resp = process_message(req, &host, "cap", &test_peer()).await;
             let items = resp.payload["items"].as_array().unwrap();
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["username"], "alice");
@@ -793,7 +949,7 @@ pub mod server {
                 serde_json::json!({ "username": "alice", "password": "", "url": "https://github.com" }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap").await;
+            let resp = process_message(req, &host, "cap", &test_peer()).await;
             assert_eq!(resp.payload["success"], false);
             assert_eq!(resp.payload["error"], "Password is required");
 
@@ -804,7 +960,7 @@ pub mod server {
                 serde_json::json!({ "username": "alice", "password": "pw", "url": "https://github.com/login", "name": "" }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap").await;
+            let resp = process_message(req, &host, "cap", &test_peer()).await;
             assert_eq!(resp.payload["success"], true);
             assert!(!resp.payload["id"].as_str().unwrap().is_empty());
             assert_eq!(mock.notifies(), 1);
@@ -825,7 +981,7 @@ pub mod server {
                 serde_json::json!({ "username": "alice", "password": "pw", "url": "https://github.com" }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap").await;
+            let resp = process_message(req, &host, "cap", &test_peer()).await;
             assert_eq!(resp.payload["success"], false);
             assert_eq!(resp.payload["error"], "Vault is locked");
             assert_eq!(mock.focuses(), 1);

@@ -9793,6 +9793,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "hmac",
+ "libc",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
  "objc2-local-authentication",
