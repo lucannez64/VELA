@@ -1187,7 +1187,10 @@ pub fn open_rms_with_password(password: &str, blob: &[u8]) -> Option<OpenedRms> 
         rms.copy_from_slice(&plaintext[..32]);
         return Some(OpenedRms {
             rms,
-            needs_migration: false,
+            // A v2 blob opens fine but was sealed at the old, lower Argon2id
+            // cost. Re-sealing on the way through upgrades it without asking
+            // the user for anything — the same lazy path legacy blobs use.
+            needs_migration: password_kdf::needs_reseal(blob),
         });
     }
 

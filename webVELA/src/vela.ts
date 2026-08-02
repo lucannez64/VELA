@@ -7,8 +7,6 @@ import init, {
   open_share_json,
   encrypt_vault_chunk_json,
   decrypt_vault_chunk_json,
-  argon2_wrap_json,
-  argon2_unwrap_json,
 } from './wasm/vela_wasm_bridge.js';
 
 let ready: Promise<void> | null = null;
@@ -78,15 +76,6 @@ export function b64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
-}
-
-/** Argon2id-wrap bytes under a PIN (RW reload survival, design §8.1). */
-export function argon2Wrap(pin: string, plaintextB64: string): string {
-  return parse<{ blob_b64: string }>(argon2_wrap_json(JSON.stringify({ pin, plaintext_b64: plaintextB64 }))).blob_b64;
-}
-
-export function argon2Unwrap(pin: string, blobB64: string): string {
-  return parse<{ plaintext_b64: string }>(argon2_unwrap_json(JSON.stringify({ pin, blob_b64: blobB64 }))).plaintext_b64;
 }
 
 /** A cryptographically-random base64 string of `n` bytes (browser RNG). */

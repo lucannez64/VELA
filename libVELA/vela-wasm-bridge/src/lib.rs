@@ -13,11 +13,6 @@ use wasm_bindgen::prelude::*;
 use vela_core::calculate_password_strength;
 use vela_crypto::{aead, kem, signing};
 
-// Argon2id parameters, matching SPEC.md §7.4 (3 iterations, 64 MiB, 4 lanes).
-const ARGON2_M_COST_KIB: u32 = 65536;
-const ARGON2_T_COST: u32 = 3;
-const ARGON2_P_COST: u32 = 4;
-const ARGON2_SALT_LEN: usize = 16;
 
 // ── Response plumbing ───────────────────────────────────────────────────────────
 
@@ -114,28 +109,6 @@ struct PasswordStrengthResponse {
     crack_time: String,
 }
 
-#[derive(Deserialize)]
-struct Argon2WrapRequest {
-    pin: String,
-    plaintext_b64: String,
-}
-
-#[derive(Serialize)]
-struct Argon2WrapResponse {
-    blob_b64: String,
-}
-
-#[derive(Deserialize)]
-struct Argon2UnwrapRequest {
-    pin: String,
-    blob_b64: String,
-}
-
-#[derive(Serialize)]
-struct Argon2UnwrapResponse {
-    plaintext_b64: String,
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
 /// Decode a 32-byte key handed to the browser in the grant capsule.
@@ -151,22 +124,6 @@ fn decode_key(b64: &str) -> Result<[u8; 32], String> {
         .try_into()
         .map_err(|_| "chunk key must be 32 bytes".to_string())?;
     Ok(arr)
-}
-
-fn argon2_key(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
-    let params = argon2::Params::new(
-        ARGON2_M_COST_KIB,
-        ARGON2_T_COST,
-        ARGON2_P_COST,
-        Some(32),
-    )
-    .map_err(|e| e.to_string())?;
-    let argon = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
-    let mut key = [0u8; 32];
-    argon
-        .hash_password_into(pin.as_bytes(), salt, &mut key)
-        .map_err(|e| e.to_string())?;
-    Ok(key)
 }
 
 // ── Core logic (also exercised by native tests) ─────────────────────────────────
@@ -245,37 +202,6 @@ fn password_strength_impl(request_json: &str) -> Result<PasswordStrengthResponse
     })
 }
 
-/// Wrap `plaintext` (e.g. the RMS + ephemeral signing key for RW reload survival,
-/// §8.1) under an Argon2id(PIN) key. Output blob = `salt(16) ‖ XChaCha20-Poly1305`.
-fn argon2_wrap_impl(request_json: &str) -> Result<Argon2WrapResponse, String> {
-    let req: Argon2WrapRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
-    let plaintext = B64.decode(req.plaintext_b64.as_bytes()).map_err(|e| e.to_string())?;
-    let mut salt = [0u8; ARGON2_SALT_LEN];
-    getrandom::getrandom(&mut salt).map_err(|e| e.to_string())?;
-    let key = argon2_key(&req.pin, &salt)?;
-    let ciphertext = aead::encrypt(&key, &plaintext).map_err(|e| e.to_string())?;
-    let mut blob = Vec::with_capacity(ARGON2_SALT_LEN + ciphertext.len());
-    blob.extend_from_slice(&salt);
-    blob.extend_from_slice(&ciphertext);
-    Ok(Argon2WrapResponse {
-        blob_b64: B64.encode(blob),
-    })
-}
-
-fn argon2_unwrap_impl(request_json: &str) -> Result<Argon2UnwrapResponse, String> {
-    let req: Argon2UnwrapRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
-    let blob = B64.decode(req.blob_b64.as_bytes()).map_err(|e| e.to_string())?;
-    if blob.len() <= ARGON2_SALT_LEN {
-        return Err("argon2 blob too short".to_string());
-    }
-    let (salt, ciphertext) = blob.split_at(ARGON2_SALT_LEN);
-    let key = argon2_key(&req.pin, salt)?;
-    let plaintext = aead::decrypt(&key, ciphertext).map_err(|e| e.to_string())?;
-    Ok(Argon2UnwrapResponse {
-        plaintext_b64: B64.encode(plaintext.as_slice()),
-    })
-}
-
 // ── wasm-bindgen exports ────────────────────────────────────────────────────────
 
 /// Bridge version string.
@@ -330,20 +256,6 @@ pub fn decrypt_vault_chunk_json(request_json: &str) -> String {
 #[wasm_bindgen]
 pub fn password_strength_json(request_json: &str) -> String {
     respond(password_strength_impl(request_json))
-}
-
-/// Argon2id-wrap arbitrary bytes under a PIN (RW reload survival, §8.1).
-/// Request `{ pin, plaintext_b64 }` → `{ blob_b64 }`.
-#[wasm_bindgen]
-pub fn argon2_wrap_json(request_json: &str) -> String {
-    respond(argon2_wrap_impl(request_json))
-}
-
-/// Argon2id-unwrap a blob produced by [`argon2_wrap_json`].
-/// Request `{ pin, blob_b64 }` → `{ plaintext_b64 }`.
-#[wasm_bindgen]
-pub fn argon2_unwrap_json(request_json: &str) -> String {
-    respond(argon2_unwrap_impl(request_json))
 }
 
 // ── Tests (native) ──────────────────────────────────────────────────────────────
@@ -432,33 +344,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn argon2_wrap_unwrap_roundtrip() {
-        let secret = B64.encode([42u8; 96]); // e.g. RMS(32) + ephemeral sk material
-        let wrapped = argon2_wrap_json(
-            &serde_json::json!({ "pin": "correct horse", "plaintext_b64": secret }).to_string(),
-        );
-        let blob = field(&wrapped, "blob_b64");
-        assert!(!blob.is_empty());
 
-        let unwrapped = argon2_unwrap_json(
-            &serde_json::json!({ "pin": "correct horse", "blob_b64": blob }).to_string(),
-        );
-        assert_eq!(field(&unwrapped, "plaintext_b64"), secret);
-    }
-
-    #[test]
-    fn argon2_wrong_pin_fails() {
-        let secret = B64.encode([1u8; 32]);
-        let wrapped = argon2_wrap_json(
-            &serde_json::json!({ "pin": "right-pin-123", "plaintext_b64": secret }).to_string(),
-        );
-        let blob = field(&wrapped, "blob_b64");
-        let out = argon2_unwrap_json(
-            &serde_json::json!({ "pin": "wrong-pin-123", "blob_b64": blob }).to_string(),
-        );
-        assert!(!field(&out, "error").is_empty());
-    }
 
     #[test]
     fn signing_keypair_sign_and_verify() {

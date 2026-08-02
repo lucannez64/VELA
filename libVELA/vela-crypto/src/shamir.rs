@@ -64,22 +64,96 @@ pub struct Share {
     pub x: u8,
     /// y-coordinates, one per byte of the secret.
     pub y: Vec<u8>,
+    /// Authentication tag over this share, keyed by the secret it belongs to.
+    /// `None` for shares written before the tag existed.
+    pub mac: Option<[u8; MAC_LEN]>,
+}
+
+/// Truncated BLAKE3 tag length. 16 bytes is far past what a share-swapping
+/// attacker could brute-force, and keeps a printed share short.
+pub const MAC_LEN: usize = 16;
+
+/// Marker byte for the authenticated format. Legacy shares start with a
+/// *non-zero* x-coordinate, so a leading zero cannot be mistaken for one.
+const AUTHENTICATED_MARKER: u8 = 0x00;
+const AUTHENTICATED_VERSION: u8 = 0x02;
+
+/// Key the share tags with something only a holder of the reconstructed secret
+/// can derive, so the tags reveal nothing to someone holding shares alone.
+fn share_mac_key(secret: &[u8]) -> [u8; 32] {
+    *crate::kdf::derive("vela shamir share authentication v1", secret).as_bytes()
+}
+
+fn share_mac(key: &[u8; 32], x: u8, y: &[u8]) -> [u8; MAC_LEN] {
+    let mut hasher = blake3::Hasher::new_keyed(key);
+    hasher.update(&[x]);
+    hasher.update(y);
+    let mut tag = [0u8; MAC_LEN];
+    tag.copy_from_slice(&hasher.finalize().as_bytes()[..MAC_LEN]);
+    tag
 }
 
 impl Share {
-    /// Serialize to `[x, y_0, y_1, …, y_{n-1}]`.
+    /// Serialize.
+    ///
+    /// Authenticated: `[0x00, version, x, y…, mac]`.
+    /// Legacy (no tag): `[x, y…]`, still emitted for a share that carries none.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + self.y.len());
-        out.push(self.x);
-        out.extend_from_slice(&self.y);
-        out
+        match self.mac {
+            Some(mac) => {
+                let mut out = Vec::with_capacity(3 + self.y.len() + MAC_LEN);
+                out.push(AUTHENTICATED_MARKER);
+                out.push(AUTHENTICATED_VERSION);
+                out.push(self.x);
+                out.extend_from_slice(&self.y);
+                out.extend_from_slice(&mac);
+                out
+            }
+            None => {
+                let mut out = Vec::with_capacity(1 + self.y.len());
+                out.push(self.x);
+                out.extend_from_slice(&self.y);
+                out
+            }
+        }
     }
 
-    /// Deserialize from bytes produced by [`Share::to_bytes`].
+    /// Deserialize either format.
+    ///
+    /// Shares are held by users — printed, written down, stored in a cloud
+    /// backup — so a share issued before authentication existed must keep
+    /// working forever, not just through a migration window.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.is_empty() {
             return Err(VelaError::ShamirError("share too short".into()));
         }
+
+        if bytes[0] == AUTHENTICATED_MARKER {
+            if bytes.len() < 3 + 1 + MAC_LEN {
+                return Err(VelaError::ShamirError("authenticated share too short".into()));
+            }
+            if bytes[1] != AUTHENTICATED_VERSION {
+                return Err(VelaError::ShamirError(format!(
+                    "unsupported share version {}",
+                    bytes[1]
+                )));
+            }
+            let x = bytes[2];
+            if x == 0 {
+                return Err(VelaError::ShamirError(
+                    "x-coordinate must be non-zero".into(),
+                ));
+            }
+            let body = &bytes[3..bytes.len() - MAC_LEN];
+            let mut mac = [0u8; MAC_LEN];
+            mac.copy_from_slice(&bytes[bytes.len() - MAC_LEN..]);
+            return Ok(Self {
+                x,
+                y: body.to_vec(),
+                mac: Some(mac),
+            });
+        }
+
         let x = bytes[0];
         if x == 0 {
             return Err(VelaError::ShamirError(
@@ -89,6 +163,7 @@ impl Share {
         Ok(Self {
             x,
             y: bytes[1..].to_vec(),
+            mac: None,
         })
     }
 }
@@ -124,11 +199,20 @@ pub fn split(secret: &[u8], threshold: u8, n: u8) -> Result<Vec<Share>> {
         coefficients.push(poly);
     }
 
-    // Evaluate each polynomial at x = 1, 2, …, n.
+    // Evaluate each polynomial at x = 1, 2, …, n, and tag each share with a MAC
+    // keyed by the secret. Reconstruction can then tell "these shares do not
+    // belong together / one was altered" from "here is your key" — previously a
+    // tampered share simply produced a different secret, silently (audit C-3).
+    let mac_key = share_mac_key(secret);
     let shares: Vec<Share> = (1..=n)
         .map(|x| {
             let y: Vec<u8> = coefficients.iter().map(|poly| eval_poly(poly, x)).collect();
-            Share { x, y }
+            let mac = share_mac(&mac_key, x, &y);
+            Share {
+                x,
+                y,
+                mac: Some(mac),
+            }
         })
         .collect();
 
@@ -184,7 +268,36 @@ pub fn reconstruct(shares: &[Share], secret_len: usize) -> Result<Vec<u8>> {
                 .collect::<Vec<_>>(),
         );
     }
+
+    // Verify every share that carries a tag. Without this, altering one share
+    // (or combining shares from two different splits) yields a *different*
+    // secret rather than an error — the caller then "recovers" into a vault it
+    // cannot decrypt, or, with a server-supplied share, into a key the server
+    // chose (audit C-3).
+    let mac_key = share_mac_key(&secret);
+    for share in shares.iter().filter(|share| share.mac.is_some()) {
+        let expected = share_mac(&mac_key, share.x, &share.y);
+        let presented = share.mac.expect("filtered to tagged shares");
+        if !tags_equal(&expected, &presented) {
+            return Err(VelaError::ShamirError(format!(
+                "share {} failed authentication — it was altered, or these shares \
+                 are from different splits",
+                share.x
+            )));
+        }
+    }
+
     Ok(secret)
+}
+
+/// Constant-time tag comparison: a caller feeding candidate shares must not
+/// learn how many leading bytes of a tag matched.
+fn tags_equal(a: &[u8; MAC_LEN], b: &[u8; MAC_LEN]) -> bool {
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// Lagrange interpolation at x=0 for a set of (x, y) points in GF(2^8).
@@ -263,12 +376,76 @@ mod tests {
         // 3 shares → success
         let r = reconstruct(&shares[0..3], RMS.len()).unwrap();
         assert_eq!(r, RMS);
-        // 2 shares → wrong result (not an error per SSS, just wrong value)
-        let r2 = reconstruct(&shares[0..2], RMS.len()).unwrap();
-        assert_ne!(
-            r2, RMS,
+        // 2 shares → refused. Plain SSS would hand back a *different* secret
+        // here, indistinguishable from the real one; the tags turn that into an
+        // error, which is what a user combining too few shares needs to see.
+        assert!(
+            reconstruct(&shares[0..2], RMS.len()).is_err(),
             "2 shares must not reconstruct the secret in a 3-of-5 scheme"
         );
+    }
+
+    /// Audit C-3: altering a share used to yield a different secret rather than
+    /// an error — "recovery" into a vault that cannot be decrypted, or, with a
+    /// server-supplied share, into a key the server chose.
+    #[test]
+    fn a_tampered_share_is_rejected_not_silently_wrong() {
+        let shares = split(RMS, 2, 3).unwrap();
+
+        let mut tampered = shares.clone();
+        tampered[0].y[0] ^= 0x01;
+        let error = reconstruct(&tampered[0..2], RMS.len()).expect_err("must not succeed");
+        assert!(format!("{error}").contains("failed authentication"), "{error}");
+
+        // A swapped tag is caught too, not just altered data.
+        let mut retagged = shares.clone();
+        retagged[1].mac = Some([0u8; MAC_LEN]);
+        assert!(reconstruct(&retagged[0..2], RMS.len()).is_err());
+    }
+
+    #[test]
+    fn shares_from_different_splits_do_not_combine() {
+        let first = split(RMS, 2, 3).unwrap();
+        let second = split(RMS, 2, 3).unwrap();
+
+        // Same secret, different polynomials: interpolation yields garbage, and
+        // the tags say so instead of returning it.
+        let mixed = vec![first[0].clone(), second[1].clone()];
+        assert!(reconstruct(&mixed, RMS.len()).is_err());
+    }
+
+    /// Shares live on paper and in cloud backups. One issued before
+    /// authentication existed has to keep working.
+    #[test]
+    fn legacy_untagged_shares_still_reconstruct() {
+        let shares = split(RMS, 2, 3).unwrap();
+        let legacy: Vec<Share> = shares
+            .iter()
+            .map(|share| Share {
+                x: share.x,
+                y: share.y.clone(),
+                mac: None,
+            })
+            .collect();
+
+        // Serialized in the old layout, and parsed back as untagged.
+        let bytes = legacy[0].to_bytes();
+        assert_eq!(bytes[0], legacy[0].x, "legacy layout starts with x");
+        assert!(Share::from_bytes(&bytes).unwrap().mac.is_none());
+
+        assert_eq!(reconstruct(&legacy[0..2], RMS.len()).unwrap(), RMS);
+    }
+
+    #[test]
+    fn authenticated_shares_round_trip_through_bytes() {
+        let shares = split(RMS, 2, 3).unwrap();
+        let parsed: Vec<Share> = shares
+            .iter()
+            .map(|share| Share::from_bytes(&share.to_bytes()).unwrap())
+            .collect();
+
+        assert!(parsed.iter().all(|share| share.mac.is_some()));
+        assert_eq!(reconstruct(&parsed[0..2], RMS.len()).unwrap(), RMS);
     }
 
     #[test]
