@@ -16,28 +16,49 @@ use crate::error::{Result, VelaError};
 
 const POLY: u16 = 0x11b;
 
-fn gf_mul(mut a: u8, mut b: u8) -> u8 {
+/// Multiply in GF(2^8), in constant time.
+///
+/// Both operands are secret here — during a split they are polynomial
+/// coefficients derived from the RMS, during reconstruction they are share
+/// values — so the previous implementation leaked through two channels: the
+/// loop ran `bit_length(b)` times, and both reduction steps were branches on
+/// secret bits. An attacker able to observe cache or timing on the same machine
+/// could narrow the operands.
+///
+/// This runs a fixed eight iterations and selects with masks instead of
+/// branching. `(bit & 1).wrapping_neg()` is 0xFF when the bit is set and 0x00
+/// otherwise, so `value & mask` is a branch-free conditional.
+fn gf_mul(a: u8, b: u8) -> u8 {
+    let mut a = a;
+    let mut b = b;
     let mut result: u8 = 0;
-    while b != 0 {
-        if b & 1 != 0 {
-            result ^= a;
-        }
-        let hi = a & 0x80;
+    for _ in 0..8 {
+        let add = (b & 1).wrapping_neg();
+        result ^= a & add;
+
+        let overflow = ((a >> 7) & 1).wrapping_neg();
         a <<= 1;
-        if hi != 0 {
-            a ^= (POLY & 0xff) as u8;
-        }
+        a ^= ((POLY & 0xff) as u8) & overflow;
+
         b >>= 1;
     }
     result
 }
 
-fn gf_pow(mut base: u8, mut exp: u8) -> u8 {
+/// Exponentiate in GF(2^8), in constant time.
+///
+/// Uniform in the exponent as well as the base: the only caller passes a
+/// constant (254), but a schedule that depends on the exponent is the kind of
+/// thing that becomes a leak the moment someone reuses it.
+fn gf_pow(base: u8, exp: u8) -> u8 {
     let mut result: u8 = 1;
-    while exp > 0 {
-        if exp & 1 != 0 {
-            result = gf_mul(result, base);
-        }
+    let mut base = base;
+    let mut exp = exp;
+    for _ in 0..8 {
+        let multiply = (exp & 1).wrapping_neg();
+        let product = gf_mul(result, base);
+        result = (product & multiply) | (result & !multiply);
+
         base = gf_mul(base, base);
         exp >>= 1;
     }
@@ -446,6 +467,43 @@ mod tests {
 
         assert!(parsed.iter().all(|share| share.mac.is_some()));
         assert_eq!(reconstruct(&parsed[0..2], RMS.len()).unwrap(), RMS);
+    }
+
+    /// The reference implementation this file used to carry: variable-time, but
+    /// known-correct. Kept here so the constant-time rewrite is checked against
+    /// it exhaustively rather than by inspection.
+    fn gf_mul_reference(mut a: u8, mut b: u8) -> u8 {
+        let mut result: u8 = 0;
+        while b != 0 {
+            if b & 1 != 0 {
+                result ^= a;
+            }
+            let hi = a & 0x80;
+            a <<= 1;
+            if hi != 0 {
+                a ^= (POLY & 0xff) as u8;
+            }
+            b >>= 1;
+        }
+        result
+    }
+
+    #[test]
+    fn constant_time_gf_mul_matches_the_reference_everywhere() {
+        for a in 0u8..=255 {
+            for b in 0u8..=255 {
+                assert_eq!(gf_mul(a, b), gf_mul_reference(a, b), "gf_mul({a}, {b})");
+            }
+        }
+    }
+
+    #[test]
+    fn gf_mul_matches_the_aes_field() {
+        // The textbook AES vector for this polynomial (x^8 + x^4 + x^3 + x + 1).
+        assert_eq!(gf_mul(0x57, 0x83), 0xc1);
+        assert_eq!(gf_mul(0x57, 0x13), 0xfe);
+        assert_eq!(gf_mul(1, 0xab), 0xab);
+        assert_eq!(gf_mul(0, 0xab), 0);
     }
 
     #[test]

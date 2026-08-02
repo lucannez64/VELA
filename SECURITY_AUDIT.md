@@ -761,6 +761,13 @@ reject any ciphertext whose version is ≤ the last-seen version.
 > `from_bytes` accepts both layouts forever, distinguished by a leading `0x00`
 > that a legacy share (whose first byte is a non-zero x-coordinate) can never
 > have.
+>
+> The finding's "while here" item is fixed too: `gf_mul` and `gf_pow` are now
+> fixed-iteration and branch-free. Both operands are secret — polynomial
+> coefficients derived from the RMS when splitting, share values when
+> reconstructing — and the old loop ran `bit_length(b)` times with two branches
+> on secret bits. The rewrite is checked against the previous implementation
+> exhaustively (all 65 536 operand pairs) rather than by inspection.
 
 **Location.** `libVELA/vela-crypto/src/shamir.rs:151-188` (no integrity; test `:267-271` accepts
 wrong output), consumed unchecked at `vela-android-bridge/src/lib.rs:585-599`.
@@ -863,7 +870,7 @@ credit the existing hardening:
 | android | ~~`build.gradle.kts:49-54`~~ | ~~No R8/minification → `Log.d` metadata ships~~ **FIXED** — R8 on, with JNI keep rules and log stripping |
 | android | `sync/SyncSettingsStore.kt:84-88` | Server URL accepts `http://` (OS blocks cleartext, but failure is silent) |
 | android | `security/SecureClipboard.kt:20` | 30s clipboard exposure window (industry-standard, but the largest live-secret surface) |
-| crypto | `shamir.rs:19-56` | Variable-time GF(2⁸) arithmetic (cache-timing leak of RMS bytes; local-only) |
+| crypto | ~~`shamir.rs:19-56`~~ | ~~Variable-time GF(2⁸) arithmetic~~ **FIXED** — fixed-iteration, branch-free multiply and exponentiation |
 | crypto | ~~`password_kdf.rs:31-33` vs `vela-wasm-bridge/src/lib.rs:19-21`~~ | ~~Argon2id params diverge~~ **FIXED** — blobs record their own cost (v3), the default is 64 MiB/t=3, and the divergent WASM copy was dead code (removed) |
 | crypto | `kdf.rs:58-61` | `chunk_key` context built from `{:?}` debug formatting (unstable contract; raw-bytes vs string divergence between bridges) |
 | crypto | `vela-core/src/vault.rs:46-106` | `VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s |
