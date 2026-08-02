@@ -1204,7 +1204,6 @@ dependencies = [
 name = "vela-wasm-bridge"
 version = "0.1.0"
 dependencies = [
- "argon2",
  "base64",
  "getrandom 0.2.17",
  "getrandom 0.4.3",

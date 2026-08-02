@@ -87,7 +87,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
 | C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | open |
-| C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | open |
+| C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | **FIXED** (tagged shares; tampering is an error) |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
 | P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
 
@@ -747,6 +747,28 @@ reject any ciphertext whose version is ≤ the last-seen version.
 
 ### C-3 — Shamir recovery shares are unauthenticated  ·  **MEDIUM**
 
+> **STATUS: FIXED.** Every share now carries a 16-byte BLAKE3 tag keyed by the
+> secret it belongs to, verified after reconstruction. Altering a share, or
+> combining shares from two different splits, is an error naming the offending
+> share instead of a silently different "secret". The key is derived from the
+> reconstructed secret, so the tags reveal nothing to someone holding shares
+> alone.
+>
+> Two consequences worth knowing. **Sub-threshold reconstruction is now detected**
+> — 2-of-3 shares in a 3-of-5 scheme used to hand back plausible garbage, and the
+> existing test asserted exactly that; it now asserts the error. And **legacy
+> untagged shares still work**: shares live on paper and in cloud backups, so
+> `from_bytes` accepts both layouts forever, distinguished by a leading `0x00`
+> that a legacy share (whose first byte is a non-zero x-coordinate) can never
+> have.
+>
+> The finding's "while here" item is fixed too: `gf_mul` and `gf_pow` are now
+> fixed-iteration and branch-free. Both operands are secret — polynomial
+> coefficients derived from the RMS when splitting, share values when
+> reconstructing — and the old loop ran `bit_length(b)` times with two branches
+> on secret bits. The rewrite is checked against the previous implementation
+> exhaustively (all 65 536 operand pairs) rather than by inspection.
+
 **Location.** `libVELA/vela-crypto/src/shamir.rs:151-188` (no integrity; test `:267-271` accepts
 wrong output), consumed unchecked at `vela-android-bridge/src/lib.rs:585-599`.
 
@@ -848,8 +870,8 @@ credit the existing hardening:
 | android | ~~`build.gradle.kts:49-54`~~ | ~~No R8/minification → `Log.d` metadata ships~~ **FIXED** — R8 on, with JNI keep rules and log stripping |
 | android | `sync/SyncSettingsStore.kt:84-88` | Server URL accepts `http://` (OS blocks cleartext, but failure is silent) |
 | android | `security/SecureClipboard.kt:20` | 30s clipboard exposure window (industry-standard, but the largest live-secret surface) |
-| crypto | `shamir.rs:19-56` | Variable-time GF(2⁸) arithmetic (cache-timing leak of RMS bytes; local-only) |
-| crypto | `password_kdf.rs:31-33` vs `vela-wasm-bridge/src/lib.rs:19-21` | Argon2id params diverge across platforms (19MiB/2/1 vs 64MiB/3/4) — cross-platform incompatibility + 19MiB/2/1 is OWASP *minimum* for an offline brute-force target |
+| crypto | ~~`shamir.rs:19-56`~~ | ~~Variable-time GF(2⁸) arithmetic~~ **FIXED** — fixed-iteration, branch-free multiply and exponentiation |
+| crypto | ~~`password_kdf.rs:31-33` vs `vela-wasm-bridge/src/lib.rs:19-21`~~ | ~~Argon2id params diverge~~ **FIXED** — blobs record their own cost (v3), the default is 64 MiB/t=3, and the divergent WASM copy was dead code (removed) |
 | crypto | `kdf.rs:58-61` | `chunk_key` context built from `{:?}` debug formatting (unstable contract; raw-bytes vs string divergence between bridges) |
 | crypto | `vela-core/src/vault.rs:46-106` | `VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s |
 | crypto | ~~`password.rs:106`~~ | ~~`getrandom(...).expect(...)` panics across `extern "C"`~~ **FIXED** — returns `PasswordError` |
