@@ -207,6 +207,27 @@ pub struct PasswordWithStrength {
     pub strength: PasswordStrength,
 }
 
+/// Map a random 32-bit draw onto `0..n`, or `None` if it falls in the biased
+/// tail and must be redrawn. The bound is computed over the 2^32 possible
+/// draws, so a charset whose size divides evenly never rejects anything.
+fn index_from(value: u32, n: u32) -> Option<u32> {
+    const SPAN: u64 = 1 << 32;
+    let bound = SPAN - (SPAN % n as u64);
+    ((value as u64) < bound).then(|| value % n)
+}
+
+fn uniform_index(n: usize) -> Result<usize, String> {
+    let n = n as u32;
+    loop {
+        let mut buf = [0u8; 4];
+        getrandom::getrandom(&mut buf)
+            .map_err(|_| "OS random source unavailable".to_string())?;
+        if let Some(index) = index_from(u32::from_le_bytes(buf), n) {
+            return Ok(index as usize);
+        }
+    }
+}
+
 /// No `AppState` dependency at all — pure generation, no vault write.
 pub fn generate_password(options: PasswordGeneratorOptions) -> Result<PasswordWithStrength, String> {
     let mut charset = String::new();
@@ -234,18 +255,13 @@ pub fn generate_password(options: PasswordGeneratorOptions) -> Result<PasswordWi
 
     let charset: Vec<char> = charset.chars().collect();
 
-    let password: String = (0..options.length)
-        .map(|_| {
-            let mut buf = [0u8; 4];
-            getrandom::getrandom(&mut buf).expect("OS random source unavailable");
-            let idx = (buf[0] as usize
-                | (buf[1] as usize) << 8
-                | (buf[2] as usize) << 16
-                | (buf[3] as usize) << 24)
-                % charset.len();
-            charset[idx]
-        })
-        .collect();
+    // Two fixes over the previous draw loop: a failing RNG returns instead of
+    // panicking, and the index is drawn without modulo bias — `value % n`
+    // favours the low indices whenever `n` does not divide 2^32.
+    let mut password = String::with_capacity(options.length);
+    for _ in 0..options.length {
+        password.push(charset[uniform_index(charset.len())?]);
+    }
 
     let strength = calculate_password_strength(&password);
 
@@ -519,6 +535,16 @@ mod tests {
         let strong = calculate_password_strength(STRONG);
         assert_eq!(strong.score, "strong");
         assert_eq!(strong.crack_time, "centuries");
+    }
+
+    #[test]
+    fn index_from_rejects_the_biased_tail() {
+        let n = 3u32;
+        let bound = ((1u64 << 32) - ((1u64 << 32) % n as u64)) as u32;
+        assert_eq!(index_from(bound - 1, n), Some((bound - 1) % n));
+        assert_eq!(index_from(bound, n), None);
+        // A charset size that divides 2^32 never rejects.
+        assert_eq!(index_from(u32::MAX, 32), Some(31));
     }
 
     #[test]

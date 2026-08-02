@@ -77,18 +77,18 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | S-4 | Medium | server | `/web-session/:id/keys` not ownership-scoped (enabler for S-1) | code | **FIXED** (scoped to the committed approver) |
 | A-1 | **High** | android | Exported `MainActivity` leaks plaintext creds to any caller | code | **FIXED** (one-time token proves the intent is ours) |
 | A-2 | Medium | android | `com.<x>` package name auto-maps to `<x>.com` (autofill phishing) | code | open |
-| A-3 | Medium | android | Release silently debug-signed when keystore missing | code | open |
+| A-3 | Medium | android | Release silently debug-signed when keystore missing | code | **FIXED** (release build fails without a keystore) |
 | D-1 | **High** | desktop | Auto-lock is lazy — secrets persist in RAM past expiry | code | **FIXED** (watchdog thread locks on the deadline) |
 | D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code | **FIXED** (per-chunk vault keys instead of the RMS) |
 | D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | **FIXED** (LocalAuthentication evaluation + ACL) |
 | D-5 | **High** | desktop | **Windows "Hello" was never invoked** — credential read only (found while fixing D-3) | code | **FIXED** (UserConsentVerifier gates every read) |
 | D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | open |
-| E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | open |
-| E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | open |
+| E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
+| E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
 | C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | open |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | open |
-| C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | open |
+| C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
 | P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
 
 `P-` denotes a protocol-level finding — one that lives in the shape of the
@@ -340,6 +340,13 @@ a stored web login.
 
 ### A-3 — Release builds silently signed with the debug key when keystore is missing  ·  **MEDIUM**
 
+> **STATUS: FIXED.** A release task without a keystore now fails with an
+> explicit message instead of falling back to the debug key. The check runs at
+> task-graph time, not during configuration, so `assembleDebug` and `gradlew
+> tasks` keep working; `-PvelaAllowDebugSigning=true` is the deliberate opt-out.
+> The release workflow's keystore secret is configured, so signed releases are
+> unaffected.
+
 **Location.** `androidVELA/app/build.gradle.kts:49-54`
 
 ```kotlin
@@ -532,6 +539,11 @@ regardless of `user_initiated`; document the same-uid threat model explicitly.
 
 ### E-1 — `nativeMessage` / `getNativeMessage` bypass credential authorization  ·  **MEDIUM**
 
+> **STATUS: FIXED.** Both handlers are deleted. They forwarded a caller-supplied
+> payload straight to the native messaging host, skipping the
+> `authorizeCredentialRequest` gate every other credential path uses — and
+> nothing in the extension sent them, so this was pure attack surface.
+
 **Locations**
 - `extension/src/background/background.js:202-204, 438-445` (`nativeMessage`)
 - `extension/src/background/background.js:581-597` (`getNativeMessage` port handler)
@@ -552,6 +564,13 @@ domain: `{command:"getNativeMessage", action:"getLogins", url:"<victim>", userIn
 ---
 
 ### E-2 — Popup XSS via unescaped `login.id` in attributes  ·  **MEDIUM**
+
+> **STATUS: FIXED, and the escaper was worse than reported.** `escapeHtml`
+> round-tripped through `textContent`/`innerHTML`, which escapes `&`, `<` and
+> `>` but **not quotes** — so even the "escaped" interpolations were unsafe in
+> attribute position. It now escapes all five characters, and every
+> interpolation (`login.id` in four attributes, plus the unescaped `initial`
+> character) goes through it.
 
 **Location.** `extension/src/popup/popup.js:162,169,174,179`
 
@@ -735,6 +754,11 @@ fingerprint of the RMS and verify after reconstruction.
 
 ### C-4 — `VelaByteBuffer` reconstructs `Vec` with wrong capacity → UB  ·  **MEDIUM**
 
+> **STATUS: FIXED.** `vec_to_buffer` converts to a boxed slice before handing
+> the pointer out, so `capacity == len` by construction and the free path is
+> sound; the C ABI is unchanged. Regression test round-trips a `Vec` with spare
+> capacity, which is the case that was UB.
+
 **Location.** `libVELA/vela-android-bridge/src/lib.rs:377-381, 686-693`
 
 **Description.** `vec_to_buffer` forgets the `Vec` without recording its true capacity; the
@@ -796,18 +820,18 @@ credit the existing hardening:
 | Component | Location | Issue |
 |---|---|---|
 | server | `routes.rs:275-278` | `cf-visitor` matched via `contains` (substring) instead of strict JSON parse (only honored from trusted proxies, so bounded) |
-| server | `routes.rs:289-319` | `/health` leaks `sled`/`stoolap` backend state unauthenticated **[DYN-VERIFIED]** |
+| server | ~~`routes.rs:289-319`~~ | ~~`/health` leaks backend state~~ **FIXED** — the response is up/down; detail goes to the logs |
 | server | `account/mod.rs:50` | No global account cap (per-IP only) → disk-exhaustion at scale via rotating IPs |
 | server | `vault/chunk.rs:18,59`, `oram.rs:68,148` | `chunk_id`/`tree_id` are unvalidated-length `String` paths |
-| server | `share/mod.rs:48-58,491-515` | User enumeration: `404 "recipient user not found"` vs `"user has no share key registered"` |
+| server | ~~`share/mod.rs:48-58,491-515`~~ | ~~User enumeration via distinct 404s~~ **FIXED** — one message for every case |
 | server | `web_session/mod.rs:437-495` | No exponential backoff on `/web-session/:id/token` (flat 10/min; inconsistent with `/auth/verify`) |
 | server | `device/revoke.rs:58-77` | Microsecond revocation race (middleware checks sled sentinel, not SQL `revoked` column) |
 | desktop | `commands/biometric.rs:42-48` | `enroll()` always returns `WindowsHello` regardless of platform |
 | desktop | `tauri.conf.json:31` | CSP permits plaintext `http://localhost:*` from renderer |
-| desktop | `tauri.conf.json:60-62` | `shell.open` unrestricted → renderer can dispatch arbitrary URL schemes (`file://`,`smb://`,…) |
+| desktop | ~~`tauri.conf.json:60-62`~~ | ~~`shell.open` unrestricted~~ **FIXED** — `^https?://` only |
 | desktop | `commands/session.rs:636-669` | `reset_vault` wipes on `"DELETE"` alone when locked/no server → trivial data-loss primitive |
-| desktop | `commands/totp.rs:4-12` | TOTP oracle callable while vault locked |
-| desktop | `commands/vault.rs:281-289` | Modulo bias in `generate_password` (~1.6×10⁻⁸, negligible) |
+| desktop | ~~`commands/totp.rs:4-12`~~ | ~~TOTP oracle callable while locked~~ **FIXED** — requires an unlocked session |
+| desktop | ~~`commands/vault.rs:281-289`~~ | ~~Modulo bias in `generate_password`~~ **FIXED** — rejection sampling, in both copies |
 | desktop | `commands/audit.rs:18-179` | Renderer can forge audit entries (action whitelist, but arbitrary `details`) |
 | desktop | `store.rs:296-318` | Legacy plaintext identity-keys file silently re-encrypted (only `warn!`) |
 | extension | `manifests/*.json:56,60-69` | Unused `webNavigation` permission; `web_accessible_resources` enables fingerprinting |
@@ -820,7 +844,7 @@ credit the existing hardening:
 | crypto | `password_kdf.rs:31-33` vs `vela-wasm-bridge/src/lib.rs:19-21` | Argon2id params diverge across platforms (19MiB/2/1 vs 64MiB/3/4) — cross-platform incompatibility + 19MiB/2/1 is OWASP *minimum* for an offline brute-force target |
 | crypto | `kdf.rs:58-61` | `chunk_key` context built from `{:?}` debug formatting (unstable contract; raw-bytes vs string divergence between bridges) |
 | crypto | `vela-core/src/vault.rs:46-106` | `VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s |
-| crypto | `password.rs:106` | `getrandom(...).expect(...)` → panic across `extern "C"` is UB |
+| crypto | ~~`password.rs:106`~~ | ~~`getrandom(...).expect(...)` panics across `extern "C"`~~ **FIXED** — returns `PasswordError` |
 
 ---
 

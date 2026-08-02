@@ -68,9 +68,12 @@ jobs:
         with:
           workspaces: libVELA/vela-android-bridge
 
-      # When the keystore secret is present, decode it and point Gradle at it so
-      # the APK is signed with the stable release key. Without the secret this
-      # step is skipped and Gradle falls back to the debug key.
+      # Decode the keystore secret and point Gradle at it so the APK is signed
+      # with the stable release key. Without the secret the build now *fails*
+      # rather than silently falling back to the well-known debug key (audit
+      # A-3) — a debug-signed "release" is installable over nothing and can be
+      # impersonated by any rebuilt APK. To produce one deliberately, pass
+      # -PvelaAllowDebugSigning=true.
       - name: Decode release keystore
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
         run: |
