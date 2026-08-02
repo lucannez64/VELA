@@ -190,7 +190,11 @@ enum VelaCoreFFI {
         rmsBase64: String,
         chunkID: String,
         ciphertextBase64: String,
-        lamportClock: Int64 = 0
+        // No default. Defaulting it to 0 meant a caller that forgot it got a
+        // silent decryption failure against any sealed chunk — which is exactly
+        // what happened to this file's own test once writers started sealing
+        // (audit C-2).
+        lamportClock: Int64
     ) -> String? {
         let request = json([
             "rms_b64": rmsBase64,
