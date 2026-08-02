@@ -355,10 +355,10 @@ pub mod tpm {
     };
     use security_framework::passwords_options::{AccessControlOptions, PasswordOptions};
 
-    const KEYCHAIN_SERVICE: &str = "VELA_RMS_Store";
+    pub(crate) const KEYCHAIN_SERVICE: &str = "VELA_RMS_Store";
     /// Account holding the RMS under a user-presence ACL. Distinct from the
     /// legacy account so the two can coexist during migration.
-    const KEYCHAIN_ACCOUNT: &str = "vela-user-presence";
+    pub(crate) const KEYCHAIN_ACCOUNT: &str = "vela-user-presence";
     /// Pre-ACL account: readable with nothing but the login keychain being
     /// unlocked, i.e. by any code running as the user. Read once, migrated, and
     /// deleted (audit D-3).
@@ -471,6 +471,11 @@ pub mod tpm {
             LEGACY_KEYCHAIN_ACCOUNT,
         ))?;
         parse_key(&key)
+    }
+
+    /// Turn raw Keychain bytes into an RMS, tolerating the pre-2025 base64 form.
+    pub(crate) fn parse_stored_key(key: &[u8]) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+        parse_key(key)
     }
 
     fn parse_key(key: &[u8]) -> Result<[u8; 32], Box<dyn std::error::Error>> {

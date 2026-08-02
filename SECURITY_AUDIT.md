@@ -80,7 +80,8 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | A-3 | Medium | android | Release silently debug-signed when keystore missing | code | open |
 | D-1 | **High** | desktop | Auto-lock is lazy — secrets persist in RAM past expiry | code | **FIXED** (watchdog thread locks on the deadline) |
 | D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code | **FIXED** (per-chunk vault keys instead of the RMS) |
-| D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | **FIXED** (user-presence ACL on the Keychain item) |
+| D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | **FIXED** (LocalAuthentication evaluation + ACL) |
+| D-5 | **High** | desktop | **Windows "Hello" was never invoked** — credential read only (found while fixing D-3) | code | **FIXED** (UserConsentVerifier gates every read) |
 | D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | open |
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | open |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | open |
@@ -424,20 +425,34 @@ export is kept, make the fingerprint-substitution check unconditional (reject ba
 
 ### D-3 — macOS "biometric" unlock is a Keychain read with no user-presence proof  ·  **HIGH**
 
-> **STATUS: FIXED.** The RMS Keychain item is now written with a
-> `SecAccessControl` of `kSecAccessControlUserPresence`, so macOS itself demands
-> Touch ID (or the login password) on every read — the read *is* the presence
-> proof. Pre-ACL items live under a separate account name: biometric unlock
-> refuses them outright rather than reading them, and one master-password unlock
-> migrates the key (`biometric::migrate_unprotected_stored_rms`) and deletes the
-> unprotected copy. Key-presence probes use an attribute-only query so they never
-> trigger a prompt. `enroll()` now reports the platform's real provider instead
-> of always claiming Windows Hello.
+> **STATUS: FIXED — real biometric authentication, not an implicit ACL.**
+> `macos_biometric::authenticate()` asks **LocalAuthentication** to verify the
+> device owner (`LAContext.evaluatePolicy`,
+> `DeviceOwnerAuthenticationWithBiometrics`) *before* any key is read, and then
+> hands that **same evaluated context** to the Keychain read via
+> `kSecUseAuthenticationContext` — so the user sees exactly one prompt and macOS
+> still enforces the item's `kSecAccessControlUserPresence` ACL underneath. Two
+> independent gates: the app authenticates the user, and the OS refuses the item
+> to anything that has not.
 >
-> **Verification caveat:** this code is `cfg(target_os = "macos")` and cannot run
-> in the Linux dev/CI environment; it was type-checked against
-> `security-framework` 3.7 for `x86_64-apple-darwin`, but the Touch ID prompt
-> itself needs a manual pass on real hardware.
+> The factor is whatever the hardware has — Touch ID, Face ID or Optic ID — since
+> the policy means "this device's biometry"; `LAContext.biometryType` is used to
+> name it correctly in prompts, errors and the reported provider
+> (`BiometricProvider::{TouchId, FaceId, OpticId}`). On a Mac with no sensor, a
+> paired Apple Watch (`…WithBiometricsOrWatch`) is accepted as the presence
+> factor; with neither, biometric unlock fails closed to the master password,
+> exactly as Linux does.
+>
+> Pre-ACL items live under a separate account name: biometric unlock refuses them
+> rather than reading them, and one master-password unlock migrates the key
+> (`biometric::migrate_unprotected_stored_rms`) and deletes the unprotected copy.
+> Key-presence probes use an attribute-only query so they never trigger a prompt.
+>
+> **Verification caveat:** `cfg(target_os = "macos")` code cannot run in the
+> Linux dev/CI environment. It is type-checked against the real
+> `objc2-local-authentication` / `security-framework` crates for
+> `x86_64-apple-darwin`; the prompt itself, the single-prompt behaviour and the
+> pre-ACL migration need one manual pass on hardware.
 
 **Locations**
 - `desktopVELA/vela-desktop-core/src/biometric.rs:647-692` (macOS `authenticate_inner`)
@@ -458,6 +473,35 @@ compromise (XSS, malicious extension, debugger) calls `authenticate()` → popul
 macOS from `authenticate()` until Touch ID is wired up (mirror the Linux storage-vs-verification
 split). Also fix `enroll()` (`commands/biometric.rs:42-48`) which unconditionally returns
 `WindowsHello` regardless of platform.
+
+---
+
+### D-5 — Windows "biometric" unlock never invoked Windows Hello  ·  **HIGH** (found during remediation)
+
+> **STATUS: FIXED.** `windows_biometric::authenticate()` now calls
+> `UserConsentVerifier` (through `IUserConsentVerifierInterop::RequestVerificationForWindowAsync`,
+> which is what a non-packaged desktop app needs so the prompt parents to its own
+> window, falling back to the plain WinRT call) and **returns before reading any
+> key** unless the user verified. `check_availability` reports `WindowsHello` only
+> when Hello can actually verify the user, and `MasterPassword` otherwise.
+
+**Locations**
+- `desktopVELA/vela-desktop-core/src/biometric.rs` (`windows_biometric::authenticate`)
+- `desktopVELA/vela-desktop-core/src/device.rs` (`tpm::retrieve_from_tpm`, Credential Manager read)
+
+**Description.** This was not in the original findings — the audit contrasted the
+macOS gap (D-3) against "Linux, which correctly requires `fprint::verify()`", and
+did not check that the Windows path did the same. It did not. `authenticate()`
+read the TPM-sealed key, or `CredReadW`'d the `VELA_RMS` credential, and returned
+`success: true`. Both reads are granted to *anything running in the user's
+session*: no Hello prompt, no PIN, no user presence of any kind. The provider was
+nevertheless reported as `WindowsHello`, so the UI told users their vault was
+protected by a biometric that was never consulted — the same defect as D-3, with
+the same impact (any renderer compromise calling `authenticate()` unlocks the
+vault), on the platform the audit assumed was fine.
+
+**Impact.** Identical to D-3: full vault access for local code running as the
+user, with no user interaction.
 
 ---
 
@@ -699,8 +743,10 @@ credit the existing hardening:
    package heuristic.
 3. ~~**Desktop auto-lock (D-1).**~~ **Done** — a watchdog thread locks on the deadline and the
    frontends clear the clipboard through their existing lock paths.
-4. ~~**macOS biometric (D-3).**~~ **Done** — the Keychain item carries a user-presence ACL, with
-   a fail-closed migration off the pre-ACL item. Needs one manual pass on real hardware.
+4. ~~**macOS biometric (D-3)**~~ **and Windows Hello (D-5, found while fixing it).** **Done** —
+   both platforms now verify the user (LocalAuthentication / `UserConsentVerifier`) *before*
+   any key is read, and macOS reuses the evaluated context for the Keychain read so there is
+   one prompt, not two. Needs one manual pass on real hardware for each.
 5. **Crypto JNI (C-1).** *Partially done* — the RMS crosses JNI as bytes now. The long-term
    identity/share private keys still cross (and persist) as strings; that needs opaque handles
    plus a storage-format change.

@@ -26,6 +26,12 @@ pub struct BiometricEnrollmentStatus {
 pub enum BiometricProvider {
     WindowsHello,
     TouchId,
+    FaceId,
+    /// Optic ID (Vision Pro). Listed so the enum matches what
+    /// `LAContext.biometryType` can report rather than mislabelling it.
+    OpticId,
+    /// Apple Watch confirmation — a real user-presence factor, but not biometry.
+    AppleWatch,
     MasterPassword,
     LinuxTpm,
     LinuxFprint,
@@ -65,11 +71,89 @@ pub mod windows_biometric {
         to_wide_string(s)
     }
 
+    /// Ask Windows Hello to verify the device owner.
+    ///
+    /// Reading the credential or the TPM-sealed key is not an authentication:
+    /// both are handed to anything running in the user's session, so
+    /// `authenticate()` used to report success without the user being present at
+    /// all — the same gap the audit filed against macOS (D-3), and the reason
+    /// the provider was reported as "Windows Hello" while Hello was never
+    /// invoked. Nothing reads a key until this returns `Ok`.
+    fn verify_user_presence() -> Result<(), String> {
+        use windows::core::{factory, HSTRING};
+        use windows::Foundation::IAsyncOperation;
+        use windows::Security::Credentials::UI::{
+            UserConsentVerificationResult, UserConsentVerifier,
+        };
+        use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+        let message = HSTRING::from("Verify your identity to unlock your VELA vault");
+
+        // A non-packaged desktop app has to parent the prompt to a window of
+        // its own, or it can end up behind the app (or refuse to show).
+        let for_window = || -> windows::core::Result<UserConsentVerificationResult> {
+            let interop = factory::<UserConsentVerifier, IUserConsentVerifierInterop>()?;
+            let hwnd = unsafe { GetForegroundWindow() };
+            let operation: IAsyncOperation<UserConsentVerificationResult> =
+                unsafe { interop.RequestVerificationForWindowAsync(hwnd, &message)? };
+            operation.get()
+        };
+
+        let outcome = for_window().or_else(|_| {
+            UserConsentVerifier::RequestVerificationAsync(&message).and_then(|op| op.get())
+        });
+
+        match outcome {
+            Ok(UserConsentVerificationResult::Verified) => Ok(()),
+            Ok(UserConsentVerificationResult::DeviceNotPresent) => Err(
+                "Windows Hello is not set up on this device. Please use your master password."
+                    .to_string(),
+            ),
+            Ok(UserConsentVerificationResult::NotConfiguredForUser) => Err(
+                "Windows Hello is not configured for this account. Please use your master password."
+                    .to_string(),
+            ),
+            Ok(UserConsentVerificationResult::DeviceBusy) => {
+                Err("Windows Hello is busy. Try again in a moment.".to_string())
+            }
+            Ok(UserConsentVerificationResult::RetriesExhausted) => {
+                Err("Too many failed Windows Hello attempts. Please use your master password."
+                    .to_string())
+            }
+            Ok(UserConsentVerificationResult::Canceled) => {
+                Err("Windows Hello was cancelled.".to_string())
+            }
+            Ok(_) => Err("Windows Hello could not verify you.".to_string()),
+            Err(e) => Err(format!("Windows Hello failed: {}", e.message())),
+        }
+    }
+
+    /// Whether Hello can verify the user right now (hardware present + enrolled).
+    fn hello_available() -> bool {
+        use windows::Security::Credentials::UI::{
+            UserConsentVerifier, UserConsentVerifierAvailability,
+        };
+        matches!(
+            UserConsentVerifier::CheckAvailabilityAsync().and_then(|op| op.get()),
+            Ok(UserConsentVerifierAvailability::Available)
+        )
+    }
+
     pub fn check_availability() -> BiometricEnrollmentStatus {
+        // Report Windows Hello only when Hello can actually verify the user;
+        // otherwise the stored key is a master-password vault, not a biometric
+        // one, and the UI should say so.
+        let hello = hello_available();
+
         if crate::device::tpm::is_tpm_key_available() {
             return BiometricEnrollmentStatus {
                 enrolled: true,
-                provider: BiometricProvider::WindowsHello,
+                provider: if hello {
+                    BiometricProvider::WindowsHello
+                } else {
+                    BiometricProvider::MasterPassword
+                },
             };
         }
 
@@ -120,6 +204,16 @@ pub mod windows_biometric {
     }
 
     pub fn authenticate() -> BiometricAuthResult {
+        // Verify the user *before* any key is read (audit D-3, Windows half).
+        if let Err(message) = verify_user_presence() {
+            return BiometricAuthResult {
+                success: false,
+                error_message: Some(message),
+                retry_count: None,
+                uses_password: false,
+            };
+        }
+
         if crate::device::tpm::is_tpm_key_available() {
             match crate::device::tpm::retrieve_from_tpm() {
                 Ok(rms) => {
@@ -613,10 +707,7 @@ fn check_enrollment_inner() -> BiometricEnrollmentStatus {
     }
     #[cfg(target_os = "macos")]
     {
-        BiometricEnrollmentStatus {
-            enrolled: crate::device::tpm::is_tpm_key_available(),
-            provider: BiometricProvider::TouchId,
-        }
+        macos_biometric::check_availability()
     }
     #[cfg(target_os = "linux")]
     {
@@ -627,6 +718,293 @@ fn check_enrollment_inner() -> BiometricEnrollmentStatus {
         BiometricEnrollmentStatus {
             enrolled: false,
             provider: BiometricProvider::None,
+        }
+    }
+}
+
+
+/// macOS: Touch ID / Face ID through LocalAuthentication.
+///
+/// The vault key sits in the Keychain under a user-presence ACL, but an ACL on
+/// its own only makes macOS prompt *whenever something reads the item* — it is
+/// not an authentication this app performs, and `authenticate()` used to report
+/// success for what was really just a Keychain read (audit D-3). Here the app
+/// asks LocalAuthentication to verify the device owner with biometrics, and then
+/// hands that *same evaluated context* to the Keychain read via
+/// `kSecUseAuthenticationContext`, so the user sees exactly one prompt and the
+/// OS still enforces the ACL underneath.
+#[cfg(target_os = "macos")]
+pub mod macos_biometric {
+    use super::*;
+    use block2::StackBlock;
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::data::CFData;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+    use objc2::rc::Retained;
+    use objc2::runtime::Bool;
+    use objc2_foundation::{NSError, NSString};
+    use objc2_local_authentication::{LABiometryType, LAContext, LAPolicy};
+    use security_framework_sys::base::errSecSuccess;
+    use security_framework_sys::item::{
+        kSecAttrAccount, kSecAttrService, kSecClass, kSecClassGenericPassword, kSecReturnData,
+        kSecUseAuthenticationContext,
+    };
+    use security_framework_sys::keychain_item::SecItemCopyMatching;
+    use std::ffi::c_void;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use crate::device::tpm::{parse_stored_key, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE};
+
+    /// How long to wait for the user to answer the prompt.
+    const PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+
+    const REASON: &str = "unlock your VELA vault";
+
+    /// What this Mac can actually verify the owner with.
+    ///
+    /// `DeviceOwnerAuthenticationWithBiometrics` already means "whatever biometry
+    /// this device has" — Touch ID, Face ID or Optic ID — so the policy never
+    /// hardcodes one. What the type is for is telling the truth in the UI and in
+    /// error messages, and knowing when to fall back to the Apple Watch policy on
+    /// Macs with no biometric sensor at all.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Factor {
+        Biometry(LABiometryType),
+        Watch,
+        None,
+    }
+
+    impl Factor {
+        fn policy(self) -> Option<LAPolicy> {
+            match self {
+                Factor::Biometry(_) => Some(LAPolicy::DeviceOwnerAuthenticationWithBiometrics),
+                Factor::Watch => Some(LAPolicy::DeviceOwnerAuthenticationWithBiometricsOrWatch),
+                Factor::None => None,
+            }
+        }
+
+        fn provider(self) -> BiometricProvider {
+            match self {
+                Factor::Biometry(LABiometryType::FaceID) => BiometricProvider::FaceId,
+                Factor::Biometry(LABiometryType::OpticID) => BiometricProvider::OpticId,
+                Factor::Biometry(_) => BiometricProvider::TouchId,
+                Factor::Watch => BiometricProvider::AppleWatch,
+                Factor::None => BiometricProvider::None,
+            }
+        }
+
+        fn name(self) -> &'static str {
+            match self {
+                Factor::Biometry(LABiometryType::FaceID) => "Face ID",
+                Factor::Biometry(LABiometryType::OpticID) => "Optic ID",
+                Factor::Biometry(_) => "Touch ID",
+                Factor::Watch => "Apple Watch",
+                Factor::None => "Biometric unlock",
+            }
+        }
+    }
+
+    /// Ask the OS what it can verify with, preferring biometry over the watch.
+    fn available_factor() -> Factor {
+        unsafe {
+            let context = LAContext::new();
+            if context
+                .canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics)
+                .is_ok()
+            {
+                let biometry = context.biometryType();
+                if biometry != LABiometryType::None {
+                    return Factor::Biometry(biometry);
+                }
+            }
+            // No sensor (an Intel Mac, an external display setup): a paired,
+            // unlocked Apple Watch on the wrist is still a presence proof, and
+            // it is what macOS itself accepts for unlock and for keychain items.
+            let context = LAContext::new();
+            if context
+                .canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometricsOrWatch)
+                .is_ok()
+            {
+                return Factor::Watch;
+            }
+            Factor::None
+        }
+    }
+
+    pub fn check_availability() -> BiometricEnrollmentStatus {
+        // "Enrolled" means both halves are in place: a key to unlock, and a
+        // biometric to unlock it with. Claiming Touch ID without the second is
+        // how the old capability probe misled the UI.
+        let factor = available_factor();
+        if crate::device::tpm::is_tpm_key_available() && factor != Factor::None {
+            return BiometricEnrollmentStatus {
+                enrolled: true,
+                provider: factor.provider(),
+            };
+        }
+        // A key with no usable biometric (no Touch ID hardware, none enrolled,
+        // or biometry locked out) is still openable — with the master password.
+        if crate::device::tpm::is_tpm_key_available()
+            || crate::device::tpm::has_unprotected_stored_rms()
+            || default_password::has_stored_blob()
+        {
+            return BiometricEnrollmentStatus {
+                enrolled: true,
+                provider: BiometricProvider::MasterPassword,
+            };
+        }
+        BiometricEnrollmentStatus {
+            enrolled: false,
+            provider: BiometricProvider::None,
+        }
+    }
+
+    /// Verify the device owner with whatever factor this Mac has, returning the
+    /// evaluated context so the caller can read the Keychain without prompting
+    /// a second time.
+    fn evaluate_presence(factor: Factor) -> Result<Retained<LAContext>, String> {
+        let policy = factor
+            .policy()
+            .ok_or_else(|| "No biometric is available on this Mac.".to_string())?;
+        let context = unsafe { LAContext::new() };
+        unsafe {
+            context
+                .canEvaluatePolicy_error(policy)
+                .map_err(|e| e.localizedDescription().to_string())?;
+        }
+
+        let reason = NSString::from_str(REASON);
+        let (tx, rx) = mpsc::channel::<Result<(), String>>();
+        let name = factor.name();
+        let reply = StackBlock::new(move |granted: Bool, error: *mut NSError| {
+            let outcome = if granted.as_bool() {
+                Ok(())
+            } else if error.is_null() {
+                Err(format!("{name} was not confirmed"))
+            } else {
+                Err(unsafe { &*error }.localizedDescription().to_string())
+            };
+            // The receiver may be gone if we timed out; that is not an error.
+            let _ = tx.send(outcome);
+        });
+        unsafe {
+            context.evaluatePolicy_localizedReason_reply(policy, &reason, &reply);
+        }
+
+        match rx.recv_timeout(PROMPT_TIMEOUT) {
+            Ok(Ok(())) => Ok(context),
+            Ok(Err(message)) => Err(message),
+            Err(_) => Err(format!("{} prompt timed out", factor.name())),
+        }
+    }
+
+    /// Read the RMS, reusing `context` so the ACL is satisfied by the evaluation
+    /// the user already completed.
+    fn retrieve_with_context(context: &Retained<LAContext>) -> Result<[u8; 32], String> {
+        unsafe {
+            // An LAContext is an Objective-C object, which CFDictionary stores
+            // as any other CF type.
+            let context_value: CFType =
+                CFType::wrap_under_get_rule(Retained::as_ptr(context) as *const c_void as _);
+            let query = CFDictionary::from_CFType_pairs(&[
+                (
+                    CFString::wrap_under_get_rule(kSecClass),
+                    CFType::wrap_under_get_rule(kSecClassGenericPassword as _),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrService),
+                    CFString::from(KEYCHAIN_SERVICE).as_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrAccount),
+                    CFString::from(KEYCHAIN_ACCOUNT).as_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecReturnData),
+                    CFBoolean::true_value().as_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecUseAuthenticationContext),
+                    context_value,
+                ),
+            ]);
+
+            let mut item: *const c_void = std::ptr::null();
+            let status = SecItemCopyMatching(query.as_concrete_TypeRef(), &mut item);
+            if status != errSecSuccess || item.is_null() {
+                return Err(format!("Keychain read failed (OSStatus {status})"));
+            }
+            let data = CFData::wrap_under_create_rule(item as _);
+            parse_stored_key(&data.to_vec()).map_err(|e| e.to_string())
+        }
+    }
+
+    pub fn authenticate() -> BiometricAuthResult {
+        if !crate::device::tpm::is_tpm_key_available() {
+            // Fail closed on a pre-ACL item rather than reading it: that read
+            // would prove nothing. One master-password unlock re-stores the key
+            // under the ACL (`migrate_unprotected_stored_rms`), after which
+            // Touch ID works.
+            let message = if crate::device::tpm::has_unprotected_stored_rms() {
+                "Biometric protection for this vault needs to be set up. Unlock with your \
+                 master password once, then biometric unlock will work."
+            } else {
+                "No vault key in the Keychain. Please use your master password."
+            };
+            return BiometricAuthResult {
+                success: false,
+                error_message: Some(message.to_string()),
+                retry_count: None,
+                uses_password: false,
+            };
+        }
+
+        let factor = available_factor();
+        if factor == Factor::None {
+            return BiometricAuthResult {
+                success: false,
+                error_message: Some(
+                    "No biometric is available on this Mac. Please use your master password."
+                        .to_string(),
+                ),
+                retry_count: None,
+                uses_password: false,
+            };
+        }
+
+        let context = match evaluate_presence(factor) {
+            Ok(context) => context,
+            Err(message) => {
+                return BiometricAuthResult {
+                    success: false,
+                    error_message: Some(message),
+                    retry_count: None,
+                    uses_password: false,
+                }
+            }
+        };
+
+        match retrieve_with_context(&context) {
+            Ok(rms) => {
+                if let Ok(mut guard) = CACHED_RMS.lock() {
+                    *guard = Some(rms);
+                }
+                BiometricAuthResult {
+                    success: true,
+                    error_message: None,
+                    retry_count: None,
+                    uses_password: false,
+                }
+            }
+            Err(message) => BiometricAuthResult {
+                success: false,
+                error_message: Some(message),
+                retry_count: None,
+                uses_password: false,
+            },
         }
     }
 }
@@ -655,43 +1033,7 @@ fn authenticate_inner() -> BiometricAuthResult {
     }
     #[cfg(target_os = "macos")]
     {
-        // The Keychain item carries a user-presence ACL, so macOS itself
-        // prompts for Touch ID (or the login password) before handing the RMS
-        // back: the read *is* the presence proof. Previously this was a plain
-        // Keychain read that any code running as the user — including a
-        // compromised renderer calling `authenticate()` — could complete
-        // silently (audit D-3).
-        match crate::device::tpm::retrieve_from_tpm() {
-            Ok(rms) => {
-                if let Ok(mut guard) = CACHED_RMS.lock() {
-                    *guard = Some(rms);
-                }
-                BiometricAuthResult {
-                    success: true,
-                    error_message: None,
-                    retry_count: None,
-                    uses_password: false,
-                }
-            }
-            Err(_) => {
-                // Fail closed on a pre-ACL item rather than reading it: that
-                // read would prove nothing. One master-password unlock
-                // re-stores the key under the ACL (see
-                // `migrate_unprotected_stored_rms`) and Touch ID works after.
-                let message = if crate::device::tpm::has_unprotected_stored_rms() {
-                    "Touch ID protection for this vault needs to be set up. Unlock with your \
-                     master password once, then Touch ID will work."
-                } else {
-                    "No vault key in Keychain. Please use your master password."
-                };
-                BiometricAuthResult {
-                    success: false,
-                    error_message: Some(message.to_string()),
-                    retry_count: None,
-                    uses_password: false,
-                }
-            }
-        }
+        macos_biometric::authenticate()
     }
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
@@ -889,6 +1231,7 @@ pub mod windows_password {
         to_wide_string(s)
     }
 
+
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
         let blob = seal_rms_with_password(rms, password)?;
 
@@ -980,6 +1323,11 @@ pub mod default_password {
         }
 
         Ok(())
+    }
+
+    /// Whether a master-password blob exists, without reading or opening it.
+    pub fn has_stored_blob() -> bool {
+        password_file_path().exists()
     }
 
     pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {

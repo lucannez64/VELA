@@ -46,6 +46,12 @@ webauthn-rs-proto = "=0.5.5"
 [target.'cfg(windows)'.dependencies]
 arboard = "3"
 windows = { version = "0.58", features = [
+    # Windows Hello: UserConsentVerifier plus the Win32 interop that a desktop
+    # (non-packaged) app needs to parent the prompt to its own window.
+    "Security_Credentials_UI",
+    "Foundation",
+    "Win32_System_WinRT",
+    "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",
@@ -72,6 +78,15 @@ secret-service = { version = "5", features = ["rt-async-io-crypto-rust"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 arboard = "3"
 security-framework = "3"
+# Touch ID / Face ID: LocalAuthentication for the user-presence evaluation, and
+# the raw Security keys so the evaluated LAContext can be handed to the Keychain
+# read (one prompt instead of two).
+security-framework-sys = "2"
+core-foundation = "0.10"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "LABiometryType"] }
+block2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
