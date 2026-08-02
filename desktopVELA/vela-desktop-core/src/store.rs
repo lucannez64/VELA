@@ -402,6 +402,7 @@ mod tests {
             username: "alice".into(),
             pass: "hunter2pw".into(),
             totp: None,
+            app_ids: Vec::new(),
         });
         vault
     }

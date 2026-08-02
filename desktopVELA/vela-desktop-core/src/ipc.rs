@@ -375,6 +375,7 @@ pub mod server {
             username,
             pass: password,
             totp: None,
+            app_ids: Vec::new(),
         };
 
         {
@@ -751,6 +752,7 @@ pub mod server {
                     username: "alice".into(),
                     pass: "s3cret".into(),
                     totp: None,
+                    app_ids: Vec::new(),
                 });
             }
             let host: Arc<dyn Host> = mock.clone();

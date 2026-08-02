@@ -209,6 +209,7 @@ impl AddItemModal {
                     let t = self.totp.read(cx).as_str().to_string();
                     (!t.trim().is_empty()).then_some(t)
                 },
+                app_ids: Vec::new(),
             },
             ItemKind::CreditCard => VaultItem::CreditCard {
                 meta,

@@ -33,6 +33,7 @@ fn login(id: &str, name: &str, url: &str, user: &str, pass: &str) -> VaultItem {
         username: user.into(),
         pass: pass.into(),
         totp: None,
+        app_ids: Vec::new(),
     }
 }
 

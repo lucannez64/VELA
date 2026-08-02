@@ -2,6 +2,8 @@ package com.vela.android.core
 
 import android.content.Context
 import android.util.Log
+import com.vela.android.autofill.AppAssociations
+import com.vela.android.autofill.AutofillMatcher
 import com.vela.android.security.EncryptedVaultStore
 import com.vela.android.security.SecureVaultManager
 import com.vela.android.sync.SyncSettingsStore
@@ -16,7 +18,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.net.URI
 import java.time.Instant
 import java.util.Locale
 
@@ -125,76 +126,102 @@ class LocalVaultRepository(
         }
     }
 
+    /**
+     * Logins that may be offered for an autofill request.
+     *
+     * The rules live in [AutofillMatcher]; [assetLinksVerifier] supplies the
+     * network half (Digital Asset Links) when a verifier has been installed.
+     */
     fun findAutofillLogins(webDomain: String?, packageName: String?): List<VaultItem.Login> {
-        val domains = buildSet {
-            webDomain?.takeIf { it.isNotBlank() }?.let { add(it) }
-            packageName?.takeIf { it.isNotBlank() }?.let {
-                add(it)
-                domainFromPackageName(it)?.let { d -> add(d) }
-            }
-        }
-        val logins = _items.value.filterIsInstance<VaultItem.Login>()
-        return if (domains.isEmpty()) logins else logins.filter { login ->
-            domains.any { domain -> domainsMatch(domain, login.url) }
-        }
-    }
-
-    private fun domainsMatch(current: String, stored: String): Boolean {
-        val currentHost = hostOf(current) ?: current.lowercase(Locale.US)
-        val storedHost = hostOf(stored) ?: stored.lowercase(Locale.US)
-        if (currentHost == storedHost) return true
-        if (currentHost.isIpAddress()) return false
-        val currentParts = currentHost.split(".")
-        val storedParts = storedHost.split(".")
-        if (storedParts.size < 2 || storedParts.size > currentParts.size) return false
-        return currentParts.takeLast(storedParts.size) == storedParts
-    }
-
-    private fun domainFromPackageName(pkg: String): String? {
-        val known = mapOf(
-            "com.instagram.android" to "instagram.com",
-            "com.zhiliaoapp.musically" to "tiktok.com",
-            "com.whatsapp" to "whatsapp.com",
-            "com.facebook.orca" to "facebook.com",
-            "com.facebook.katana" to "facebook.com",
-            "com.snapchat.android" to "snapchat.com",
-            "com.linkedin.android" to "linkedin.com",
-            "com.pinterest" to "pinterest.com",
-            "com.reddit.frontpage" to "reddit.com",
-            "com.spotify.music" to "spotify.com",
-            "com.netflix.mediaclient" to "netflix.com",
-            "com.amazon.mShop.android.shopping" to "amazon.com",
-            "com.paypal.android.p2pmobile" to "paypal.com",
-            "com.ubercab" to "uber.com",
-            "com.airbnb.android" to "airbnb.com",
-            "com.discord" to "discord.com",
-            "com.twitch.android.app" to "twitch.tv",
-            "com.ebay.mobile" to "ebay.com",
-            "com.dropbox.android" to "dropbox.com",
-            "com.slack" to "slack.com",
-            "com.skype.raider" to "skype.com",
-            "com.vkontakte.android" to "vk.com",
-            "com.telegram.messenger" to "telegram.org"
+        val verifier = assetLinksVerifier
+        val browsers = browserAllowlist
+        return AutofillMatcher.match(
+            logins = _items.value.filterIsInstance<VaultItem.Login>(),
+            webDomain = webDomain,
+            packageName = packageName,
+            isTrustedBrowser = browsers ?: { false },
+            installedSignatures = installedSignatures ?: { emptySet() },
+            verifyAssetLinks = verifier ?: { _, _ -> false },
         )
-        known[pkg]?.let { return it }
-
-        val parts = pkg.split(".")
-        if (parts.size >= 3 && parts[0] == "com") {
-            return "${parts[1]}.com"
-        }
-        return null
     }
 
-    private fun hostOf(value: String): String? {
-        val normalized = if (value.startsWith("http://") || value.startsWith("https://")) {
-            value
+    /**
+     * Signing certificates of an installed app, for links that pinned one.
+     * Installed alongside the other autofill lookups; absent means no signature
+     * is ever confirmed, so pinned links fail closed.
+     */
+    var installedSignatures: ((String) -> Set<String>)? = null
+
+    /**
+     * Grant [packageName] the right to be offered [itemId].
+     *
+     * This is the user speaking, so it is the strongest signal the matcher has —
+     * which is why [pinSigningKey] exists. Pinning records the certificate the
+     * app is signed with today, so the grant does not transfer if the package
+     * later ships from someone else's key. Leaving it off keeps the grant on the
+     * package name, which is what a user running the same app from a different
+     * store needs (F-Droid and Play sign differently).
+     */
+    fun linkApp(itemId: String, packageName: String, pinSigningKey: Boolean): Boolean {
+        val login = _items.value.filterIsInstance<VaultItem.Login>().firstOrNull { it.id == itemId }
+            ?: return false
+        val fingerprint = if (pinSigningKey) {
+            installedSignatures?.invoke(packageName)?.firstOrNull() ?: return false
         } else {
-            "https://$value"
+            null
         }
-        return runCatching { URI(normalized).host?.removePrefix("www.")?.lowercase(Locale.US) }.getOrNull()
+        val link = AppAssociations.appUri(packageName, fingerprint)
+
+        // Replace any existing link for this package: the user is restating the
+        // grant, not adding a second one.
+        val kept = login.appIds.filter {
+            !AppAssociations.packageFromUri(it).equals(packageName.lowercase(Locale.US), ignoreCase = true)
+        }
+        updateItem(
+            login.copy(
+                appIds = kept + link,
+                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+            )
+        )
+        return true
     }
 
-    private fun String.isIpAddress(): Boolean = split(".").all { it.toIntOrNull() in 0..255 }
+    /** Revoke a grant. The link string is what the UI listed, so it round-trips. */
+    fun unlinkApp(itemId: String, link: String) {
+        val login = _items.value.filterIsInstance<VaultItem.Login>().firstOrNull { it.id == itemId }
+            ?: return
+        if (link !in login.appIds) return
+        updateItem(
+            login.copy(
+                appIds = login.appIds - link,
+                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+            )
+        )
+    }
+
+    /**
+     * Asks a site whether it vouches for an app. Installed at startup, where
+     * there is a Context; null in tests, so the matcher simply falls back to
+     * locally-known associations.
+     */
+    var assetLinksVerifier: ((String, String) -> Boolean)? = null
+
+    /**
+     * Whether a package is a browser whose claimed `webDomain` may be believed —
+     * signing certificate checked, not just the name. Installed alongside
+     * [assetLinksVerifier]; absent means "nothing is a browser", which is the
+     * safe direction.
+     */
+    var browserAllowlist: ((String) -> Boolean)? = null
+
+    /** See [browserAllowlist]. */
+    fun isTrustedBrowser(packageName: String?): Boolean {
+        val check = browserAllowlist ?: return false
+        val pkg = packageName?.takeIf { it.isNotBlank() } ?: return false
+        return check(pkg)
+    }
+
+    private fun hostOf(value: String): String? = AutofillMatcher.hostOf(value)
 
     private fun persistIfUnlocked() {
         val rms = secureVaultManager.currentRmsCopy() ?: return
@@ -247,6 +274,12 @@ object VelaRepositories {
             secureVaultManager = security,
             encryptedVaultStore = EncryptedVaultStore(context.applicationContext.filesDir.resolve("vault"))
         )
+        // Autofill decides where credentials may go; both answers need a Context,
+        // and neither belongs in the repository itself (audit A-2).
+        val appContext = context.applicationContext
+        vault.assetLinksVerifier = com.vela.android.autofill.AssetLinksVerifier(appContext)::verify
+        vault.browserAllowlist = com.vela.android.autofill.BrowserAllowlist(appContext)::isTrustedBrowser
+        vault.installedSignatures = { pkg -> com.vela.android.autofill.AppSignatures.sha256(appContext, pkg) }
         syncSettings = SyncSettingsStore(context.applicationContext)
         vault.onLocalChange = { syncSettings.markLocalChanged() }
         serverIdentity = com.vela.android.sync.ServerIdentityStore(context.applicationContext)

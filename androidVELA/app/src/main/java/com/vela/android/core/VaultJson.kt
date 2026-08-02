@@ -48,6 +48,7 @@ object VaultJson {
                 .put("username", username)
                 .put("password", password)
                 .put("totp", totp)
+                .put("app_ids", JSONArray().also { array -> appIds.forEach { array.put(it) } })
 
             is VaultItem.CreditCard -> json
                 .put("item_type", "creditCard")
@@ -103,6 +104,7 @@ object VaultJson {
                 username = json.optString("username"),
                 password = json.optString("password"),
                 totp = json.optNullableString("totp"),
+                appIds = json.stringList("app_ids", "appIds"),
             )
 
             "creditCard", "creditcard", "card" -> VaultItem.CreditCard(
@@ -254,6 +256,16 @@ object VaultJson {
             }
         }
         return ""
+    }
+
+    /** First present string array among [names], as a list. */
+    private fun JSONObject.stringList(vararg names: String): List<String> {
+        for (name in names) {
+            val array = optJSONArray(name) ?: continue
+            return (0 until array.length())
+                .mapNotNull { array.optString(it).takeIf { value -> value.isNotBlank() } }
+        }
+        return emptyList()
     }
 
     private fun JSONObject.firstStringByKey(predicate: (String) -> Boolean): String {

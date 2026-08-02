@@ -55,6 +55,16 @@ pub enum VaultItem {
         pass: String,
         #[serde(default)]
         totp: Option<String>,
+        /// Mobile apps the user has linked to this login, as `androidapp://<package>`.
+        ///
+        /// A package name cannot be turned into a domain by rule — `com.ubercab`
+        /// is not `ubercab.com`, and anyone can publish `com.paypal.anything` —
+        /// so the association is recorded when the user confirms it, the way
+        /// every other password manager does it (audit A-2). Defaulted and
+        /// preserved on round trip so a client that predates the field does not
+        /// silently drop someone's links.
+        #[serde(default, alias = "appIds")]
+        app_ids: Vec<String>,
     },
     CreditCard {
         #[serde(flatten)]
@@ -419,6 +429,7 @@ mod tests {
             username: username.to_string(),
             pass: "secret".to_string(),
             totp: None,
+            app_ids: Vec::new(),
         }
     }
 
@@ -471,6 +482,34 @@ mod tests {
         let roundtrip = serde_json::to_string(&item).unwrap();
         let re_read: VaultItem = serde_json::from_str(&roundtrip).unwrap();
         assert_eq!(re_read, item);
+    }
+
+    #[test]
+    fn app_links_survive_a_json_round_trip_and_default_to_none() {
+        // Written by an older client: no app_ids at all.
+        let old = r#"{"item_type":"login","id":"abc","name":"t","url":"https://uber.com","username":"u","password":"p","createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z"}"#;
+        let item: VaultItem = serde_json::from_str(old).unwrap();
+        match &item {
+            VaultItem::Login { app_ids, .. } => assert!(app_ids.is_empty()),
+            _ => panic!("expected a login"),
+        }
+
+        let mut linked = login("1", "https://uber.com", "ada");
+        if let VaultItem::Login { app_ids, .. } = &mut linked {
+            app_ids.push("androidapp://com.ubercab".to_string());
+        }
+        let json = serde_json::to_string(&linked).unwrap();
+        assert!(json.contains("\"app_ids\":[\"androidapp://com.ubercab\"]"));
+        assert_eq!(serde_json::from_str::<VaultItem>(&json).unwrap(), linked);
+
+        // camelCase, as a JS client would write it.
+        let camel = r#"{"item_type":"login","id":"abc","name":"t","url":"https://uber.com","username":"u","password":"p","appIds":["androidapp://com.ubercab"],"createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z"}"#;
+        match serde_json::from_str::<VaultItem>(camel).unwrap() {
+            VaultItem::Login { app_ids, .. } => {
+                assert_eq!(app_ids, vec!["androidapp://com.ubercab".to_string()])
+            }
+            _ => panic!("expected a login"),
+        }
     }
 
     #[test]

@@ -42,6 +42,14 @@ sealed interface VaultItem {
         val username: String,
         val password: String,
         val totp: String? = null,
+        /**
+         * Apps the user has linked to this login, as `androidapp://<package>`.
+         *
+         * A package name cannot be turned into a domain by rule, so the link is
+         * recorded when the user confirms it rather than guessed (audit A-2).
+         * See [com.vela.android.autofill.AppAssociations].
+         */
+        val appIds: List<String> = emptyList(),
     ) : VaultItem {
         override val type: VaultItemType = VaultItemType.Login
     }

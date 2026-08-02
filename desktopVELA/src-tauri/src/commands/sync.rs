@@ -1076,6 +1076,7 @@ mod tests {
             username: "user".to_string(),
             pass: "pw".to_string(),
             totp: None,
+            app_ids: Vec::new(),
         }
     }
 
