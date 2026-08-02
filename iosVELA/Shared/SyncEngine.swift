@@ -49,7 +49,7 @@ struct SyncEngine {
     /// recorded one is a rollback, not a stale read. A vault reset and
     /// re-created elsewhere legitimately restarts its clocks, which is why the
     /// message says how to clear the local baseline.
-    private func rejectRollback(manifest: SyncManifest) throws {
+    private func rejectRollback(manifest: VelaClient.SyncManifest) throws {
         let lastSeen = Self.sharedDefaults().integer(forKey: Self.lastSeenClockKey)
         guard lastSeen > 0 else { return }
         let serverMax = manifest.chunks.map { $0.lamport_clock }.max() ?? 0
