@@ -73,18 +73,19 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 |---|---|---|---|---|---|
 | S-1 | **High** | server + desktop | Web-session grant trusts "any user who saw the QR"; `rw` leaks the RMS | code + dynamic | **FIXED** (grant bound to the approver; RMS export = D-2, also fixed) |
 | S-2 | High | server | `GET /web-session/:id` fully unauthenticated; one-shot capsule DoS | **[DYN-VERIFIED]** | **FIXED** (poll requires the browser's secret) |
-| S-3 | Medium | server | Recovery-initiation per-user DoS (rate limit keyed on `user_id` only) | **[DYN-VERIFIED]** | open |
+| S-3 | Medium | server | Recovery-initiation per-user DoS (rate limit keyed on `user_id` only) | **[DYN-VERIFIED]** | **FIXED** (per-victim cap keyed on the source too) |
 | S-4 | Medium | server | `/web-session/:id/keys` not ownership-scoped (enabler for S-1) | code | **FIXED** (scoped to the committed approver) |
-| A-1 | **High** | android | Exported `MainActivity` leaks plaintext creds to any caller | code | open |
+| A-1 | **High** | android | Exported `MainActivity` leaks plaintext creds to any caller | code | **FIXED** (one-time token proves the intent is ours) |
 | A-2 | Medium | android | `com.<x>` package name auto-maps to `<x>.com` (autofill phishing) | code | open |
 | A-3 | Medium | android | Release silently debug-signed when keystore missing | code | open |
-| D-1 | **High** | desktop | Auto-lock is lazy — secrets persist in RAM past expiry | code | open |
+| D-1 | **High** | desktop | Auto-lock is lazy — secrets persist in RAM past expiry | code | **FIXED** (watchdog thread locks on the deadline) |
 | D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code | **FIXED** (per-chunk vault keys instead of the RMS) |
-| D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | open |
+| D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | **FIXED** (LocalAuthentication evaluation + ACL) |
+| D-5 | **High** | desktop | **Windows "Hello" was never invoked** — credential read only (found while fixing D-3) | code | **FIXED** (UserConsentVerifier gates every read) |
 | D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | open |
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | open |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | open |
-| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | open |
+| C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **PARTIAL** (RMS crosses as bytes; identity keys still strings) |
 | C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | open |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | open |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | open |
@@ -205,6 +206,13 @@ from its ephemeral key) before delivering/invalidating the capsule.
 
 ### S-3 — Recovery-initiation per-user DoS  ·  **MEDIUM**  ·  **[DYN-VERIFIED]**
 
+> **STATUS: FIXED.** The per-victim cap is now keyed on `(ip, user_id)` at
+> 5/hour (`rate_limit::recovery_initiate_by_ip_user`), so a third party can only
+> ever throttle itself — the same reasoning the `/auth/verify` failure counters
+> already used. A per-user backstop remains for distributed churn but at 50/hour,
+> which one legitimate user cannot reach. Regression:
+> `recovery_initiate_limit_cannot_be_burned_for_someone_else`.
+
 **Location.** `serverVELA/vela-server/src/recovery/initiate.rs:44-53`
 
 ```rust
@@ -259,6 +267,15 @@ craft a malicious grant capsule.
 ---
 
 ### A-1 — Exported `MainActivity` leaks plaintext credentials via Autofill-unlock IPC  ·  **HIGH**
+
+> **STATUS: FIXED.** `VelaAutofillService` mints a one-time token
+> (`AutofillUnlockTokens`) into the `PendingIntent` it builds, and
+> `parseAutofillRequest` ignores any unlock intent that cannot redeem one. An app
+> that crafts its own intent has no token, so it never reaches the
+> `FillResponse`. Caller identity is deliberately not the check: the Autofill
+> framework launches the PendingIntent from the *filled app's* process, so
+> `getCallingPackage()` is attacker-influenced. Tokens are in-memory, one-shot,
+> and expire in 5 minutes; a process restart fails closed to a plain unlock.
 
 **Locations**
 - `androidVELA/app/src/main/AndroidManifest.xml:22` (`android:exported="true"` — required as launcher)
@@ -337,6 +354,14 @@ same-key replacement in sideload/downgrade scenarios.
 
 ### D-1 — Auto-lock is lazy: secrets persist in memory past expiry  ·  **HIGH**
 
+> **STATUS: FIXED.** `commands::session::spawn_auto_lock_watchdog` runs
+> `auto_lock_if_expired` on its own thread every 15 s, so the deadline is enforced
+> by the clock rather than by the next command. Both frontends start it: Tauri
+> emits `session-locked` (the same event the manual lock uses, so the renderer
+> clears the clipboard and in-memory items), gpui sends `TrayCommand::Locked`
+> (same path as "Lock Now"). Regression:
+> `auto_lock_wipes_secrets_once_the_deadline_passes`.
+
 **Locations**
 - `desktopVELA/vela-desktop-core/src/session.rs:66-72` (`is_expired` only compares timestamps)
 - `desktopVELA/vela-desktop-core/src/lib.rs:131-134` (`is_unlocked` never wipes state)
@@ -400,6 +425,35 @@ export is kept, make the fingerprint-substitution check unconditional (reject ba
 
 ### D-3 — macOS "biometric" unlock is a Keychain read with no user-presence proof  ·  **HIGH**
 
+> **STATUS: FIXED — real biometric authentication, not an implicit ACL.**
+> `macos_biometric::authenticate()` asks **LocalAuthentication** to verify the
+> device owner (`LAContext.evaluatePolicy`,
+> `DeviceOwnerAuthenticationWithBiometrics`) *before* any key is read, and then
+> hands that **same evaluated context** to the Keychain read via
+> `kSecUseAuthenticationContext` — so the user sees exactly one prompt and macOS
+> still enforces the item's `kSecAccessControlUserPresence` ACL underneath. Two
+> independent gates: the app authenticates the user, and the OS refuses the item
+> to anything that has not.
+>
+> The factor is whatever the hardware has — Touch ID, Face ID or Optic ID — since
+> the policy means "this device's biometry"; `LAContext.biometryType` is used to
+> name it correctly in prompts, errors and the reported provider
+> (`BiometricProvider::{TouchId, FaceId, OpticId}`). On a Mac with no sensor, a
+> paired Apple Watch (`…WithBiometricsOrWatch`) is accepted as the presence
+> factor; with neither, biometric unlock fails closed to the master password,
+> exactly as Linux does.
+>
+> Pre-ACL items live under a separate account name: biometric unlock refuses them
+> rather than reading them, and one master-password unlock migrates the key
+> (`biometric::migrate_unprotected_stored_rms`) and deletes the unprotected copy.
+> Key-presence probes use an attribute-only query so they never trigger a prompt.
+>
+> **Verification caveat:** `cfg(target_os = "macos")` code cannot run in the
+> Linux dev/CI environment. It is type-checked against the real
+> `objc2-local-authentication` / `security-framework` crates for
+> `x86_64-apple-darwin`; the prompt itself, the single-prompt behaviour and the
+> pre-ACL migration need one manual pass on hardware.
+
 **Locations**
 - `desktopVELA/vela-desktop-core/src/biometric.rs:647-692` (macOS `authenticate_inner`)
 - `desktopVELA/vela-desktop-core/src/device.rs:373-432` (`retrieve_from_secure_enclave` → `get_generic_password`)
@@ -419,6 +473,35 @@ compromise (XSS, malicious extension, debugger) calls `authenticate()` → popul
 macOS from `authenticate()` until Touch ID is wired up (mirror the Linux storage-vs-verification
 split). Also fix `enroll()` (`commands/biometric.rs:42-48`) which unconditionally returns
 `WindowsHello` regardless of platform.
+
+---
+
+### D-5 — Windows "biometric" unlock never invoked Windows Hello  ·  **HIGH** (found during remediation)
+
+> **STATUS: FIXED.** `windows_biometric::authenticate()` now calls
+> `UserConsentVerifier` (through `IUserConsentVerifierInterop::RequestVerificationForWindowAsync`,
+> which is what a non-packaged desktop app needs so the prompt parents to its own
+> window, falling back to the plain WinRT call) and **returns before reading any
+> key** unless the user verified. `check_availability` reports `WindowsHello` only
+> when Hello can actually verify the user, and `MasterPassword` otherwise.
+
+**Locations**
+- `desktopVELA/vela-desktop-core/src/biometric.rs` (`windows_biometric::authenticate`)
+- `desktopVELA/vela-desktop-core/src/device.rs` (`tpm::retrieve_from_tpm`, Credential Manager read)
+
+**Description.** This was not in the original findings — the audit contrasted the
+macOS gap (D-3) against "Linux, which correctly requires `fprint::verify()`", and
+did not check that the Windows path did the same. It did not. `authenticate()`
+read the TPM-sealed key, or `CredReadW`'d the `VELA_RMS` credential, and returned
+`success: true`. Both reads are granted to *anything running in the user's
+session*: no Hello prompt, no PIN, no user presence of any kind. The provider was
+nevertheless reported as `WindowsHello`, so the UI told users their vault was
+protected by a biometric that was never consulted — the same defect as D-3, with
+the same impact (any renderer compromise calling `authenticate()` unlocks the
+vault), on the platform the audit assumed was fine.
+
+**Impact.** Identical to D-3: full vault access for local code running as the
+user, with no user interaction.
 
 ---
 
@@ -486,6 +569,21 @@ corrupted/synced/imported entry suffices. (Companion issue: `velaEscapeHtml`
 ---
 
 ### C-1 — Private keys / RMS cross the JNI/FFI boundary as immutable base64 `String`s  ·  **HIGH**
+
+> **STATUS: PARTIALLY FIXED — the RMS no longer crosses as a string.** Every JNI
+> entry point that consumes the RMS (vault and per-chunk encrypt/decrypt, web
+> session chunk keys, Shamir split) now takes it as a `ByteArray`, and the Rust
+> copy is wiped on drop (`SecretBytes`). The paths that *return* a recovered RMS
+> (RMS capsule decrypt, Shamir combine) write into a caller-provided `ByteArray`
+> instead of returning base64 in the JSON. Kotlin callers already held the RMS as
+> a `ByteArray` and wipe it with `fill(0)`, so the un-zeroizable base64 `String`
+> is gone from the RMS path entirely.
+>
+> **Still open:** `generate_server_identity` returns the hybrid signing key and
+> share decapsulation key as base64 strings, and `ServerIdentityStore` persists
+> them that way. Fixing that is a storage-format change (opaque handles + a
+> Rust-side keystore), tracked separately. iOS has the same string-based FFI
+> shape and is tracked with it.
 
 **Locations**
 - `libVELA/vela-android-bridge/src/lib.rs:82-88, 426-429, 478-501` (key material returned as base64 strings)
@@ -636,16 +734,22 @@ credit the existing hardening:
    `approver_user_id` at `start` and only that account may fetch keys or grant; the approver
    apps reject codes missing the fingerprint or link nonce.
    ~~**D-2**~~ **Done** — `rw` now seals per-chunk vault keys (envelope v2), so the browser never
-   holds the RMS; ~~**S-2**~~ **Done** — polling requires the browser's registered secret. `rw`
+   holds the RMS; ~~**S-2**~~ **Done** — polling requires the browser's registered secret;
+   ~~**S-3**~~ **Done** — the recovery cap can no longer be burned on someone else's behalf. `rw`
    still hands over long-lived *vault* keys, so it remains "I trust this device" until vault
    re-keying (§9) exists.
-2. **Android `MainActivity` (A-1 + A-2).** Enforce caller == Autofill framework before returning
-   the `FillResponse`; remove the `com.<x>`→`<x>.com` package heuristic.
-3. **Desktop auto-lock (D-1).** Add a background timer that wipes RMS + clipboard on expiry.
-4. **macOS biometric (D-3).** Bind the Keychain item to Touch ID/user-presence, or disable
-   macOS biometric unlock until implemented.
-5. **Crypto JNI (C-1).** Move key use behind opaque Rust handles instead of passing private keys
-   as strings.
+2. ~~**Android `MainActivity` (A-1).**~~ **Done** — an unlock intent must redeem a one-time token
+   minted by our own Autofill service. **A-2 is still open**: remove the `com.<x>`→`<x>.com`
+   package heuristic.
+3. ~~**Desktop auto-lock (D-1).**~~ **Done** — a watchdog thread locks on the deadline and the
+   frontends clear the clipboard through their existing lock paths.
+4. ~~**macOS biometric (D-3)**~~ **and Windows Hello (D-5, found while fixing it).** **Done** —
+   both platforms now verify the user (LocalAuthentication / `UserConsentVerifier`) *before*
+   any key is read, and macOS reuses the evaluated context for the Keychain read so there is
+   one prompt, not two. Needs one manual pass on real hardware for each.
+5. **Crypto JNI (C-1).** *Partially done* — the RMS crosses JNI as bytes now. The long-term
+   identity/share private keys still cross (and persist) as strings; that needs opaque handles
+   plus a storage-format change.
 6. **Extension credential bypass (E-1).** Remove/gate `nativeMessage`/`getNativeMessage`.
 7. **AEAD binding (C-2) + authenticated shares (C-3) + `VelaByteBuffer` UB (C-4).**
 8. The lower-severity items above are opportunistic hardening.

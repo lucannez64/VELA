@@ -4,7 +4,7 @@
 //! Kotlin/JNI layer can remain thin and stable while the Rust internals evolve.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use jni::objects::{JObject, JString};
+use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,7 @@ use vela_crypto::kdf;
 use vela_crypto::kem;
 use vela_crypto::shamir;
 use vela_crypto::signing;
+use zeroize::Zeroize;
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
 const CHUNK_KEY_CONTEXT: &str = "vela chunk key v1";
@@ -44,6 +45,9 @@ struct PasswordStrengthResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct EncryptVaultRequest {
+    /// Only the C ABI still carries the RMS here; the JNI entry points take it
+    /// as a byte array instead (audit C-1).
+    #[serde(default)]
     rms_b64: String,
     vault_json: String,
 }
@@ -55,6 +59,8 @@ struct EncryptVaultResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DecryptVaultRequest {
+    /// C-ABI only; the JNI entry points pass the RMS as bytes (audit C-1).
+    #[serde(default)]
     rms_b64: String,
     ciphertext_b64: String,
 }
@@ -66,6 +72,8 @@ struct DecryptVaultResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct WebSessionChunkKeysRequest {
+    /// C-ABI only; the JNI entry points pass the RMS as bytes (audit C-1).
+    #[serde(default)]
     rms_b64: String,
 }
 
@@ -78,6 +86,8 @@ struct WebSessionChunkKeysResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct EncryptChunkRequest {
+    /// C-ABI only; the JNI entry points pass the RMS as bytes (audit C-1).
+    #[serde(default)]
     rms_b64: String,
     chunk_id: String,
     vault_json: String,
@@ -85,6 +95,8 @@ struct EncryptChunkRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DecryptChunkRequest {
+    /// C-ABI only; the JNI entry points pass the RMS as bytes (audit C-1).
+    #[serde(default)]
     rms_b64: String,
     chunk_id: String,
     ciphertext_b64: String,
@@ -163,6 +175,8 @@ struct DecryptEnrollmentPackageResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SplitRecoveryRequest {
+    /// C-ABI only; the JNI entry points pass the RMS as bytes (audit C-1).
+    #[serde(default)]
     rms_b64: String,
     threshold: u8,
     n: u8,
@@ -219,10 +233,11 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEnrollmen
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEncryptVaultJson(
     mut env: JNIEnv,
     _object: JObject,
+    rms: JByteArray,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        encrypt_vault_json(request)
+    let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
+        encrypt_vault_with_rms(rms, request)
     });
     jni_string(&mut env, &response)
 }
@@ -231,10 +246,11 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEncryptVa
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVaultJson(
     mut env: JNIEnv,
     _object: JObject,
+    rms: JByteArray,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        decrypt_vault_json(request)
+    let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
+        decrypt_vault_with_rms(rms, request)
     });
     jni_string(&mut env, &response)
 }
@@ -243,10 +259,11 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVa
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEncryptVaultChunkJson(
     mut env: JNIEnv,
     _object: JObject,
+    rms: JByteArray,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        encrypt_vault_chunk_json(request)
+    let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
+        encrypt_vault_chunk_with_rms(rms, request)
     });
     jni_string(&mut env, &response)
 }
@@ -255,10 +272,11 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeEncryptVa
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVaultChunkJson(
     mut env: JNIEnv,
     _object: JObject,
+    rms: JByteArray,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        decrypt_vault_chunk_json(request)
+    let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
+        decrypt_vault_chunk_with_rms(rms, request)
     });
     jni_string(&mut env, &response)
 }
@@ -267,10 +285,11 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVa
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeWebSessionChunkKeysJson(
     mut env: JNIEnv,
     _object: JObject,
+    rms: JByteArray,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        web_session_chunk_keys_json(request)
+    let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
+        web_session_chunk_keys_with_rms(rms, request)
     });
     jni_string(&mut env, &response)
 }
@@ -320,9 +339,10 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptRm
     mut env: JNIEnv,
     _object: JObject,
     request_json: JString,
+    rms_out: JByteArray,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        decrypt_rms_capsule_json(request)
+    let response = jni_json_result_into_secret(&mut env, request_json, rms_out, |request| {
+        decrypt_rms_capsule_bytes(request)
     });
     jni_string(&mut env, &response)
 }
@@ -367,10 +387,11 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenShare
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeSplitRecoveryJson(
     mut env: JNIEnv,
     _object: JObject,
+    rms: JByteArray,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        split_recovery_json(request)
+    let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
+        split_recovery_with_rms(rms, request)
     });
     jni_string(&mut env, &response)
 }
@@ -383,9 +404,10 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCombineRe
     mut env: JNIEnv,
     _object: JObject,
     request_json: JString,
+    rms_out: JByteArray,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        combine_recovery_json(request)
+    let response = jni_json_result_into_secret(&mut env, request_json, rms_out, |request| {
+        combine_recovery_bytes(request)
     });
     jni_string(&mut env, &response)
 }
@@ -450,6 +472,72 @@ pub unsafe extern "C" fn vela_encrypt_bytes(
 fn decode_rms(input: &str) -> anyhow_like::Result<[u8; 32]> {
     let decoded = B64.decode(input.as_bytes())?;
     unsafe { raw_rms(decoded.as_ptr(), decoded.len()) }
+}
+
+/// RMS handed over as raw bytes (JNI path, audit C-1).
+fn encrypt_vault_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {
+    let request: EncryptVaultRequest = serde_json::from_str(request_json)?;
+    let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
+    let _: VaultStore = serde_json::from_str(&request.vault_json)?;
+    let key = kdf::derive(VAULT_KEY_CONTEXT, &rms);
+    let ciphertext = aead::encrypt(key.as_bytes(), request.vault_json.as_bytes())?;
+    Ok(EncryptVaultResponse {
+        ciphertext_b64: B64.encode(ciphertext),
+    })
+}
+
+fn decrypt_vault_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<DecryptVaultResponse> {
+    let request: DecryptVaultRequest = serde_json::from_str(request_json)?;
+    let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
+    let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
+    let key = kdf::derive(VAULT_KEY_CONTEXT, &rms);
+    let plaintext = aead::decrypt(key.as_bytes(), &ciphertext)?;
+    Ok(DecryptVaultResponse {
+        vault_json: String::from_utf8(plaintext.to_vec())?,
+    })
+}
+
+fn encrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {
+    let request: EncryptChunkRequest = serde_json::from_str(request_json)?;
+    let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
+    let _: VaultStore = serde_json::from_str(&request.vault_json)?;
+    let key = chunk_key(&rms, &request.chunk_id);
+    let ciphertext = aead::encrypt(&key, request.vault_json.as_bytes())?;
+    Ok(EncryptVaultResponse {
+        ciphertext_b64: B64.encode(ciphertext),
+    })
+}
+
+fn decrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<DecryptVaultResponse> {
+    let request: DecryptChunkRequest = serde_json::from_str(request_json)?;
+    let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
+    let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
+    let key = chunk_key(&rms, &request.chunk_id);
+    let plaintext = aead::decrypt(&key, &ciphertext)?;
+    Ok(DecryptVaultResponse {
+        vault_json: String::from_utf8(plaintext.to_vec())?,
+    })
+}
+
+fn web_session_chunk_keys_with_rms(
+    rms: &[u8],
+    _request_json: &str,
+) -> anyhow_like::Result<WebSessionChunkKeysResponse> {
+    let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
+    let chunk_keys = kdf::web_session_chunk_keys(&rms)
+        .into_iter()
+        .map(|(id, key)| (id, B64.encode(key.as_bytes())))
+        .collect();
+    Ok(WebSessionChunkKeysResponse { chunk_keys })
+}
+
+fn split_recovery_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<SplitRecoveryResponse> {
+    let request: SplitRecoveryRequest = serde_json::from_str(request_json)?;
+    let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
+    let shares = shamir::split(&rms, request.threshold, request.n)?;
+    Ok(SplitRecoveryResponse {
+        shares_b64: shares.iter().map(|s| B64.encode(s.to_bytes())).collect(),
+    })
 }
 
 fn encrypt_vault_json(request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {
@@ -574,6 +662,18 @@ fn create_auth_signature_json(request_json: &str) -> anyhow_like::Result<AuthSig
     create_auth_signature(&hybrid_sk, &challenge, &request.device_id)
 }
 
+/// Same as [`decrypt_rms_capsule_json`] but yields the raw RMS for the
+/// byte-array JNI path (audit C-1).
+fn decrypt_rms_capsule_bytes(request_json: &str) -> anyhow_like::Result<[u8; 32]> {
+    let response = decrypt_rms_capsule_json(request_json)?;
+    decode_rms(&response.rms_b64)
+}
+
+fn combine_recovery_bytes(request_json: &str) -> anyhow_like::Result<[u8; 32]> {
+    let response = combine_recovery_json(request_json)?;
+    decode_rms(&response.rms_b64)
+}
+
 fn decrypt_rms_capsule_json(request_json: &str) -> anyhow_like::Result<DecryptRmsCapsuleResponse> {
     let request: DecryptRmsCapsuleRequest = serde_json::from_str(request_json)?;
     let transfer_key = B64.decode(request.transfer_key_b64.as_bytes())?;
@@ -647,6 +747,100 @@ fn create_auth_signature(
     Ok(AuthSignatureResponse {
         signature: B64.encode(signature.to_bytes()),
     })
+}
+
+/// Read a JNI byte array into a buffer that is wiped when it drops.
+///
+/// Key material used to reach Rust as base64 inside a JVM `String`: immutable,
+/// possibly interned, never zeroized, and therefore still sitting in the heap
+/// (and in any heap dump or crash report) long after use. A `ByteArray` is
+/// something both sides can actually erase — Kotlin calls `fill(0)`, and the
+/// copy below is zeroized on drop (audit C-1).
+struct SecretBytes(Vec<u8>);
+
+impl std::ops::Deref for SecretBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for SecretBytes {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+fn jni_secret_bytes(env: &mut JNIEnv, array: &JByteArray) -> anyhow_like::Result<SecretBytes> {
+    let bytes = env
+        .convert_byte_array(array)
+        .map_err(|e| anyhow_like::Error::from(e.to_string()))?;
+    Ok(SecretBytes(bytes))
+}
+
+/// Run `f` with the RMS taken from a JNI byte array rather than a `String`.
+fn jni_json_result_with_secret<T, F>(
+    env: &mut JNIEnv,
+    secret: JByteArray,
+    request_json: JString,
+    f: F,
+) -> String
+where
+    T: Serialize,
+    F: FnOnce(&[u8], &str) -> anyhow_like::Result<T>,
+{
+    let secret = match jni_secret_bytes(env, &secret) {
+        Ok(bytes) => bytes,
+        Err(error) => return error_json(&error.to_string()),
+    };
+    let request = match env.get_string(&request_json) {
+        Ok(value) => value.to_string_lossy().into_owned(),
+        Err(error) => return error_json(&error.to_string()),
+    };
+    match f(&secret, &request).and_then(|value| Ok(serde_json::to_string(&value)?)) {
+        Ok(json) => json,
+        Err(error) => error_json(&error.to_string()),
+    }
+}
+
+#[derive(Serialize)]
+struct OkResponse {
+    ok: bool,
+}
+
+/// Run `f` and hand its 32-byte secret back through the caller's byte array
+/// instead of a JSON string.
+///
+/// Returning the RMS as base64 in a JVM `String` (as the recovery and
+/// enrollment paths used to) leaves it un-zeroizable on the JVM heap, which is
+/// the same problem as passing it in (audit C-1). The JSON return value is kept
+/// for the error message only.
+fn jni_json_result_into_secret<F>(
+    env: &mut JNIEnv,
+    request_json: JString,
+    out: JByteArray,
+    f: F,
+) -> String
+where
+    F: FnOnce(&str) -> anyhow_like::Result<[u8; 32]>,
+{
+    let request = match env.get_string(&request_json) {
+        Ok(value) => value.to_string_lossy().into_owned(),
+        Err(error) => return error_json(&error.to_string()),
+    };
+    match f(&request) {
+        Ok(secret) => {
+            let signed: Vec<i8> = secret.iter().map(|b| *b as i8).collect();
+            if let Err(error) = env.set_byte_array_region(&out, 0, &signed) {
+                return error_json(&error.to_string());
+            }
+            match serde_json::to_string(&OkResponse { ok: true }) {
+                Ok(json) => json,
+                Err(error) => error_json(&error.to_string()),
+            }
+        }
+        Err(error) => error_json(&error.to_string()),
+    }
 }
 
 fn jni_json_result<T, F>(env: &mut JNIEnv, request_json: JString, f: F) -> String
@@ -746,6 +940,68 @@ mod tests {
         let ptr = unsafe { vela_password_strength_json(request.as_ptr()) };
         let json = unsafe { CString::from_raw(ptr) }.into_string().unwrap();
         assert!(json.contains("\"score\":\"strong\""));
+    }
+
+    /// Audit C-1: the JNI paths take the RMS as bytes, so the request JSON no
+    /// longer carries any key material at all.
+    #[test]
+    fn byte_array_paths_round_trip_without_key_material_in_json() {
+        let rms = [7u8; 32];
+        let vault_json = r#"{"items":[],"tombstones":[]}"#;
+
+        let encrypted = encrypt_vault_chunk_with_rms(
+            &rms,
+            &serde_json::json!({ "chunk_id": "vault-data-000000", "vault_json": vault_json })
+                .to_string(),
+        )
+        .expect("encrypt");
+        let decrypted = decrypt_vault_chunk_with_rms(
+            &rms,
+            &serde_json::json!({
+                "chunk_id": "vault-data-000000",
+                "ciphertext_b64": encrypted.ciphertext_b64,
+            })
+            .to_string(),
+        )
+        .expect("decrypt");
+        assert_eq!(decrypted.vault_json, vault_json);
+
+        // Whole-vault path too.
+        let encrypted =
+            encrypt_vault_with_rms(&rms, &serde_json::json!({ "vault_json": vault_json }).to_string())
+                .expect("encrypt vault");
+        let decrypted = decrypt_vault_with_rms(
+            &rms,
+            &serde_json::json!({ "ciphertext_b64": encrypted.ciphertext_b64 }).to_string(),
+        )
+        .expect("decrypt vault");
+        assert_eq!(decrypted.vault_json, vault_json);
+
+        // A wrong-length RMS is rejected rather than silently padded.
+        assert!(encrypt_vault_with_rms(
+            &[0u8; 16],
+            &serde_json::json!({ "vault_json": vault_json }).to_string()
+        )
+        .is_err());
+    }
+
+    /// The recovery/enrollment paths hand the RMS back as raw bytes for the
+    /// caller's `ByteArray`, never as base64 in a JVM string (audit C-1).
+    #[test]
+    fn recovered_rms_is_returned_as_raw_bytes() {
+        let rms = [9u8; 32];
+        let shares = split_recovery_with_rms(
+            &rms,
+            &serde_json::json!({ "threshold": 2, "n": 3 }).to_string(),
+        )
+        .expect("split");
+        assert_eq!(shares.shares_b64.len(), 3);
+
+        let combined = combine_recovery_bytes(
+            &serde_json::json!({ "shares_b64": shares.shares_b64[..2].to_vec() }).to_string(),
+        )
+        .expect("combine");
+        assert_eq!(combined, rms);
     }
 
     #[test]

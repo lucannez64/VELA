@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillManager
@@ -22,6 +23,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.vela.android.autofill.AutofillDatasetBuilder
 import com.vela.android.autofill.AutofillFieldSet
+import com.vela.android.autofill.AutofillUnlockTokens
 import com.vela.android.core.VelaRepositories
 import com.vela.android.core.SharedCore
 import com.vela.android.security.WebAuthnCeremony
@@ -269,8 +271,24 @@ class MainActivity : FragmentActivity() {
         finish()
     }
 
+    /**
+     * Parse an "unlock then fill" request — but only one this app actually
+     * issued.
+     *
+     * This Activity is the launcher, so it is exported and any installed app can
+     * start it with crafted extras. Completing the flow hands a `FillResponse`
+     * full of plaintext credentials back to whoever started it, so a request
+     * without a valid one-time token from [AutofillUnlockTokens] is ignored
+     * outright (audit A-1). The caller's identity is deliberately not used as
+     * the check: the Autofill framework launches our PendingIntent from the
+     * filled app's process, so `getCallingPackage()` is attacker-influenced.
+     */
     private fun parseAutofillRequest(intent: Intent?): AutofillFillRequest? {
         if (intent == null || !intent.getBooleanExtra(EXTRA_AUTOFILL_UNLOCK, false)) return null
+        if (!AutofillUnlockTokens.redeem(intent.getStringExtra(EXTRA_AUTOFILL_TOKEN))) {
+            Log.w(TAG, "ignoring autofill-unlock intent without a valid token")
+            return null
+        }
         val usernameIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_USERNAME_IDS).orEmpty()
         val passwordIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_PASSWORD_IDS).orEmpty()
         if (usernameIds.isEmpty() && passwordIds.isEmpty()) return null
@@ -362,12 +380,14 @@ class MainActivity : FragmentActivity() {
     }
 
     companion object {
+        private const val TAG = "MainActivity"
         private const val DRIVE_AUTH_REQUEST_CODE = 9821
         const val EXTRA_AUTOFILL_UNLOCK = "com.vela.android.extra.AUTOFILL_UNLOCK"
         const val EXTRA_AUTOFILL_USERNAME_IDS = "com.vela.android.extra.AUTOFILL_USERNAME_IDS"
         const val EXTRA_AUTOFILL_PASSWORD_IDS = "com.vela.android.extra.AUTOFILL_PASSWORD_IDS"
         const val EXTRA_AUTOFILL_DOMAIN = "com.vela.android.extra.AUTOFILL_DOMAIN"
         const val EXTRA_AUTOFILL_PACKAGE = "com.vela.android.extra.AUTOFILL_PACKAGE"
+        const val EXTRA_AUTOFILL_TOKEN = "com.vela.android.extra.AUTOFILL_TOKEN"
     }
 
     fun launchQrScanner(prompt: String, onResult: (String?) -> Unit) {

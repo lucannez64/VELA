@@ -173,6 +173,9 @@ class VelaAutofillService : AutofillService() {
             .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_PASSWORD_IDS, ArrayList(fields.passwordFields))
             .putExtra(MainActivity.EXTRA_AUTOFILL_DOMAIN, domain)
             .putExtra(MainActivity.EXTRA_AUTOFILL_PACKAGE, packageName)
+            // Proof this intent came from us and not from any app that noticed
+            // MainActivity is exported (audit A-1).
+            .putExtra(MainActivity.EXTRA_AUTOFILL_TOKEN, AutofillUnlockTokens.issue())
         val pendingIntent = PendingIntent.getActivity(
             this,
             1001,
