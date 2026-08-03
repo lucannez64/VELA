@@ -832,11 +832,28 @@ enrollment driver.
 > the writers, which is this change. Readers keep accepting the legacy format
 > forever, so chunks written before the flip stay readable.
 >
-> **Still unbound: audit chunks and share blobs.** The audit-log chunk is read
-> with the legacy `decrypt` on every client, so sealing it would need the same
-> two-phase rollout again; until then the server can still roll the audit log
-> back. `SHARE_ENCRYPTION` and `MAC_KEY` contexts are likewise unbound. Tracked
-> in #109.
+> **Done: the audit chunk is sealed too.** It is read and written only by the
+> desktop — no other client touches `audit-log` — so it needed no cross-client
+> rollout. The reader takes both formats and the writer seals against the id and
+> clock, which matters because the audit log is precisely the record a user
+> consults after a compromise, and a server that could roll it back could hide
+> its own tampering. An older desktop that cannot open a sealed chunk skips the
+> merge, which is what it already did on any decrypt failure.
+>
+> **Share blobs: not a rollback hole, and now tested.** Share capsules are
+> KEM-sealed to the recipient and carry no AAD, so nothing at the AEAD layer
+> distinguishes a live capsule from one the server kept and replayed. What
+> prevents the rollback is that `sync_received_linked_items` applies a share only
+> when its item is strictly newer than the one already held, and `updated_at`
+> travels *inside* the sealed payload — authenticated, so the server cannot alter
+> it without breaking the capsule. The whole protection is one comparison, which
+> is the kind of thing that gets refactored away, so it now has a test.
+>
+> The `SHARE_ENCRYPTION` and `MAC_KEY` derivation contexts the finding lists are
+> **dead code**: `share_encryption_key` has no callers at all and `mac_key` only a
+> test assertion. Adding associated data to a key nothing encrypts with would be
+> theatre; they are called out here so the next reader does not assume they are
+> vetted and start using them.
 
 **Location.** `libVELA/vela-crypto/src/aead.rs:21-36` (no AAD parameter; all callers pass empty)
 
