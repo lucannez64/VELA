@@ -318,6 +318,15 @@ fn env_is_production() -> bool {
         .unwrap_or(false)
 }
 
+/// Narrowest CIDR breadth accepted for `TRUSTED_PROXY_CIDRS`.
+///
+/// /8 still covers a whole private cloud network (10.0.0.0/8), which is the
+/// broadest thing a real deployment legitimately needs; /32 for v6 is likewise
+/// far wider than any proxy fleet. Below these, "trusted proxy" has stopped
+/// meaning anything and X-Forwarded-For becomes attacker-controlled.
+const MIN_TRUSTED_PROXY_PREFIX_V4: u8 = 8;
+const MIN_TRUSTED_PROXY_PREFIX_V6: u8 = 32;
+
 fn validate_proxy_cidr(cidr: &str) -> Result<()> {
     let (addr, prefix) = cidr
         .split_once('/')
@@ -336,5 +345,85 @@ fn validate_proxy_cidr(cidr: &str) -> Result<()> {
         prefix <= max_prefix,
         "TRUSTED_PROXY_CIDRS prefix too large for {cidr}"
     );
+    // Refuse a range so broad that anyone may forge their own address.
+    //
+    // This validated syntax only, so `0.0.0.0/0` passed — and that single
+    // setting quietly undoes the per-IP keying every rate limit depends on. It
+    // is worse than "limits can be evaded": the recovery and web-session budgets
+    // are keyed on (ip, target), so an attacker who chooses their own
+    // `X-Forwarded-For` can name the *victim's* address and burn exactly the
+    // victim's bucket — RT-1 and RT-2 restored in full, with the regression
+    // suite still green because it runs against a correctly configured server.
+    //
+    // A warning in a log would not do. Nobody reads one before shipping, and
+    // the failure it precedes is silent. Refusing to start is the only signal
+    // that arrives in time.
+    //
+    // The floor still admits the ranges a real deployment uses: a single
+    // proxy (/32), a subnet, or a whole private cloud network like
+    // 10.0.0.0/8. What it rejects is the class where "trusted proxy" has
+    // stopped meaning anything.
+    let min_prefix = match ip {
+        IpAddr::V4(_) => MIN_TRUSTED_PROXY_PREFIX_V4,
+        IpAddr::V6(_) => MIN_TRUSTED_PROXY_PREFIX_V6,
+    };
+    anyhow::ensure!(
+        prefix >= min_prefix,
+        "TRUSTED_PROXY_CIDRS entry {cidr} is too broad: /{prefix} lets {} forge \
+         X-Forwarded-For, which makes every per-IP rate limit attacker-controlled \
+         (an attacker can spend a victim's budget by claiming the victim's address). \
+         Use /{min_prefix} or narrower — the address range of your actual proxies.",
+        if prefix == 0 { "anyone" } else { "a large part of the internet" }
+    );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An over-broad trusted-proxy range must stop the server, not warn.
+    ///
+    /// `TRUSTED_PROXY_CIDRS=0.0.0.0/0` makes `X-Forwarded-For` attacker-supplied,
+    /// and every per-IP limit is keyed on that value. It does not merely let an
+    /// attacker dodge their own budget: the recovery and web-session limits are
+    /// keyed on (ip, target), so a forged address spends the *victim's*
+    /// allowance — RT-1 and RT-2 in full, against a build whose regression suite
+    /// still passes because CI runs it configured correctly.
+    #[test]
+    fn an_over_broad_trusted_proxy_range_is_refused() {
+        for cidr in ["0.0.0.0/0", "0.0.0.0/4", "::/0", "::/16"] {
+            let err = validate_proxy_cidr(cidr)
+                .expect_err(&format!("{cidr} is broad enough to forge any client address"));
+            assert!(
+                err.to_string().contains("too broad"),
+                "{cidr} should be refused for breadth, got: {err}"
+            );
+        }
+    }
+
+    /// The floor must not break real deployments: a single proxy, a Docker
+    /// bridge network, a private cloud range, an IPv6 site prefix.
+    #[test]
+    fn ordinary_proxy_ranges_are_still_accepted() {
+        for cidr in [
+            "127.0.0.1/32",
+            "::1/128",
+            "10.0.0.0/8",
+            "172.17.0.0/16",
+            "192.168.1.0/24",
+            "2001:db8::/48",
+        ] {
+            validate_proxy_cidr(cidr)
+                .unwrap_or_else(|e| panic!("{cidr} is a normal proxy range but was refused: {e}"));
+        }
+    }
+
+    /// Syntax checks still apply.
+    #[test]
+    fn malformed_proxy_ranges_are_still_refused() {
+        for cidr in ["10.0.0.0", "not-an-ip/24", "10.0.0.0/33", "::1/129"] {
+            assert!(validate_proxy_cidr(cidr).is_err(), "{cidr} should be refused");
+        }
+    }
 }

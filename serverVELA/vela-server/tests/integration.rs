@@ -1561,3 +1561,80 @@ async fn web_session_token_still_reaches_the_vault() {
         );
     }
 }
+
+/// The capsule is one-shot even when polls arrive together.
+///
+/// The sequential case was already covered. This is the concurrent one: the
+/// handler used to read the row, then clear it in a separate statement, so two
+/// polls that both read before either cleared were both served the capsule.
+/// Only the holder of the poll secret can reach this endpoint, so it was never
+/// an attacker's race to win — but one-shot delivery exists to bound the damage
+/// if that secret leaks, and a property that dissolves under concurrency bounds
+/// nothing.
+///
+/// The assertion is deterministic — the conditional UPDATE makes exactly one
+/// caller the winner whatever the interleaving. Its *detection* of a regression
+/// is probabilistic: reverting the fix only fails this when the polls really do
+/// overlap. That is worth saying out loud rather than trusting a green tick.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_capsule_is_delivered_once_even_under_concurrent_polls() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+
+    let (user_id, token) = seed_user_with_device(&state);
+    let link_nonce = B64.encode(vec![7u8; 32]);
+    let resp = app
+        .clone()
+        .oneshot(web_session_start_req(user_id, &link_nonce))
+        .await
+        .unwrap();
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let session_id = v["session_id"].as_str().unwrap().to_string();
+
+    let capsule = B64.encode(vec![9u8; 64]);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/web-session/{session_id}/grant"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "mode": "ro",
+                        "capsule": capsule,
+                        "link_nonce": link_nonce,
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let app = app.clone();
+        let session_id = session_id.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = app.oneshot(web_session_poll_req(&session_id)).await.unwrap();
+            let b = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+            v.get("capsule")
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string())
+        }));
+    }
+
+    let mut served = 0;
+    for h in handles {
+        if let Some(got) = h.await.unwrap() {
+            assert_eq!(got, capsule, "a served capsule must be the real one");
+            served += 1;
+        }
+    }
+    assert_eq!(served, 1, "the capsule must be handed out exactly once, got {served}");
+}
