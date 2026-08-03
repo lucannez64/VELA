@@ -1,12 +1,18 @@
-use axum::{extract::State, Json};
+use axum::{
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+    Json,
+};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webauthn_rs::prelude::PublicKeyCredential;
 
+use std::net::SocketAddr;
+
 use crate::{
     error::{AppError, Result},
-    rate_limit,
+    net, rate_limit,
     state::AppState,
 };
 
@@ -38,14 +44,18 @@ pub struct RecoverResponse {
 
 pub async fn post_recover(
     State(state): State<AppState>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<RecoverRequest>,
 ) -> Result<Json<RecoverResponse>> {
-    rate_limit::check(
-        &state.store,
-        &format!("rl:recover:user:{}", body.user_id),
-        5,
-        3600,
-    )?;
+    // Keyed on the caller as well as the target (red-team RT-1). `user_id` is
+    // request-body data on an unauthenticated endpoint, and this check runs
+    // before the WebAuthn assertion is verified — so a per-user-only budget let
+    // anyone who knew a user id lock that user out of recovery from a single IP,
+    // without ever presenting a credential.
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    rate_limit::recovery_recover_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
+    rate_limit::recovery_recover_by_user(&state.store, &body.user_id.to_string())?;
 
     crate::recovery::initiate::ensure_recovery_share_exists(&state, body.user_id)?;
     let mut passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)?

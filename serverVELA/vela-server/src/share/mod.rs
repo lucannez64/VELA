@@ -53,15 +53,32 @@ pub async fn post_send(
 ) -> Result<(HeaderMap, Json<SendResponse>)> {
     crate::rate_limit::share_send_by_sender(&state.store, &session.user_id.to_string())?;
 
-    let exists_rows = state
+    // Gate on the share key, not on mere existence (red-team RT-3).
+    //
+    // Checking `SELECT 1 FROM users` made this endpoint leak strictly more than
+    // `get_recipient_ek` below: a user who exists but has never registered a
+    // share key answered 200 here and 404 there, so the pair distinguished
+    // "no such user" from "user without a share key" — the exact split the
+    // constant above exists to hide. Requiring the key collapses them, and
+    // stops depositing inbox items the recipient could never decrypt.
+    let recipient_rows = state
         .db
         .query(
-            "SELECT 1 FROM users WHERE id = $1",
+            "SELECT share_ek FROM users WHERE id = $1",
             stoolap::params![body.recipient_user_id.to_string()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if exists_rows.into_iter().next().is_none() {
+    let recipient_can_receive = match recipient_rows.into_iter().next() {
+        None => false,
+        Some(row) => {
+            let row = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            crate::db::row_val(&row, 0)?
+                .as_str()
+                .is_some_and(|ek| !ek.is_empty())
+        }
+    };
+    if !recipient_can_receive {
         return Err(AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()));
     }
 

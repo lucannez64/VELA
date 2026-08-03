@@ -28,7 +28,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::{
-    auth::token::TokenService,
+    auth::token::{TokenScope, TokenService},
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
@@ -526,15 +526,25 @@ pub struct TokenResponse {
 
 pub async fn post_token(
     State(state): State<AppState>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(body): Json<TokenRequest>,
 ) -> Result<Json<TokenResponse>> {
+    // Both the budget and the backoff are scoped to the caller, not to the
+    // session (red-team RT-2). The session id is in the QR and this endpoint
+    // does not require the poll secret, so a shared scope let an onlooker's
+    // three bad proofs lock the real browser out for the session's lifetime.
+    // The per-session cap stays behind it as a distributed-grind backstop.
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    rate_limit::web_session_token_by_ip_session(&state.store, &ip, &id.to_string())?;
     rate_limit::web_session_token_by_session(&state.store, &id.to_string())?;
-    // The flat 10/min let a guesser keep trying the ephemeral-key proof at a
+    // The flat rate limit let a guesser keep trying the ephemeral-key proof at a
     // steady rate indefinitely. `/auth/verify` has had exponential backoff on
     // consecutive failures since the spec asked for it; this proof is the same
-    // shape and now gets the same treatment.
-    let backoff_scope = format!("websession:token:{id}");
+    // shape and now gets the same treatment — keyed the same way too, on
+    // (ip, id) rather than on id alone.
+    let backoff_scope = format!("websession:token:{ip}:{id}");
     rate_limit::check_backoff(&state.store, &backoff_scope)?;
 
     let session = load_session(&state, id)?;
@@ -583,8 +593,15 @@ pub async fn post_token(
 
     // device_id = session_id; hard_cap = session expiry, so renewals never outlive
     // the granted TTL and revocation via `device:revoked:<session_id>` applies.
+    //
+    // Scoped `WebSession` (red-team RT-4). Without that claim this token was
+    // byte-for-byte as authoritative as an enrolled laptop's: it could rotate
+    // the recovery share, register the attacker's recovery passkey, revoke the
+    // user's real devices, and delete the account. The design calls this session
+    // temporary and non-enrolling; the scope is what makes that true rather than
+    // merely stated.
     let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
-    let (token, jti) = ts.issue(user_id, id, Some(expires_at))?;
+    let (token, jti) = ts.issue_scoped(user_id, id, Some(expires_at), TokenScope::WebSession)?;
     rate_limit::track_device_jti(&state.store, &id.to_string(), &jti)?;
 
     tracing::info!(session_id = %id, user_id = %user_id, "web session rw token issued");

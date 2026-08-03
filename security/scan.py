@@ -8,7 +8,8 @@ so a standard Semgrep install can run the same logic in CI.
 
 Checks:
   R1  missing-authsession   Axum route handler (takes State<AppState>) with no
-                           AuthSession parameter. Audit S-2/S-4 class.
+                           AuthSession (or the stricter DeviceSession)
+                           parameter. Audit S-2/S-4 class.
   R2  debug-format-crypto   `{:?}` Debug formatting inside crypto/derivation code.
                            Audit crypto M4 (cross-client key divergence).
   R3  panic-across-ffi      expect/unwrap/panic inside `extern "C"`. Audit L2.
@@ -88,7 +89,12 @@ def check_missing_authsession():
         is_handler = "State<" in params and "AppState" in params
         if not is_handler:
             continue
-        if "AuthSession" in params:
+        # `DeviceSession` is `AuthSession` plus a scope check — strictly
+        # stronger, not weaker (red-team RT-4). Handlers that require a real
+        # enrolled device must satisfy R1 too, or the only way to pass the gate
+        # would be to whitelist them, which would blind it to someone later
+        # dropping the session parameter altogether.
+        if "AuthSession" in params or "DeviceSession" in params:
             continue
         if name in allow:
             continue

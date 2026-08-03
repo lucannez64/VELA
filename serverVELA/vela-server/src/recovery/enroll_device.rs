@@ -54,12 +54,11 @@ pub async fn post_enroll_device(
 ) -> Result<Json<EnrollDeviceResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     rate_limit::check(&state.store, &format!("rl:recover:enroll:ip:{ip}"), 10, 3600)?;
-    rate_limit::check(
-        &state.store,
-        &format!("rl:recover:enroll:user:{}", body.user_id),
-        5,
-        3600,
-    )?;
+    // Keyed on the caller as well as the target (red-team RT-1) — see the note
+    // in `recover.rs`. This check also runs before the grant is verified, so the
+    // per-user-only form was spendable with a garbage body.
+    rate_limit::recovery_enroll_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
+    rate_limit::recovery_enroll_by_user(&state.store, &body.user_id.to_string())?;
 
     // Consumes the grant — a second call with the same grant fails here,
     // so a recovering user can only ever mint one new device per successful

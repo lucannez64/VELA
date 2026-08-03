@@ -149,6 +149,66 @@ pub fn recovery_initiate_by_user(store: &Store, user_id: &str) -> Result<()> {
     )
 }
 
+// ─── Recovery consequence endpoints (red-team RT-1) ──────────────────────────
+//
+// `/recovery/initiate` got the S-3 treatment; the two endpoints that actually
+// *do* something — release the share, and enrol the recovered device — kept the
+// per-user-only shape S-3 was filed against. Both run their limit check before
+// any signature or WebAuthn verification, so a garbage body was enough to spend
+// a victim's budget and lock them out of recovery, which is the last resort
+// after a lost device. Same fix as initiate: the throttle a caller can trip is
+// keyed on that caller, and the per-user number is a distributed-abuse backstop
+// set far above what one source can reach.
+
+/// Per-(IP, user) cap on `/recovery/recover`, and on `/recovery/enroll-device`.
+pub const RECOVERY_CONSEQUENCE_PER_IP_USER_HOURLY: u64 = 5;
+
+/// Global per-user backstop for the same two endpoints.
+///
+/// At 5/hour/IP this takes ten hostile sources to reach, while a legitimate
+/// user retrying from one device never comes close.
+pub const RECOVERY_CONSEQUENCE_PER_USER_HOURLY: u64 = 50;
+
+/// 5 `/recovery/recover` attempts/hour per (IP, user).
+pub fn recovery_recover_by_ip_user(store: &Store, ip: &str, user_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:recover:ip_user:{ip}:{user_id}"),
+        RECOVERY_CONSEQUENCE_PER_IP_USER_HOURLY,
+        HOUR_SECS,
+    )
+}
+
+/// 50 `/recovery/recover` attempts/hour per user, across every source.
+pub fn recovery_recover_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:recover:user:{user_id}"),
+        RECOVERY_CONSEQUENCE_PER_USER_HOURLY,
+        HOUR_SECS,
+    )
+}
+
+/// 5 `/recovery/enroll-device` attempts/hour per (IP, user).
+pub fn recovery_enroll_by_ip_user(store: &Store, ip: &str, user_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:recover:enroll:ip_user:{ip}:{user_id}"),
+        RECOVERY_CONSEQUENCE_PER_IP_USER_HOURLY,
+        HOUR_SECS,
+    )
+}
+
+/// 50 `/recovery/enroll-device` attempts/hour per user, across every source.
+pub fn recovery_enroll_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:recover:enroll:user:{user_id}"),
+        RECOVERY_CONSEQUENCE_PER_USER_HOURLY,
+        HOUR_SECS,
+    )
+}
+
 /// 120 share sends/hour per sender (anti inbox-flooding of a targeted recipient).
 pub fn share_send_by_sender(store: &Store, sender: &str) -> Result<()> {
     check(store, &format!("rl:share:send:user:{sender}"), 120, HOUR_SECS)
@@ -185,10 +245,36 @@ pub fn webauthn_register_by_user(store: &Store, user_id: &str) -> Result<()> {
 }
 
 /// 10 RW token attempts/min per session (throttle ephemeral-key proof guessing).
+///
+/// Kept as a global backstop only. The throttle that actually bites is
+/// [`web_session_token_by_ip_session`] below — see its note for why this one
+/// cannot be the primary gate.
 pub fn web_session_token_by_session(store: &Store, session_id: &str) -> Result<()> {
     check(
         store,
         &format!("rl:websession:token:{session_id}"),
+        30,
+        WINDOW_SECS,
+    )
+}
+
+/// 10 RW token attempts/min per (IP, session) — red-team RT-2.
+///
+/// The session id travels in the QR, and this endpoint does not require the
+/// poll secret, so anyone who merely *saw* the QR can call it. With the budget
+/// and the failure backoff both keyed on the session alone, three garbage proofs
+/// from an onlooker put the shared scope into exponential backoff and the
+/// legitimate browser — holding the poll secret and a valid signature — was
+/// refused its token for the rest of the session.
+///
+/// Same lesson as S-3 and as `/auth/verify`'s `(ip, device_id)` backoff: a
+/// budget meant to stop one *caller* must be keyed on something that caller
+/// alone controls. The per-session cap above stays as a backstop against a
+/// distributed grind.
+pub fn web_session_token_by_ip_session(store: &Store, ip: &str, session_id: &str) -> Result<()> {
+    check(
+        store,
+        &format!("rl:websession:token:ip:{ip}:{session_id}"),
         10,
         WINDOW_SECS,
     )

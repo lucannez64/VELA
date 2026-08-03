@@ -17,7 +17,12 @@ use axum::{
 };
 use chrono::Utc;
 
-use crate::{auth::token::TokenService, error::AppError, rate_limit, state::AppState};
+use crate::{
+    auth::token::{TokenScope, TokenService},
+    error::AppError,
+    rate_limit,
+    state::AppState,
+};
 
 /// Authenticated session extracted from the `Authorization: Bearer` header.
 #[derive(Clone, Debug)]
@@ -27,6 +32,10 @@ pub struct AuthSession {
     pub jti: String,
     /// Set when the token is close to expiry and has been refreshed.
     pub new_token: Option<String>,
+    /// What kind of caller this is (red-team RT-4). Routes whose effects
+    /// outlive a web session must extract [`DeviceSession`] instead of this,
+    /// which refuses anything but [`TokenScope::Device`].
+    pub scope: TokenScope,
 }
 
 #[axum::async_trait]
@@ -108,8 +117,15 @@ impl FromRequestParts<AppState> for AuthSession {
                 // one: if issuance fails, the client keeps its still-valid
                 // token instead of being locked out (old jti revoked with no
                 // replacement, forcing a full re-auth).
-                let (refreshed, new_jti) =
-                    ts.issue(claims.user_id, claims.device_id, Some(claims.hard_cap))?;
+                // `issue_scoped`, not `issue`: renewing with the default scope
+                // would launder an ephemeral web-session token into a device
+                // token every 10 minutes, quietly undoing the RT-4 boundary.
+                let (refreshed, new_jti) = ts.issue_scoped(
+                    claims.user_id,
+                    claims.device_id,
+                    Some(claims.hard_cap),
+                    claims.scope,
+                )?;
                 let _ =
                     rate_limit::track_device_jti(store, &claims.device_id.to_string(), &new_jti);
                 if old_ttl_secs > 0 {
@@ -129,6 +145,7 @@ impl FromRequestParts<AppState> for AuthSession {
             device_id: claims.device_id,
             jti: claims.jti,
             new_token,
+            scope: claims.scope,
         })
     }
 }
@@ -139,5 +156,51 @@ pub fn maybe_append_new_token(headers: &mut HeaderMap, session: &AuthSession) {
         if let Ok(v) = HeaderValue::from_str(tok) {
             headers.insert("X-New-Token", v);
         }
+    }
+}
+
+/// An [`AuthSession`] that is definitely a real enrolled device (red-team RT-4).
+///
+/// Extract this instead of `AuthSession` on any route whose effect outlives the
+/// caller — anything touching recovery material, device revocation, permanent
+/// enrollment, or the account itself. An ephemeral web session is granted access
+/// to a *vault*, not authority over the *account*, and
+/// `EPHEMERAL_WEB_ACCESS_DESIGN.md` §2 says so in as many words: "temporary",
+/// "revocable at any time", "no permanent device enrollment". Those are
+/// authorization claims, and until this existed nothing enforced them — the
+/// browser's token was byte-for-byte as powerful as a laptop's.
+///
+/// It derefs to `AuthSession`, so handlers use it exactly as before.
+#[derive(Clone, Debug)]
+pub struct DeviceSession(pub AuthSession);
+
+impl std::ops::Deref for DeviceSession {
+    type Target = AuthSession;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[axum::async_trait]
+impl FromRequestParts<AppState> for DeviceSession {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let session = AuthSession::from_request_parts(parts, state).await?;
+        if session.scope != TokenScope::Device {
+            tracing::warn!(
+                user_id = %session.user_id,
+                session_id = %session.device_id,
+                "web-session token refused on a device-only route"
+            );
+            return Err(AppError::Forbidden(
+                "this action requires one of your own devices; a temporary web session cannot perform it"
+                    .into(),
+            ));
+        }
+        Ok(DeviceSession(session))
     }
 }
