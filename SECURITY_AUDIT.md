@@ -1065,12 +1065,28 @@ credit the existing hardening:
 >   every app with focus can read it — and 30 seconds was longer than pasting
 >   takes. It is a setting because "long enough to paste" genuinely differs.
 >
-> **Not done: the native-messaging host's static bearer.**
-> `vela-native-messaging-host.py`'s capability token has no HMAC and no nonce, and
-> `is_safe_auth_file` returns `True` unconditionally on Windows because POSIX
-> ownership bits do not exist there and checking Windows ACLs needs `pywin32`,
-> which the host deliberately does not depend on. Shared with #106; both issues
-> stay open for it.
+> * **The Windows auth-file check is a real check now.** It returned `True`
+>   unconditionally, which is not a check. Reading the file's DACL — the direct
+>   equivalent of the POSIX owner/mode test — needs `pywin32`, and the host has no
+>   dependencies on purpose so it runs under whatever Python is present. Two
+>   things the standard library *can* establish, and both close the realistic
+>   redirect: the file is not a reparse point, and it genuinely resolves inside
+>   the user's profile directory (which Windows ACLs to the user on creation).
+>   Planting a junction is how you redirect a file you cannot otherwise write, and
+>   resolving the path is what catches that. Weaker than the POSIX branch, and
+>   documented as such rather than claimed equivalent.
+>
+> * **The capability stays a plain bearer, deliberately.** Adding an HMAC or a
+>   nonce was listed as hardening; it would not move anything. The token sits in
+>   a 0600 file and is regenerated on every desktop start. The attacker worth
+>   worrying about is another process running as the same user, which can read
+>   that file — signing messages with a key that file hands out authenticates
+>   nobody, and a nonce only stops replay of a message that had to be captured off
+>   a 0600 socket by someone who could mint fresh ones anyway. What actually
+>   raises the bar is refusing to answer that process, and that is enforced on the
+>   desktop side: peer credentials from the kernel plus a user-presence proof for
+>   plaintext release (D-4). The reasoning is recorded in the host's module
+>   docstring so the next reader does not "fix" it.
 
 ---
 

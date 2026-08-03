@@ -5,6 +5,26 @@ VELA Native Messaging Host.
 The browser extension talks to this process over the browser native messaging
 stdio protocol. This host then relays requests to VELA Desktop over an
 OS-local pipe/socket using a per-session capability written by the desktop app.
+
+On the capability being a plain bearer, with no HMAC or nonce
+-------------------------------------------------------------
+That was raised as a hardening item, and it is deliberately not done, because
+it would not buy anything against the threat it appears to address.
+
+The capability lives in `ipc_auth.json`, mode 0600 (or the per-user AppData
+directory on Windows), and it is regenerated every time the desktop app starts.
+The attacker worth worrying about is another process running as the same user:
+it can read that file. Signing each message with a key that same file hands out
+authenticates nobody — the attacker holds the key too. A nonce stops replay of a
+captured message, but capturing one requires reading a 0600 socket, which
+requires being that same user, who can simply mint fresh messages.
+
+What actually raises the bar is refusing to answer that process at all, and that
+is enforced on the desktop side rather than here: the kernel identifies the peer
+(SO_PEERCRED / LOCAL_PEERCRED / GetNamedPipeClientProcessId), and releasing a
+plaintext credential additionally requires a fresh user-presence proof bound to
+the calling pid. See `desktopVELA/vela-desktop-core/src/ipc_peer.rs` and audit
+finding D-4. Adding a MAC here would look like security while moving nothing.
 """
 
 import json
@@ -78,6 +98,52 @@ def candidate_auth_paths():
         yield home / ".local" / "share" / "vela" / "vela" / "ipc_auth.json"
 
 
+# FILE_ATTRIBUTE_REPARSE_POINT — a junction or symlink, i.e. a path that does
+# not lead where it appears to.
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _is_safe_auth_file_windows(path):
+    """What can be checked on Windows without pywin32.
+
+    Reading the file's DACL — the direct equivalent of the POSIX owner/mode
+    check below — needs `pywin32`, and this host deliberately has no
+    dependencies so it can run under whatever Python the user happens to have.
+    This used to return True unconditionally, which is not a check at all.
+
+    Two things the standard library *can* establish, both of which close the
+    realistic redirect: the file is not a reparse point, and it really lives
+    inside this user's profile directory (which Windows ACLs to the user on
+    creation). Planting a junction is how you redirect a file you cannot
+    otherwise write, and resolving the path is what catches it.
+
+    This is weaker than the POSIX branch and is not claimed to be equivalent.
+    """
+    try:
+        if path.is_symlink():
+            return False
+        stat_result = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return False
+
+    if getattr(stat_result, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT:
+        return False
+
+    try:
+        resolved = path.resolve(strict=True)
+        profile = Path(os.environ.get("USERPROFILE") or Path.home()).resolve(strict=True)
+    except OSError:
+        return False
+
+    try:
+        # Raises if `resolved` is not under the profile — including when a
+        # junction anywhere along the path led outside it.
+        resolved.relative_to(profile)
+    except ValueError:
+        return False
+    return True
+
+
 def is_safe_auth_file(path):
     """Refuse to trust an ipc_auth.json that isn't privately owned by the
     current user. There is no secret shared out-of-band between the desktop
@@ -86,10 +152,7 @@ def is_safe_auth_file(path):
     other local users, and a group/world-writable file, from redirecting
     credential requests to an attacker-controlled endpoint."""
     if platform.system().lower() == "windows":
-        # POSIX mode/owner bits aren't meaningful on Windows; the desktop app
-        # writes this file under the per-user AppData directory, which is
-        # ACL'd to the owning user by default.
-        return True
+        return _is_safe_auth_file_windows(path)
     try:
         st = path.stat()
     except OSError:
