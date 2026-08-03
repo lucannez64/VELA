@@ -193,7 +193,7 @@ pub fn verify_auth_signature(
     )
 }
 
-fn verify_enrollment_signature(
+pub(crate) fn verify_enrollment_signature(
     device_a_vk_bytes: &[u8],
     hybrid_ek: &[u8],
     hybrid_vk: &[u8],
