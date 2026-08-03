@@ -31,7 +31,7 @@ use crate::{
     auth::token::{TokenScope, TokenService},
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     net, rate_limit,
     state::AppState,
 };
@@ -310,17 +310,49 @@ pub async fn get_session(
     }
 
     // One-shot capsule delivery: hand it over once, then drop it server-side.
-    if session.capsule.is_some() {
-        let _ = state.db.execute(
-            "UPDATE web_sessions SET capsule = NULL WHERE id = $1",
-            stoolap::params![id.to_string()],
-        );
-    }
+    //
+    // Two things had to change here (red-team follow-up).
+    //
+    // The clear is now the thing that *decides* who gets the capsule, rather
+    // than a cleanup that happens alongside serving it. `WHERE capsule IS NOT
+    // NULL` plus the affected-row count makes exactly one caller the winner:
+    // previously both halves of a concurrent poll read a non-NULL capsule and
+    // both were served it, so "one-shot" held only when nobody raced. Only the
+    // holder of the poll secret can reach this, so that race was not an
+    // attacker's to win — but one-shot delivery exists precisely to bound the
+    // damage if that secret leaks, and a property that evaporates under
+    // concurrency does not bound anything.
+    //
+    // And the result is no longer discarded. `let _ =` meant a failing UPDATE
+    // still served the capsule and left it in the row, so a persistently failing
+    // write turned a one-shot into an unlimited one — strictly worse than the
+    // race it sat next to. Failing closed costs the user a retry.
+    let capsule = match session.capsule {
+        None => None,
+        Some(capsule) => {
+            let cleared = state
+                .db
+                .execute(
+                    "UPDATE web_sessions SET capsule = NULL WHERE id = $1 AND capsule IS NOT NULL",
+                    stoolap::params![id.to_string()],
+                )
+                .map_err(|e| AppError::Internal(format!("capsule clear failed: {e}")))?;
+            if cleared < 1 {
+                // Someone else took it in the meantime. Report the session as
+                // granted with nothing attached rather than serving a capsule
+                // we could not retract.
+                tracing::warn!(session_id = %id, "capsule already collected; not serving it twice");
+                None
+            } else {
+                Some(capsule)
+            }
+        }
+    };
 
     Ok(Json(PollResponse {
         status: "granted".into(),
         mode: session.mode,
-        capsule: session.capsule,
+        capsule,
         expires_at: session.expires_at,
     }))
 }
@@ -345,7 +377,7 @@ pub struct KeysResponse {
 pub async fn get_keys(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<KeysResponse>)> {
     rate_limit::web_session_keys_by_user(&state.store, &session.user_id.to_string())?;
 
@@ -413,7 +445,7 @@ pub struct GrantResponse {
 pub async fn post_grant(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<GrantRequest>,
 ) -> Result<(HeaderMap, Json<GrantResponse>)> {
     let mode = match body.mode.as_str() {
@@ -617,7 +649,7 @@ pub async fn post_token(
 pub async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let existing = load_session(&state, id)?;
     // Only the owner may revoke: the granting user for a granted session, or the
@@ -668,7 +700,7 @@ pub struct SessionsListResponse {
 
 pub async fn get_sessions_list(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<SessionsListResponse>)> {
     let rows = state
         .db

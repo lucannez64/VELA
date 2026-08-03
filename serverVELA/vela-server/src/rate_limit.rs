@@ -48,7 +48,10 @@ const SESSION_HARD_CAP_SECS: i64 = 8 * 60 * 60;
 /// The key is initialised with a TTL of `window_secs` on first touch.
 /// Returns `Err(AppError::RateLimited)` if `count > limit`.
 pub fn check(store: &Store, key: &str, limit: u64, window_secs: i64) -> Result<()> {
-    let count = store.incr_expire(key, 1, window_secs)?;
+    // Fixed window, not a refreshing TTL: a "per minute" budget has to
+    // decay, or a caller that never pauses is charged for every request it
+    // has ever made (red-team RT-7).
+    let count = store.incr_fixed_window(key, 1, window_secs)?;
     if count > limit {
         Err(AppError::RateLimited(format!(
             "limit of {limit} per {window_secs}s exceeded"

@@ -13,6 +13,11 @@ Checks:
   R2  debug-format-crypto   `{:?}` Debug formatting inside crypto/derivation code.
                            Audit crypto M4 (cross-client key divergence).
   R3  panic-across-ffi      expect/unwrap/panic inside `extern "C"`. Audit L2.
+  R4  unclassified-authsession
+                           Route handler taking `AuthSession` — i.e. reachable
+                           by an ephemeral web-session token — that is not
+                           listed in `semgrep/web-session-routes.txt`.
+                           Red-team RT-5/RT-6.
   J1  (delegated to semgrep vela-js.yml: unescaped attr interpolation, native
       call without authorization.)
 
@@ -34,6 +39,9 @@ CRYPTO_DIRS = [
     os.path.join(ROOT, "libVELA", "vela-wasm-bridge", "src"),
 ]
 ALLOWLIST_FILE = os.path.join(ROOT, "security", "semgrep", "public-handlers.txt")
+WEB_SESSION_ROUTES_FILE = os.path.join(
+    ROOT, "security", "semgrep", "web-session-routes.txt"
+)
 
 findings = []
 
@@ -41,6 +49,16 @@ findings = []
 def add(check, sev, path, line, msg):
     rel = os.path.relpath(path, ROOT)
     findings.append((check, sev, rel, line, msg))
+
+
+def load_names(path):
+    names = set()
+    if os.path.exists(path):
+        for raw in open(path):
+            s = raw.split("#", 1)[0].strip()
+            if s:
+                names.add(s)
+    return names
 
 
 def load_allowlist():
@@ -102,6 +120,36 @@ def check_missing_authsession():
             f"`{name}` is a route handler (State<AppState>) with no AuthSession "
             f"parameter. Unauthenticated/unscoped endpoint (audit S-2/S-4). "
             f"If intentional, add `{name}` to public-handlers.txt.")
+
+
+# ── R4: AuthSession handler not classified against web-session reach ─────────
+#
+# `AuthSession` accepts an ephemeral web-session token as readily as an enrolled
+# device's. RT-4 fixed that by moving the account-authority routes behind
+# `DeviceSession` — a list built by hand, which then missed `put_my_ek` (RT-5,
+# HIGH) and `post_grant` (RT-6). Hand-enumeration fails silently and fails
+# permissive, so the default is inverted here: taking `AuthSession` is a finding
+# unless someone has written down why a borrowed browser may reach it.
+def check_unclassified_authsession():
+    allowed = load_names(WEB_SESSION_ROUTES_FILE)
+    public = load_allowlist()
+    for path, name, params, line in iter_fns(SERVER_SRC):
+        if "State<" not in params or "AppState" not in params:
+            continue
+        if "AuthSession" not in params:
+            continue
+        # `DeviceSession` contains the substring "Session" but not "AuthSession",
+        # so it never lands here; this is belt-and-braces against a rename.
+        if "DeviceSession" in params:
+            continue
+        if name in allowed or name in public:
+            continue
+        add("R4 unclassified-authsession", "ERROR", path, line,
+            f"`{name}` takes AuthSession, so an ephemeral web-session token reaches it. "
+            f"If a borrowed browser may legitimately call it, add `{name}` to "
+            f"web-session-routes.txt with the reason; if its effect survives the "
+            f"session or changes account authority, take DeviceSession instead "
+            f"(red-team RT-5/RT-6).")
 
 
 # ── R2: {:?} debug formatting in crypto code ─────────────────────────────────
@@ -241,6 +289,7 @@ def check_panic_ffi():
 
 def main():
     check_missing_authsession()
+    check_unclassified_authsession()
     check_debug_format_crypto()
     check_panic_ffi()
     if not findings:

@@ -1222,6 +1222,23 @@ async fn web_session_token_is_refused_on_permanent_power_routes() {
         ("POST", "/device/revoke", Some(json!({ "device_id": Uuid::new_v4() }))),
         ("POST", "/device/enrollment-grant", Some(json!({}))),
         ("DELETE", "/account", None),
+        // RT-5 (HIGH): overwriting the account's share key let a borrowed
+        // browser read every future share, and it survived revoking the
+        // session.
+        ("PUT", "/share/my-ek", Some(json!({ "share_ek": B64.encode([0u8; 1600]) }))),
+        // RT-6: an RW token acting as approver minted fresh sessions with its
+        // own keys, so revoking the visible one left a clone alive.
+        (
+            "POST",
+            "/web-session/00000000-0000-0000-0000-000000000000/grant",
+            Some(json!({ "mode": "rw", "capsule": B64.encode([0u8; 64]), "link_nonce": B64.encode([0u8; 32]) })),
+        ),
+        // The rest of the session-management surface, same class.
+        ("GET", "/web-session/00000000-0000-0000-0000-000000000000/keys", None),
+        ("DELETE", "/web-session/00000000-0000-0000-0000-000000000000", None),
+        ("GET", "/web-sessions", None),
+        ("GET", "/devices", None),
+        ("GET", "/device/capsule", None),
     ];
 
     for (method, path, body) in cases {
@@ -1519,8 +1536,12 @@ async fn web_session_token_still_reaches_the_vault() {
     let session_id = Uuid::new_v4();
     insert_user(&state, user_id);
 
+    // Vault endpoints only. `/devices` used to be in this list and is not any
+    // more: it is account metadata rather than vault content, the web vault
+    // never calls it, and it is now device-only alongside the rest of the
+    // account-management surface (red-team RT-5/RT-6).
     let web = token_for(&state, user_id, session_id, TokenScope::WebSession);
-    for (method, uri) in [("GET", "/vault/sync"), ("GET", "/devices")] {
+    for (method, uri) in [("GET", "/vault/sync"), ("GET", "/share/inbox")] {
         let resp = app
             .clone()
             .oneshot(
@@ -1537,6 +1558,207 @@ async fn web_session_token_still_reaches_the_vault() {
             resp.status(),
             StatusCode::FORBIDDEN,
             "{method} {uri} must stay reachable for a granted web session"
+        );
+    }
+}
+
+/// The capsule is one-shot even when polls arrive together.
+///
+/// The sequential case was already covered. This is the concurrent one: the
+/// handler used to read the row, then clear it in a separate statement, so two
+/// polls that both read before either cleared were both served the capsule.
+/// Only the holder of the poll secret can reach this endpoint, so it was never
+/// an attacker's race to win — but one-shot delivery exists to bound the damage
+/// if that secret leaks, and a property that dissolves under concurrency bounds
+/// nothing.
+///
+/// The assertion is deterministic — the conditional UPDATE makes exactly one
+/// caller the winner whatever the interleaving. Its *detection* of a regression
+/// is probabilistic: reverting the fix only fails this when the polls really do
+/// overlap. That is worth saying out loud rather than trusting a green tick.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_capsule_is_delivered_once_even_under_concurrent_polls() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+
+    let (user_id, token) = seed_user_with_device(&state);
+    let link_nonce = B64.encode(vec![7u8; 32]);
+    let resp = app
+        .clone()
+        .oneshot(web_session_start_req(user_id, &link_nonce))
+        .await
+        .unwrap();
+    let b = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let session_id = v["session_id"].as_str().unwrap().to_string();
+
+    let capsule = B64.encode(vec![9u8; 64]);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/web-session/{session_id}/grant"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "mode": "ro",
+                        "capsule": capsule,
+                        "link_nonce": link_nonce,
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let app = app.clone();
+        let session_id = session_id.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = app.oneshot(web_session_poll_req(&session_id)).await.unwrap();
+            let b = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+            v.get("capsule")
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string())
+        }));
+    }
+
+    let mut served = 0;
+    for h in handles {
+        if let Some(got) = h.await.unwrap() {
+            assert_eq!(got, capsule, "a served capsule must be the real one");
+            served += 1;
+        }
+    }
+    assert_eq!(served, 1, "the capsule must be handed out exactly once, got {served}");
+}
+
+/// A device id that exists must be indistinguishable from one that does not.
+///
+/// Both `/auth/verify` and `/device/enroll` answered "no such device" and "wrong
+/// signature" differently, so an anonymous caller could confirm whether a device
+/// id was real. `/auth/verify` had already collapsed its not-found arm to one
+/// message — the wording names all three possibilities deliberately — but the
+/// signature arm returned the helper's own message and undid it. Half-applied
+/// hardening reads as intentional to the next person, so this pins both arms of
+/// both endpoints.
+///
+/// This covers the message channel only. A miss still returns after one lookup
+/// while a hit runs an ML-DSA-87 verification, and that timing difference is
+/// deliberately left: equalising it costs a signature verification per
+/// unauthenticated request, to close an oracle that only confirms a UUIDv4 the
+/// caller already holds.
+#[tokio::test]
+async fn device_existence_is_not_revealed_by_auth_failures() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let (_user_id, _token) = seed_user_with_device(&state);
+
+    // The seeded device really exists; this id does not.
+    let real = {
+        let rows = state
+            .db
+            .query("SELECT id FROM devices", stoolap::params![])
+            .unwrap();
+        let row = rows.into_iter().next().unwrap().unwrap();
+        vela_server::db::row_val(&row, 0)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let absent = Uuid::new_v4().to_string();
+
+    async fn probe(
+        app: &axum::Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, String) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let b = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap_or(json!({}));
+        (status, v["message"].as_str().unwrap_or_default().to_string())
+    }
+
+    // A fresh challenge per probe: /device/enroll consumes it.
+    async fn challenge(app: &axum::Router) -> String {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/challenge")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let b = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        v["challenge"].as_str().unwrap().to_string()
+    }
+
+    let bad_sig = B64.encode(vec![0u8; 4627 + 64]);
+
+    for device_ids in [[real.clone(), absent.clone()]] {
+        let mut verify_answers = Vec::new();
+        let mut enroll_answers = Vec::new();
+        for id in &device_ids {
+            let ch = challenge(&app).await;
+            verify_answers.push(
+                probe(
+                    &app,
+                    "/auth/verify",
+                    json!({ "device_id": id, "challenge": ch, "signature": bad_sig }),
+                )
+                .await,
+            );
+
+            let ch = challenge(&app).await;
+            enroll_answers.push(
+                probe(
+                    &app,
+                    "/device/enroll",
+                    json!({
+                        "enrolling_device_id": id,
+                        "challenge": ch,
+                        "auth_signature": bad_sig,
+                        "new_device": {
+                            "hybrid_ek": B64.encode(vec![0u8; 1600]),
+                            "hybrid_vk": B64.encode(vec![0u8; 2624]),
+                            "rms_capsule": B64.encode(vec![0u8; 64]),
+                            "signature": bad_sig,
+                        },
+                    }),
+                )
+                .await,
+            );
+        }
+
+        assert_eq!(
+            verify_answers[0], verify_answers[1],
+            "/auth/verify distinguishes an existing device id from an absent one"
+        );
+        assert_eq!(
+            enroll_answers[0], enroll_answers[1],
+            "/device/enroll distinguishes an existing device id from an absent one"
         );
     }
 }

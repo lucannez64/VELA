@@ -279,35 +279,79 @@ impl Store {
         }
     }
 
-    /// Atomically increment a counter key by `delta` and set/refresh its TTL.
-    /// Returns the new count.
+    /// Atomically increment a counter whose TTL is **refreshed on every touch**,
+    /// so it only forgets after `ttl_secs` of complete silence. Returns the new
+    /// count.
+    ///
+    /// This is a *streak* counter, not a rate-limit window. Use it where
+    /// "consecutive, with no long gap" is the intended meaning — the
+    /// `/auth/verify` and web-session failure streaks that drive exponential
+    /// backoff. For anything shaped like "N per minute" use
+    /// [`incr_fixed_window`](Self::incr_fixed_window): refreshing the TTL makes
+    /// a budget cumulative rather than periodic (red-team RT-7), so a caller
+    /// that never pauses is charged for every request it has ever made.
     ///
     /// Uses sled's compare-and-swap `update_and_fetch` so concurrent requests
     /// cannot lose updates — this counter backs rate limiting, so a non-atomic
     /// read-modify-write would let an attacker undercount past the limit by
     /// issuing requests in parallel.
     pub fn incr_expire(&self, key: &str, delta: u64, ttl_secs: i64) -> Result<u64> {
+        self.incr_inner(key, delta, ttl_secs, true)
+    }
+
+    /// Atomically increment a fixed-window counter. The window opens on the
+    /// first increment and closes `window_secs` later regardless of traffic, so
+    /// the count really does decay.
+    ///
+    /// This is what every "N per minute" limit needs. The previous behaviour
+    /// pushed the expiry forward on each request, so the counter never reset
+    /// while traffic continued: a browser polling every 2 s against a
+    /// "120/min" cap accumulated to 120 and then locked itself out until it
+    /// went quiet for a full minute (red-team RT-7).
+    ///
+    /// It is a fixed window, not a rolling one: a caller that saturates the end
+    /// of one window and the start of the next can briefly send up to 2×`limit`
+    /// across the boundary. That is the standard cost of an O(1)-memory counter,
+    /// and it is bounded — unlike the old behaviour, which was unbounded in the
+    /// other direction. Keeping per-key hit timestamps would remove it at the
+    /// price of memory that grows with an attacker's request rate, which is a
+    /// poor trade on a limiter whose job is to survive abuse.
+    pub fn incr_fixed_window(&self, key: &str, delta: u64, window_secs: i64) -> Result<u64> {
+        self.incr_inner(key, delta, window_secs, false)
+    }
+
+    fn incr_inner(&self, key: &str, delta: u64, ttl_secs: i64, refresh_ttl: bool) -> Result<u64> {
         let now = epoch_secs();
-        let expiry = now + ttl_secs as u64;
+        let fresh_expiry = now + ttl_secs as u64;
 
         let updated = self
             .ttl
             .update_and_fetch(key.as_bytes(), |old| {
                 // Decode the live count, treating missing/expired entries as 0.
-                let current = match old {
+                // Decode the live count and the window it belongs to, treating
+                // missing/expired entries as a fresh window.
+                let (current, live_expiry) = match old {
                     Some(data) if data.len() >= 16 => {
                         let mut exp = [0u8; 8];
                         exp.copy_from_slice(&data[..8]);
                         let stored_expiry = u64::from_le_bytes(exp);
                         if stored_expiry != u64::MAX && now >= stored_expiry {
-                            0
+                            (0, None)
                         } else {
                             let mut cnt = [0u8; 8];
                             cnt.copy_from_slice(&data[8..16]);
-                            u64::from_le_bytes(cnt)
+                            (u64::from_le_bytes(cnt), Some(stored_expiry))
                         }
                     }
-                    _ => 0,
+                    _ => (0, None),
+                };
+
+                // A fixed window keeps the expiry it opened with, so the count
+                // actually decays; a streak counter pushes it forward and only
+                // forgets after a quiet period (red-team RT-7).
+                let expiry = match live_expiry {
+                    Some(stored) if !refresh_ttl => stored,
+                    _ => fresh_expiry,
                 };
 
                 let new_count = current.saturating_add(delta);
@@ -503,6 +547,53 @@ fn epoch_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixed-window counter must keep the expiry it opened with (red-team
+    /// RT-7).
+    ///
+    /// The old behaviour pushed the expiry forward on every increment, so a
+    /// counter never reset while traffic continued and "N per minute" silently
+    /// meant "N since the last full minute of silence". A browser polling every
+    /// 2 s against a 120/min cap reached 120 in four minutes and then locked
+    /// itself out.
+    #[test]
+    fn a_fixed_window_keeps_the_expiry_it_opened_with() {
+        let store = Store::open_temp().unwrap();
+        for _ in 0..3 {
+            store.incr_fixed_window("rl:test", 1, 60).unwrap();
+        }
+        let after_first_burst = store.ttl("rl:test").unwrap();
+
+        // More traffic inside the same window must not buy more time.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert_eq!(store.incr_fixed_window("rl:test", 1, 60).unwrap(), 4);
+        let after_more_traffic = store.ttl("rl:test").unwrap();
+        assert!(
+            after_more_traffic < after_first_burst,
+            "the window must keep closing while traffic continues: {after_first_burst}s -> \
+             {after_more_traffic}s"
+        );
+    }
+
+    /// The streak counter deliberately behaves the other way round: it forgets
+    /// only after a quiet period, which is what "consecutive failures" means.
+    /// Making it decay on a fixed window would let an attacker reset their own
+    /// backoff by straddling a boundary.
+    #[test]
+    fn a_streak_counter_still_refreshes_its_ttl() {
+        let store = Store::open_temp().unwrap();
+        store.incr_expire("rl:streak:test", 1, 60).unwrap();
+        let after_first = store.ttl("rl:streak:test").unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert_eq!(store.incr_expire("rl:streak:test", 1, 60).unwrap(), 2);
+        let after_second = store.ttl("rl:streak:test").unwrap();
+        assert!(
+            after_second >= after_first,
+            "a streak must not expire while failures keep arriving: {after_first}s -> \
+             {after_second}s"
+        );
+    }
 
     /// First-claim-wins is the whole point of `set_ex_nx`; a lost race has to be
     /// reported to the loser, not silently overwritten (audit P-1).

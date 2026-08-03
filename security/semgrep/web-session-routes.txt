@@ -1,0 +1,43 @@
+# Route handlers that may be reached by an EPHEMERAL WEB-SESSION token, i.e.
+# ones that take `AuthSession` rather than the stricter `DeviceSession`.
+# The scanner (security/scan.py, check R4) treats any `AuthSession` handler not
+# listed here as a finding.
+#
+# Why this file exists: RT-4 was fixed by listing the account-authority routes
+# by hand. That list was wrong twice — `PUT /share/my-ek` (RT-5, HIGH: the RW
+# token overwrote the account's share key and read every future share, surviving
+# revocation) and `POST /web-session/:id/grant` (RT-6: the token re-granted
+# itself clones that outlived revocation) were both missed. Hand-enumeration
+# fails silently and defaults to permissive, which is the worst possible
+# direction. So the default is now inverted: a new handler taking `AuthSession`
+# is a finding until someone writes down why a borrowed browser may reach it.
+#
+# The rule for adding an entry: an ephemeral web session is granted access to a
+# VAULT, not authority over an ACCOUNT. If the effect survives the session, or
+# changes who can act on the account later, it does not belong here — it belongs
+# behind `DeviceSession`.
+
+# ── Vault data. This is what a web session is for. ──────────────────────────
+get_sync
+get_chunk
+put_chunk
+delete_chunk
+get_path                # ORAM read
+put_path                # ORAM write
+
+# ── Sharing. Vault-content operations, scoped to the granted vault. ─────────
+# NOT put_my_ek — that rewrites the account's share identity and every future
+# share addressed to the user (RT-5). It is device-only.
+post_send
+get_inbox
+delete_inbox_item
+get_linked_items
+put_linked_item
+delete_linked_item
+get_recipient_ek
+
+# ── The session's own lifecycle ─────────────────────────────────────────────
+# Ending your own session is not authority over the account. Revoking sessions
+# (delete_session) is, and is device-only: otherwise a clone could revoke the
+# session its owner can actually see.
+post_logout
