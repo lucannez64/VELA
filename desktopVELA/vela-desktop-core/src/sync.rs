@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use vela_crypto::aead::{decrypt, encrypt};
 use vela_crypto::oram::CHUNK_SIZE;
 
 const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
@@ -578,7 +577,20 @@ async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut Stri
                     if let Some(t) = new_tok {
                         *token = t;
                     }
-                    if let Ok(server_plaintext) = decrypt(&key, &ciphertext) {
+                    // Reads both formats: sealed against the chunk's id and
+                    // clock, or the legacy unbound envelope written before this
+                    // (audit C-2). Unlike vault chunks, the audit log is only
+                    // ever read and written by the desktop, so there is no other
+                    // client to wait for — an older desktop that cannot open a
+                    // sealed chunk skips the merge, which is what it already
+                    // does on any decrypt failure.
+                    let entry_clock = entry.lamport_clock;
+                    if let Ok(server_plaintext) = vela_crypto::aead::open_vault_chunk(
+                        &key,
+                        &ciphertext,
+                        audit::AUDIT_CHUNK_ID,
+                        entry_clock,
+                    ) {
                         // Merge server events into the local log (union by
                         // event id) — never replace local history.
                         let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
@@ -590,10 +602,18 @@ async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut Stri
 
         if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
             if let Some(updated_plaintext) = audit::serialize_audit_plaintext(state) {
-                match encrypt(&key, &updated_plaintext) {
+                // Sealed to the id and the clock it is stored under, so the
+                // server cannot replay an older audit log — which is exactly the
+                // record a user consults after a compromise (audit C-2).
+                let next_clock = entry.lamport_clock + 1;
+                match vela_crypto::aead::seal(
+                    &key,
+                    &updated_plaintext,
+                    &vela_crypto::aead::vault_chunk_aad(audit::AUDIT_CHUNK_ID, next_clock),
+                ) {
                     Ok(ciphertext) => {
                         let _ = client
-                            .put_chunk(token, audit::AUDIT_CHUNK_ID, entry.version, ciphertext, entry.lamport_clock + 1)
+                            .put_chunk(token, audit::AUDIT_CHUNK_ID, entry.version, ciphertext, next_clock)
                             .await
                             .map(|(_, new_tok)| {
                                 if let Some(t) = new_tok {
@@ -607,7 +627,11 @@ async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut Stri
             }
         }
     } else if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
-        match encrypt(&key, &plaintext) {
+        match vela_crypto::aead::seal(
+            &key,
+            &plaintext,
+            &vela_crypto::aead::vault_chunk_aad(audit::AUDIT_CHUNK_ID, 1),
+        ) {
             Ok(ciphertext) => {
                 let _ = client
                     .put_chunk(token, audit::AUDIT_CHUNK_ID, 0, ciphertext, 1)

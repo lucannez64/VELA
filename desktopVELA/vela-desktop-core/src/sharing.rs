@@ -565,3 +565,80 @@ pub async fn delete_share(state: &AppState, share_id: &str) -> Result<(), String
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vault::{VaultItem, VaultMeta};
+    use chrono::Duration;
+
+    fn meta(id: &str, name: &str, updated_at: DateTime<Utc>) -> VaultMeta {
+        VaultMeta {
+            id: id.to_string(),
+            name: name.to_string(),
+            notes: None,
+            created_at: updated_at,
+            updated_at,
+            last_modified_device: None,
+            favorite: false,
+            shared: true,
+            share_recipient: None,
+        }
+    }
+
+    fn login(id: &str, name: &str, pass: &str, updated_at: DateTime<Utc>) -> VaultItem {
+        VaultItem::Login {
+            meta: meta(id, name, updated_at),
+            url: "https://example.com".into(),
+            username: "ada".into(),
+            pass: pass.into(),
+            totp: None,
+            app_ids: Vec::new(),
+        }
+    }
+
+    /// A share capsule the server serves back later must not undo a newer edit.
+    ///
+    /// Share capsules are KEM-sealed to the recipient and carry no AAD, so
+    /// nothing at the AEAD layer distinguishes a current capsule from one the
+    /// server kept and replayed (audit C-2). What stops the rollback is one
+    /// line in `sync_received_linked_items`: apply only when the capsule's
+    /// item is strictly newer than what is already held. `updated_at` travels
+    /// *inside* the sealed payload, so it is authenticated — a server cannot
+    /// alter it without breaking the capsule.
+    ///
+    /// That makes the whole protection a single comparison, which is exactly
+    /// the kind of thing that gets refactored away. Hence this test.
+    #[test]
+    fn a_replayed_share_capsule_cannot_revert_a_newer_item() {
+        let (share_ek, share_dk) = crate::crypto::generate_share_keypair();
+        let now = Utc::now();
+
+        // What the sender sealed some time ago, and what the recipient has now.
+        let stale = login("item-1", "Example", "old-password", now - Duration::hours(2));
+        let current = login("item-1", "Example", "new-password", now);
+
+        let capsule = crate::crypto::seal_share(
+            &share_ek,
+            &serde_json::to_vec(&stale).unwrap(),
+        )
+        .unwrap();
+
+        // The capsule still opens — replay is not detectable here, which is the
+        // point: the freshness decision is made after decryption, not by it.
+        let opened = crate::crypto::open_share(&share_dk, &capsule).unwrap();
+        let replayed: VaultItem = serde_json::from_slice(&opened).unwrap();
+        assert_eq!(replayed.updated_at(), stale.updated_at());
+
+        // And the applier's rule rejects it.
+        assert!(
+            !(replayed.updated_at() > current.updated_at()),
+            "a replayed capsule must not be newer than what is already held"
+        );
+
+        // The same rule accepts a genuinely newer one, or the check would be
+        // trivially satisfied by rejecting everything.
+        let newer = login("item-1", "Example", "newest", now + Duration::hours(1));
+        assert!(newer.updated_at() > current.updated_at());
+    }
+}
