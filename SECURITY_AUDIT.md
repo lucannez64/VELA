@@ -589,12 +589,24 @@ user, with no user interaction.
 > Metadata (names, usernames, URLs) is deliberately left ungated: it is not the
 > secret, and gating it would put a prompt in front of every suggestion.
 >
-> **What remains.** Linux has no general user-presence API; fprintd is the only
-> factor drivable without a desktop-specific agent, so a machine with no
-> fingerprint reader reports `Unavailable` and the release proceeds on the peer
-> check alone. Closing that needs an in-app confirmation dialog in both
-> frontends. The native-messaging host's static bearer (E-1's neighbour) is also
-> untouched. Tracked in #106.
+> **Linux now has a presence factor.** fprintd first where a reader exists, then
+> polkit — the mechanism every other Linux application uses for this question,
+> with an agent the user's desktop already runs. `auth_self` prompts for the
+> user's own password, not an administrator's, and deliberately not
+> `auth_self_keep`: a remembered authorisation would defeat the point, since the
+> whole purpose is that an idle machine cannot be drained by something that read
+> the capability file. The desktop packages install
+> `/usr/share/polkit-1/actions/com.vela.VELA.policy`; a machine with neither
+> factor still reports `Unavailable` and says so rather than inventing a
+> confirmation.
+>
+> This was chosen over building a VELA confirmation dialog in both frontends. A
+> security prompt is exactly the kind of UI whose failure modes — approving on
+> timeout, a leaked pending entry — are invisible from the calling side, and
+> reusing the platform's own agent means there is no such dialog to get wrong.
+>
+> **What remains.** A machine with no fingerprint reader *and* no polkit agent
+> still releases on the peer check alone. Tracked in #106.
 
 **Location.** `desktopVELA/vela-desktop-core/src/ipc.rs:294-312`
 

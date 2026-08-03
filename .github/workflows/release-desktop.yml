@@ -408,7 +408,8 @@ jobs:
                    'hicolor-icon-theme' 'libsoup3' 'pango' 'webkit2gtk-4.1'
                    'libayatana-appindicator' 'librsvg')
           optdepends=('gnome-keyring: system secret-storage backend'
-                      'keepassxc: alternative secret-storage backend')
+                      'keepassxc: alternative secret-storage backend'
+                      'polkit: confirm you are present before a saved password is released to the browser extension')
           provides=('vela-desktop')
           conflicts=('vela-desktop')
           # Prebuilt binary: upstream already stripped it — re-stripping is
