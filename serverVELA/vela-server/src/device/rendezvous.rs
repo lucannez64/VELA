@@ -389,7 +389,7 @@ pub async fn post_result(
         let result: EnrollmentResult = serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Internal(format!("stored result is unreadable: {e}")))?;
         let vk = crate::db::decode_b64(&result.hybrid_vk)?;
-        super::enroll::verify_enrollment_result_signature(&vk, grant_id, &signature)?;
+        verify_result_signature(&vk, grant_id, &signature)?;
         return Ok(Json(ResultResponse::Enrolled {
             device_id: result.device_id,
         }));
@@ -399,13 +399,33 @@ pub async fn post_result(
     // not an answer an interceptor can get.
     if let Some(claim) = load_claim(&state, grant_id)? {
         let vk = crate::db::decode_b64(&claim.hybrid_vk)?;
-        super::enroll::verify_enrollment_result_signature(&vk, grant_id, &signature)?;
+        verify_result_signature(&vk, grant_id, &signature)?;
         return Ok(Json(ResultResponse::Pending));
     }
 
     Err(AppError::NotFound(
         "enrollment grant not found or expired".into(),
     ))
+}
+
+/// Check a collector's signature, treating an unusable stored key as a refusal
+/// rather than a server fault.
+///
+/// A claim's `hybrid_vk` is length-checked but not parsed when it is stored, so
+/// an unauthenticated caller can put 2624 bytes of noise there and reach this
+/// path. That is not a bug on the server's side — such a claim can never be a
+/// working device — but it is caller-supplied input, and answering it with a
+/// 500 would file the caller's own garbage as an internal error and bury real
+/// faults among them.
+fn verify_result_signature(vk: &[u8], grant_id: &str, signature: &[u8]) -> Result<()> {
+    super::enroll::verify_enrollment_result_signature(vk, grant_id, signature).map_err(|e| {
+        match e {
+            AppError::Internal(_) => AppError::Unauthorized(
+                "signature does not match the key this grant was claimed with".into(),
+            ),
+            other => other,
+        }
+    })
 }
 
 // ── shared ──────────────────────────────────────────────────────────────────
