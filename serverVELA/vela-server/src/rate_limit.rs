@@ -194,6 +194,23 @@ pub fn web_session_token_by_session(store: &Store, session_id: &str) -> Result<(
     )
 }
 
+/// 10 enrollment grants/hour per user. Opening a grant is cheap and a person
+/// enrolls a device rarely; a burst is either a mistake or someone farming
+/// grants.
+pub fn enrollment_grant_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(store, &format!("rl:enroll:grant:{user_id}"), 10, HOUR_SECS)
+}
+
+/// 20 claim attempts/hour per IP.
+///
+/// A claim is unauthenticated by necessity — the joining device has no identity
+/// yet — so this is the only volume bound on it. It stays well above what a
+/// person doing this by hand needs, and well below useful for grinding grant
+/// ids, which are UUIDs anyway.
+pub fn enrollment_claim_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:enroll:claim:ip:{ip}"), 20, HOUR_SECS)
+}
+
 // ─── Exponential backoff enforcement ─────────────────────────────────────────
 
 /// On consecutive failures (≥3) the spec mandates exponential backoff

@@ -73,6 +73,26 @@ pub fn build(state: AppState) -> Router {
             "/device/enrollment-package/:token",
             get(crate::device::invitation::get_enrollment_package),
         )
+        // Enrollment v3 (audit P-1). The claim is unauthenticated because the
+        // joining device has no identity yet — that is the whole point — so its
+        // binding comes from the grant being single-claim and readable only by
+        // the device that opened it, not from a session.
+        .route(
+            "/device/enrollment-grant",
+            post(crate::device::rendezvous::post_grant),
+        )
+        .route(
+            "/device/enrollment-grant/:id/claim",
+            post(crate::device::rendezvous::post_claim),
+        )
+        .route(
+            "/device/enrollment-grant/:id",
+            get(crate::device::rendezvous::get_claim),
+        )
+        .route(
+            "/device/enrollment-grant/:id/complete",
+            post(crate::device::rendezvous::post_complete),
+        )
         .route("/device/revoke", post(crate::device::revoke::post_revoke))
         .route("/device/capsule", get(crate::device::capsule::get_capsule))
         .route("/devices", get(crate::device::list::list_devices))

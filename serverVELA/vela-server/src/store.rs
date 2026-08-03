@@ -132,6 +132,48 @@ impl Store {
         Ok(())
     }
 
+    /// Set a key **only if it is absent or expired**, atomically.
+    ///
+    /// Returns whether this caller was the one that set it.
+    ///
+    /// `set_ex` followed by a read cannot express "first writer wins": two
+    /// racing callers both read absent and both write, and the second silently
+    /// replaces the first. That is fine for a cache and fatal for a claim —
+    /// enrollment depends on exactly one device ever being able to claim a
+    /// grant, so a lost race has to be visible to the loser rather than
+    /// overwritten (audit P-1).
+    ///
+    /// sled's `compare_and_swap` is the atomicity: the swap only lands if the
+    /// stored bytes are still exactly what we read, so a concurrent writer makes
+    /// ours fail rather than clobber.
+    pub fn set_ex_nx(&self, key: &str, value: &[u8], ttl_secs: u64) -> Result<bool> {
+        let expiry = epoch_secs() + ttl_secs;
+        let mut entry = expiry.to_le_bytes().to_vec();
+        entry.extend_from_slice(value);
+
+        let current = self.ttl.get(key.as_bytes()).map_err(map_err)?;
+        if let Some(ref data) = current {
+            let (_, expired) = extract_value(data);
+            // Present and still live: someone else already claimed this.
+            if !expired {
+                return Ok(false);
+            }
+        }
+
+        // `current` is the exact bytes we based the decision on. If anything
+        // changed in between — another claim landing — the swap fails and we
+        // report the loss instead of overwriting their claim.
+        let swapped = self
+            .ttl
+            .compare_and_swap(
+                key.as_bytes(),
+                current.as_ref().map(|d| d.as_ref()),
+                Some(entry),
+            )
+            .map_err(|e| AppError::Internal(format!("sled cas error: {e}")))?;
+        Ok(swapped.is_ok())
+    }
+
     /// Set a key without TTL (persists until deleted).
     pub fn set(&self, key: &str, value: &[u8]) -> Result<()> {
         let mut entry = u64::MAX.to_le_bytes().to_vec();
@@ -456,4 +498,71 @@ fn epoch_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// First-claim-wins is the whole point of `set_ex_nx`; a lost race has to be
+    /// reported to the loser, not silently overwritten (audit P-1).
+    #[test]
+    fn set_ex_nx_lets_exactly_one_writer_win() {
+        let store = Store::open_temp().unwrap();
+        assert!(store.set_ex_nx("grant:1", b"device-a", 60).unwrap());
+        assert!(
+            !store.set_ex_nx("grant:1", b"device-b", 60).unwrap(),
+            "a second claim must lose"
+        );
+        assert_eq!(store.get("grant:1").unwrap().unwrap(), b"device-a");
+    }
+
+    #[test]
+    fn set_ex_nx_wins_under_concurrency_exactly_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let store = Arc::new(Store::open_temp().unwrap());
+        let barrier = Arc::new(Barrier::new(8));
+        let winners = Arc::new(AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                let winners = winners.clone();
+                std::thread::spawn(move || {
+                    // Release them together, so this is a real race rather than
+                    // eight sequential calls.
+                    barrier.wait();
+                    if store
+                        .set_ex_nx("grant:race", format!("device-{i}").as_bytes(), 60)
+                        .unwrap()
+                    {
+                        winners.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(
+            winners.load(Ordering::SeqCst),
+            1,
+            "exactly one of eight racing claims may win"
+        );
+    }
+
+    #[test]
+    fn an_expired_claim_does_not_block_a_new_one() {
+        // Otherwise an abandoned grant would poison its key until sled's own
+        // cleanup ran, and the user would see enrollment fail for no reason.
+        let store = Store::open_temp().unwrap();
+        assert!(store.set_ex_nx("grant:2", b"stale", 0).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(store.set_ex_nx("grant:2", b"fresh", 60).unwrap());
+        assert_eq!(store.get("grant:2").unwrap().unwrap(), b"fresh");
+    }
 }

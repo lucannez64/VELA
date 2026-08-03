@@ -89,7 +89,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (vault chunks bound end to end; audit chunks and share blobs are not) |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | **FIXED** (tagged shares; tampering is an error) |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
-| P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | open |
+| P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | **PARTIAL** (server-side v3 rendezvous landed; clients still on v2) |
 
 `P-` denotes a protocol-level finding — one that lives in the shape of the
 handshake rather than in any single component's code. P-1 was found while
