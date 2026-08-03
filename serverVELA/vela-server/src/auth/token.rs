@@ -40,6 +40,49 @@ pub struct VelaClaims {
     pub jti: String,
     pub exp: DateTime<Utc>,
     pub hard_cap: DateTime<Utc>,
+    pub scope: TokenScope,
+}
+
+/// What kind of caller a token speaks for (red-team RT-4).
+///
+/// Before this existed, the PASETO issued to an ephemeral browser was
+/// indistinguishable from an enrolled device's: same `sub`, a `device_id` that
+/// happened to be the session id, and nothing to tell the two apart. So a
+/// session that `EPHEMERAL_WEB_ACCESS_DESIGN.md` §2 promises is "temporary",
+/// "revocable at any time" and "no permanent device enrollment" could rotate the
+/// recovery share, register the attacker's recovery passkey, revoke the real
+/// devices that would have revoked *it*, and delete the account outright.
+///
+/// The boundary that promise describes is an authorization boundary, not just an
+/// expiry one — so it has to be written into the token and checked at the routes
+/// that outlive the session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenScope {
+    /// A real enrolled device. Full authority over the account.
+    Device,
+    /// An ephemeral web session. May read and write the vault it was granted,
+    /// and nothing that survives the session.
+    WebSession,
+}
+
+impl TokenScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TokenScope::Device => "device",
+            TokenScope::WebSession => "web_session",
+        }
+    }
+
+    fn from_claim(value: Option<&str>) -> Self {
+        match value {
+            Some("web_session") => TokenScope::WebSession,
+            // Tokens minted before this claim existed carry no scope. They are
+            // treated as device tokens, which is the permissive reading — but
+            // the window is bounded by TOKEN_LIFE (15 min), after which every
+            // token in circulation is scoped.
+            _ => TokenScope::Device,
+        }
+    }
 }
 
 /// Token service — thin wrapper around the PASETO library.
@@ -62,11 +105,23 @@ impl TokenService {
     ///
     /// `hard_cap` carries the original timestamp across renewals so the
     /// 8-hour session ceiling is always enforced.
+    /// Issue a token for a real enrolled device.
     pub fn issue(
         &self,
         user_id: Uuid,
         device_id: Uuid,
         hard_cap: Option<DateTime<Utc>>,
+    ) -> Result<(String, String)> {
+        self.issue_scoped(user_id, device_id, hard_cap, TokenScope::Device)
+    }
+
+    /// Issue a token, saying what kind of caller it speaks for (red-team RT-4).
+    pub fn issue_scoped(
+        &self,
+        user_id: Uuid,
+        device_id: Uuid,
+        hard_cap: Option<DateTime<Utc>>,
+        scope: TokenScope,
     ) -> Result<(String, String)> {
         let now = Utc::now();
         let hcap = hard_cap.unwrap_or_else(|| now + Duration::seconds(HARD_CAP_SECS));
@@ -103,6 +158,9 @@ impl TokenService {
         claims
             .add_additional("hard_cap", serde_json::json!(hcap.to_rfc3339()))
             .map_err(|e| AppError::Internal(format!("hard_cap claim: {e:?}")))?;
+        claims
+            .add_additional("scope", serde_json::json!(scope.as_str()))
+            .map_err(|e| AppError::Internal(format!("scope claim: {e:?}")))?;
 
         let token = public::sign(&self.sk, &claims, None, None)
             .map_err(|e| AppError::Internal(format!("PASETO sign: {e:?}")))?;
@@ -157,12 +215,15 @@ impl TokenService {
             .map(|dt| dt.with_timezone(&Utc))
             .ok_or_else(|| AppError::Unauthorized("missing hard_cap claim".into()))?;
 
+        let scope = TokenScope::from_claim(p.get_claim("scope").and_then(|v| v.as_str()));
+
         Ok(VelaClaims {
             user_id,
             device_id,
             jti,
             exp,
             hard_cap,
+            scope,
         })
     }
 }

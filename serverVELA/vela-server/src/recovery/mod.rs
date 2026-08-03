@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, DeviceSession},
     state::AppState,
 };
 
@@ -31,7 +31,7 @@ pub struct PutShareResponse {
 
 pub async fn put_share(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<PutShareRequest>,
 ) -> Result<(HeaderMap, Json<PutShareResponse>)> {
     let share_bytes = B64
@@ -70,7 +70,7 @@ pub struct GetShareResponse {
 
 pub async fn get_share(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<GetShareResponse>)> {
     let rows = state
         .db
@@ -111,7 +111,7 @@ pub async fn get_share(
 
 pub async fn delete_share(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, StatusCode)> {
     state
         .db

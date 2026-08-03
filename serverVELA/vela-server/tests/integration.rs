@@ -1162,3 +1162,381 @@ async fn web_session_start_requires_an_approver_account() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+// ── Red-team RT-4: a web-session token is not a device token ─────────────────
+
+/// Mint a token of a given scope for an existing user, as the server would.
+fn token_for(
+    state: &vela_server::state::AppState,
+    user_id: Uuid,
+    device_id: Uuid,
+    scope: vela_server::auth::token::TokenScope,
+) -> String {
+    let ts = vela_server::auth::token::TokenService::new(
+        state.paseto_sk.clone(),
+        state.paseto_pk.clone(),
+    );
+    ts.issue_scoped(user_id, device_id, None, scope).unwrap().0
+}
+
+/// Insert a user so the auth middleware's existence check passes.
+fn insert_user(state: &vela_server::state::AppState, user_id: Uuid) {
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .db
+        .execute(
+            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
+            stoolap::params![user_id.to_string(), now],
+        )
+        .unwrap();
+}
+
+/// The endpoints an ephemeral browser must not reach.
+///
+/// `EPHEMERAL_WEB_ACCESS_DESIGN.md` §2 promises a web session is temporary,
+/// revocable, and enrolls no permanent device. Before the scope claim existed
+/// its token was byte-for-byte as authoritative as a laptop's, so it could
+/// rotate the recovery share, register the attacker's recovery passkey, revoke
+/// the user's real devices, open an enrollment grant, and delete the account.
+#[tokio::test]
+async fn web_session_token_is_refused_on_permanent_power_routes() {
+    use vela_server::auth::token::TokenScope;
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    insert_user(&state, user_id);
+
+    let web = token_for(&state, user_id, session_id, TokenScope::WebSession);
+
+    let cases: Vec<(&str, &str, Option<serde_json::Value>)> = vec![
+        ("PUT", "/recovery/share", Some(json!({ "share": B64.encode(b"x") }))),
+        ("GET", "/recovery/share", None),
+        ("DELETE", "/recovery/share", None),
+        (
+            "POST",
+            "/recovery/webauthn/register/start",
+            Some(json!({ "user_name": "attacker" })),
+        ),
+        ("POST", "/device/revoke", Some(json!({ "device_id": Uuid::new_v4() }))),
+        ("POST", "/device/enrollment-grant", Some(json!({}))),
+        ("DELETE", "/account", None),
+    ];
+
+    for (method, path, body) in cases {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Authorization", format!("Bearer {web}"));
+        let req = match body {
+            Some(ref v) => {
+                builder = builder.header("Content-Type", "application/json");
+                builder.body(Body::from(serde_json::to_vec(v).unwrap())).unwrap()
+            }
+            None => builder.body(Body::empty()).unwrap(),
+        };
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {path} must refuse a web-session token, got {}",
+            resp.status()
+        );
+    }
+}
+
+/// The same routes still work for a real device token — the guard must refuse
+/// web sessions, not everyone.
+#[tokio::test]
+async fn device_token_still_reaches_permanent_power_routes() {
+    use vela_server::auth::token::TokenScope;
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let device_id = Uuid::new_v4();
+    insert_user(&state, user_id);
+
+    let device = token_for(&state, user_id, device_id, TokenScope::Device);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/recovery/share")
+                .header("Authorization", format!("Bearer {device}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "share": B64.encode(b"share-bytes") })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a real device must not be caught by the web-session guard"
+    );
+}
+
+/// Renewal must carry the scope across.
+///
+/// The middleware re-issues a token when one is close to expiry. Issuing with
+/// the default scope there would launder an ephemeral web-session token into a
+/// device token roughly every ten minutes, silently undoing the guard above.
+#[tokio::test]
+async fn renewing_a_web_session_token_keeps_it_a_web_session_token() {
+    use vela_server::auth::token::{TokenScope, TokenService};
+
+    let state = helpers::test_state().await;
+    let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
+    let user_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+
+    let (web, _) = ts
+        .issue_scoped(user_id, session_id, None, TokenScope::WebSession)
+        .unwrap();
+    let claims = ts.verify(&web).unwrap();
+    assert_eq!(claims.scope, TokenScope::WebSession);
+
+    // What `AuthSession::from_request_parts` does on renewal.
+    let (renewed, _) = ts
+        .issue_scoped(
+            claims.user_id,
+            claims.device_id,
+            Some(claims.hard_cap),
+            claims.scope,
+        )
+        .unwrap();
+    assert_eq!(
+        ts.verify(&renewed).unwrap().scope,
+        TokenScope::WebSession,
+        "renewal must not promote a web session to a device"
+    );
+}
+
+/// A token minted before the scope claim existed reads as a device token.
+///
+/// That is the permissive reading, chosen deliberately: the alternative would
+/// have invalidated every device token in flight at deploy. The exposure is
+/// bounded by the 15-minute token lifetime.
+#[tokio::test]
+async fn a_token_without_a_scope_claim_is_treated_as_a_device() {
+    use vela_server::auth::token::{TokenScope, TokenService};
+
+    let state = helpers::test_state().await;
+    let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
+    let (token, _) = ts.issue(Uuid::new_v4(), Uuid::new_v4(), None).unwrap();
+    assert_eq!(ts.verify(&token).unwrap().scope, TokenScope::Device);
+}
+
+// ── Red-team RT-1: the consequence endpoints, keyed like initiate ────────────
+
+/// A WebAuthn credential shaped well enough to deserialize.
+///
+/// It has to parse, or the handler rejects the body before the rate limit runs
+/// and the test measures nothing at all.
+fn parseable_credential() -> serde_json::Value {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
+    json!({
+        "id": "abc",
+        "rawId": B64URL.encode(b"abc"),
+        "type": "public-key",
+        "response": {
+            "authenticatorData": B64URL.encode([0u8; 32]),
+            "clientDataJSON": B64URL.encode(b"{}"),
+            "signature": B64URL.encode([0u8; 64]),
+        },
+    })
+}
+
+/// `/recovery/recover` is the endpoint that releases the recovery share, and it
+/// checked its budget before verifying anything — so a garbage body from any
+/// address used to spend a victim's hourly allowance and lock them out of
+/// recovery, which is the last resort after a lost device.
+#[tokio::test]
+async fn recovery_recover_limit_cannot_be_burned_for_someone_else() {
+    let app = vela_server::routes::build(helpers::test_state().await);
+    let victim = Uuid::new_v4();
+
+    let recover = |ip: [u8; 4]| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/recovery/recover")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(
+                    &json!({ "user_id": victim, "credential": parseable_credential() }),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from((ip, 44444))));
+        req
+    };
+
+    const ATTACKER: [u8; 4] = [203, 0, 113, 6];
+    for i in 1..=vela_server::rate_limit::RECOVERY_CONSEQUENCE_PER_IP_USER_HOURLY {
+        let resp = app.clone().oneshot(recover(ATTACKER)).await.unwrap();
+        assert_ne!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "attacker call {i} should spend budget, not be refused yet"
+        );
+    }
+    let resp = app.clone().oneshot(recover(ATTACKER)).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the attacker must throttle themselves"
+    );
+
+    // The victim, elsewhere, is untouched.
+    let resp = app.oneshot(recover([198, 51, 100, 7])).await.unwrap();
+    assert_ne!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "one caller must not be able to lock another out of recovery"
+    );
+}
+
+/// Same for `/recovery/enroll-device`, the step that re-enrols the recovered
+/// device. Locking this is locking the user out just as effectively.
+#[tokio::test]
+async fn recovery_enroll_device_limit_cannot_be_burned_for_someone_else() {
+    let app = vela_server::routes::build(helpers::test_state().await);
+    let victim = Uuid::new_v4();
+
+    let enroll = |ip: [u8; 4]| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/recovery/enroll-device")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&json!({
+                    "user_id": victim,
+                    "recovery_grant": Uuid::new_v4(),
+                    "hybrid_ek": "",
+                    "hybrid_vk": "",
+                    "device_name": "x",
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from((ip, 44444))));
+        req
+    };
+
+    const ATTACKER: [u8; 4] = [203, 0, 113, 8];
+    for i in 1..=vela_server::rate_limit::RECOVERY_CONSEQUENCE_PER_IP_USER_HOURLY {
+        let resp = app.clone().oneshot(enroll(ATTACKER)).await.unwrap();
+        assert_ne!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "attacker call {i} should spend budget, not be refused yet"
+        );
+    }
+    let resp = app.clone().oneshot(enroll(ATTACKER)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let resp = app.oneshot(enroll([198, 51, 100, 11])).await.unwrap();
+    assert_ne!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "one caller must not be able to lock another out of post-recovery enrollment"
+    );
+}
+
+// ── Red-team RT-2: the RW token proof, scoped per caller ─────────────────────
+
+/// The session id is in the QR and this endpoint does not require the poll
+/// secret, so an onlooker can call it. With the budget keyed on the session
+/// alone, an onlooker's attempts spent the browser's allowance.
+///
+/// This covers the per-caller *budget*. The exponential backoff — the other
+/// half of RT-2, and the one the original exploit tripped — only engages once a
+/// signature actually fails verification, which needs a granted session with a
+/// real key; that half is exercised end to end against a live server rather
+/// than here, and the scope string it uses is asserted below.
+#[tokio::test]
+async fn web_session_token_budget_cannot_be_burned_by_an_onlooker() {
+    let app = vela_server::routes::build(helpers::test_state().await);
+    let session_id = Uuid::new_v4();
+
+    let attempt = |ip: [u8; 4]| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri(format!("/web-session/{session_id}/token"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&json!({ "challenge": "AAAA", "signature": "AAAA" }))
+                    .unwrap(),
+            ))
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from((ip, 44444))));
+        req
+    };
+
+    // Spend the onlooker's own per-(ip, session) allowance (10/min).
+    const ONLOOKER: [u8; 4] = [203, 0, 113, 12];
+    for _ in 0..10 {
+        let _ = app.clone().oneshot(attempt(ONLOOKER)).await.unwrap();
+    }
+    let resp = app.clone().oneshot(attempt(ONLOOKER)).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the onlooker must throttle themselves"
+    );
+
+    // The browser, elsewhere, still reaches the endpoint. Its proof is garbage
+    // too, so "reached" means anything but 429.
+    let resp = app.oneshot(attempt([198, 51, 100, 13])).await.unwrap();
+    assert_ne!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "an onlooker must not be able to back off the legitimate browser"
+    );
+}
+
+/// The guard must not break what a web session is *for*.
+///
+/// An RW browser session exists to read and write the vault it was granted.
+/// Scoping the token is only correct if that still works — otherwise the fix
+/// for RT-4 would have removed the feature rather than bounded it.
+#[tokio::test]
+async fn web_session_token_still_reaches_the_vault() {
+    use vela_server::auth::token::TokenScope;
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    insert_user(&state, user_id);
+
+    let web = token_for(&state, user_id, session_id, TokenScope::WebSession);
+    for (method, uri) in [("GET", "/vault/sync"), ("GET", "/devices")] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("Authorization", format!("Bearer {web}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {uri} must stay reachable for a granted web session"
+        );
+    }
+}

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
-    middleware::AuthSession,
+    middleware::DeviceSession,
     rate_limit,
     state::AppState,
 };
@@ -22,7 +22,7 @@ pub struct RevokeResponse {
 
 pub async fn post_revoke(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<RevokeRequest>,
 ) -> Result<Json<RevokeResponse>> {
     let rows = state

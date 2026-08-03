@@ -9,7 +9,7 @@ use webauthn_rs::prelude::{
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, DeviceSession},
     rate_limit,
     state::AppState,
 };
@@ -62,7 +62,7 @@ pub struct RegisterFinishResponse {
 
 pub async fn post_register_start(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<RegisterStartRequest>,
 ) -> Result<(HeaderMap, Json<RegisterStartResponse>)> {
     let existing = recovery_passkey_for_user(&state, session.user_id)?;
@@ -103,7 +103,7 @@ pub async fn post_register_start(
 
 pub async fn post_register_finish(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(credential): Json<RegisterPublicKeyCredential>,
 ) -> Result<(HeaderMap, Json<RegisterFinishResponse>)> {
     // Registration ceremonies are rare in normal use (one per recovery-key

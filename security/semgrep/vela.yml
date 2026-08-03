@@ -12,10 +12,10 @@ rules:
     languages: [rust]
     severity: ERROR
     message: >
-      Route handler $F takes State<AppState> but has no `AuthSession` parameter.
-      If this is reachable from the public router, it is an unauthenticated (or
-      unownership-scoped) endpoint. Audit ref S-2/S-4. If it is intentionally
-      public, add its name to `public-handlers.txt`.
+      Route handler $F takes State<AppState> but has no `AuthSession` or
+      `DeviceSession` parameter. If this is reachable from the public router, it
+      is an unauthenticated (or unownership-scoped) endpoint. Audit ref S-2/S-4.
+      If it is intentionally public, add its name to `public-handlers.txt`.
     paths:
       include: ["serverVELA/vela-server/src/**/*.rs"]
     patterns:
@@ -28,6 +28,16 @@ rules:
           pub async fn $F($ARGS) -> $RET {
             ...
             $AUTH: AuthSession,
+            ...
+          }
+      # `DeviceSession` is `AuthSession` plus a scope check (red-team RT-4) —
+      # strictly stronger. Without this clause the only way a device-only
+      # handler could pass would be the public allowlist, which would say the
+      # opposite of what is true and hide a later removal of the parameter.
+      - pattern-not-inside: |
+          pub async fn $F($ARGS) -> $RET {
+            ...
+            $AUTH: DeviceSession,
             ...
           }
 

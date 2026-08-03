@@ -2,14 +2,14 @@ use axum::{extract::State, http::HeaderMap, Json};
 
 use crate::{
     error::{AppError, Result},
-    middleware::AuthSession,
+    middleware::DeviceSession,
     rate_limit,
     state::AppState,
 };
 
 pub async fn delete_account(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let rows = state
         .db

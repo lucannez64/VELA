@@ -50,7 +50,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     net, rate_limit,
     state::AppState,
 };
@@ -112,9 +112,18 @@ pub struct CreateGrantResponse {
     pub expires_in: u64,
 }
 
+/// Open a grant.
+///
+/// Device-only (red-team RT-4). An enrollment grant is the first step of a
+/// *permanent* device enrollment, which is exactly what
+/// `EPHEMERAL_WEB_ACCESS_DESIGN.md` §2 promises a web session cannot do. The
+/// completion path refuses a web session anyway — it has no `devices` row whose
+/// key could sign the enrollment — but refusing at the source is the honest
+/// place: it also stops a borrowed browser watching an enrollment in progress
+/// through `get_claim`.
 pub async fn post_grant(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<CreateGrantResponse>)> {
     rate_limit::enrollment_grant_by_user(&state.store, &session.user_id.to_string())?;
 
@@ -212,7 +221,7 @@ pub struct ClaimView {
 pub async fn get_claim(
     State(state): State<AppState>,
     Path(grant_id): Path<String>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<ClaimView>)> {
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
     authorize_grant(&state, grant_id, &session)?;
@@ -253,7 +262,7 @@ pub struct CompleteResponse {
 pub async fn post_complete(
     State(state): State<AppState>,
     Path(grant_id): Path<String>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<CompleteRequest>,
 ) -> Result<(HeaderMap, Json<CompleteResponse>)> {
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
