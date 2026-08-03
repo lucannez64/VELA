@@ -43,8 +43,35 @@ struct MockDbInner {
     tokens: HashMap<String, String>,
     /// Enrollment package token -> base64 ciphertext.
     enrollment_packages: HashMap<String, String>,
+    /// Enrollment v3 grant id -> who may drive it (audit P-1).
+    enroll_grants: HashMap<String, Grant>,
+    /// Grant id -> the public keys a joining device presented. Written exactly
+    /// once per grant, which is the property the whole design leans on.
+    enroll_claims: HashMap<String, Claim>,
+    /// Grant id -> what the joining device may collect once enrolled.
+    enroll_results: HashMap<String, EnrollmentResult>,
     /// "user_id\0chunk_id" -> chunk.
     chunks: HashMap<String, Chunk>,
+}
+
+#[derive(Clone)]
+struct Grant {
+    user_id: String,
+    device_id: String,
+}
+
+#[derive(Clone)]
+struct Claim {
+    hybrid_ek: Vec<u8>,
+    hybrid_vk: Vec<u8>,
+    device_name: Option<String>,
+    device_type: Option<String>,
+}
+
+#[derive(Clone)]
+struct EnrollmentResult {
+    device_id: String,
+    hybrid_vk: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -358,6 +385,216 @@ async fn post_enroll(State(db): State<MockDb>, body: axum::body::Bytes) -> Respo
     ok_json(serde_json::json!({ "device_id": new_device_id }))
 }
 
+// ───────────────────── enrollment v3 rendezvous (audit P-1) ─────────────────
+//
+// Faithful to `serverVELA/.../rendezvous.rs` in the parts a client can observe
+// or get wrong: a grant is bound to the device that opened it, admits exactly
+// one claim, the enrolled keys come from the stored claim rather than the
+// completion body, completing consumes both, and the result is collectable only
+// by whoever holds the private half of the claimed key. A mock that were laxer
+// than the server would let a broken client pass here and fail in production.
+
+async fn post_enrollment_grant(State(db): State<MockDb>, headers: HeaderMap) -> Response {
+    let device = match auth_device(&db, &headers) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let grant_id = Uuid::new_v4().to_string();
+    db.lock().enroll_grants.insert(
+        grant_id.clone(),
+        Grant { user_id: device.user_id, device_id: device.device_id },
+    );
+    ok_json(serde_json::json!({ "grant_id": grant_id, "expires_in": 300 }))
+}
+
+#[derive(Deserialize)]
+struct ClaimBody {
+    hybrid_ek: String,
+    hybrid_vk: String,
+    device_name: Option<String>,
+    device_type: Option<String>,
+}
+
+async fn post_enrollment_claim(
+    State(db): State<MockDb>,
+    Path(grant_id): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let body: ClaimBody = match serde_json::from_slice(&body) {
+        Ok(b) => b,
+        Err(_) => return error_response(StatusCode::BAD_REQUEST, "bad_request", "malformed claim body"),
+    };
+    let (Ok(ek), Ok(vk)) = (B64.decode(&body.hybrid_ek), B64.decode(&body.hybrid_vk)) else {
+        return error_response(StatusCode::BAD_REQUEST, "bad_request", "claim keys are not base64");
+    };
+
+    let mut inner = db.lock();
+    if !inner.enroll_grants.contains_key(&grant_id) {
+        return error_response(StatusCode::NOT_FOUND, "not_found", "enrollment grant not found or expired");
+    }
+    // First claim wins, and the loser is told. Silent replacement is what would
+    // make a hijack invisible.
+    if inner.enroll_claims.contains_key(&grant_id) {
+        return error_response(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this enrollment code has already been used by another device",
+        );
+    }
+    inner.enroll_claims.insert(
+        grant_id,
+        Claim { hybrid_ek: ek, hybrid_vk: vk, device_name: body.device_name, device_type: body.device_type },
+    );
+    ok_json(serde_json::json!({ "claimed": true }))
+}
+
+/// Load a grant and require the caller to be the device that opened it.
+fn authorize_grant(db: &MockDb, grant_id: &str, headers: &HeaderMap) -> Result<Grant, Response> {
+    let device = auth_device(db, headers)?;
+    let grant = db.lock().enroll_grants.get(grant_id).cloned().ok_or_else(|| {
+        error_response(StatusCode::NOT_FOUND, "not_found", "enrollment grant not found or expired")
+    })?;
+    if grant.user_id != device.user_id || grant.device_id != device.device_id {
+        // Same message as "not found": whether a grant exists is not something
+        // an unrelated caller should be able to probe.
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "enrollment grant not found or expired",
+        ));
+    }
+    Ok(grant)
+}
+
+async fn get_enrollment_claim(
+    State(db): State<MockDb>,
+    Path(grant_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(resp) = authorize_grant(&db, &grant_id, &headers) {
+        return resp;
+    }
+    match db.lock().enroll_claims.get(&grant_id).cloned() {
+        Some(claim) => ok_json(serde_json::json!({
+            "hybrid_ek": B64.encode(&claim.hybrid_ek),
+            "hybrid_vk": B64.encode(&claim.hybrid_vk),
+            "device_name": claim.device_name,
+            "device_type": claim.device_type,
+        })),
+        None => error_response(StatusCode::NOT_FOUND, "not_found", "no device has claimed this code yet"),
+    }
+}
+
+#[derive(Deserialize)]
+struct CompleteBody {
+    rms_capsule: String,
+    signature: String,
+}
+
+async fn post_enrollment_complete(
+    State(db): State<MockDb>,
+    Path(grant_id): Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let grant = match authorize_grant(&db, &grant_id, &headers) {
+        Ok(g) => g,
+        Err(resp) => return resp,
+    };
+    let body: CompleteBody = match serde_json::from_slice(&body) {
+        Ok(b) => b,
+        Err(_) => return error_response(StatusCode::BAD_REQUEST, "bad_request", "malformed complete body"),
+    };
+
+    // Consume both together, so a replay finds nothing.
+    let claim = {
+        let mut inner = db.lock();
+        let claim = match inner.enroll_claims.remove(&grant_id) {
+            Some(c) => c,
+            None => {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    "no device has claimed this code yet",
+                )
+            }
+        };
+        inner.enroll_grants.remove(&grant_id);
+        claim
+    };
+
+    let capsule = match B64.decode(&body.rms_capsule) {
+        Ok(b) => b,
+        Err(_) => return error_response(StatusCode::BAD_REQUEST, "bad_request", "rms_capsule is not base64"),
+    };
+
+    let primary = match db.lock().devices.get(&grant.device_id).cloned() {
+        Some(d) => d,
+        None => return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "enrolling device not found"),
+    };
+    // Signed over the *stored* keys — so a primary cannot enrol something other
+    // than what the user's fingerprint comparison was about.
+    let message = signing::enrollment_message(&claim.hybrid_ek, &claim.hybrid_vk, &capsule);
+    if !verify_signature(&primary.hybrid_vk, &message, &body.signature) {
+        return error_response(StatusCode::BAD_REQUEST, "bad_request", "enrollment signature invalid");
+    }
+
+    let new_device_id = Uuid::new_v4().to_string();
+    {
+        let mut inner = db.lock();
+        inner.devices.insert(
+            new_device_id.clone(),
+            Device {
+                device_id: new_device_id.clone(),
+                user_id: grant.user_id.clone(),
+                hybrid_vk: claim.hybrid_vk.clone(),
+                rms_capsule: capsule,
+            },
+        );
+        inner.enroll_results.insert(
+            grant_id,
+            EnrollmentResult { device_id: new_device_id.clone(), hybrid_vk: claim.hybrid_vk },
+        );
+    }
+    ok_json(serde_json::json!({ "device_id": new_device_id }))
+}
+
+#[derive(Deserialize)]
+struct ResultBody {
+    signature: String,
+}
+
+async fn post_enrollment_result(
+    State(db): State<MockDb>,
+    Path(grant_id): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let body: ResultBody = match serde_json::from_slice(&body) {
+        Ok(b) => b,
+        Err(_) => return error_response(StatusCode::BAD_REQUEST, "bad_request", "malformed result body"),
+    };
+    let message = signing::enrollment_result_message(&grant_id);
+
+    // Completed: the claim is gone and the result carries the vk forward.
+    if let Some(result) = db.lock().enroll_results.get(&grant_id).cloned() {
+        if !verify_signature(&result.hybrid_vk, &message, &body.signature) {
+            return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "signature does not match the claimed key");
+        }
+        return ok_json(serde_json::json!({ "status": "enrolled", "device_id": result.device_id }));
+    }
+
+    // Not completed yet. Checked against the claimed key too, so "pending" is
+    // not an answer someone holding only the code can get.
+    if let Some(claim) = db.lock().enroll_claims.get(&grant_id).cloned() {
+        if !verify_signature(&claim.hybrid_vk, &message, &body.signature) {
+            return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "signature does not match the claimed key");
+        }
+        return ok_json(serde_json::json!({ "status": "pending" }));
+    }
+
+    error_response(StatusCode::NOT_FOUND, "not_found", "enrollment grant not found or expired")
+}
+
 #[derive(Deserialize)]
 struct StorePackageBody {
     token: String,
@@ -560,6 +797,11 @@ impl MockServer {
             .route("/device/enroll", post(post_enroll))
             .route("/device/enrollment-package", post(post_enrollment_package))
             .route("/device/enrollment-package/:token", get(get_enrollment_package))
+            .route("/device/enrollment-grant", post(post_enrollment_grant))
+            .route("/device/enrollment-grant/:id/claim", post(post_enrollment_claim))
+            .route("/device/enrollment-grant/:id", get(get_enrollment_claim))
+            .route("/device/enrollment-grant/:id/complete", post(post_enrollment_complete))
+            .route("/device/enrollment-grant/:id/result", post(post_enrollment_result))
             .route("/device/capsule", get(get_capsule))
             .route("/share/my-ek", put(put_my_share_ek))
             .route("/vault/sync", get(get_sync_manifest))

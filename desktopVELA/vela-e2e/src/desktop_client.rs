@@ -115,6 +115,42 @@ impl DesktopClient {
         generate_enrollment_code(&self.state).await
     }
 
+    /// Open an enrollment v3 grant, returning the code to show as a QR.
+    ///
+    /// Nothing is created on the account here: unlike v2, no keypair is
+    /// generated and no device row exists until a fingerprint is confirmed.
+    pub async fn open_enrollment_invite(
+        &self,
+    ) -> Result<vela_desktop_core::commands::enrollment_v3::EnrollmentInvite, String> {
+        vela_desktop_core::commands::enrollment_v3::open_enrollment_invite(&self.state).await
+    }
+
+    /// Poll for the joining device's claim. `None` until one arrives.
+    pub async fn poll_enrollment_claim(
+        &self,
+        grant_id: &str,
+    ) -> Result<Option<vela_desktop_core::commands::enrollment_v3::ClaimedDevice>, String> {
+        vela_desktop_core::commands::enrollment_v3::poll_enrollment_claim(&self.state, grant_id)
+            .await
+    }
+
+    /// Answer the fingerprint question with `chosen`, as the user would.
+    ///
+    /// A wrong value does not merely fail: it discards the pending enrollment,
+    /// which is what stops an n-way choice from becoming a 1-in-1 by repetition.
+    pub async fn confirm_enrollment(
+        &self,
+        grant_id: &str,
+        chosen: &str,
+    ) -> Result<String, String> {
+        vela_desktop_core::commands::enrollment_v3::confirm_enrollment(
+            &self.state,
+            grant_id,
+            chosen,
+        )
+        .await
+    }
+
     pub fn item_ids(&self) -> Vec<String> {
         self.state.vault.read().items.iter().map(|i| i.id().to_string()).collect()
     }
