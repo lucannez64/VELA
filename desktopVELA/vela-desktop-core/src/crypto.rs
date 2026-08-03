@@ -102,6 +102,31 @@ pub fn create_rms_capsule(transfer_key: &[u8; 32], rms: &[u8; 32]) -> anyhow::Re
     Ok(vela_crypto::aead::encrypt(transfer_key, rms)?)
 }
 
+/// Seal the RMS to a joining device's public KEM key (enrollment v3).
+///
+/// v2 sealed it under a symmetric `transfer_key` that travelled inside the
+/// enrollment code, so reading the code was enough to open the capsule. Here it
+/// is KEM-sealed to a key whose private half never left the joining device, so
+/// the capsule is worthless to anyone else even if they intercept both the code
+/// and the capsule (audit P-1).
+pub fn seal_rms_to_device(hybrid_ek_bytes: &[u8], rms: &[u8; 32]) -> anyhow::Result<Vec<u8>> {
+    let pk = kem::HybridPublicKey::from_bytes(hybrid_ek_bytes)?;
+    Ok(kem::seal_share(&pk, rms)?)
+}
+
+/// Open a capsule sealed by [`seal_rms_to_device`], using this device's own
+/// KEM secret key.
+pub fn open_rms_from_capsule(hybrid_sk_bytes: &[u8], capsule: &[u8]) -> Result<[u8; 32], String> {
+    let sk = kem::HybridSecretKey::from_bytes(hybrid_sk_bytes)
+        .map_err(|e| format!("invalid device key: {e}"))?;
+    let plaintext = kem::open_share(&sk, capsule).map_err(|e| format!("capsule did not open: {e}"))?;
+    let bytes: [u8; 32] = plaintext
+        .as_slice()
+        .try_into()
+        .map_err(|_| "capsule did not contain a 32-byte root seed".to_string())?;
+    Ok(bytes)
+}
+
 /// Decrypt an RMS capsule previously created by [`create_rms_capsule`].
 pub fn decrypt_rms_capsule(transfer_key: &[u8; 32], capsule: &[u8]) -> Result<[u8; 32], String> {
     let plaintext = vela_crypto::aead::decrypt(transfer_key, capsule)
@@ -229,6 +254,39 @@ pub fn derive_device_id(public_key_bytes: &[u8]) -> String {
     hasher.update(public_key_bytes);
     let result = hasher.finalize();
     Uuid::from_bytes(result[..16].try_into().unwrap()).to_string()
+}
+
+#[cfg(test)]
+mod v3_capsule_tests {
+    use super::*;
+
+    /// The capsule is worth nothing without the joining device's private key —
+    /// which is the entire difference from v2, where the key to open it
+    /// travelled inside the enrollment code (audit P-1).
+    #[test]
+    fn a_capsule_opens_only_with_the_device_that_was_sealed_to() {
+        let (ek, sk) = generate_share_keypair();
+        let (other_ek, other_sk) = generate_share_keypair();
+        assert_ne!(ek, other_ek);
+
+        let rms = [42u8; 32];
+        let capsule = seal_rms_to_device(&ek, &rms).unwrap();
+
+        assert_eq!(open_rms_from_capsule(&sk, &capsule).unwrap(), rms);
+        assert!(
+            open_rms_from_capsule(&other_sk, &capsule).is_err(),
+            "another device's key must not open it"
+        );
+    }
+
+    #[test]
+    fn a_tampered_capsule_does_not_open() {
+        let (ek, sk) = generate_share_keypair();
+        let mut capsule = seal_rms_to_device(&ek, &[7u8; 32]).unwrap();
+        let last = capsule.len() - 1;
+        capsule[last] ^= 1;
+        assert!(open_rms_from_capsule(&sk, &capsule).is_err());
+    }
 }
 
 #[cfg(test)]
