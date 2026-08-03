@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import ConfirmResetModal from '../components/ConfirmResetModal';
 import RecoverAccountModal from '../components/RecoverAccountModal';
+import JoinAccountModal from '../components/JoinAccountModal';
 
 interface Props {
   onCreateVault: () => void;
@@ -13,35 +14,10 @@ interface Props {
 export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportComplete, onAccountRecovered }: Props) {
   const [biometricAvailable, setBiometricAvailable] = useState<boolean | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [importCode, setImportCode] = useState('');
-  const [importPassword, setImportPassword] = useState('');
-  const [importPasswordVisible, setImportPasswordVisible] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState('');
-  const [importVerificationCode, setImportVerificationCode] = useState('');
-  const [codeConfirmed, setCodeConfirmed] = useState(false);
 
   useEffect(() => {
     checkBiometric();
   }, []);
-
-  // Recompute the out-of-band verification code whenever the pasted/scanned
-  // enrollment code changes, and require re-confirmation for the new value —
-  // the whole point is that the user compares THIS code against what's shown
-  // on their other device before trusting it.
-  useEffect(() => {
-    setCodeConfirmed(false);
-    const trimmed = importCode.trim();
-    if (!trimmed) {
-      setImportVerificationCode('');
-      return;
-    }
-    let cancelled = false;
-    invoke<string>('enrollment_verification_code', { code: trimmed })
-      .then(code => { if (!cancelled) setImportVerificationCode(code); })
-      .catch(() => { if (!cancelled) setImportVerificationCode(''); });
-    return () => { cancelled = true; };
-  }, [importCode]);
 
   const checkBiometric = async () => {
     try {
@@ -58,23 +34,6 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
       onAddExisting();
     } else {
       onCreateVault();
-    }
-  };
-
-  const handleImport = async () => {
-    if (!importCode.trim()) { setImportError('Please paste the enrollment code.'); return; }
-    if (!importPassword) { setImportError('Please set a password to protect the vault on this device.'); return; }
-    if (!codeConfirmed) { setImportError('Confirm the verification code matches your other device first.'); return; }
-    setImporting(true);
-    setImportError('');
-    try {
-      await invoke('import_enrollment_code', { code: importCode.trim(), password: importPassword });
-      setShowImportModal(false);
-      onImportComplete?.();
-    } catch (e: any) {
-      setImportError(typeof e === 'string' ? e : 'Import failed. Check the code and try again.');
-    } finally {
-      setImporting(false);
     }
   };
 
@@ -163,7 +122,7 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
               </button>
 
               <button
-                onClick={() => { setShowImportModal(true); setImportError(''); }}
+                onClick={() => setShowImportModal(true)}
                 className="w-full flex items-center justify-between bg-surface-container-highest hover:bg-surface-bright py-4 px-6 rounded-xl transition-all active:scale-95 duration-200"
               >
                 <span className="font-headline font-medium text-on-surface tracking-wide">Join existing account</span>
@@ -202,100 +161,13 @@ export default function WelcomeScreen({ onCreateVault, onAddExisting, onImportCo
         </div>
       </div>
       {showImportModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setShowImportModal(false)}>
-          <div
-            className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-outline-variant/20"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <span className="material-symbols-outlined text-2xl text-primary">vpn_key</span>
-              <h2 className="font-headline text-2xl font-bold text-on-surface">Join existing account</h2>
-            </div>
-            <p className="text-on-surface-variant text-sm mb-5">
-              Paste the enrollment code generated on your other device, then set a password to protect the vault on this device.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-on-surface-variant mb-1">Enrollment code</label>
-                <textarea
-                  value={importCode}
-                  onChange={e => setImportCode(e.target.value)}
-                  placeholder="Paste enrollment code here…"
-                  rows={4}
-                  className="w-full bg-surface-bright border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface text-xs font-mono placeholder-on-surface-variant/40 focus:outline-none focus:border-primary resize-none"
-                />
-              </div>
-
-              {importVerificationCode && (
-                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="material-symbols-outlined text-amber-400 text-lg">verified_user</span>
-                    <span className="font-label text-sm font-bold text-amber-300">Verify this code</span>
-                  </div>
-                  <p className="text-on-surface-variant text-xs mb-2">
-                    Compare this against the verification code shown on your other device's "Enrollment Code" dialog.
-                    If it doesn't match, stop — do not proceed, the code may have been tampered with.
-                  </p>
-                  <div className="font-mono text-xl font-bold tracking-widest text-on-surface text-center py-1 mb-2">
-                    {importVerificationCode}
-                  </div>
-                  <label className="flex items-center gap-2 text-xs text-on-surface cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={codeConfirmed}
-                      onChange={e => setCodeConfirmed(e.target.checked)}
-                      className="w-4 h-4 rounded border-outline-variant bg-surface-container text-primary accent-primary"
-                    />
-                    It matches the code on my other device
-                  </label>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-medium text-on-surface-variant mb-1">Vault password (this device)</label>
-                <div className="relative">
-                  <input
-                    type={importPasswordVisible ? 'text' : 'password'}
-                    value={importPassword}
-                    onChange={e => setImportPassword(e.target.value)}
-                    placeholder="Set a password for this device"
-                    className="w-full bg-surface-bright border border-outline-variant/30 rounded-xl px-4 py-3 pr-12 text-on-surface placeholder-on-surface-variant/40 focus:outline-none focus:border-primary"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setImportPasswordVisible(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
-                  >
-                    <span className="material-symbols-outlined text-xl">
-                      {importPasswordVisible ? 'visibility_off' : 'visibility'}
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {importError && (
-                <p className="text-red-400 text-sm">{importError}</p>
-              )}
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowImportModal(false)}
-                className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleImport}
-                disabled={importing || !codeConfirmed}
-                className="flex-1 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-              >
-                {importing ? 'Importing…' : 'Import & join'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <JoinAccountModal
+          onClose={() => setShowImportModal(false)}
+          onComplete={() => {
+            setShowImportModal(false);
+            onImportComplete?.();
+          }}
+        />
       )}
       {showRecoverModal && (
         <RecoverAccountModal
