@@ -77,6 +77,17 @@ jobs:
           # See the note in the macOS workflow: the workspace root is
           # desktopVELA, so src-tauri caches the wrong lockfile/target dir.
           workspaces: desktopVELA
+          # Shared with build-windows-dryrun. rust-cache keys on the job id by
+          # default, and these are two jobs — this one runs on main, that one on
+          # PRs — so the cache main fills was under a key no PR ever looked up,
+          # and every PR rebuilt the whole dependency tree from scratch on the
+          # slowest, most expensive runner we have (#135).
+          shared-key: desktop-windows
+          # A failed or cancelled build otherwise saves nothing, so the next
+          # attempt starts cold too — exactly when iterating on a broken build
+          # is already painful. rust-cache only stores dependency artifacts and
+          # cleans the workspace's own, so a failure cannot poison it.
+          cache-on-failure: true
 
       - name: Install frontend deps
         working-directory: desktopVELA
@@ -119,6 +130,10 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: desktopVELA
+          # Same key as build-windows above, so a PR restores what the last
+          # main build left rather than starting cold (#135).
+          shared-key: desktop-windows
+          cache-on-failure: true
 
       - name: Install frontend deps
         working-directory: desktopVELA
@@ -188,6 +203,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: desktopVELA
+          cache-on-failure: true
 
       # The main place the desktop crates' tests run: the macOS job compiles
       # a different set of `cfg`s entirely (none of `linux_biometric`, the
