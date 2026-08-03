@@ -15,6 +15,15 @@ post_enroll
 post_enrollment_package
 get_enrollment_package
 
+# Enrollment v3 claim (audit P-1). Unauthenticated by necessity: the joining
+# device has no identity yet — creating one is what it is asking for. It is not
+# open, though. The caller must know a live grant id, the grant can be claimed
+# exactly once (atomic CAS, so a race is reported to the loser rather than
+# overwriting), and the claim carries public keys only. Nothing here is readable
+# without the session of the device that opened the grant. Re-review if the
+# single-claim rule or that read restriction is ever relaxed.
+post_claim
+
 # Recovery is pre-auth by design (user has lost their devices)
 post_initiate
 post_recover
