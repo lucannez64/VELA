@@ -42,13 +42,20 @@ import org.json.JSONObject
  * A browser on none of them gets no browser trust — there is no name-only tier,
  * because a package name is the thing this finding is about. The cost is real:
  * passwords saved in such a browser are filed under its package rather than the
- * site, and are then offered across every site in it. The fix is a verified
- * fingerprint, not a looser rule here.
+ * site, and are then offered across every site in it.
+ *
+ * The remaining gap is browsers that ship only through Play, where the
+ * certificate on the device is Google's re-signed one and no vendor publishes
+ * it anywhere. For those the device's owner is the only available authority, so
+ * they can vouch for one in Settings — see [TrustedBrowsers] (#125). Nothing is
+ * trusted that way until they say so, and the grant is pinned to the certificate
+ * present at that moment.
  */
 class BrowserAllowlist(private val context: Context) {
 
     private val pinned: Map<String, Set<String>> by lazy { loadPinned() }
     private val answers = ConcurrentHashMap<String, Boolean>()
+    private val userTrusted by lazy { TrustedBrowsers(context) }
 
     /**
      * Whether [packageName] is a browser whose `webDomain` may be believed.
@@ -58,6 +65,9 @@ class BrowserAllowlist(private val context: Context) {
      */
     fun isTrustedBrowser(packageName: String?): Boolean {
         val pkg = packageName?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotEmpty() } ?: return false
+        // Not memoised across a user's decision: trusting or revoking a browser
+        // in Settings has to take effect on the next fill, not after a restart.
+        if (userTrusted.isTrusted(pkg)) return true
         return answers.getOrPut(pkg) { evaluate(pkg) }
     }
 
@@ -69,6 +79,10 @@ class BrowserAllowlist(private val context: Context) {
         if (actual.isEmpty()) return false
         return expected.intersect(actual).isNotEmpty()
     }
+
+    /** Whether a shipped list already covers [packageName], so Settings can say so. */
+    fun isCoveredByShippedList(packageName: String): Boolean =
+        pinned.containsKey(packageName.lowercase(Locale.US))
 
     private fun loadPinned(): Map<String, Set<String>> {
         val merged = mutableMapOf<String, MutableSet<String>>()

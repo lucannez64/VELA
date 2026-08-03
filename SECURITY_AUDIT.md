@@ -355,10 +355,18 @@ permission.
 >    gets no browser trust, since a package name is precisely what this finding
 >    is about. Tor Browser and Kiwi carry certificates we pulled out of the
 >    vendor's own APK and checked by hand (Tor's against its published OpenPGP
->    signing key), recorded with their provenance in a third list. Three remain
->    unpinned (Ecosia, Opera GX, UC): passwords saved in those are filed under
->    the package rather than the site, and are then offered across every site in
->    that browser, until their certificates can be verified too.
+>    signing key), recorded with their provenance in a third list. Three ship only
+>    through Play — Ecosia, Opera GX and UC — and no vendor channel exists for
+>    them: none is on F-Droid, Opera's own CDN carries desktop builds only, and
+>    where a vendor uses Play App Signing the certificate on the device is
+>    Google's re-signed one, published nowhere. For those the device's owner is
+>    the remaining authority, so a browser can be vouched for in Settings —
+>    pinned, like an app link, to the certificate it carries at that moment, so
+>    the grant does not transfer if the package is later re-signed. Nothing is
+>    trusted that way until the user says so, and browsers already covered by a
+>    published list are shown as verified rather than offered as a choice: asking
+>    someone to approve what is already verified only teaches them to approve
+>    without reading.
 >
 > An app nobody has vouched for gets no suggestions, where it previously got the
 > whole vault when the request identified nothing.
