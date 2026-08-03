@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+
+<!--
+  User presence for releasing a saved password to the browser extension.
+
+  macOS has LocalAuthentication and Windows has Hello; Linux has no general
+  equivalent, so before this the desktop could only prove presence where a
+  fingerprint reader existed and otherwise released credentials on the peer
+  check alone (audit D-4). polkit is the mechanism every other Linux
+  application uses for exactly this question, and the user's own desktop
+  already runs an agent for it.
+
+  auth_self, not auth_admin: this is "prove you are the person sitting here",
+  not "prove you are root". And not auth_self_keep — a remembered
+  authorisation would defeat the point, since the whole purpose is that an
+  idle machine cannot be drained by something that read the capability file.
+  The desktop applies its own short validity window on top.
+-->
+<policyconfig>
+  <vendor>VELA</vendor>
+  <vendor_url>https://github.com/lucannez64/VELA</vendor_url>
+
+  <action id="com.vela.VELA.release-credential">
+    <description>Fill a saved password</description>
+    <message>Authenticate to let VELA fill a saved password</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>
