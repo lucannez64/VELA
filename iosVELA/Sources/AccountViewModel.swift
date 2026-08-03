@@ -423,6 +423,99 @@ final class AccountViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Enrollment v3 (audit P-1)
+    //
+    // The v2 path above adopts a signing key and an RMS transfer key that both
+    // travelled inside the enrollment code, so reading the code was holding the
+    // vault, permanently. Here this device generates its own identity, sends
+    // only the public halves, and the RMS comes back sealed to a key that never
+    // left it. An intercepted code buys an enrollment attempt.
+
+    /// This device's own fingerprint while a v3 join is in flight.
+    ///
+    /// Set from `identityEnrollmentFingerprint`, which derives it natively from
+    /// the key just generated. It must never be assigned a value from a server
+    /// response: the comparison only means something because the two devices
+    /// agree about a *key*, and a number off the wire would let them agree
+    /// about nothing.
+    @Published var joinFingerprint: String?
+
+    func joinWithV3Code(serverURL: String, code: String, deviceName: String,
+                        secure: VaultViewModel.UnlockMode, password: String?) {
+        run("Joining") { [self] in
+            guard case .v3(let locatorURL, let grantID) = try EnrollmentCode.parse(code) else {
+                throw Failure("not a v3 enrollment code")
+            }
+            var effectiveServer = serverURL.trimmingCharacters(in: .whitespaces)
+            if effectiveServer.isEmpty { effectiveServer = locatorURL ?? defaultServer }
+            guard let base = URL(string: effectiveServer) else { throw Failure("invalid server URL") }
+            let client = VelaClient(baseURL: base)
+
+            // Generated here, and the private halves never leave the native side.
+            guard let identity = VelaCoreFFI.identityCreate(sealKey: store.sealKey()) else {
+                throw Failure("could not generate this device's identity")
+            }
+            try await client.claimEnrollmentGrant(
+                grantID: grantID,
+                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
+                deviceName: deviceName, deviceType: "ios")
+
+            guard let fingerprint = VelaCoreFFI.identityEnrollmentFingerprint(handle: identity.handle) else {
+                throw Failure("could not compute this device's fingerprint")
+            }
+            joinFingerprint = fingerprint
+            defer { joinFingerprint = nil }
+
+            // Wait for the other device's user to pick this fingerprint. No
+            // session is possible yet — the device_id being asked for is what a
+            // session would need — so the proof is a signature under the key
+            // this device claimed with.
+            guard let resultSignature = VelaCoreFFI.identitySignEnrollmentResult(
+                handle: identity.handle, grantID: grantID) else {
+                throw Failure("could not sign the enrollment result request")
+            }
+            var deviceID: String?
+            while deviceID == nil {
+                try await Task.sleep(nanoseconds: Self.v3JoinPollIntervalNanos)
+                deviceID = try await client.collectEnrollmentResult(
+                    grantID: grantID, signature: resultSignature)
+            }
+            guard let deviceID = deviceID else { throw Failure("enrollment was not confirmed") }
+
+            let challenge = try await client.challenge()
+            guard let signature = VelaCoreFFI.identitySign(
+                handle: identity.handle, challengeBase64: challenge, deviceID: deviceID) else {
+                throw Failure("signing failed")
+            }
+            let verified = try await client.verify(deviceID: deviceID, challenge: challenge,
+                                                   signature: signature, deviceType: "ios")
+
+            // Opens with the key generated above and nowhere else.
+            let capsule = try await client.getCapsule()
+            guard let rmsB64 = VelaCoreFFI.identityOpenEnrollmentCapsule(
+                handle: identity.handle, capsuleBase64: capsule),
+                  let rms = Data(base64Encoded: rmsB64) else {
+                throw Failure("the vault key was not sealed to this device")
+            }
+            try vault.adoptVault(rms: rms, mode: secure, password: password)
+
+            var state = AccountState(
+                serverURL: effectiveServer, userID: verified.user_id, deviceID: deviceID,
+                hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
+                token: await client.currentToken ?? verified.token)
+            state.shareEK = identity.shareEK
+            state.sealedIdentity = identity.sealed
+            try store.save(state)
+            account = state
+            return "Joined"
+        }
+    }
+
+    /// How often the joining device asks whether the other device's user has
+    /// confirmed. Slow enough not to hammer the server for the minute or two a
+    /// person takes to compare two screens.
+    private static let v3JoinPollIntervalNanos: UInt64 = 2_000_000_000
+
     private func resolvePayload(code: String, serverOverride: inout String) async throws -> EnrollmentPayload {
         switch try EnrollmentCode.parse(code) {
         case .direct(let payload):
@@ -433,6 +526,10 @@ final class AccountViewModel: ObservableObject {
             let ciphertext = try await VelaClient(baseURL: base).getEnrollmentPackage(token: token)
             if serverOverride.isEmpty { serverOverride = server }
             return try EnrollmentCode.decodeV2Package(ciphertextB64URL: ciphertext, packageKeyB64URL: key)
+        case .v3:
+            // There is no payload to resolve: a v3 code carries no key material
+            // at all. `joinWithV3Code` runs that flow instead.
+            throw Failure("this is a v3 enrollment code — use joinWithV3Code")
         }
     }
 

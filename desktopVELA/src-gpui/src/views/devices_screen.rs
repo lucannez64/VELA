@@ -24,6 +24,7 @@ use vela_desktop_core::AppState;
 
 use crate::animation;
 use crate::fonts;
+use crate::views::enroll_device_modal::{EnrollDeviceModal, EnrollDeviceModalEvent};
 use crate::icon::icon;
 use crate::theme::Palette;
 
@@ -52,6 +53,14 @@ pub struct DevicesScreen {
     enrolling: bool,
     enroll_error: Option<SharedString>,
     enrollment: Option<EnrollmentSession>,
+    /// Enrollment v3 (audit P-1). Its own view, because it is a small state
+    /// machine — grant, poll, pick, enrol — rather than one dialog.
+    enroll_v3: Option<gpui::Entity<EnrollDeviceModal>>,
+    _enroll_v3_subscription: Option<gpui::Subscription>,
+    /// Whether the user has asked for the old-style code. Not offered by
+    /// default: a v2 code carries the joining device's private key and the
+    /// vault key, so reading it is holding the vault.
+    confirm_legacy_enroll: bool,
     show_web_access_modal: bool,
     web_access_code_state: gpui::Entity<EditableTextState>,
     web_access_mode: WebAccessMode,
@@ -98,6 +107,9 @@ impl DevicesScreen {
             revoke_error: None,
             enrolling: false,
             enroll_error: None,
+            enroll_v3: None,
+            _enroll_v3_subscription: None,
+            confirm_legacy_enroll: false,
             enrollment: None,
             show_web_access_modal: false,
             web_access_code_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
@@ -173,6 +185,34 @@ impl DevicesScreen {
             .ok();
         })
         .detach();
+    }
+
+    /// Open the enrollment v3 flow (audit P-1) — the default way to add a
+    /// device. It runs as its own view because it is a state machine (grant,
+    /// poll, pick a fingerprint, enrol) rather than a single dialog.
+    fn open_enroll_v3(&mut self, cx: &mut Context<Self>) {
+        let modal = cx.new({
+            let app_state = self.app_state.clone();
+            move |cx| EnrollDeviceModal::new(app_state, cx)
+        });
+        let subscription = cx.subscribe(&modal, |this, _modal, event, cx| {
+            match event {
+                EnrollDeviceModalEvent::Close => {
+                    this.enroll_v3 = None;
+                    this._enroll_v3_subscription = None;
+                }
+                // The modal stays open to report success; only the list behind
+                // it needs refreshing.
+                EnrollDeviceModalEvent::Enrolled => {
+                    let app_state = this.app_state.clone();
+                    Self::load_devices(&app_state, cx);
+                }
+            }
+            cx.notify();
+        });
+        self.enroll_v3 = Some(modal);
+        self._enroll_v3_subscription = Some(subscription);
+        cx.notify();
     }
 
     fn start_enrollment(&mut self, cx: &mut Context<Self>) {
@@ -413,6 +453,24 @@ impl Render for DevicesScreen {
                                 div()
                                     .text_color(palette.on_surface_variant)
                                     .child("Manage devices that have access to your vault"),
+                            )
+                            // Reachable, not offered: an old-style code carries
+                            // the new device's private key and the vault key,
+                            // so anyone who reads it holds the vault (audit
+                            // P-1). Only a device on a build too old to scan a
+                            // v3 code needs it.
+                            .child(
+                                div()
+                                    .id("legacy-enroll-link")
+                                    .mt_2()
+                                    .text_xs()
+                                    .text_color(palette.on_surface_variant)
+                                    .cursor_pointer()
+                                    .child("Enrolling a device on an older version of VELA?")
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        this.confirm_legacy_enroll = true;
+                                        cx.notify();
+                                    })),
                             ),
                     )
                     .child(
@@ -423,7 +481,7 @@ impl Render for DevicesScreen {
                                 this.open_web_access_modal(cx);
                             }))
                             .child(header_button(&palette, "enroll-device", "add", "Enroll new device", true, window, cx, |this, cx| {
-                                this.start_enrollment(cx);
+                                this.open_enroll_v3(cx);
                             })),
                     )
             })
@@ -506,6 +564,8 @@ impl Render for DevicesScreen {
                 el.child(enrollment_modal(&palette, session, window, cx))
             })
             .when(self.show_web_access_modal, |el| el.child(web_access_modal(&palette, self, window, cx)))
+            .when(self.confirm_legacy_enroll, |el| el.child(legacy_enroll_modal(&palette, self.enrolling, window, cx)))
+            .when_some(self.enroll_v3.clone(), |el, modal| el.child(modal))
     }
 }
 
@@ -1047,6 +1107,135 @@ fn revoke_modal(
                                 })
                                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                                     this.revoke_device(device_id.clone(), cx);
+                                }))
+                        }),
+                ),
+        )
+}
+
+/// Confirmation gate on the old-style enrollment code.
+///
+/// The v2 code is kept working because installs mix — a device on an older
+/// build cannot read a v3 code — but it is worth being blunt about what it is:
+/// the joining device's private key and the key to the whole vault, in one
+/// string, valid to whoever reads it and not undone by revoking the device
+/// afterwards (audit P-1).
+fn legacy_enroll_modal(
+    palette: &Palette,
+    enrolling: bool,
+    window: &mut Window,
+    cx: &mut Context<DevicesScreen>,
+) -> impl IntoElement {
+    div()
+        .id("legacy-enroll-backdrop")
+        .absolute()
+        .inset_0()
+        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .flex()
+        .items_center()
+        .justify_center()
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+            this.confirm_legacy_enroll = false;
+            cx.notify();
+        }))
+        .child(
+            div()
+                .id("legacy-enroll-body")
+                .w(px(420.))
+                .p_8()
+                .rounded_2xl()
+                .bg(palette.surface_container)
+                .border_1()
+                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .flex()
+                .flex_col()
+                .gap_4()
+                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(icon("warning", px(24.), palette.error))
+                        .child(
+                            div()
+                                .font_family(fonts::HEADLINE)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_xl()
+                                .text_color(palette.on_surface)
+                                .child("Use an old-style code?"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child("An old-style code carries the new device's private key and the key to your whole vault. Anyone who reads it — over someone's shoulder, in a screenshot, on a shared screen — has your vault permanently, and revoking the device does not take it back."),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child("Only use this if the other device is running a version of VELA too old to scan the normal code."),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .child({
+                            let hover_t = animation::hover_transition("legacy-enroll-back", window, cx);
+                            let t = *hover_t.evaluate(window, cx);
+                            let bg = animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, t);
+                            div()
+                                .id("legacy-enroll-back")
+                                .flex_1()
+                                .py_3()
+                                .rounded_xl()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(bg)
+                                .text_color(palette.on_primary)
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .cursor_pointer()
+                                .child("Go back")
+                                .on_hover(move |is_hovered, _, cx| {
+                                    hover_t.update(cx, |v, cx| {
+                                        *v = *is_hovered as u8 as f32;
+                                        cx.notify();
+                                    });
+                                })
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                    this.confirm_legacy_enroll = false;
+                                    cx.notify();
+                                }))
+                        })
+                        .child({
+                            let hover_t = animation::hover_transition("legacy-enroll-go", window, cx);
+                            let t = *hover_t.evaluate(window, cx);
+                            let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
+                            div()
+                                .id("legacy-enroll-go")
+                                .flex_1()
+                                .py_3()
+                                .rounded_xl()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(bg)
+                                .text_color(palette.on_surface)
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .cursor_pointer()
+                                .child(if enrolling { "Generating…" } else { "Generate anyway" })
+                                .on_hover(move |is_hovered, _, cx| {
+                                    hover_t.update(cx, |v, cx| {
+                                        *v = *is_hovered as u8 as f32;
+                                        cx.notify();
+                                    });
+                                })
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                    this.confirm_legacy_enroll = false;
+                                    this.start_enrollment(cx);
                                 }))
                         }),
                 ),

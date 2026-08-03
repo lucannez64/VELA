@@ -211,6 +211,18 @@ pub fn enrollment_claim_by_ip(store: &Store, ip: &str) -> Result<()> {
     check(store, &format!("rl:enroll:claim:ip:{ip}"), 20, HOUR_SECS)
 }
 
+/// 120 result polls/min per IP.
+///
+/// The joining device polls this while the user is comparing fingerprints on
+/// the other screen, so it has to tolerate a poll every second or two for the
+/// whole grant lifetime — the claim limit above would cut a legitimate
+/// enrollment off partway. It is a far weaker lever than the claim: every
+/// request has to carry a signature under a key the caller already claimed
+/// with, so there is nothing here to grind.
+pub fn enrollment_result_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:enroll:result:ip:{ip}"), 120, WINDOW_SECS)
+}
+
 // ─── Exponential backoff enforcement ─────────────────────────────────────────
 
 /// On consecutive failures (≥3) the spec mandates exponential backoff

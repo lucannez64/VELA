@@ -67,10 +67,33 @@ pub struct WelcomeScreen {
     import_code_confirmed: bool,
     importing: bool,
     import_error: Option<SharedString>,
+    /// A v3 enrollment this device has claimed and is waiting on (audit P-1).
+    ///
+    /// The fingerprint in here comes from `begin_enrollment_join`, which
+    /// computes it in-process from the keypair it has just generated. It must
+    /// stay that way: rendering one that arrived over the network would turn
+    /// the user's comparison from "two devices agree about a key" into "two
+    /// devices agree about a number".
+    join_v3: Option<JoinV3>,
+    _join_v3_task: Option<Task<()>>,
+    /// Whether the pasted code is a v3 one. Recomputed with the verification
+    /// code, and what decides which of the two flows "Continue" runs.
+    import_is_v3: bool,
     show_recover_modal: bool,
     recover: RecoverState,
     _pulse_task: Task<()>,
     _import_code_subscription: gpui::Subscription,
+}
+
+/// A v3 enrollment in flight on the joining side.
+#[derive(Clone)]
+struct JoinV3 {
+    grant_id: String,
+    /// This device's own fingerprint, computed locally from the key it just
+    /// generated. Displayed for the user to find on the primary's screen.
+    fingerprint: SharedString,
+    /// True once the primary has confirmed and the vault is coming down.
+    finishing: bool,
 }
 
 /// Mirrors `RecoverAccountModal.tsx`'s `Step` union.
@@ -157,6 +180,9 @@ impl WelcomeScreen {
             import_code_confirmed: false,
             importing: false,
             import_error: None,
+            join_v3: None,
+            _join_v3_task: None,
+            import_is_v3: false,
             show_recover_modal: false,
             recover: RecoverState {
                 step: RecoverStep::Remote,
@@ -370,7 +396,14 @@ impl WelcomeScreen {
     fn refresh_verification_code(&mut self, cx: &mut Context<Self>) {
         let code = self.import_code_state.read(cx).as_str().trim().to_string();
         self.import_code_confirmed = false;
-        self.import_verification_code = if code.is_empty() {
+        // A v3 code has nothing to verify at this point: the value the user
+        // compares is derived from a key this device has not generated yet, and
+        // will not until it claims the grant. Showing a v2-style digest of a v3
+        // code would be a number that means nothing, confirmed by a checkbox
+        // that attests to nothing.
+        self.import_is_v3 =
+            vela_desktop_core::commands::enrollment_v3::is_v3_enrollment_code(&code);
+        self.import_verification_code = if code.is_empty() || self.import_is_v3 {
             None
         } else {
             // Pure local hash of the code — no network, no vault access — so
@@ -379,6 +412,146 @@ impl WelcomeScreen {
                 vela_desktop_core::commands::devices::enrollment_verification_code(&code).into(),
             )
         };
+        cx.notify();
+    }
+
+    /// Claim a v3 grant with a freshly generated keypair, then wait for the
+    /// primary's user to pick this device's fingerprint.
+    fn begin_join_v3(&mut self, code: String, cx: &mut Context<Self>) {
+        self.importing = true;
+        self.import_error = None;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                vela_desktop_core::commands::enrollment_v3::begin_enrollment_join(&app_state, &code)
+                    .await
+            })
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.importing = false;
+                match result {
+                    Ok(Ok(request)) => {
+                        this.join_v3 = Some(JoinV3 {
+                            grant_id: request.grant_id,
+                            fingerprint: request.fingerprint.into(),
+                            finishing: false,
+                        });
+                        this.spawn_join_poll(cx);
+                    }
+                    Ok(Err(e)) => this.import_error = Some(e.into()),
+                    Err(e) => this.import_error = Some(format!("Task failed: {e}").into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn spawn_join_poll(&mut self, cx: &mut Context<Self>) {
+        let Some(join) = self.join_v3.clone() else { return };
+        let app_state = self.app_state.clone();
+        let grant_id = join.grant_id.clone();
+
+        self._join_v3_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_spawn(async {
+                    std::thread::sleep(std::time::Duration::from_secs(2))
+                })
+                .await;
+
+                let app_state = app_state.clone();
+                let gid = grant_id.clone();
+                let result = gpui_tokio::Tokio::spawn(cx, async move {
+                    vela_desktop_core::commands::enrollment_v3::poll_enrollment_join(&app_state, &gid)
+                        .await
+                })
+                .await;
+
+                match result {
+                    Ok(Ok(vela_desktop_core::commands::enrollment_v3::JoinStatus::Waiting)) => {
+                        continue
+                    }
+                    Ok(Ok(vela_desktop_core::commands::enrollment_v3::JoinStatus::Enrolled)) => {
+                        this.update(cx, |this, cx| this.finish_join_v3(cx)).ok();
+                        break;
+                    }
+                    // The grant is gone — expired, or the primary cancelled.
+                    // There is nothing left to wait for.
+                    Ok(Err(e)) => {
+                        this.update(cx, |this, cx| {
+                            this.join_v3 = None;
+                            this.import_error = Some(e.into());
+                            cx.notify();
+                        })
+                        .ok();
+                        break;
+                    }
+                    Err(e) => {
+                        this.update(cx, |this, cx| {
+                            this.join_v3 = None;
+                            this.import_error = Some(format!("Task failed: {e}").into());
+                            cx.notify();
+                        })
+                        .ok();
+                        break;
+                    }
+                }
+            }
+        }));
+    }
+
+    fn finish_join_v3(&mut self, cx: &mut Context<Self>) {
+        let Some(join) = self.join_v3.clone() else { return };
+        let password = self.import_password_state.read(cx).as_str().to_string();
+        let grant_id = join.grant_id.clone();
+
+        if let Some(state) = self.join_v3.as_mut() {
+            state.finishing = true;
+        }
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                vela_desktop_core::commands::enrollment_v3::finish_enrollment_join(
+                    &app_state, &grant_id, password,
+                )
+                .await
+            })
+            .await;
+
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(Ok(())) => {
+                        this.join_v3 = None;
+                        this.show_import_modal = false;
+                        crate::toast::show(cx, "Device joined", crate::toast::ToastKind::Success);
+                        cx.emit(WelcomeEvent::ImportComplete);
+                    }
+                    Ok(Err(e)) => {
+                        this.join_v3 = None;
+                        this.import_error = Some(e.into());
+                    }
+                    Err(e) => {
+                        this.join_v3 = None;
+                        this.import_error = Some(format!("Task failed: {e}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn cancel_join_v3(&mut self, cx: &mut Context<Self>) {
+        vela_desktop_core::commands::enrollment_v3::cancel_enrollment_join(&self.app_state);
+        self.join_v3 = None;
+        self._join_v3_task = None;
         cx.notify();
     }
 
@@ -398,6 +571,14 @@ impl WelcomeScreen {
             cx.notify();
             return;
         }
+        // A v3 code takes the other path entirely: this device generates its own
+        // keys and claims the grant, and what the user compares only exists
+        // after that. There is no v2 digest here to have confirmed.
+        if self.import_is_v3 {
+            self.begin_join_v3(code, cx);
+            return;
+        }
+
         if !self.import_code_confirmed {
             self.import_error =
                 Some("Confirm the verification code matches your other device first.".into());
@@ -1123,10 +1304,21 @@ fn import_code_modal(
     screen: &WelcomeScreen,
     window: &mut Window,
     cx: &mut Context<WelcomeScreen>,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
+    // Once this device has claimed a grant there is nothing left to fill in —
+    // it is waiting on the other device's user, and all it has to do is show
+    // the fingerprint of the key it generated.
+    if let Some(join) = screen.join_v3.clone() {
+        return join_waiting_modal(palette, join, screen.import_error.clone(), window, cx)
+            .into_any_element();
+    }
+
     let importing = screen.importing;
     let confirmed = screen.import_code_confirmed;
-    let can_import = confirmed && !importing;
+    // A v3 code has nothing to confirm at this point — the comparison happens
+    // after this device has claimed the grant — so requiring the v2 checkbox
+    // would leave the button permanently dead.
+    let can_import = (confirmed || screen.import_is_v3) && !importing;
     let password_visible = screen.import_password_visible;
     let amber = gpui::rgb(0xf59e0b).into();
 
@@ -1164,7 +1356,7 @@ fn import_code_modal(
                 // the enrollment-code box above — that's a `text_area`, where
                 // Enter inserts a newline and never reaches us.
                 .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
-                    if this.import_code_confirmed && !this.importing {
+                    if (this.import_code_confirmed || this.import_is_v3) && !this.importing {
                         this.do_import(cx);
                     }
                 }))
@@ -1388,7 +1580,13 @@ fn import_code_modal(
                                 .text_color(palette.on_primary)
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .when(can_import, |el| el.cursor_pointer())
-                                .child(if importing { "Importing…" } else { "Import & join" })
+                                .child(if importing {
+                                    "Working…"
+                                } else if screen.import_is_v3 {
+                                    "Continue"
+                                } else {
+                                    "Import & join"
+                                })
                                 .when(can_import, |el| {
                                     el.on_mouse_down(
                                         MouseButton::Left,
@@ -1396,6 +1594,144 @@ fn import_code_modal(
                                     )
                                 }),
                         ),
+                ),
+        )
+        .into_any_element()
+}
+
+/// Waiting for the other device's user to pick this device's fingerprint.
+///
+/// The value rendered here is `JoinV3::fingerprint`, which
+/// `begin_enrollment_join` computed in-process from the keypair it had just
+/// generated. It must never be replaced by one read from a response: the point
+/// of the comparison is that the two devices agree about a *key*, and a number
+/// off the wire would let them agree about nothing at all (audit P-1).
+fn join_waiting_modal(
+    palette: &Palette,
+    join: JoinV3,
+    error: Option<SharedString>,
+    window: &mut Window,
+    cx: &mut Context<WelcomeScreen>,
+) -> impl IntoElement {
+    let finishing = join.finishing;
+    let cancel_hover = animation::hover_transition("welcome-join-cancel", window, cx);
+    let cancel_t = *cancel_hover.evaluate(window, cx);
+    let cancel_bg =
+        animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+
+    div()
+        .id("welcome-join-modal-backdrop")
+        .absolute()
+        .inset_0()
+        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .flex()
+        .items_center()
+        .justify_center()
+        .p_4()
+        .child(
+            div()
+                .id("welcome-join-modal-body")
+                .w(px(460.))
+                .p_8()
+                .rounded_2xl()
+                .bg(palette.surface_container)
+                .border_1()
+                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .flex()
+                .flex_col()
+                .gap_4()
+                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(icon("vpn_key", px(24.), palette.primary))
+                        .child(
+                            div()
+                                .font_family(fonts::HEADLINE)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_xl()
+                                .text_color(palette.on_surface)
+                                .child("Join existing account"),
+                        ),
+                )
+                .child(
+                    div().text_sm().text_color(palette.on_surface_variant).child(
+                        "Your other device is now showing several codes. Pick this one on it:",
+                    ),
+                )
+                .child(
+                    div()
+                        .py_6()
+                        .rounded_xl()
+                        .bg(palette.surface_bright)
+                        .flex()
+                        .justify_center()
+                        .child(
+                            fonts::tracked_text(&join.fingerprint, px(24.), 0.15)
+                                .font_family(fonts::MONO)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(palette.on_surface),
+                        ),
+                )
+                .child(
+                    div().text_xs().text_color(palette.on_surface_variant).child(
+                        "This code is computed on this device from the key it just generated for \
+                         itself. Nobody else can produce it, which is what makes picking it on \
+                         your other device mean something.",
+                    ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child(
+                            icon("sync", px(16.), palette.on_surface_variant)
+                                .opacity(animation::pulse_alpha(1.0)),
+                        )
+                        .child(if finishing {
+                            "Confirmed — downloading your vault…"
+                        } else {
+                            "Waiting for confirmation…"
+                        }),
+                )
+                .when_some(error, |el, error| {
+                    el.child(div().text_sm().text_color(palette.error).child(error))
+                })
+                .child(
+                    div()
+                        .id("welcome-join-cancel")
+                        .w_full()
+                        .py_3()
+                        .rounded_xl()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(cancel_bg)
+                        .text_color(palette.on_surface)
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .when(!finishing, |el| el.cursor_pointer())
+                        .child("Cancel")
+                        .on_hover(move |is_hovered, _, cx| {
+                            cancel_hover.update(cx, |v, cx| {
+                                *v = *is_hovered as u8 as f32;
+                                cx.notify();
+                            });
+                        })
+                        .when(!finishing, |el| {
+                            el.on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.cancel_join_v3(cx);
+                                    this.close_import_modal(cx);
+                                }),
+                            )
+                        }),
                 ),
         )
 }

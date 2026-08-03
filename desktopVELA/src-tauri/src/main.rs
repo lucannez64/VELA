@@ -342,6 +342,17 @@ fn main() {
             commands::devices::generate_enrollment_code,
             commands::devices::import_enrollment_code,
             commands::devices::enrollment_verification_code,
+            // Enrollment v3 (audit P-1), alongside the v2 pair above until old
+            // installs age out.
+            commands::devices::open_enrollment_invite,
+            commands::devices::poll_enrollment_claim,
+            commands::devices::confirm_enrollment,
+            commands::devices::cancel_enrollment,
+            commands::devices::begin_enrollment_join,
+            commands::devices::poll_enrollment_join,
+            commands::devices::finish_enrollment_join,
+            commands::devices::cancel_enrollment_join,
+            commands::devices::is_v3_enrollment_code,
             commands::sharing::get_shares,
             commands::sharing::send_share,
             commands::sharing::accept_share,

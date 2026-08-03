@@ -143,6 +143,45 @@ enum VelaCoreFFI {
         return field(response, "item_json")
     }
 
+    // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
+
+    /// This device's own enrollment fingerprint.
+    ///
+    /// Takes only the handle, and that is deliberate: the value shown to the
+    /// user is derived from the key this device holds, so there is no way for
+    /// the app to display a fingerprint that arrived over the network. If it
+    /// could, the user would be comparing two devices' agreement about a
+    /// number rather than about a key, and every binding behind it would stop
+    /// meaning anything.
+    static func identityEnrollmentFingerprint(handle: UInt64) -> String? {
+        let request = json(["handle": handle])
+        let response = request.withCString {
+            consume(vela_ffi_identity_enrollment_fingerprint_json($0))
+        }
+        return field(response, "fingerprint")
+    }
+
+    /// Sign a grant id, to collect the outcome of this device's own enrollment.
+    /// Stands in for a session — the device_id it asks for is what a session
+    /// would need.
+    static func identitySignEnrollmentResult(handle: UInt64, grantID: String) -> String? {
+        let request = json(["handle": handle, "grant_id": grantID])
+        let response = request.withCString {
+            consume(vela_ffi_identity_sign_enrollment_result_json($0))
+        }
+        return field(response, "signature_b64")
+    }
+
+    /// Open the RMS capsule the enrolling device sealed to this device's key.
+    /// Returns the root master secret, base64.
+    static func identityOpenEnrollmentCapsule(handle: UInt64, capsuleBase64: String) -> String? {
+        let request = json(["handle": handle, "capsule_b64": capsuleBase64])
+        let response = request.withCString {
+            consume(vela_ffi_identity_open_enrollment_capsule_json($0))
+        }
+        return field(response, "rms_b64")
+    }
+
     /// Drop a handle, wiping its keys. Call on sign-out.
     static func identityForget(handle: UInt64) {
         let request = json(["handle": handle])

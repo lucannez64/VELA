@@ -286,6 +286,42 @@ actor VelaClient {
         return resp.capsule
     }
 
+    // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
+    //
+    // Both calls are unauthenticated by necessity: this device has no identity
+    // the server knows about yet, which is the thing it is asking for. What
+    // stands in is the grant id for the claim, and a signature under the key
+    // that claimed for the result.
+
+    /// Present this device's *public* keys under a grant.
+    ///
+    /// A grant admits exactly one claim, so losing the race is reported (409)
+    /// rather than silently replacing whoever claimed first — a hijack nobody
+    /// noticed is the failure this design exists to prevent.
+    func claimEnrollmentGrant(grantID: String, hybridEK: String, hybridVK: String,
+                              deviceName: String, deviceType: String) async throws {
+        let body: [String: Any] = [
+            "hybrid_ek": hybridEK, "hybrid_vk": hybridVK,
+            "device_name": deviceName, "device_type": deviceType,
+        ]
+        let _: EmptyResponse = try await request(
+            "POST", "/device/enrollment-grant/\(grantID)/claim", json: body, auth: false)
+    }
+
+    private struct EnrollmentResultResponse: Decodable {
+        let status: String
+        let device_id: String?
+    }
+
+    /// Ask which device this one became. `nil` while the other device's user
+    /// has not confirmed yet.
+    func collectEnrollmentResult(grantID: String, signature: String) async throws -> String? {
+        let resp: EnrollmentResultResponse = try await request(
+            "POST", "/device/enrollment-grant/\(grantID)/result",
+            json: ["signature": signature], auth: false)
+        return resp.status == "enrolled" ? resp.device_id : nil
+    }
+
     struct EnrollmentPackageResponse: Decodable { let ciphertext: String }
 
     /// Fetch an enrollment package by token (no auth — the token is the secret).

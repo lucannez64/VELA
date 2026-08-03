@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import QRCode from 'qrcode';
 import { useApp } from '../context/AppContext';
 import WebAccessModal from '../components/WebAccessModal';
+import EnrollDeviceModal from '../components/EnrollDeviceModal';
 
 interface Device {
   id: string;
@@ -33,6 +34,8 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [showRevokeModal, setShowRevokeModal] = useState<Device | null>(null);
   const [enrolling, setEnrolling] = useState(false);
+  const [showEnroll, setShowEnroll] = useState(false);
+  const [showLegacyEnroll, setShowLegacyEnroll] = useState(false);
   const [showWebAccess, setShowWebAccess] = useState(false);
   const [webSessions, setWebSessions] = useState<WebSession[]>([]);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
@@ -199,6 +202,16 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
         <div>
           <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface mb-2">My Devices</h1>
           <p className="text-on-surface-variant">Manage devices that have access to your vault</p>
+          {/* The old enrollment code is kept reachable, not offered: it carries
+              the new device's private key and the vault key, so anyone who reads
+              it holds the vault (audit P-1). Only a device running a build too
+              old to understand the new code needs it. */}
+          <button
+            onClick={() => setShowLegacyEnroll(true)}
+            className="mt-2 text-xs text-on-surface-variant underline hover:text-on-surface transition-colors"
+          >
+            Enrolling a device on an older version of VELA?
+          </button>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -209,17 +222,24 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
             Web access
           </button>
           <button
-            onClick={handleEnrollDevice}
-            disabled={enrolling}
+            onClick={() => setShowEnroll(true)}
             className="flex items-center gap-2 bg-primary text-on-primary px-4 sm:px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             <span className="material-symbols-outlined">add</span>
-            {enrolling ? 'Generating code…' : 'Enroll new device'}
+            Enroll new device
           </button>
         </div>
       </div>
 
       <WebAccessModal open={showWebAccess} onClose={() => setShowWebAccess(false)} />
+      <EnrollDeviceModal
+        open={showEnroll}
+        onClose={() => setShowEnroll(false)}
+        onEnrolled={() => {
+          loadDevices();
+          onItemsChanged?.();
+        }}
+      />
 
 
       <div className="flex items-center justify-between mb-4">
@@ -407,6 +427,44 @@ export default function DevicesScreen({ onItemsChanged }: Props) {
                 className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
               >
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLegacyEnroll && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setShowLegacyEnroll(false)}>
+          <div
+            className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <span className="material-symbols-outlined text-2xl text-amber-400">warning</span>
+              <h2 className="font-headline text-2xl font-bold text-on-surface">Use an old-style code?</h2>
+            </div>
+            <p className="text-on-surface-variant mb-4 text-sm">
+              An old-style code carries the new device's private key and the key to your whole
+              vault. Anyone who reads it — over someone's shoulder, in a screenshot, on a shared
+              screen — has your vault permanently, and revoking the device does not take it back.
+            </p>
+            <p className="text-on-surface-variant mb-6 text-sm">
+              Only use this if the other device is running a version of VELA too old to scan the
+              normal code. Otherwise update it and use <strong>Enroll new device</strong>.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowLegacyEnroll(false)}
+                className="flex-1 py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors"
+              >
+                Go back
+              </button>
+              <button
+                onClick={() => { setShowLegacyEnroll(false); handleEnrollDevice(); }}
+                disabled={enrolling}
+                className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors disabled:opacity-50"
+              >
+                {enrolling ? 'Generating…' : 'Generate anyway'}
               </button>
             </div>
           </div>

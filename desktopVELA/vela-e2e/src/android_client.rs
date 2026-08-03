@@ -14,6 +14,7 @@ use reqwest::Client;
 use std::collections::HashMap;
 use vela_core::vault::{Tombstone, VaultItem, VaultMeta, VaultStore};
 use vela_crypto::aead;
+use vela_crypto::kem;
 use vela_crypto::signing;
 
 const VAULT_CHUNK_PREFIX: &str = "vault-data-";
@@ -21,6 +22,7 @@ const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
 const VAULT_DATA_CHUNK_ID: &str = "vault-data-000000";
 const VAULT_CHUNK_PLAINTEXT_SIZE: usize = 1024 * 1024 - 4096;
 const ENROLLMENT_CODE_V2_PREFIX: &str = "VELA-ENROLL:v2:";
+const ENROLLMENT_CODE_V3_PREFIX: &str = "VELA-ENROLL:v3:";
 
 /// Server identity decrypted out of an enrollment code + package.
 struct EnrolledIdentity {
@@ -229,6 +231,153 @@ impl AndroidClient {
         let rms = client.fetch_rms(identity.transfer_key).await?;
         client.rms = rms;
         Ok(client)
+    }
+
+    /// Join an account from a `VELA-ENROLL:v3:` code (audit P-1).
+    ///
+    /// The difference from [`enroll_with_code`](Self::enroll_with_code) is the
+    /// whole point of v3: nothing secret arrives in the code. This device
+    /// generates its own identity, sends only the public halves, and the RMS
+    /// comes back KEM-sealed to a key whose private half never left here.
+    ///
+    /// `pick_fingerprint` stands in for the human on the primary. It is handed
+    /// the fingerprint *this* device computed locally, exactly as a real user
+    /// reads it off this screen — a harness that instead took the value from
+    /// the primary's candidate list would test the two devices agreeing with
+    /// themselves.
+    pub async fn join_with_v3_code<F, Fut>(
+        code: &str,
+        pick_fingerprint: F,
+    ) -> Result<Self, String>
+    where
+        F: FnOnce(String) -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        let trimmed = code.trim();
+        let encoded = trimmed
+            .strip_prefix(ENROLLMENT_CODE_V3_PREFIX)
+            .ok_or_else(|| "not a VELA-ENROLL:v3: code".to_string())?;
+        let locator: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(encoded.as_bytes())
+                .map_err(|e| format!("decode v3 locator: {e}"))?,
+        )
+        .map_err(|e| format!("parse v3 locator: {e}"))?;
+
+        if locator.get("v").and_then(|v| v.as_i64()) != Some(3) {
+            return Err("unsupported enrollment code version".to_string());
+        }
+        let grant_id = locator["g"].as_str().ok_or("locator has no grant id")?.to_string();
+        let base_url =
+            locator["u"].as_str().ok_or("locator has no server URL")?.trim_end_matches('/').to_string();
+
+        // Generated here, and the private halves stay here.
+        let (hybrid_vk, signing_sk) =
+            signing::generate_keypair().map_err(|e| format!("generate signing keypair: {e}"))?;
+        let (hybrid_ek, hybrid_dk) = kem::generate_keypair();
+
+        // Over this device's own key, computed locally — never a value read
+        // back from the server.
+        let fingerprint = vela_crypto::verification::enrollment_fingerprint(&hybrid_vk.to_bytes());
+
+        let http = Client::new();
+        let claim = serde_json::json!({
+            "hybrid_ek": B64.encode(hybrid_ek.to_bytes()),
+            "hybrid_vk": B64.encode(hybrid_vk.to_bytes()),
+            "device_name": "Android E2E",
+            "device_type": "android",
+        });
+        let resp = http
+            .post(format!("{base_url}/device/enrollment-grant/{grant_id}/claim"))
+            .json(&claim)
+            .send()
+            .await
+            .map_err(|e| format!("claim grant: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("claim grant: {}", resp.status()));
+        }
+
+        // The human step on the other device.
+        pick_fingerprint(fingerprint).await?;
+
+        // Collect the outcome. No session is possible yet — the device_id this
+        // returns is exactly what a session would need — so the proof is a
+        // signature under the key just claimed with.
+        let result_message = signing::enrollment_result_message(&grant_id);
+        let result_signature = B64.encode(
+            signing::sign(&signing_sk, &result_message)
+                .map_err(|e| format!("sign grant id: {e}"))?
+                .to_bytes(),
+        );
+        let resp = http
+            .post(format!("{base_url}/device/enrollment-grant/{grant_id}/result"))
+            .json(&serde_json::json!({ "signature": result_signature }))
+            .send()
+            .await
+            .map_err(|e| format!("collect result: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("collect result: {}", resp.status()));
+        }
+        let outcome: serde_json::Value =
+            resp.json().await.map_err(|e| format!("parse result: {e}"))?;
+        let device_id = match outcome["status"].as_str() {
+            Some("enrolled") => outcome["device_id"]
+                .as_str()
+                .ok_or("result missing device_id")?
+                .to_string(),
+            Some("pending") => return Err("the primary has not confirmed this enrollment".into()),
+            other => return Err(format!("unexpected result status: {other:?}")),
+        };
+
+        let mut client = AndroidClient {
+            base_url,
+            http,
+            device_id: String::new(),
+            user_id: String::new(),
+            token: String::new(),
+            rms: [0u8; 32],
+            vault: VaultStore::new(),
+            local_version: 0,
+            local_lamport: 0,
+        };
+        client
+            .authenticate(&EnrolledIdentity {
+                device_id,
+                hybrid_sk_b64: B64.encode(signing_sk.to_bytes()),
+                transfer_key: [0u8; 32],
+                server_url: None,
+            })
+            .await?;
+
+        // The capsule opens with the key generated above and nowhere else. In
+        // v2 the equivalent key travelled inside the code, which is why reading
+        // the code was reading the vault.
+        let capsule = client.fetch_capsule_bytes().await?;
+        let plaintext = kem::open_share(&hybrid_dk, &capsule)
+            .map_err(|e| format!("capsule was not sealed to this device: {e}"))?;
+        let rms: [u8; 32] = plaintext
+            .as_slice()
+            .try_into()
+            .map_err(|_| "capsule did not contain a 32-byte root seed".to_string())?;
+        client.rms = rms;
+        Ok(client)
+    }
+
+    /// The raw RMS capsule the server holds for this device.
+    async fn fetch_capsule_bytes(&self) -> Result<Vec<u8>, String> {
+        let resp = self
+            .http
+            .get(format!("{}/device/capsule", self.base_url))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|e| format!("get capsule: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("get capsule: {}", resp.status()));
+        }
+        let capsule: serde_json::Value = resp.json().await.map_err(|e| format!("parse capsule: {e}"))?;
+        let capsule_b64 = capsule["capsule"].as_str().ok_or("capsule missing")?;
+        B64.decode(capsule_b64).map_err(|e| format!("decode capsule: {e}"))
     }
 
     /// Authenticate an already-enrolled device (challenge + signature).

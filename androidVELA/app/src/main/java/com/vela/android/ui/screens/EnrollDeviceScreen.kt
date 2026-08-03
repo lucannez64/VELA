@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.MainActivity
 import com.vela.android.core.NativeVelaCore
+import com.vela.android.sync.V3EnrollmentLocator
 import com.vela.android.ui.components.StatusBadge
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
@@ -54,6 +55,13 @@ fun EnrollDeviceScreen(
     errorMessage: String?,
     isEnrolling: Boolean,
     isEnrolled: Boolean,
+    /// Set once this device has claimed a v3 grant: the fingerprint of the key
+    /// it generated for itself, which its user has to find on the other
+    /// device's screen. Computed natively from that key — never a value read
+    /// back from the server, or the comparison would be about a number rather
+    /// than about a key (audit P-1).
+    joinFingerprint: String? = null,
+    onCancelJoin: () -> Unit = {},
     onEnroll: (serverUrl: String, enrollmentCode: String) -> Unit,
     onProtectBiometric: () -> Unit,
     onProtectPassword: (String) -> Unit,
@@ -73,8 +81,16 @@ fun EnrollDeviceScreen(
     // wrong code scanned, etc.), so the user must confirm it matches what's
     // shown on the enrolling device before "Enroll" is enabled. Keyed by
     // enrollmentCode so editing/rescanning always requires re-confirmation.
+    // A v3 code has nothing to verify at this point: the value the user compares
+    // is derived from a key this device has not generated until it claims the
+    // grant. A v2-style digest of a v3 code would be a number that means
+    // nothing, ticked by a checkbox that attests to nothing.
+    val isV3Code = remember(enrollmentCode) {
+        enrollmentCode.isNotBlank() && V3EnrollmentLocator.looksLikeV3(enrollmentCode)
+    }
     val verificationCode = remember(enrollmentCode) {
-        enrollmentCode.takeIf { it.isNotBlank() }?.let { NativeVelaCore.enrollmentVerificationCode(it) }
+        enrollmentCode.takeIf { it.isNotBlank() && !V3EnrollmentLocator.looksLikeV3(it) }
+            ?.let { NativeVelaCore.enrollmentVerificationCode(it) }
     }
     var codeConfirmed by remember(enrollmentCode) { mutableStateOf(false) }
 
@@ -124,6 +140,7 @@ fun EnrollDeviceScreen(
             Spacer(Modifier.height(8.dp))
 
             val subtitle = when {
+                joinFingerprint != null && !isEnrolled -> "Confirm this device on your other one"
                 isEnrolling -> "Registering with server..."
                 isEnrolled && !showPasswordSetup -> "Vault downloaded. Secure it locally."
                 isEnrolled && showPasswordSetup -> "Create a strong fallback password"
@@ -150,7 +167,59 @@ fun EnrollDeviceScreen(
 
             Spacer(Modifier.weight(1f))
 
-            if (isEnrolled) {
+            if (joinFingerprint != null && !isEnrolled) {
+                // Claimed, waiting on the other device's user. The form is gone
+                // — there is nothing left to type, and one thing to read.
+                Text(
+                    "Your other device is now showing several codes. Pick this one on it:",
+                    color = VelaColors.TextSecondary,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                Text(
+                    joinFingerprint,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(VelaColors.SurfaceHigh)
+                        .padding(20.dp)
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    "This code is computed on this device from the key it just generated for " +
+                        "itself. Nobody else can produce it, which is what makes picking it on " +
+                        "your other device mean something.",
+                    color = VelaColors.TextMuted,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                Text(
+                    "Waiting for confirmation...",
+                    color = VelaColors.TextSecondary,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                VelaButton(
+                    text = "Cancel",
+                    onClick = onCancelJoin,
+                    style = VelaButtonStyle.Surface
+                )
+            } else if (isEnrolled) {
                 if (!showPasswordSetup) {
                     VelaButton(
                         text = "Secure with Biometric",
@@ -323,14 +392,18 @@ fun EnrollDeviceScreen(
                 Spacer(Modifier.height(24.dp))
 
                 VelaButton(
-                    text = if (isEnrolling) "Enrolling..." else "Enroll",
+                    text = when {
+                        isEnrolling -> "Enrolling..."
+                        isV3Code -> "Continue"
+                        else -> "Enroll"
+                    },
                     onClick = {
                         if (enrollmentCode.isNotBlank()) {
                             onEnroll(serverUrl.trim(), enrollmentCode.trim())
                         }
                     },
                     style = VelaButtonStyle.Gradient,
-                    enabled = enrollmentCode.isNotBlank() && !isEnrolling && codeConfirmed,
+                    enabled = enrollmentCode.isNotBlank() && !isEnrolling && (codeConfirmed || isV3Code),
                     icon = Icons.Filled.DevicesOther
                 )
 

@@ -37,6 +37,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Arrays
 import javax.crypto.Cipher
@@ -184,6 +185,28 @@ class MainActivity : FragmentActivity() {
                         // froze the UI for the duration of enrollment + sync.
                         lifecycleScope.launch(Dispatchers.IO) {
                             val rms = VelaRepositories.sync.enrollWithCode(serverUrl, enrollmentCode)
+                            VelaRepositories.security.adoptRms(rms)
+                            VelaRepositories.sync.syncNow()
+                            startBackgroundSync()
+                        }
+                    },
+                    onJoinDeviceV3 = { serverUrl, enrollmentCode, onFingerprint ->
+                        // Enrollment v3 (audit P-1). Claim the grant with keys
+                        // generated here, show this device's own fingerprint,
+                        // and wait for the user to pick it on the other device.
+                        // Nothing is enrolled until they do.
+                        withContext(Dispatchers.IO) {
+                            val session =
+                                VelaRepositories.sync.beginV3Join(serverUrl, enrollmentCode)
+                            withContext(Dispatchers.Main) { onFingerprint(session.fingerprint) }
+
+                            var deviceId: String? = null
+                            while (deviceId == null) {
+                                delay(V3_JOIN_POLL_INTERVAL_MS)
+                                deviceId = VelaRepositories.sync.pollV3Join(session)
+                            }
+
+                            val rms = VelaRepositories.sync.finishV3Join(session, deviceId)
                             VelaRepositories.security.adoptRms(rms)
                             VelaRepositories.sync.syncNow()
                             startBackgroundSync()
@@ -385,6 +408,11 @@ class MainActivity : FragmentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val DRIVE_AUTH_REQUEST_CODE = 9821
+
+        /// How often the joining device asks whether the other device's user
+        /// has confirmed. Slow enough not to hammer the server for the minute
+        /// or two a person takes to compare two screens.
+        private const val V3_JOIN_POLL_INTERVAL_MS = 2_000L
         const val EXTRA_AUTOFILL_UNLOCK = "com.vela.android.extra.AUTOFILL_UNLOCK"
         const val EXTRA_AUTOFILL_USERNAME_IDS = "com.vela.android.extra.AUTOFILL_USERNAME_IDS"
         const val EXTRA_AUTOFILL_PASSWORD_IDS = "com.vela.android.extra.AUTOFILL_PASSWORD_IDS"

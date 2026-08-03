@@ -13,21 +13,32 @@ struct EnrollView: View {
     @State private var password = ""
     @State private var confirm = ""
     @State private var codeConfirmed = false
+    /// Shown to the enrolling user on the other device, so they can tell which
+    /// device is asking. Editable, like the register and recover screens.
+    @State private var deviceName = "iPhone"
 
     /// Out-of-band verification code for the pasted/scanned enrollment code.
     /// Neither device can otherwise prove the code wasn't substituted (a
     /// tampered QR, or simply the wrong code), so the user must confirm this
     /// matches what's shown on the enrolling device before joining.
+    /// A v3 code has nothing to verify at this point: the value the user
+    /// compares is derived from a key this device has not generated until it
+    /// claims the grant. A v2-style digest of a v3 code would be a number that
+    /// means nothing, confirmed by a toggle that attests to nothing.
+    private var isV3Code: Bool {
+        EnrollmentCode.looksLikeV3(code)
+    }
+
     private var verificationCode: String? {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard !trimmed.isEmpty, !isV3Code else { return nil }
         let value = VelaCoreFFI.enrollmentVerificationCode(trimmed)
         return value.isEmpty ? nil : value
     }
 
     private var canJoin: Bool {
         guard !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        guard codeConfirmed else { return false }
+        guard codeConfirmed || isV3Code else { return false }
         if usePassword { return password.count >= 8 && password == confirm }
         return true
     }
@@ -35,6 +46,27 @@ struct EnrollView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let fingerprint = account.joinFingerprint {
+                    Section("Confirm on your other device") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Your other device is now showing several codes. Pick this one on it:")
+                                .font(.callout)
+                            Text(fingerprint)
+                                .font(.system(.title2, design: .monospaced).bold())
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 8)
+                                .accessibilityIdentifier("joinFingerprint")
+                            // Why picking it elsewhere means anything: only this
+                            // device could have produced it.
+                            Text("This code is computed on this device from the key it just generated for itself. Nobody else can produce it, which is what makes picking it on your other device mean something.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Waiting for confirmation…")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Section("Server") {
                     TextField("Server URL", text: $serverURL)
                         .textInputAutocapitalization(.never)
@@ -69,6 +101,12 @@ struct EnrollView: View {
                         }
                     }
                 }
+                if isV3Code {
+                    Section("This device") {
+                        TextField("Device name", text: $deviceName)
+                            .accessibilityIdentifier("enrollDeviceNameField")
+                    }
+                }
                 Section("Secure on this device") {
                     Toggle("Protect with password", isOn: $usePassword)
                     if usePassword {
@@ -81,11 +119,22 @@ struct EnrollView: View {
                     }
                 }
                 Section {
-                    Button("Join") {
-                        account.joinWithCode(
-                            serverURL: serverURL, code: code,
-                            secure: usePassword ? .password : .biometric,
-                            password: usePassword ? password : nil)
+                    Button(isV3Code ? "Continue" : "Join") {
+                        // Which flow runs is decided by the code's own prefix,
+                        // never guessed: a v2 and a v3 install have to keep
+                        // enrolling each other until old builds age out.
+                        if isV3Code {
+                            account.joinWithV3Code(
+                                serverURL: serverURL, code: code,
+                                deviceName: deviceName,
+                                secure: usePassword ? .password : .biometric,
+                                password: usePassword ? password : nil)
+                        } else {
+                            account.joinWithCode(
+                                serverURL: serverURL, code: code,
+                                secure: usePassword ? .password : .biometric,
+                                password: usePassword ? password : nil)
+                        }
                     }
                     .disabled(!canJoin || account.busy)
                     .accessibilityIdentifier("joinButton")

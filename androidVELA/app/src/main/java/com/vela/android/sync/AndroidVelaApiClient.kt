@@ -203,6 +203,64 @@ class AndroidVelaApiClient(
         )
     }
 
+    // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
+    //
+    // Both calls are unauthenticated by necessity: this device has no identity
+    // the server knows about yet, which is the thing it is asking for. What
+    // stands in is the grant id for the claim, and a signature under the key
+    // that claimed for the result.
+
+    /// Present this device's *public* keys under a grant.
+    ///
+    /// A grant admits exactly one claim, so losing the race is reported (409)
+    /// rather than silently replacing whoever claimed first — a hijack that
+    /// went unnoticed is the failure this whole design exists to prevent.
+    fun claimEnrollmentGrant(
+        grantId: String,
+        hybridEkB64: String,
+        hybridVkB64: String,
+        deviceName: String,
+        deviceType: String
+    ) {
+        val body = JSONObject()
+            .put("hybrid_ek", hybridEkB64)
+            .put("hybrid_vk", hybridVkB64)
+            .put("device_name", deviceName)
+            .put("device_type", deviceType)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val response = request(
+            "POST",
+            "/device/enrollment-grant/$grantId/claim",
+            token = "",
+            body = body,
+            contentType = "application/json"
+        )
+        response.requireSuccess("Could not use this enrollment code")
+    }
+
+    /// Ask which device this one became. `null` while the other device's user
+    /// has not confirmed yet.
+    fun collectEnrollmentResult(grantId: String, signatureB64: String): String? {
+        val body = JSONObject()
+            .put("signature", signatureB64)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val response = request(
+            "POST",
+            "/device/enrollment-grant/$grantId/result",
+            token = "",
+            body = body,
+            contentType = "application/json"
+        )
+        response.requireSuccess("Enrollment could not be confirmed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        return when (json.optString("status")) {
+            "enrolled" -> json.getString("device_id")
+            else -> null
+        }
+    }
+
     fun getEnrollmentPackage(token: String): EnrollmentPackageResponse {
         val response = request("GET", "/device/enrollment-package/$token", token = "")
         response.requireSuccess("Enrollment package download failed")

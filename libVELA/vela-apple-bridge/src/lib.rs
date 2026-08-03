@@ -116,6 +116,35 @@ struct IdentityHandleRequest {
     handle: u64,
 }
 
+// Enrollment v3 (audit P-1). The fingerprint request carries only the handle:
+// the value shown to the user has to come from the key this device holds, and
+// an API that accepted key bytes would make "render what the server sent" a
+// one-line mistake.
+
+#[derive(Serialize, Deserialize)]
+struct IdentityFingerprintResponse {
+    fingerprint: String,
+}
+
+#[derive(Deserialize)]
+struct IdentityEnrollmentResultRequest {
+    handle: u64,
+    grant_id: String,
+}
+
+#[derive(Deserialize)]
+struct IdentityCapsuleRequest {
+    handle: u64,
+    capsule_b64: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct IdentityCapsuleResponse {
+    /// The 32-byte root master secret, base64. Sealed to this device's own
+    /// `hybrid_ek`, so it opens here and nowhere else.
+    rms_b64: String,
+}
+
 #[derive(Serialize)]
 struct IdentityRotateShareKeyResponse {
     share_ek_b64: String,
@@ -332,6 +361,35 @@ pub unsafe extern "C" fn vela_ffi_identity_open_share_json(
     json_result(|| identity_open_share_impl(c_str(request_json)?))
 }
 
+// ── Enrollment v3 (audit P-1) ───────────────────────────────────────────────
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_enrollment_fingerprint_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_enrollment_fingerprint_impl(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_sign_enrollment_result_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_sign_enrollment_result_impl(c_str(request_json)?))
+}
+
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_open_enrollment_capsule_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_open_enrollment_capsule_impl(c_str(request_json)?))
+}
+
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
@@ -543,6 +601,43 @@ fn identity_open_share_impl(request_json: &str) -> FfiResult<OpenShareResponse> 
     })?;
     Ok(OpenShareResponse {
         item_json: String::from_utf8(plaintext)?,
+    })
+}
+
+/// This device's own enrollment fingerprint (v3), from the key under `handle`.
+fn identity_enrollment_fingerprint_impl(
+    request_json: &str,
+) -> FfiResult<IdentityFingerprintResponse> {
+    let req: IdentityHandleRequest = serde_json::from_str(request_json)?;
+    let fingerprint = vela_crypto::identity::with_identity(req.handle, |identity| {
+        Ok(identity.enrollment_fingerprint())
+    })?;
+    Ok(IdentityFingerprintResponse { fingerprint })
+}
+
+/// Sign a grant id, to collect the outcome of this device's own enrollment.
+fn identity_sign_enrollment_result_impl(request_json: &str) -> FfiResult<AuthSignatureResponse> {
+    let req: IdentityEnrollmentResultRequest = serde_json::from_str(request_json)?;
+    let signature = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.sign_enrollment_result(&req.grant_id)
+    })?;
+    Ok(AuthSignatureResponse {
+        signature_b64: B64.encode(signature),
+    })
+}
+
+/// Open the RMS capsule the enrolling device sealed to this device's key.
+fn identity_open_enrollment_capsule_impl(request_json: &str) -> FfiResult<IdentityCapsuleResponse> {
+    let req: IdentityCapsuleRequest = serde_json::from_str(request_json)?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let plaintext = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.open_identity_capsule(&capsule)
+    })?;
+    if plaintext.len() != 32 {
+        return Err("capsule did not contain a 32-byte root seed".into());
+    }
+    Ok(IdentityCapsuleResponse {
+        rms_b64: B64.encode(&plaintext),
     })
 }
 
@@ -761,6 +856,97 @@ mod tests {
             &serde_json::json!({"rms_b64": B64.encode([2u8;32]), "ciphertext_b64": enc.ciphertext_b64}).to_string(),
         );
         assert!(dec.contains("error"), "wrong RMS must fail: {dec}");
+    }
+
+    /// Enrollment v3 (audit P-1): the three calls the joining side runs.
+    ///
+    /// The important shape is that the fingerprint call takes only a handle. If
+    /// it accepted key bytes, "render the value the server sent" would be a
+    /// one-line mistake, and the user would end up comparing two devices'
+    /// agreement about a number rather than about a key.
+    #[test]
+    fn enrollment_v3_fingerprint_is_over_the_devices_own_key_and_the_capsule_opens() {
+        let seal_key = [11u8; 32];
+        let created_ptr = unsafe { vela_ffi_identity_create(seal_key.as_ptr(), seal_key.len()) };
+        let created = unsafe { CStr::from_ptr(created_ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { vela_ffi_free_string(created_ptr) };
+        let created: serde_json::Value = serde_json::from_str(&created).unwrap();
+        let handle = created["handle"].as_u64().unwrap();
+        let hybrid_ek = B64.decode(created["hybrid_ek_b64"].as_str().unwrap()).unwrap();
+        let hybrid_vk = B64.decode(created["hybrid_vk_b64"].as_str().unwrap()).unwrap();
+
+        // The fingerprint is over this device's own signing key, so a primary
+        // reading its claim computes the same value from the public half.
+        let fp = call(
+            vela_ffi_identity_enrollment_fingerprint_json,
+            &serde_json::json!({ "handle": handle }).to_string(),
+        );
+        let fp: IdentityFingerprintResponse = serde_json::from_str(&fp).unwrap();
+        assert_eq!(
+            fp.fingerprint,
+            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk),
+            "the two sides must agree about the same key"
+        );
+
+        // The result signature proves possession of the claimed key.
+        let sig = call(
+            vela_ffi_identity_sign_enrollment_result_json,
+            &serde_json::json!({ "handle": handle, "grant_id": "grant-1" }).to_string(),
+        );
+        let sig: AuthSignatureResponse = serde_json::from_str(&sig).unwrap();
+        let vk = vela_crypto::signing::HybridVerifyingKey::from_bytes(
+            hybrid_vk.as_slice().try_into().unwrap(),
+        )
+        .unwrap();
+        let parsed = vela_crypto::signing::HybridSignature::from_bytes(
+            B64.decode(&sig.signature_b64).unwrap().as_slice().try_into().unwrap(),
+        )
+        .unwrap();
+        assert!(vela_crypto::signing::verify(
+            &vk,
+            &vela_crypto::signing::enrollment_result_message("grant-1"),
+            &parsed
+        )
+        .unwrap());
+        // And it is specific to the grant — a signature collected once must not
+        // collect an unrelated enrollment's result.
+        assert!(!vela_crypto::signing::verify(
+            &vk,
+            &vela_crypto::signing::enrollment_result_message("grant-2"),
+            &parsed
+        )
+        .unwrap());
+
+        // The capsule the primary seals to `hybrid_ek` opens here.
+        let pk = vela_crypto::kem::HybridPublicKey::from_bytes(&hybrid_ek).unwrap();
+        let capsule = vela_crypto::kem::seal_share(&pk, &[7u8; 32]).unwrap();
+        let opened = call(
+            vela_ffi_identity_open_enrollment_capsule_json,
+            &serde_json::json!({
+                "handle": handle,
+                "capsule_b64": B64.encode(&capsule),
+            })
+            .to_string(),
+        );
+        let opened: IdentityCapsuleResponse = serde_json::from_str(&opened).unwrap();
+        assert_eq!(B64.decode(&opened.rms_b64).unwrap(), vec![7u8; 32]);
+
+        // And nowhere else: another device's handle must not open it.
+        let other_ptr = unsafe { vela_ffi_identity_create(seal_key.as_ptr(), seal_key.len()) };
+        let other = unsafe { CStr::from_ptr(other_ptr) }.to_string_lossy().into_owned();
+        unsafe { vela_ffi_free_string(other_ptr) };
+        let other: serde_json::Value = serde_json::from_str(&other).unwrap();
+        let refused = call(
+            vela_ffi_identity_open_enrollment_capsule_json,
+            &serde_json::json!({
+                "handle": other["handle"].as_u64().unwrap(),
+                "capsule_b64": B64.encode(&capsule),
+            })
+            .to_string(),
+        );
+        assert!(refused.contains("error"), "another device opened it: {refused}");
     }
 
     /// Audit C-1: the identity is created behind a handle. The response carries

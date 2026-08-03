@@ -24,7 +24,7 @@ struct DeviceIdStore {
     user_id: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IdentityKeysStore {
     pub hybrid_ek: Vec<u8>,
     pub hybrid_vk: Vec<u8>,
@@ -38,6 +38,15 @@ pub struct IdentityKeysStore {
     /// ML-KEM-1024 DK seed (64 B) ‖ X25519 sk (32 B) = 96 B. Used to open shares addressed to us.
     #[serde(default)]
     pub share_dk: Vec<u8>,
+    /// The private half of `hybrid_ek`, in the same shape as `share_dk`.
+    ///
+    /// Empty for every device enrolled before v3: `hybrid_ek` was registered
+    /// with its secret discarded, because nothing encapsulated under it. It does
+    /// now — the enrollment v3 RMS capsule is sealed to it (audit P-1) — so
+    /// devices that join from here on keep it. The old ones do not need it: a
+    /// capsule is only ever sealed to a device that is *joining*.
+    #[serde(default)]
+    pub hybrid_dk: Vec<u8>,
 }
 
 pub struct Store {
@@ -268,16 +277,28 @@ impl Store {
         hybrid_sk: &[u8],
         crypto: &Crypto,
     ) -> anyhow::Result<()> {
-        self.save_identity_keys_full(hybrid_ek, hybrid_vk, hybrid_sk, &[], &[], crypto)
+        self.save_identity_keys_full(
+            &IdentityKeysStore {
+                hybrid_ek: hybrid_ek.to_vec(),
+                hybrid_vk: hybrid_vk.to_vec(),
+                hybrid_sk: hybrid_sk.to_vec(),
+                ..Default::default()
+            },
+            crypto,
+        )
     }
 
+    /// Write the whole identity.
+    ///
+    /// Takes the record by name rather than as a row of byte slices: there are
+    /// now three secret keys in here of similar length and confusable name
+    /// (`hybrid_sk` signs, `share_dk` opens shares, `hybrid_dk` opens this
+    /// device's own capsule), and a positional call site that transposed two of
+    /// them would compile and produce a device broken in a way only visible
+    /// much later.
     pub fn save_identity_keys_full(
         &self,
-        hybrid_ek: &[u8],
-        hybrid_vk: &[u8],
-        hybrid_sk: &[u8],
-        share_ek: &[u8],
-        share_dk: &[u8],
+        keys: &IdentityKeysStore,
         crypto: &Crypto,
     ) -> anyhow::Result<()> {
         let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
@@ -288,14 +309,7 @@ impl Store {
             }
         }
 
-        let store = IdentityKeysStore {
-            hybrid_ek: hybrid_ek.to_vec(),
-            hybrid_vk: hybrid_vk.to_vec(),
-            hybrid_sk: hybrid_sk.to_vec(),
-            share_ek: share_ek.to_vec(),
-            share_dk: share_dk.to_vec(),
-        };
-        let plaintext = serde_json::to_vec(&store)?;
+        let plaintext = serde_json::to_vec(keys)?;
         let key = Self::derive_identity_file_key(crypto);
         let ciphertext = encrypt(&key, &plaintext)?;
         write_secret_file(&identity_path, &ciphertext)?;
@@ -344,14 +358,7 @@ impl Store {
                 }
             }
         };
-        self.save_identity_keys_full(
-            &store.hybrid_ek,
-            &store.hybrid_vk,
-            &store.hybrid_sk,
-            &store.share_ek,
-            &store.share_dk,
-            crypto,
-        )?;
+        self.save_identity_keys_full(&store, crypto)?;
         Ok(Some(store))
     }
 }
@@ -418,6 +425,17 @@ mod tests {
 
     fn test_crypto() -> Crypto {
         Crypto::new(&Crypto::generate_rms())
+    }
+
+    fn test_identity_keys(share_dk: &[u8]) -> IdentityKeysStore {
+        IdentityKeysStore {
+            hybrid_ek: b"ek".to_vec(),
+            hybrid_vk: b"vk".to_vec(),
+            hybrid_sk: b"sk".to_vec(),
+            share_ek: b"share-ek".to_vec(),
+            share_dk: share_dk.to_vec(),
+            hybrid_dk: b"hybrid-dk".to_vec(),
+        }
     }
 
     fn sample_vault() -> VaultStore {
@@ -549,7 +567,7 @@ mod tests {
         let (_dir, store) = test_store();
         let crypto = test_crypto();
         store
-            .save_identity_keys_full(b"ek", b"vk", b"sk", b"share-ek", b"share-dk", &crypto)
+            .save_identity_keys_full(&test_identity_keys(b"share-dk"), &crypto)
             .unwrap();
 
         let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
@@ -599,7 +617,7 @@ mod tests {
         let mut attempts = 0;
         loop {
             store
-                .save_identity_keys_full(b"ek", b"vk", b"sk", b"sek", b"sdk", &crypto)
+                .save_identity_keys_full(&test_identity_keys(b"sdk"), &crypto)
                 .unwrap();
             if fs::read(&path).unwrap().first() == Some(&b'{') {
                 break;
@@ -629,6 +647,9 @@ mod tests {
             hybrid_sk: SECRET.to_vec(),
             share_ek: vec![],
             share_dk: vec![],
+            // A file this old predates the identity KEM secret entirely, which
+            // is what `#[serde(default)]` on the field is for.
+            hybrid_dk: vec![],
         };
         fs::write(
             store.store_path().join(IDENTITY_KEYS_FILE),

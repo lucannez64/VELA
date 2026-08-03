@@ -100,6 +100,15 @@ pub struct AppState {
     /// over IPC, and to which caller (audit D-4). Not persisted: a restart
     /// should cost a fresh confirmation.
     plaintext_release: RwLock<Option<(Option<u32>, std::time::Instant)>>,
+    /// An enrollment v3 grant this device opened and is waiting on, with the
+    /// fingerprint the user has to pick. Deliberately not persisted: a restart
+    /// mid-enrollment should mean starting over, not resuming a comparison the
+    /// user never finished.
+    pub pending_enrollment: RwLock<Option<commands::enrollment_v3::PendingEnrollment>>,
+    /// The keypair this device generated to join an account, held between
+    /// claiming a grant and opening the capsule sealed to it. The private
+    /// halves in here never leave the process (audit P-1).
+    pub pending_join: RwLock<Option<commands::enrollment_v3::PendingJoin>>,
 }
 
 /// How long one user-presence confirmation covers further plaintext releases to
@@ -187,6 +196,8 @@ impl AppState {
             sync_mutex: tokio::sync::Mutex::new(()),
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
+            pending_enrollment: RwLock::new(None),
+            pending_join: RwLock::new(None),
         }
     }
 
@@ -350,6 +361,8 @@ pub enum RateLimitResult {
             sync_mutex: tokio::sync::Mutex::new(()),
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
+            pending_enrollment: RwLock::new(None),
+            pending_join: RwLock::new(None),
         }
     }
 }

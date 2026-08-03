@@ -180,9 +180,15 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
 
     let crypto = state.crypto.read();
     let Some(crypto) = crypto.as_ref() else { return };
-    if let Err(e) =
-        state.store.save_identity_keys_full(&keys.hybrid_ek, &keys.hybrid_vk, &keys.hybrid_sk, &share_ek, &share_dk, crypto)
-    {
+    // Only the share keypair is being backfilled; everything else is carried
+    // over untouched, `hybrid_dk` included — a device that has one must not
+    // lose it to a share-key backfill.
+    let updated = crate::store::IdentityKeysStore {
+        share_ek: share_ek.clone(),
+        share_dk: share_dk.clone(),
+        ..keys.clone()
+    };
+    if let Err(e) = state.store.save_identity_keys_full(&updated, crypto) {
         tracing::warn!("Share key backfill: failed to persist keys: {}", e);
     } else {
         tracing::info!("Share key backfilled for existing identity");

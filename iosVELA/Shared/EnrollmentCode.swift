@@ -18,10 +18,23 @@ struct EnrollmentPayload: Decodable {
 ///   fetched from `/device/enrollment-package/:t` and decrypted with key `k`.
 enum EnrollmentCode {
     static let v2Prefix = "VELA-ENROLL:v2:"
+    static let v3Prefix = "VELA-ENROLL:v3:"
 
     enum Parsed {
         case direct(EnrollmentPayload)
         case v2(serverURL: String?, token: String, packageKeyB64URL: String)
+        /// Enrollment v3 (audit P-1): a one-time grant and a server URL, and
+        /// nothing else. Compare with the cases above, which carry the joining
+        /// device's private signing key and the key the RMS capsule is
+        /// encrypted under — so reading one of those codes was holding the
+        /// vault, permanently.
+        case v3(serverURL: String?, grantID: String)
+    }
+
+    /// Whether a code is a v3 one, for callers that must decide which flow to
+    /// run before parsing. Both versions stay live until old installs age out.
+    static func looksLikeV3(_ code: String) -> Bool {
+        code.filter { !$0.isWhitespace }.hasPrefix(v3Prefix)
     }
 
     enum CodeError: LocalizedError {
@@ -31,6 +44,16 @@ enum EnrollmentCode {
 
     static func parse(_ code: String) throws -> Parsed {
         let normalized = code.filter { !$0.isWhitespace }
+        if normalized.hasPrefix(v3Prefix) {
+            let locatorB64 = String(normalized.dropFirst(v3Prefix.count))
+            guard let data = dataFromBase64URL(locatorB64),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (obj["v"] as? Int) == 3,
+                  let grantID = obj["g"] as? String else {
+                throw CodeError.malformed
+            }
+            return .v3(serverURL: obj["u"] as? String, grantID: grantID)
+        }
         if normalized.hasPrefix(v2Prefix) {
             let locatorB64 = String(normalized.dropFirst(v2Prefix.count))
             guard let data = dataFromBase64URL(locatorB64),

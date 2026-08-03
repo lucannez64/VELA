@@ -87,6 +87,75 @@ class VaultSyncManager(
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
     }
 
+    // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
+    //
+    // The v2 flow above adopts a signing key and an RMS transfer key that both
+    // travelled inside the enrollment code — so reading the code was holding
+    // the vault, permanently. Here this device generates its own identity,
+    // sends only the public halves, and the RMS comes back sealed to a key that
+    // never left it. What an intercepted code buys is an enrollment attempt.
+    //
+    // Three steps rather than one because a person stands in the middle: the
+    // user has to find this device's fingerprint among the candidates on the
+    // other device's screen before anything is enrolled.
+
+    fun beginV3Join(serverUrl: String, enrollmentCode: String): V3JoinSession {
+        val locator = V3EnrollmentLocator.parse(enrollmentCode)
+        val effectiveServerUrl = serverUrl.ifBlank { locator.serverUrl }
+        if (effectiveServerUrl.isBlank()) error("Enrollment requires a server URL")
+
+        updateServer(effectiveServerUrl, "")
+        val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
+
+        // Fresh, and generated here — the private halves never leave the native
+        // side, let alone this device.
+        val identity = identityStore.createForEnrollment()
+        client.claimEnrollmentGrant(
+            grantId = locator.grantId,
+            hybridEkB64 = identity.hybridEkB64,
+            hybridVkB64 = identity.hybridVkB64,
+            deviceName = android.os.Build.MODEL ?: "Android device",
+            deviceType = "mobile"
+        )
+
+        // Computed natively from the key just generated. There is deliberately
+        // no path by which this could be a value read back from the server.
+        val fingerprint = identityStore.enrollmentFingerprint()
+            ?: error("Native VELA bridge could not compute this device's fingerprint")
+
+        return V3JoinSession(
+            grantId = locator.grantId,
+            serverUrl = effectiveServerUrl,
+            fingerprint = fingerprint
+        )
+    }
+
+    /// Whether the other device's user has confirmed yet. Returns the
+    /// `device_id` this device was enrolled as, or null while waiting.
+    fun pollV3Join(session: V3JoinSession): String? {
+        val handle = identityStore.handle() ?: error("This device has no identity to prove")
+        val signature = NativeVelaCore.identitySignEnrollmentResult(handle, session.grantId)
+            ?: error("Native VELA bridge could not sign the enrollment result request")
+        val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
+        return client.collectEnrollmentResult(session.grantId, signature)
+    }
+
+    /// Authenticate as the newly enrolled device and open the capsule sealed to
+    /// it. Returns the RMS.
+    fun finishV3Join(session: V3JoinSession, deviceId: String): ByteArray {
+        val identity = identityStore.load() ?: error("This device has no identity")
+        identityStore.save(identity.copy(deviceId = deviceId))
+
+        val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
+        val token = authenticateOrRegister(client)
+        val capsule = client.getCapsule(token)
+        capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
+
+        val handle = identityStore.handle() ?: error("This device has no identity")
+        return NativeVelaCore.identityOpenEnrollmentCapsule(handle, capsule.capsuleB64)
+            ?: error("The vault key was not sealed to this device — enrollment aborted")
+    }
+
     /// Split the RMS into recovery shares (SPEC.md §4.3), register a WebAuthn
     /// recovery passkey via `performRegistration` (a physical security key,
     /// independent of this device's own biometrics — see `WebAuthnCeremony`),
@@ -745,6 +814,53 @@ private data class EnrollmentCodePayload(
             val ciphertext = Base64.getUrlDecoder().decode(packageResponse.ciphertext)
             return NativeVelaCore.decryptEnrollmentPackage(packageKey, ciphertext)
                 ?: error("Native VELA bridge could not decrypt enrollment package")
+        }
+    }
+}
+
+/**
+ * An enrollment v3 join in flight: the grant this device claimed, and the
+ * fingerprint it must show its user.
+ *
+ * `fingerprint` is computed natively from the keypair generated for this join.
+ * It must never be replaced by a value from a server response — the comparison
+ * only means something because the two devices are agreeing about a key, and a
+ * number off the wire would let them agree about nothing (audit P-1).
+ */
+data class V3JoinSession(
+    val grantId: String,
+    val serverUrl: String,
+    val fingerprint: String
+)
+
+/**
+ * The entire payload of a v3 enrollment code: a grant id and a server URL.
+ *
+ * Compare with [EnrollmentCodePayload], which carries a device id, a full
+ * keypair including the private half, and the key the RMS capsule is encrypted
+ * under.
+ */
+data class V3EnrollmentLocator(val grantId: String, val serverUrl: String) {
+    companion object {
+        const val V3_PREFIX = "VELA-ENROLL:v3:"
+
+        fun looksLikeV3(code: String): Boolean =
+            code.filterNot { it.isWhitespace() }.startsWith(V3_PREFIX)
+
+        fun parse(code: String): V3EnrollmentLocator {
+            val normalized = code.filterNot { it.isWhitespace() }
+            require(normalized.startsWith(V3_PREFIX)) { "Not a v3 enrollment code" }
+            val json = JSONObject(
+                String(
+                    Base64.getUrlDecoder().decode(normalized.removePrefix(V3_PREFIX)),
+                    Charsets.UTF_8
+                )
+            )
+            require(json.optInt("v") == 3) { "Unsupported enrollment code version" }
+            return V3EnrollmentLocator(
+                grantId = json.getString("g"),
+                serverUrl = json.optString("u")
+            )
         }
     }
 }

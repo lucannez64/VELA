@@ -34,6 +34,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vela.android.core.VaultItem
 import com.vela.android.sync.SyncSettings
+import com.vela.android.sync.V3EnrollmentLocator
 import com.vela.android.sync.SyncState
 import com.vela.android.ui.screens.AddItemScreen
 import com.vela.android.ui.screens.AuditLogScreen
@@ -50,7 +51,10 @@ import com.vela.android.ui.screens.VaultBrowserScreen
 import com.vela.android.ui.screens.WebAccessScreen
 import com.vela.android.ui.screens.WelcomeScreen
 import com.vela.android.ui.theme.VelaColors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -116,6 +120,10 @@ fun VelaNavHost(
     onUpdateClipboardClearSeconds: (Int) -> Unit,
     onNavigateToEnroll: () -> Unit,
     onEnrollDevice: (String, String) -> Unit,
+    /// Enrollment v3 (audit P-1). Multi-step because a person stands in the
+    /// middle: it reports this device's own fingerprint through `onFingerprint`
+    /// and only returns once the other device's user has confirmed it.
+    onJoinDeviceV3: suspend (String, String, (String) -> Unit) -> Unit,
     onNavigateToRecover: () -> Unit,
     onRecoverAccount: (String, String, String, String) -> Unit,
     onProtectEnrolledBiometric: () -> Unit,
@@ -251,29 +259,54 @@ fun VelaNavHost(
                 var enrolled by remember { mutableStateOf(false) }
                 var error by remember { mutableStateOf<String?>(null) }
 
+                var joinFingerprint by remember { mutableStateOf<String?>(null) }
+                var joinJob by remember { mutableStateOf<Job?>(null) }
+
                 EnrollDeviceScreen(
                     errorMessage = error,
                     isEnrolling = enrolling,
                     isEnrolled = enrolled,
+                    joinFingerprint = joinFingerprint,
+                    onCancelJoin = {
+                        joinJob?.cancel()
+                        joinJob = null
+                        joinFingerprint = null
+                        enrolling = false
+                    },
                     onEnroll = { url, code ->
                         enrolling = true
                         error = null
-                        scope.launch(Dispatchers.IO) {
+                        val job = scope.launch(Dispatchers.IO) {
                             try {
-                                onEnrollDevice(url, code)
+                                // Which flow runs is decided by the code's own
+                                // prefix, never guessed: a v2 and a v3 install
+                                // have to keep enrolling each other until old
+                                // builds age out.
+                                if (V3EnrollmentLocator.looksLikeV3(code)) {
+                                    onJoinDeviceV3(url, code) { fingerprint ->
+                                        joinFingerprint = fingerprint
+                                    }
+                                } else {
+                                    onEnrollDevice(url, code)
+                                }
                                 withContext(Dispatchers.Main) {
+                                    joinFingerprint = null
                                     enrolled = true
                                 }
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
+                                    joinFingerprint = null
                                     error = e.message ?: "Enrollment failed"
                                 }
                             } finally {
-                                withContext(Dispatchers.Main) {
+                                withContext(NonCancellable + Dispatchers.Main) {
                                     enrolling = false
                                 }
                             }
                         }
+                        joinJob = job
                     },
                     onProtectBiometric = {
                         onProtectEnrolledBiometric()

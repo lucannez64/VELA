@@ -93,6 +93,14 @@ pub fn build(state: AppState) -> Router {
             "/device/enrollment-grant/:id/complete",
             post(crate::device::rendezvous::post_complete),
         )
+        // Also unauthenticated, for the same reason as the claim: the joining
+        // device is asking which device_id it became, which is precisely what it
+        // needs before it can authenticate at all. Its proof is a signature
+        // under the key it claimed with.
+        .route(
+            "/device/enrollment-grant/:id/result",
+            post(crate::device::rendezvous::post_result),
+        )
         .route("/device/revoke", post(crate::device::revoke::post_revoke))
         .route("/device/capsule", get(crate::device::capsule::get_capsule))
         .route("/devices", get(crate::device::list::list_devices))

@@ -23,7 +23,14 @@ use crate::error::{Result, VelaError};
 use crate::{aead, kem, signing};
 
 /// Version byte on the sealed blob, so the format can change without ambiguity.
-const SEALED_VERSION: u8 = 1;
+///
+/// v1 carried three fields and no private half for `hybrid_ek`. v2 appends that
+/// private half, because enrollment v3 seals the RMS to `hybrid_ek` and a device
+/// that cannot open its own capsule cannot finish enrolling (audit P-1). v1
+/// blobs still open — they simply have no `hybrid_dk`, which is exactly true of
+/// the devices that wrote them.
+const SEALED_VERSION: u8 = 2;
+const SEALED_VERSION_WITHOUT_IDENTITY_DK: u8 = 1;
 
 /// The public halves — safe to store in the clear and to send to the server.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +47,15 @@ pub struct IdentityPublics {
 pub struct DeviceIdentity {
     signing_sk: signing::HybridSigningKey,
     share_dk: kem::HybridSecretKey,
+    /// The private half of `publics.hybrid_ek`.
+    ///
+    /// `None` on devices whose identity predates enrollment v3 — they registered
+    /// a `hybrid_ek` whose secret was discarded at generation. Nothing had ever
+    /// encapsulated under it, so nothing was lost; v3 does, and those devices
+    /// simply cannot be the target of a sealed capsule. They do not need to be:
+    /// a capsule is only ever sealed to a device that is *joining*, and a device
+    /// joining under v3 generates this key itself.
+    hybrid_dk: Option<kem::HybridSecretKey>,
     publics: IdentityPublics,
 }
 
@@ -57,14 +73,16 @@ impl DeviceIdentity {
     pub fn generate() -> Result<Self> {
         let (hybrid_vk, signing_sk) = signing::generate_keypair()?;
         let (share_ek, share_dk) = kem::generate_keypair();
-        // The matching secret for `hybrid_ek` is deliberately dropped: nothing
-        // in the protocol encapsulates under it, it exists so the device has a
-        // real KEM public key to register rather than filler bytes.
-        let (hybrid_ek, _unused_dk) = kem::generate_keypair();
+        // The matching secret for `hybrid_ek` used to be dropped here, on the
+        // grounds that nothing encapsulated under it. Enrollment v3 does — the
+        // RMS capsule is sealed to it — so dropping it would hand a joining
+        // device a capsule it could never open (audit P-1).
+        let (hybrid_ek, hybrid_dk) = kem::generate_keypair();
 
         Ok(Self {
             signing_sk,
             share_dk,
+            hybrid_dk: Some(hybrid_dk),
             publics: IdentityPublics {
                 hybrid_ek: hybrid_ek.to_bytes(),
                 hybrid_vk: hybrid_vk.to_bytes().to_vec(),
@@ -85,6 +103,23 @@ impl DeviceIdentity {
         share_dk: Option<&[u8]>,
         hybrid_ek: Option<&[u8]>,
     ) -> Result<Self> {
+        Self::import_full(signing_sk, share_dk, hybrid_ek, None)
+    }
+
+    /// [`import`](Self::import), plus the private half of `hybrid_ek`.
+    ///
+    /// This is the enrollment v3 path: a joining device generates its own
+    /// identity KEM keypair, presents the public half under a grant, and needs
+    /// the private half afterwards to open the RMS capsule sealed to it. When
+    /// `hybrid_dk` is given, `hybrid_ek` is derived from it rather than trusted
+    /// from the caller — a mismatched pair would produce a device that cannot
+    /// open its own capsule, and would do it silently.
+    pub fn import_full(
+        signing_sk: &[u8],
+        share_dk: Option<&[u8]>,
+        hybrid_ek: Option<&[u8]>,
+        hybrid_dk: Option<&[u8]>,
+    ) -> Result<Self> {
         let signing_sk = signing::HybridSigningKey::from_bytes(signing_sk)?;
         let hybrid_vk = signing_sk.verifying_key();
 
@@ -100,14 +135,24 @@ impl DeviceIdentity {
             }
         };
 
-        let hybrid_ek = match hybrid_ek {
-            Some(bytes) => bytes.to_vec(),
-            None => kem::generate_keypair().0.to_bytes(),
+        let (hybrid_ek, hybrid_dk) = match hybrid_dk {
+            Some(bytes) => {
+                let dk = kem::HybridSecretKey::from_bytes(bytes)?;
+                (dk.public_key().to_bytes(), Some(dk))
+            }
+            None => {
+                let ek = match hybrid_ek {
+                    Some(bytes) => bytes.to_vec(),
+                    None => kem::generate_keypair().0.to_bytes(),
+                };
+                (ek, None)
+            }
         };
 
         Ok(Self {
             signing_sk,
             share_dk,
+            hybrid_dk,
             publics: IdentityPublics {
                 hybrid_ek,
                 hybrid_vk: hybrid_vk.to_bytes().to_vec(),
@@ -140,6 +185,52 @@ impl DeviceIdentity {
         kem::open_share(&self.share_dk, capsule)
     }
 
+    /// This device's enrollment fingerprint (v3), over its *own* signing key.
+    ///
+    /// Deliberately takes no argument. The value a joining device shows its
+    /// user has to be derived from the key it holds, and an API that accepted
+    /// key bytes would let a caller render one that arrived over the wire —
+    /// at which point the two devices are agreeing about a number rather than
+    /// about a key, and every binding behind it stops meaning anything
+    /// (audit P-1).
+    pub fn enrollment_fingerprint(&self) -> String {
+        crate::verification::enrollment_fingerprint(&self.publics.hybrid_vk)
+    }
+
+    /// Sign a grant id, to collect the outcome of this device's own enrollment.
+    ///
+    /// Stands in for a session: the joining device is asking which `device_id`
+    /// it became, which is exactly what a session would require. Someone who
+    /// only photographed the enrollment code cannot produce this.
+    pub fn sign_enrollment_result(&self, grant_id: &str) -> Result<Vec<u8>> {
+        let message = signing::enrollment_result_message(grant_id);
+        Ok(signing::sign(&self.signing_sk, &message)?.to_bytes().to_vec())
+    }
+
+    /// Whether this identity can open a capsule sealed to its `hybrid_ek`.
+    ///
+    /// False for identities generated before enrollment v3, which registered a
+    /// public key whose secret was discarded.
+    pub fn can_open_identity_capsule(&self) -> bool {
+        self.hybrid_dk.is_some()
+    }
+
+    /// Open the RMS capsule the enrolling device sealed to this device's
+    /// `hybrid_ek` (enrollment v3).
+    ///
+    /// The key this uses never left the device, which is the whole difference
+    /// from v2 — there the capsule opened with a symmetric key that travelled
+    /// inside the enrollment code.
+    pub fn open_identity_capsule(&self, capsule: &[u8]) -> Result<Vec<u8>> {
+        let dk = self.hybrid_dk.as_ref().ok_or_else(|| {
+            VelaError::InvalidParameter(
+                "this device has no private half for its identity key; it predates enrollment v3"
+                    .into(),
+            )
+        })?;
+        kem::open_share(dk, capsule)
+    }
+
     /// Encrypt the private halves under `key` for the app to persist.
     ///
     /// The app stores an opaque blob: it can lose it, but it cannot read a key
@@ -147,14 +238,27 @@ impl DeviceIdentity {
     pub fn seal(&self, key: &[u8; 32]) -> Result<Vec<u8>> {
         let signing_bytes = Zeroizing::new(self.signing_sk.to_bytes());
         let share_bytes = Zeroizing::new(self.share_dk.to_bytes());
+        let identity_dk_bytes = Zeroizing::new(
+            self.hybrid_dk
+                .as_ref()
+                .map(|dk| dk.to_bytes())
+                .unwrap_or_default(),
+        );
 
         let mut plaintext = Zeroizing::new(Vec::with_capacity(
-            1 + 12 + signing_bytes.len() + share_bytes.len() + self.publics.hybrid_ek.len(),
+            1 + 16
+                + signing_bytes.len()
+                + share_bytes.len()
+                + self.publics.hybrid_ek.len()
+                + identity_dk_bytes.len(),
         ));
         plaintext.push(SEALED_VERSION);
         push_field(&mut plaintext, &signing_bytes);
         push_field(&mut plaintext, &share_bytes);
         push_field(&mut plaintext, &self.publics.hybrid_ek);
+        // Empty when this identity has no private half — an absent key and a
+        // zero-length one are the same statement here.
+        push_field(&mut plaintext, &identity_dk_bytes);
 
         aead::encrypt(key, &plaintext)
     }
@@ -165,7 +269,7 @@ impl DeviceIdentity {
         let mut rest: &[u8] = &plaintext;
 
         let version = take_byte(&mut rest)?;
-        if version != SEALED_VERSION {
+        if version != SEALED_VERSION && version != SEALED_VERSION_WITHOUT_IDENTITY_DK {
             return Err(VelaError::InvalidParameter(format!(
                 "unsupported sealed identity version {version}"
             )));
@@ -174,7 +278,21 @@ impl DeviceIdentity {
         let share_dk = Zeroizing::new(take_field(&mut rest)?);
         let hybrid_ek = take_field(&mut rest)?;
 
-        Self::import(&signing_sk, Some(&share_dk), Some(&hybrid_ek))
+        // v1 blobs stop here, and legitimately: those devices never had this
+        // key. Re-sealing one later writes v2 with an empty field, which reads
+        // back the same way.
+        let hybrid_dk = if version == SEALED_VERSION {
+            Zeroizing::new(take_field(&mut rest)?)
+        } else {
+            Zeroizing::new(Vec::new())
+        };
+        let hybrid_dk = if hybrid_dk.is_empty() {
+            None
+        } else {
+            Some(&hybrid_dk[..])
+        };
+
+        Self::import_full(&signing_sk, Some(&share_dk), Some(&hybrid_ek), hybrid_dk)
     }
 }
 
@@ -277,6 +395,71 @@ mod tests {
     }
 
     #[test]
+    /// The registered `hybrid_ek` must be a key the device can actually use.
+    ///
+    /// Enrollment v3 seals the RMS to it, so a device whose private half was
+    /// discarded at generation would enrol successfully and then be unable to
+    /// open the one capsule addressed to it (audit P-1).
+    #[test]
+    fn a_generated_identity_can_open_a_capsule_sealed_to_its_own_key() {
+        let identity = DeviceIdentity::generate().expect("generate");
+        assert!(identity.can_open_identity_capsule());
+
+        let ek = kem::HybridPublicKey::from_bytes(&identity.publics().hybrid_ek).expect("ek");
+        let capsule = kem::seal_share(&ek, b"root master secret").expect("seal");
+        assert_eq!(
+            identity.open_identity_capsule(&capsule).expect("open"),
+            b"root master secret"
+        );
+
+        // And nobody else's key opens it — the property the whole change rests on.
+        let other = DeviceIdentity::generate().expect("generate");
+        assert!(other.open_identity_capsule(&capsule).is_err());
+    }
+
+    #[test]
+    fn the_identity_key_survives_a_seal_round_trip() {
+        let identity = DeviceIdentity::generate().expect("generate");
+        let ek = kem::HybridPublicKey::from_bytes(&identity.publics().hybrid_ek).expect("ek");
+        let capsule = kem::seal_share(&ek, b"rms").expect("seal");
+
+        let sealed = identity.seal(&SEAL_KEY).expect("seal");
+        let reopened = DeviceIdentity::open(&sealed, &SEAL_KEY).expect("open");
+
+        // A device that is killed between claiming and being enrolled has to
+        // come back able to open its capsule.
+        assert_eq!(reopened.open_identity_capsule(&capsule).expect("open"), b"rms");
+    }
+
+    /// A v1 blob predates this key and must still open.
+    ///
+    /// Those devices registered a `hybrid_ek` with no private half, so the
+    /// honest result is an identity that says it cannot open a capsule — not a
+    /// failure to load, which would lock a working device out of its vault.
+    #[test]
+    fn a_pre_v3_sealed_identity_still_opens_and_admits_what_it_lacks() {
+        let identity = DeviceIdentity::generate().expect("generate");
+        let signing_bytes = identity.signing_sk.to_bytes();
+        let share_bytes = identity.share_dk.to_bytes();
+
+        let mut plaintext = vec![SEALED_VERSION_WITHOUT_IDENTITY_DK];
+        push_field(&mut plaintext, &signing_bytes);
+        push_field(&mut plaintext, &share_bytes);
+        push_field(&mut plaintext, &identity.publics().hybrid_ek);
+        let sealed = aead::encrypt(&SEAL_KEY, &plaintext).expect("encrypt");
+
+        let reopened = DeviceIdentity::open(&sealed, &SEAL_KEY).expect("v1 blobs must still open");
+        assert_eq!(reopened.publics().hybrid_ek, identity.publics().hybrid_ek);
+        assert!(!reopened.can_open_identity_capsule());
+        assert!(reopened.open_identity_capsule(b"anything").is_err());
+
+        // Re-sealing writes v2 with an empty field, which reads back the same.
+        let resealed = reopened.seal(&SEAL_KEY).expect("seal");
+        assert!(!DeviceIdentity::open(&resealed, &SEAL_KEY)
+            .expect("open")
+            .can_open_identity_capsule());
+    }
+
     fn seal_round_trip_preserves_both_capabilities() {
         let identity = DeviceIdentity::generate().expect("generate");
         let publics = identity.publics().clone();
