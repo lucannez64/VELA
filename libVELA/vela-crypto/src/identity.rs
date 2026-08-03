@@ -185,6 +185,28 @@ impl DeviceIdentity {
         kem::open_share(&self.share_dk, capsule)
     }
 
+    /// This device's enrollment fingerprint (v3), over its *own* signing key.
+    ///
+    /// Deliberately takes no argument. The value a joining device shows its
+    /// user has to be derived from the key it holds, and an API that accepted
+    /// key bytes would let a caller render one that arrived over the wire —
+    /// at which point the two devices are agreeing about a number rather than
+    /// about a key, and every binding behind it stops meaning anything
+    /// (audit P-1).
+    pub fn enrollment_fingerprint(&self) -> String {
+        crate::verification::enrollment_fingerprint(&self.publics.hybrid_vk)
+    }
+
+    /// Sign a grant id, to collect the outcome of this device's own enrollment.
+    ///
+    /// Stands in for a session: the joining device is asking which `device_id`
+    /// it became, which is exactly what a session would require. Someone who
+    /// only photographed the enrollment code cannot produce this.
+    pub fn sign_enrollment_result(&self, grant_id: &str) -> Result<Vec<u8>> {
+        let message = signing::enrollment_result_message(grant_id);
+        Ok(signing::sign(&self.signing_sk, &message)?.to_bytes().to_vec())
+    }
+
     /// Whether this identity can open a capsule sealed to its `hybrid_ek`.
     ///
     /// False for identities generated before enrollment v3, which registered a

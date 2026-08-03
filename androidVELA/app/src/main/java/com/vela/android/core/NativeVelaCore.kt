@@ -208,6 +208,45 @@ object NativeVelaCore {
         response.getString("signature")
     }
 
+    /// This device's own enrollment fingerprint (v3, audit P-1).
+    ///
+    /// Takes only the handle, and that is the point: the value shown to the
+    /// user is derived from the key this device holds, so there is no way for
+    /// the app to display a fingerprint that arrived over the network. If it
+    /// could, the user would be comparing two devices' agreement about a number
+    /// rather than about a key.
+    fun identityEnrollmentFingerprint(handle: Long): String? = callNative {
+        val request = JSONObject().put("handle", handle).toString()
+        val response = JSONObject(nativeIdentityEnrollmentFingerprintJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("fingerprint")
+    }
+
+    /// Sign a grant id, to collect the outcome of this device's own enrollment.
+    /// Stands in for a session — the device_id it asks for is what a session
+    /// would need.
+    fun identitySignEnrollmentResult(handle: Long, grantId: String): String? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("grant_id", grantId)
+            .toString()
+        val response = JSONObject(nativeIdentitySignEnrollmentResultJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("signature")
+    }
+
+    /// Open the RMS capsule the enrolling device sealed to this device's key.
+    /// Returns the raw 32-byte root master secret.
+    fun identityOpenEnrollmentCapsule(handle: Long, capsuleB64: String): ByteArray? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("capsule_b64", capsuleB64)
+            .toString()
+        val response = JSONObject(nativeIdentityOpenEnrollmentCapsuleJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        Base64.getDecoder().decode(response.getString("rms_b64"))
+    }
+
     /// Open a capsule sealed to this device's share key.
     fun identityOpenShare(handle: Long, capsuleB64: String): String? = callNative {
         val request = JSONObject()
@@ -306,6 +345,9 @@ object NativeVelaCore {
     private external fun nativeIdentityRotateShareKeyJson(sealKey: ByteArray, requestJson: String): String
     private external fun nativeIdentitySignJson(requestJson: String): String
     private external fun nativeIdentityOpenShareJson(requestJson: String): String
+    private external fun nativeIdentityEnrollmentFingerprintJson(requestJson: String): String
+    private external fun nativeIdentitySignEnrollmentResultJson(requestJson: String): String
+    private external fun nativeIdentityOpenEnrollmentCapsuleJson(requestJson: String): String
     private external fun nativeIdentityForgetJson(requestJson: String): String
     private external fun nativeIdentityForgetAllJson(requestJson: String): String
     private external fun nativeSealShareJson(requestJson: String): String

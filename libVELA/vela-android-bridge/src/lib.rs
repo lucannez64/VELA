@@ -108,6 +108,37 @@ struct IdentityOpenShareRequest {
     capsule_b64: String,
 }
 
+/// Enrollment v3 (audit P-1). Carries only the handle: the fingerprint must be
+/// over the key this device holds, never one supplied by the caller.
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityFingerprintRequest {
+    handle: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityFingerprintResponse {
+    fingerprint: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityEnrollmentResultRequest {
+    handle: u64,
+    grant_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityCapsuleRequest {
+    handle: u64,
+    capsule_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IdentityCapsuleResponse {
+    /// The 32-byte root master secret, base64. Sealed to this device's own
+    /// `hybrid_ek`, so it opens here and nowhere else.
+    rms_b64: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct IdentityRotateShareKeyRequest {
     handle: u64,
@@ -383,6 +414,44 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityS
     request_json: JString,
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| identity_sign(request));
+    jni_string(&mut env, &response)
+}
+
+// ── Enrollment v3 (audit P-1) ───────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityEnrollmentFingerprintJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_enrollment_fingerprint(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentitySignEnrollmentResultJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_sign_enrollment_result(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityOpenEnrollmentCapsuleJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_open_enrollment_capsule(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -751,6 +820,53 @@ fn identity_open_share(request_json: &str) -> anyhow_like::Result<OpenShareRespo
     })?;
     Ok(OpenShareResponse {
         item_json: String::from_utf8(plaintext)?,
+    })
+}
+
+/// This device's own enrollment fingerprint (v3).
+///
+/// Computed from the key held under `handle`, so the app has no way to display
+/// a fingerprint that arrived over the network — which is the property the
+/// user's comparison depends on (audit P-1).
+fn identity_enrollment_fingerprint(
+    request_json: &str,
+) -> anyhow_like::Result<IdentityFingerprintResponse> {
+    let request: IdentityFingerprintRequest = serde_json::from_str(request_json)?;
+    let fingerprint = vela_crypto::identity::with_identity(request.handle, |identity| {
+        Ok(identity.enrollment_fingerprint())
+    })?;
+    Ok(IdentityFingerprintResponse { fingerprint })
+}
+
+/// Sign a grant id, to collect the outcome of this device's own enrollment.
+fn identity_sign_enrollment_result(
+    request_json: &str,
+) -> anyhow_like::Result<AuthSignatureResponse> {
+    let request: IdentityEnrollmentResultRequest = serde_json::from_str(request_json)?;
+    let signature = vela_crypto::identity::with_identity(request.handle, |identity| {
+        identity.sign_enrollment_result(&request.grant_id)
+    })?;
+    Ok(AuthSignatureResponse {
+        signature: B64.encode(signature),
+    })
+}
+
+/// Open the RMS capsule the enrolling device sealed to this device's key.
+fn identity_open_enrollment_capsule(
+    request_json: &str,
+) -> anyhow_like::Result<IdentityCapsuleResponse> {
+    let request: IdentityCapsuleRequest = serde_json::from_str(request_json)?;
+    let capsule = B64.decode(request.capsule_b64.as_bytes())?;
+    let plaintext = vela_crypto::identity::with_identity(request.handle, |identity| {
+        identity.open_identity_capsule(&capsule)
+    })?;
+    if plaintext.len() != 32 {
+        return Err(anyhow_like::Error::from(
+            "capsule did not contain a 32-byte root seed".to_string(),
+        ));
+    }
+    Ok(IdentityCapsuleResponse {
+        rms_b64: B64.encode(&plaintext),
     })
 }
 
