@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     state::AppState,
 };
 
@@ -14,7 +14,7 @@ pub struct CapsuleResponse {
 
 pub async fn get_capsule(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<CapsuleResponse>)> {
     // Read-then-clear must be atomic: two concurrent requests must never both
     // observe the same capsule. Do both inside one snapshot-isolated

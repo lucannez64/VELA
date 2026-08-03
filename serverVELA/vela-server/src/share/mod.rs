@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::{
     db,
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     state::AppState,
 };
 
@@ -560,7 +560,7 @@ pub struct PutShareEkRequest {
 /// and vault intact.
 pub async fn put_my_ek(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<PutShareEkRequest>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let ek_bytes = B64

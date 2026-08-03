@@ -31,7 +31,7 @@ use crate::{
     auth::token::{TokenScope, TokenService},
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     net, rate_limit,
     state::AppState,
 };
@@ -345,7 +345,7 @@ pub struct KeysResponse {
 pub async fn get_keys(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<KeysResponse>)> {
     rate_limit::web_session_keys_by_user(&state.store, &session.user_id.to_string())?;
 
@@ -413,7 +413,7 @@ pub struct GrantResponse {
 pub async fn post_grant(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<GrantRequest>,
 ) -> Result<(HeaderMap, Json<GrantResponse>)> {
     let mode = match body.mode.as_str() {
@@ -617,7 +617,7 @@ pub async fn post_token(
 pub async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let existing = load_session(&state, id)?;
     // Only the owner may revoke: the granting user for a granted session, or the
@@ -668,7 +668,7 @@ pub struct SessionsListResponse {
 
 pub async fn get_sessions_list(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<SessionsListResponse>)> {
     let rows = state
         .db

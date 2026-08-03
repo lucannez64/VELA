@@ -1222,6 +1222,23 @@ async fn web_session_token_is_refused_on_permanent_power_routes() {
         ("POST", "/device/revoke", Some(json!({ "device_id": Uuid::new_v4() }))),
         ("POST", "/device/enrollment-grant", Some(json!({}))),
         ("DELETE", "/account", None),
+        // RT-5 (HIGH): overwriting the account's share key let a borrowed
+        // browser read every future share, and it survived revoking the
+        // session.
+        ("PUT", "/share/my-ek", Some(json!({ "share_ek": B64.encode([0u8; 1600]) }))),
+        // RT-6: an RW token acting as approver minted fresh sessions with its
+        // own keys, so revoking the visible one left a clone alive.
+        (
+            "POST",
+            "/web-session/00000000-0000-0000-0000-000000000000/grant",
+            Some(json!({ "mode": "rw", "capsule": B64.encode([0u8; 64]), "link_nonce": B64.encode([0u8; 32]) })),
+        ),
+        // The rest of the session-management surface, same class.
+        ("GET", "/web-session/00000000-0000-0000-0000-000000000000/keys", None),
+        ("DELETE", "/web-session/00000000-0000-0000-0000-000000000000", None),
+        ("GET", "/web-sessions", None),
+        ("GET", "/devices", None),
+        ("GET", "/device/capsule", None),
     ];
 
     for (method, path, body) in cases {
@@ -1519,8 +1536,12 @@ async fn web_session_token_still_reaches_the_vault() {
     let session_id = Uuid::new_v4();
     insert_user(&state, user_id);
 
+    // Vault endpoints only. `/devices` used to be in this list and is not any
+    // more: it is account metadata rather than vault content, the web vault
+    // never calls it, and it is now device-only alongside the rest of the
+    // account-management surface (red-team RT-5/RT-6).
     let web = token_for(&state, user_id, session_id, TokenScope::WebSession);
-    for (method, uri) in [("GET", "/vault/sync"), ("GET", "/devices")] {
+    for (method, uri) in [("GET", "/vault/sync"), ("GET", "/share/inbox")] {
         let resp = app
             .clone()
             .oneshot(

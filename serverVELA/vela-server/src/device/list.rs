@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     state::AppState,
 };
 
@@ -30,7 +30,7 @@ pub struct ListDevicesResponse {
 
 pub async fn list_devices(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<ListDevicesResponse>)> {
     let rows = state
         .db
