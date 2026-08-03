@@ -1079,10 +1079,19 @@ credit the existing hardening:
 >   each with a test that renders every variant and asserts each planted secret is
 >   absent.
 >
-> Plaintext `String` fields still have no `Zeroize`: `VaultItem`'s fields are
-> moved out by pattern matches all over the codebase, so a `Drop` impl would not
-> compile without reworking those call sites. Left open deliberately rather than
-> half-done.
+> * **`VaultItem` wipes its secrets on drop.** Every path that lets an item go —
+>   locking the vault, replacing the store after a sync, a temporary clone going
+>   out of scope — now clears the plaintext rather than returning a buffer to the
+>   allocator with a password still in it. It is in `Drop` rather than at chosen
+>   call sites precisely because the sites you forget are the ones that matter.
+>   Only the secrets are wiped; names, URLs and usernames are not what this
+>   protects.
+>
+>   An earlier note here claimed a `Drop` impl would not compile because
+>   `VaultItem`'s fields are moved out by pattern matches across the codebase.
+>   That was wrong: of 118 destructuring sites, exactly three moved out of an
+>   *owned* item, and all three were in tests added the same day. Adding `&`
+>   fixed them.
 
 ---
 

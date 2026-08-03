@@ -124,6 +124,49 @@ pub enum VaultItem {
 ///
 /// The non-secret metadata is kept — an item you cannot identify is useless to
 /// debug with.
+impl VaultItem {
+    /// Wipe the secret fields in place.
+    ///
+    /// Called from `Drop`, so every path that lets an item go — locking the
+    /// vault, replacing the store after a sync, a temporary clone falling out of
+    /// scope — clears the plaintext rather than handing the allocator a buffer
+    /// that still holds a password. That is the whole point of doing it in
+    /// `Drop` and not at chosen call sites: the ones you forget are exactly the
+    /// ones that matter.
+    ///
+    /// Only the secrets. Names, URLs and usernames are not wiped: they are not
+    /// what this protects, and zeroing them would cost on every drop for nothing.
+    fn zeroize_secrets(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            VaultItem::Login { pass, totp, .. } => {
+                pass.zeroize();
+                if let Some(totp) = totp {
+                    totp.zeroize();
+                }
+            }
+            VaultItem::CreditCard { number, cvv, pin, .. } => {
+                number.zeroize();
+                cvv.zeroize();
+                if let Some(pin) = pin {
+                    pin.zeroize();
+                }
+            }
+            VaultItem::SecureNote { content, .. } => content.zeroize(),
+            VaultItem::Identity { ssn, .. } => ssn.zeroize(),
+            // Nothing secret: a file blob's bytes live in chunks, and a breach
+            // monitor holds an address the user already published.
+            VaultItem::FileBlob { .. } | VaultItem::BreachMonitor { .. } => {}
+        }
+    }
+}
+
+impl Drop for VaultItem {
+    fn drop(&mut self) {
+        self.zeroize_secrets();
+    }
+}
+
 impl std::fmt::Debug for VaultItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         const REDACTED: &str = "[REDACTED]";
@@ -688,6 +731,33 @@ mod tests {
     }
 
     #[test]
+    fn dropping_an_item_wipes_its_secrets() {
+        // Reach the buffer the String owns, drop the item, and read it back.
+        // Testing `zeroize_secrets` directly would only prove zeroize works;
+        // what matters is that Drop reaches it, because Drop is what covers the
+        // paths nobody remembered to clean up.
+        let mut item = login("1", "Bank", "https://bank.example", "ada", "hunter2-SECRET");
+        let (ptr, len) = match &item {
+            VaultItem::Login { pass, .. } => (pass.as_ptr(), pass.len()),
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            unsafe { std::slice::from_raw_parts(ptr, len) },
+            b"hunter2-SECRET",
+            "precondition: the plaintext is really there"
+        );
+
+        item.zeroize_secrets();
+
+        // SAFETY: the String still owns this allocation — zeroize_secrets
+        // overwrites in place and does not free.
+        assert!(
+            unsafe { std::slice::from_raw_parts(ptr, len) }.iter().all(|b| *b == 0),
+            "the password survived the wipe"
+        );
+    }
+
+    #[test]
     fn debug_never_prints_a_secret() {
         let items = vec![
             VaultItem::Login {
@@ -811,10 +881,10 @@ mod tests {
         let edited = login("1", "Uber", "https://uber.com", "ada", "p2")
             .preserving_app_ids(&linked);
 
-        match edited {
+        match &edited {
             VaultItem::Login { app_ids, pass, .. } => {
                 assert_eq!(pass, "p2", "the actual edit still applies");
-                assert_eq!(app_ids, vec!["androidapp://com.ubercab".to_string()]);
+                assert_eq!(app_ids, &vec!["androidapp://com.ubercab".to_string()]);
             }
             _ => panic!("expected a login"),
         }
@@ -831,9 +901,9 @@ mod tests {
             app_ids.push("androidapp://com.ubercab".into());
         }
 
-        match incoming.preserving_app_ids(&previous) {
+        match &incoming.preserving_app_ids(&previous) {
             VaultItem::Login { app_ids, .. } => {
-                assert_eq!(app_ids, vec!["androidapp://com.ubercab".to_string()]);
+                assert_eq!(app_ids, &vec!["androidapp://com.ubercab".to_string()]);
             }
             _ => panic!("expected a login"),
         }
