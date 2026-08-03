@@ -246,10 +246,27 @@ pub mod server {
             }
             crate::biometric::PresenceOutcome::Denied(message) => Err(message),
             crate::biometric::PresenceOutcome::Unavailable => {
-                // No user-presence factor on this machine. The peer check still
-                // applies; say nothing misleading about what was verified.
-                state.record_plaintext_release(peer.pid);
-                Ok(())
+                // Nothing on this machine can establish that a person is here.
+                //
+                // This used to release the credential anyway, on the peer check
+                // alone. But the peer check answers "which process is asking",
+                // never "did anyone ask for this" — and the attacker this guards
+                // against is malware running as the user, which passes the peer
+                // check by definition. Releasing on it alone is the exact
+                // scenario D-4 describes, so it fails closed.
+                //
+                // The cost is real and falls on machines with no Windows Hello
+                // enrolment, no fingerprint reader and no polkit agent: filling
+                // from the extension stops there. It degrades rather than
+                // breaking — metadata is still served, so the extension still
+                // lists the matching logins, and the window is raised so the
+                // user can copy from the app. Enrolling any one factor restores
+                // one-click fill.
+                host.focus_main_window();
+                Err("This computer has no way to confirm it is really you — no \
+Windows Hello, fingerprint reader or polkit agent. Open VELA to copy the \
+password, or set one of those up to fill from the browser."
+                    .to_string())
             }
         }
     }
@@ -854,6 +871,42 @@ pub mod server {
             assert_ne!(resp.msg_type, IpcMessageType::Error);
         }
 
+        /// CI has no Windows Hello, no fingerprint reader and no polkit agent,
+        /// so `verify_presence` reports `Unavailable` here — which makes this
+        /// the exact machine the fix is about.
+        #[tokio::test]
+        async fn plaintext_is_refused_when_nothing_can_confirm_a_person_is_here() {
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+            let us = test_peer();
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::AutofillRequest,
+                    serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &us,
+            )
+            .await;
+
+            // The peer check passes — this really is our own process, as any
+            // malware running as the user would also be. That is precisely why
+            // it cannot be the only thing standing here.
+            assert!(us.is_same_user());
+            assert_eq!(
+                resp.msg_type,
+                IpcMessageType::Error,
+                "no presence factor must fail closed, not fall through to the peer check"
+            );
+            assert!(
+                mock.focuses() > 0,
+                "the window should be raised so the user can copy from the app"
+            );
+        }
+
         #[test]
         fn a_release_grant_is_tied_to_one_caller_and_expires() {
             let dir = tempfile::tempdir().unwrap();
@@ -913,14 +966,20 @@ pub mod server {
             }
             let host: Arc<dyn Host> = mock.clone();
 
-            // user_initiated: full credentials (the extension will gate on
-            // biometric itself).
+            // user_initiated: full credentials — but only once presence has
+            // been confirmed. Standing in for a confirmation the user just
+            // completed, because CI has no factor to complete one with; the
+            // refusal when there is no factor at all is covered separately by
+            // plaintext_is_refused_when_nothing_can_confirm_a_person_is_here.
+            let peer = test_peer();
+            mock.state.record_plaintext_release(peer.pid);
+
             let req = message(
                 IpcMessageType::AutofillRequest,
                 serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &test_peer()).await;
+            let resp = process_message(req, &host, "cap", &peer).await;
             let items = resp.payload["items"].as_array().unwrap();
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["password"], "s3cret");
@@ -931,7 +990,7 @@ pub mod server {
                 serde_json::json!({ "domain": "https://github.com/login", "user_initiated": false }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &test_peer()).await;
+            let resp = process_message(req, &host, "cap", &peer).await;
             let items = resp.payload["items"].as_array().unwrap();
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["username"], "alice");
