@@ -33,6 +33,11 @@ char *vela_ffi_identity_rotate_share_key(const uint8_t *seal_key, size_t seal_ke
                                          const char *request_json);
 char *vela_ffi_identity_sign_json(const char *request_json);
 char *vela_ffi_identity_open_share_json(const char *request_json);
+/* Enrollment v3 (audit P-1). The fingerprint call takes only a handle: the
+   value shown to the user must come from the key this device holds. */
+char *vela_ffi_identity_enrollment_fingerprint_json(const char *request_json);
+char *vela_ffi_identity_sign_enrollment_result_json(const char *request_json);
+char *vela_ffi_identity_open_enrollment_capsule_json(const char *request_json);
 char *vela_ffi_identity_forget_json(const char *request_json);
 char *vela_ffi_identity_forget_all(void);
 

@@ -1182,6 +1182,82 @@ mod tests {
     use super::*;
     use std::ffi::CString;
 
+    /// Enrollment v3 (audit P-1): the three calls the joining side runs.
+    ///
+    /// These go through the plain impls rather than the JNI wrappers, which
+    /// need a JVM. The shape being pinned is that the fingerprint request
+    /// carries only a handle — an API taking key bytes would make "render the
+    /// value the server sent" a one-line mistake, and that one line is what
+    /// would turn the comparison from two devices agreeing about a key into two
+    /// devices agreeing about a number.
+    #[test]
+    fn enrollment_v3_fingerprint_is_over_the_devices_own_key_and_the_capsule_opens() {
+        let created = identity_create(&[13u8; 32], "{}").expect("create");
+        let handle = created.handle;
+        let hybrid_ek = B64.decode(&created.hybrid_ek_b64).unwrap();
+        let hybrid_vk = B64.decode(&created.hybrid_vk_b64).unwrap();
+
+        let fp = identity_enrollment_fingerprint(
+            &serde_json::json!({ "handle": handle }).to_string(),
+        )
+        .expect("fingerprint");
+        assert_eq!(
+            fp.fingerprint,
+            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk),
+            "both sides must be talking about the same key"
+        );
+
+        let sig = identity_sign_enrollment_result(
+            &serde_json::json!({ "handle": handle, "grant_id": "grant-1" }).to_string(),
+        )
+        .expect("sign");
+        let vk = vela_crypto::signing::HybridVerifyingKey::from_bytes(
+            hybrid_vk.as_slice().try_into().unwrap(),
+        )
+        .unwrap();
+        let parsed = vela_crypto::signing::HybridSignature::from_bytes(
+            B64.decode(&sig.signature).unwrap().as_slice().try_into().unwrap(),
+        )
+        .unwrap();
+        assert!(vela_crypto::signing::verify(
+            &vk,
+            &vela_crypto::signing::enrollment_result_message("grant-1"),
+            &parsed
+        )
+        .unwrap());
+        // Bound to the grant: a signature collected once cannot collect another
+        // enrollment's result.
+        assert!(!vela_crypto::signing::verify(
+            &vk,
+            &vela_crypto::signing::enrollment_result_message("grant-2"),
+            &parsed
+        )
+        .unwrap());
+
+        // What the primary seals to `hybrid_ek` opens here, and nowhere else.
+        let pk = vela_crypto::kem::HybridPublicKey::from_bytes(&hybrid_ek).unwrap();
+        let capsule = vela_crypto::kem::seal_share(&pk, &[5u8; 32]).unwrap();
+        let opened = identity_open_enrollment_capsule(
+            &serde_json::json!({ "handle": handle, "capsule_b64": B64.encode(&capsule) })
+                .to_string(),
+        )
+        .expect("open");
+        assert_eq!(B64.decode(&opened.rms_b64).unwrap(), vec![5u8; 32]);
+
+        let other = identity_create(&[13u8; 32], "{}").expect("create");
+        assert!(
+            identity_open_enrollment_capsule(
+                &serde_json::json!({
+                    "handle": other.handle,
+                    "capsule_b64": B64.encode(&capsule),
+                })
+                .to_string(),
+            )
+            .is_err(),
+            "another device's key must not open it"
+        );
+    }
+
     /// Audit C-4: a `Vec` with spare capacity must still round-trip through the
     /// C ABI without lying to the allocator about the layout.
     #[test]
