@@ -100,6 +100,25 @@ pub struct SyncManifest {
     pub chunks: Vec<ChunkManifestEntry>,
 }
 
+/// What `POST /device/enrollment-grant` returns. The grant id is the whole
+/// payload of a v3 enrollment code — there is nothing else in it, which is the
+/// point of the change (audit P-1).
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnrollmentGrant {
+    pub grant_id: String,
+    pub expires_in: u64,
+}
+
+/// The joining device's *public* halves, as the server stored them. These are
+/// what the fingerprint is computed over and what will be enrolled.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnrollmentClaim {
+    pub hybrid_ek: String,
+    pub hybrid_vk: String,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
+}
+
 impl ApiClient {
     pub fn new(base_url: &str) -> Self {
         let fallback_client = Client::builder()
@@ -494,6 +513,148 @@ impl ApiClient {
 
         let result: FetchEnrollmentPackageResponse = resp.json().await?;
         Ok(result.ciphertext)
+    }
+
+    // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
+    //
+    // The v2 pair above ships the joining device's private key inside a package
+    // the code decrypts. These four carry public keys only; what the joining
+    // device keeps never leaves it.
+
+    /// Open a grant. Authenticated: the server binds it to this user *and* this
+    /// device, and only this device can read the claim or complete.
+    pub async fn open_enrollment_grant(
+        &self,
+        token: &str,
+    ) -> Result<(EnrollmentGrant, Option<String>)> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/device/enrollment-grant", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({}))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Open enrollment grant failed: {} — {}", status, body);
+        }
+        let new_token = extract_new_token(&resp);
+        let grant: EnrollmentGrant = resp.json().await?;
+        Ok((grant, new_token))
+    }
+
+    /// Present this device's *public* keys under a grant.
+    ///
+    /// Unauthenticated because the joining device has no identity yet — the
+    /// grant id is what it presents instead. A grant admits exactly one claim,
+    /// so losing this race is reported (409) rather than silently overwriting
+    /// whoever claimed first.
+    pub async fn claim_enrollment_grant(
+        &self,
+        grant_id: &str,
+        hybrid_ek_b64: &str,
+        hybrid_vk_b64: &str,
+        device_name: &str,
+        device_type: &str,
+    ) -> Result<()> {
+        let body = serde_json::json!({
+            "hybrid_ek": hybrid_ek_b64,
+            "hybrid_vk": hybrid_vk_b64,
+            "device_name": device_name,
+            "device_type": device_type,
+        });
+        let url = format!("{}/device/enrollment-grant/{}/claim", self.base_url, grant_id);
+        let resp = self
+            .send_request(false, move |client| client.post(&url).json(&body))
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Claim enrollment grant failed: {} — {}", status, body);
+        }
+        Ok(())
+    }
+
+    /// Read the claim, to show the user a fingerprint of the key that will be
+    /// enrolled. Returns `None` while no device has claimed yet.
+    pub async fn get_enrollment_claim(
+        &self,
+        token: &str,
+        grant_id: &str,
+    ) -> Result<(Option<EnrollmentClaim>, Option<String>)> {
+        let url = format!("{}/device/enrollment-grant/{}", self.base_url, grant_id);
+        let token = token.to_string();
+        let resp = self
+            .send_request(true, move |client| {
+                client
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+
+        // 404 covers both "nobody has claimed yet" and "not your grant". The
+        // server deliberately does not distinguish them, and neither does this.
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok((None, None));
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Read enrollment claim failed: {} — {}", status, body);
+        }
+        let new_token = extract_new_token(&resp);
+        let claim: EnrollmentClaim = resp.json().await?;
+        Ok((Some(claim), new_token))
+    }
+
+    /// Enrol the claimed device.
+    ///
+    /// Deliberately carries no key material: the server enrols the keys it
+    /// stored at claim time, so the fingerprint the user just confirmed and the
+    /// key that gets enrolled are the same object. There is no argument here
+    /// through which a different key could be named.
+    pub async fn complete_enrollment(
+        &self,
+        token: &str,
+        grant_id: &str,
+        rms_capsule_b64: &str,
+        signature_b64: &str,
+    ) -> Result<(String, Option<String>)> {
+        let body = serde_json::json!({
+            "rms_capsule": rms_capsule_b64,
+            "signature": signature_b64,
+        });
+        let url = format!(
+            "{}/device/enrollment-grant/{}/complete",
+            self.base_url, grant_id
+        );
+        let token = token.to_string();
+        let resp = self
+            .send_request(false, move |client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&body)
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Complete enrollment failed: {} — {}", status, body);
+        }
+
+        #[derive(Deserialize)]
+        struct CompleteResponse {
+            device_id: String,
+        }
+        let new_token = extract_new_token(&resp);
+        let done: CompleteResponse = resp.json().await?;
+        Ok((done.device_id, new_token))
     }
 
     pub async fn get_capsule(&self, token: &str) -> Result<(CapsuleResponse, Option<String>)> {
