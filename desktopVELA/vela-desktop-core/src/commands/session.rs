@@ -119,11 +119,14 @@ async fn register_with_server(
     state
         .store
         .save_identity_keys_full(
-            &identity.hybrid_ek,
-            &identity.hybrid_vk,
-            &identity.hybrid_sk,
-            &identity.share_ek,
-            &identity.share_dk,
+            &crate::store::IdentityKeysStore {
+                hybrid_ek: identity.hybrid_ek.clone(),
+                hybrid_dk: identity.hybrid_dk.clone(),
+                hybrid_vk: identity.hybrid_vk.clone(),
+                hybrid_sk: identity.hybrid_sk.clone(),
+                share_ek: identity.share_ek.clone(),
+                share_dk: identity.share_dk.clone(),
+            },
             crypto,
         )
         .map_err(|e| format!("Failed to save identity keys: {}", e))?;

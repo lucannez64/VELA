@@ -46,11 +46,14 @@ impl DesktopClient {
             state
                 .store
                 .save_identity_keys_full(
-                    &identity.hybrid_ek,
-                    &identity.hybrid_vk,
-                    &identity.hybrid_sk,
-                    &identity.share_ek,
-                    &identity.share_dk,
+                    &vela_desktop_core::store::IdentityKeysStore {
+                        hybrid_ek: identity.hybrid_ek.clone(),
+                        hybrid_dk: identity.hybrid_dk.clone(),
+                        hybrid_vk: identity.hybrid_vk.clone(),
+                        hybrid_sk: identity.hybrid_sk.clone(),
+                        share_ek: identity.share_ek.clone(),
+                        share_dk: identity.share_dk.clone(),
+                    },
                     &crypto_obj,
                 )
                 .map_err(|e| format!("save identity keys: {e}"))?;

@@ -657,6 +657,45 @@ impl ApiClient {
         Ok((done.device_id, new_token))
     }
 
+    /// Ask which device this one became.
+    ///
+    /// The joining side calls this while the user compares fingerprints on the
+    /// other screen. It carries no session — the `device_id` it returns is what
+    /// a session would need — so the proof is `signature_b64`, made with the
+    /// private half of the key this device claimed under. `Ok(None)` means the
+    /// primary has not confirmed yet.
+    pub async fn collect_enrollment_result(
+        &self,
+        grant_id: &str,
+        signature_b64: &str,
+    ) -> Result<Option<String>> {
+        let body = serde_json::json!({ "signature": signature_b64 });
+        let url = format!(
+            "{}/device/enrollment-grant/{}/result",
+            self.base_url, grant_id
+        );
+        let resp = self
+            .send_request(true, move |client| client.post(&url).json(&body))
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Collect enrollment result failed: {} — {}", status, body);
+        }
+
+        #[derive(Deserialize)]
+        #[serde(tag = "status", rename_all = "snake_case")]
+        enum ResultResponse {
+            Pending,
+            Enrolled { device_id: String },
+        }
+        match resp.json::<ResultResponse>().await? {
+            ResultResponse::Pending => Ok(None),
+            ResultResponse::Enrolled { device_id } => Ok(Some(device_id)),
+        }
+    }
+
     pub async fn get_capsule(&self, token: &str) -> Result<(CapsuleResponse, Option<String>)> {
         let resp = self
             .send_request(true, |client| {

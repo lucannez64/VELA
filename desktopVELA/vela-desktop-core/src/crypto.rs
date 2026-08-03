@@ -24,6 +24,10 @@ const ORAM_KEY_CONTEXT: &str = "vela oram position map v1";
 #[derive(Clone)]
 pub struct IdentityKeypair {
     pub hybrid_ek: Vec<u8>,
+    /// The private half of `hybrid_ek`. Enrollment v3 seals the RMS capsule to
+    /// `hybrid_ek`, so this is what opens it (audit P-1); before v3 nothing
+    /// encapsulated under that key and it was discarded at generation.
+    pub hybrid_dk: Vec<u8>,
     pub hybrid_vk: Vec<u8>,
     pub hybrid_sk: Vec<u8>,
     pub share_ek: Vec<u8>,
@@ -34,15 +38,17 @@ pub fn generate_identity_keypair() -> Result<IdentityKeypair, String> {
     // `hybrid_ek` must be a real KEM public key, not filler bytes: it is
     // signed (via sign_enrollment) and transmitted to the server as part of
     // this device's identity, so storing/attesting to random noise here
-    // means the signed enrollment payload contains fake key material. The
-    // matching secret key is intentionally not persisted anywhere — nothing
-    // in the current protocol encapsulates under hybrid_ek (the RMS capsule
-    // is sealed with a symmetric transfer_key instead, see
-    // crypto::create_rms_capsule), so there is nothing to decrypt with it
-    // yet. A public key with no stored private counterpart is inert, not
-    // insecure: it just can't be used until that capability exists.
-    let (hybrid_ek_pk, _unused_hybrid_ek_sk) = kem::generate_keypair();
+    // means the signed enrollment payload contains fake key material.
+    //
+    // The matching secret used to be discarded, because nothing encapsulated
+    // under `hybrid_ek` — v2 sealed the RMS capsule under a symmetric
+    // transfer_key instead. Enrollment v3 is the capability that comment
+    // anticipated: the capsule is now KEM-sealed to `hybrid_ek`, so a device
+    // that threw this key away would enrol and then find its own capsule
+    // unopenable (audit P-1).
+    let (hybrid_ek_pk, hybrid_ek_sk) = kem::generate_keypair();
     let hybrid_ek = hybrid_ek_pk.to_bytes();
+    let hybrid_dk = hybrid_ek_sk.to_bytes();
 
     let (signing_vk, signing_sk) = signing::generate_keypair()
         .map_err(|e| format!("Failed to generate signing keypair: {}", e))?;
@@ -53,6 +59,7 @@ pub fn generate_identity_keypair() -> Result<IdentityKeypair, String> {
 
     Ok(IdentityKeypair {
         hybrid_ek,
+        hybrid_dk,
         hybrid_vk,
         hybrid_sk,
         share_ek: share_pk.to_bytes(),
@@ -96,6 +103,21 @@ pub fn sign_enrollment(
     Ok(sig.to_bytes().to_vec())
 }
 
+/// Sign the grant id, to collect the outcome of this device's own enrollment.
+///
+/// The joining device has no session yet — the `device_id` it is asking for is
+/// what a session would need — so this signature stands in for one. It proves
+/// possession of the private half of the key that claimed the grant, which
+/// someone who merely photographed the enrollment code does not have.
+pub fn sign_enrollment_result(hybrid_sk_bytes: &[u8], grant_id: &str) -> Result<String, String> {
+    let sk = signing::HybridSigningKey::from_bytes(hybrid_sk_bytes)
+        .map_err(|e| format!("Failed to decode signing key: {e}"))?;
+    let message = signing::enrollment_result_message(grant_id);
+    let signature =
+        signing::sign(&sk, &message).map_err(|e| format!("Failed to sign grant id: {e}"))?;
+    Ok(B64.encode(signature.to_bytes()))
+}
+
 /// AEAD-encrypt `rms` using `transfer_key`.  The resulting capsule is stored
 /// on the server and downloaded by the new device after authentication.
 pub fn create_rms_capsule(transfer_key: &[u8; 32], rms: &[u8; 32]) -> anyhow::Result<Vec<u8>> {
@@ -116,8 +138,13 @@ pub fn seal_rms_to_device(hybrid_ek_bytes: &[u8], rms: &[u8; 32]) -> anyhow::Res
 
 /// Open a capsule sealed by [`seal_rms_to_device`], using this device's own
 /// KEM secret key.
-pub fn open_rms_from_capsule(hybrid_sk_bytes: &[u8], capsule: &[u8]) -> Result<[u8; 32], String> {
-    let sk = kem::HybridSecretKey::from_bytes(hybrid_sk_bytes)
+///
+/// The argument is `hybrid_dk` — the private half of the device's `hybrid_ek` —
+/// and not `hybrid_sk`, which is the *signing* key. The two are different
+/// keypairs of similar-looking names, and passing the wrong one fails at decode
+/// rather than silently, which is the reason this is spelled out.
+pub fn open_rms_from_capsule(hybrid_dk_bytes: &[u8], capsule: &[u8]) -> Result<[u8; 32], String> {
+    let sk = kem::HybridSecretKey::from_bytes(hybrid_dk_bytes)
         .map_err(|e| format!("invalid device key: {e}"))?;
     let plaintext = kem::open_share(&sk, capsule).map_err(|e| format!("capsule did not open: {e}"))?;
     let bytes: [u8; 32] = plaintext

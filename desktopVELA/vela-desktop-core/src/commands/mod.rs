@@ -4,6 +4,7 @@
 //! actions can call the same code. See
 //! /home/hirew/.claude/plans/mighty-wibbling-wave.md Step 1.2.
 pub mod devices;
+pub mod enrollment_v3;
 pub mod session;
 pub mod settings;
 pub mod vault;
