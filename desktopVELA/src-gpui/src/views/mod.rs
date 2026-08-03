@@ -4,6 +4,7 @@ pub mod audit_log_screen;
 pub mod biometric_gate;
 pub mod breach_monitor_screen;
 pub mod devices_screen;
+pub mod enroll_device_modal;
 pub mod item_detail;
 pub mod password_generator;
 pub mod settings_screen;
