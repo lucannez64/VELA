@@ -1638,3 +1638,127 @@ async fn the_capsule_is_delivered_once_even_under_concurrent_polls() {
     }
     assert_eq!(served, 1, "the capsule must be handed out exactly once, got {served}");
 }
+
+/// A device id that exists must be indistinguishable from one that does not.
+///
+/// Both `/auth/verify` and `/device/enroll` answered "no such device" and "wrong
+/// signature" differently, so an anonymous caller could confirm whether a device
+/// id was real. `/auth/verify` had already collapsed its not-found arm to one
+/// message — the wording names all three possibilities deliberately — but the
+/// signature arm returned the helper's own message and undid it. Half-applied
+/// hardening reads as intentional to the next person, so this pins both arms of
+/// both endpoints.
+///
+/// This covers the message channel only. A miss still returns after one lookup
+/// while a hit runs an ML-DSA-87 verification, and that timing difference is
+/// deliberately left: equalising it costs a signature verification per
+/// unauthenticated request, to close an oracle that only confirms a UUIDv4 the
+/// caller already holds.
+#[tokio::test]
+async fn device_existence_is_not_revealed_by_auth_failures() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let (_user_id, _token) = seed_user_with_device(&state);
+
+    // The seeded device really exists; this id does not.
+    let real = {
+        let rows = state
+            .db
+            .query("SELECT id FROM devices", stoolap::params![])
+            .unwrap();
+        let row = rows.into_iter().next().unwrap().unwrap();
+        vela_server::db::row_val(&row, 0)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let absent = Uuid::new_v4().to_string();
+
+    async fn probe(
+        app: &axum::Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, String) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let b = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap_or(json!({}));
+        (status, v["message"].as_str().unwrap_or_default().to_string())
+    }
+
+    // A fresh challenge per probe: /device/enroll consumes it.
+    async fn challenge(app: &axum::Router) -> String {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/challenge")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let b = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        v["challenge"].as_str().unwrap().to_string()
+    }
+
+    let bad_sig = B64.encode(vec![0u8; 4627 + 64]);
+
+    for device_ids in [[real.clone(), absent.clone()]] {
+        let mut verify_answers = Vec::new();
+        let mut enroll_answers = Vec::new();
+        for id in &device_ids {
+            let ch = challenge(&app).await;
+            verify_answers.push(
+                probe(
+                    &app,
+                    "/auth/verify",
+                    json!({ "device_id": id, "challenge": ch, "signature": bad_sig }),
+                )
+                .await,
+            );
+
+            let ch = challenge(&app).await;
+            enroll_answers.push(
+                probe(
+                    &app,
+                    "/device/enroll",
+                    json!({
+                        "enrolling_device_id": id,
+                        "challenge": ch,
+                        "auth_signature": bad_sig,
+                        "new_device": {
+                            "hybrid_ek": B64.encode(vec![0u8; 1600]),
+                            "hybrid_vk": B64.encode(vec![0u8; 2624]),
+                            "rms_capsule": B64.encode(vec![0u8; 64]),
+                            "signature": bad_sig,
+                        },
+                    }),
+                )
+                .await,
+            );
+        }
+
+        assert_eq!(
+            verify_answers[0], verify_answers[1],
+            "/auth/verify distinguishes an existing device id from an absent one"
+        );
+        assert_eq!(
+            enroll_answers[0], enroll_answers[1],
+            "/device/enroll distinguishes an existing device id from an absent one"
+        );
+    }
+}

@@ -15,6 +15,34 @@ use crate::{
     state::AppState,
 };
 
+/// One message for every "this device did not authenticate" case.
+///
+/// `/auth/verify` and `/device/enroll` both used to answer "no such device" and
+/// "that signature is wrong" differently, which told an anonymous caller whether
+/// a device id exists. `/auth/verify` had already collapsed its not-found arm to
+/// this wording — the three possibilities are named deliberately — but the
+/// signature arm returned the helper's own message and undid it, so the
+/// hardening was half applied on one endpoint and absent on the other.
+///
+/// This does not close the timing side of the same question: a miss returns
+/// after one lookup, a hit after an ML-DSA-87 verification. Equalising that
+/// means verifying against a dummy key on the miss path, which buys an
+/// unauthenticated caller a signature verification per request — a poor trade
+/// against an oracle that only confirms a UUIDv4 the caller already holds.
+pub(crate) const DEVICE_AUTH_FAILED: &str = "invalid device, challenge or signature";
+
+/// Rewrite an auth-signature rejection to [`DEVICE_AUTH_FAILED`].
+///
+/// Only the `Unauthorized` arm: a `BadRequest` is about the shape of what the
+/// caller sent and tells them nothing about the device, and an `Internal` is a
+/// fault on our side that must not be disguised as an authentication failure.
+pub(crate) fn unify_device_auth_error(error: AppError) -> AppError {
+    match error {
+        AppError::Unauthorized(_) => AppError::Unauthorized(DEVICE_AUTH_FAILED.into()),
+        other => other,
+    }
+}
+
 #[derive(Deserialize)]
 pub struct NewDevicePayload {
     pub hybrid_ek: String,
@@ -72,7 +100,7 @@ pub async fn post_enroll(
     let row = rows
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?
+        .ok_or_else(|| AppError::Unauthorized(DEVICE_AUTH_FAILED.into()))?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let device_a = crate::db::parse_device_row(&row)?;
 
@@ -80,12 +108,16 @@ pub async fn post_enroll(
         .decode(&body.challenge)
         .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
 
+    // Same answer whether the device was missing or the signature was wrong.
+    // Internal errors keep their own identity — collapsing those would hide a
+    // real fault behind an auth failure, which is the opposite trade.
     verify_auth_signature(
         &device_a.hybrid_vk,
         &challenge_bytes,
         &enrolling_device_id_str,
         &body.auth_signature,
-    )?;
+    )
+    .map_err(unify_device_auth_error)?;
 
     let new_hybrid_ek = B64
         .decode(&body.new_device.hybrid_ek)

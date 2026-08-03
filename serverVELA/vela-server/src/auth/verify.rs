@@ -65,7 +65,9 @@ pub async fn post_verify(
     let row = rows
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Unauthorized("invalid device, challenge or signature".into()))?
+        .ok_or_else(|| {
+            AppError::Unauthorized(crate::device::enroll::DEVICE_AUTH_FAILED.into())
+        })?
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let device = crate::db::parse_device_row(&row)?;
 
@@ -94,7 +96,11 @@ pub async fn post_verify(
             );
         }
         rate_limit::verify_fail_by_device(&state.store, &ip, &device_id_str)?;
-        return Err(e);
+        // Same answer as "no such device" above. Returning the helper's own
+        // message here is what told an anonymous caller which device ids exist,
+        // despite the not-found arm having been collapsed for exactly that
+        // reason.
+        return Err(crate::device::enroll::unify_device_auth_error(e));
     }
 
     rate_limit::reset_verify_streak(&state.store, &ip, &device_id_str)?;
