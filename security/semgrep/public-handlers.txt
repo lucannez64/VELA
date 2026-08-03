@@ -24,6 +24,15 @@ get_enrollment_package
 # single-claim rule or that read restriction is ever relaxed.
 post_claim
 
+# Enrollment v3 result (audit P-1). Same necessity, one step further on: the
+# joining device is asking which device_id the server minted for it, which is
+# exactly what it is missing in order to authenticate. A session cannot be the
+# gate here, so a signature is: every call must carry one over the grant id under
+# the key that claimed the grant, verified before either branch answers, so an
+# interceptor of the code cannot even learn whether a claim exists. Re-review if
+# that signature check is ever made conditional.
+post_result
+
 # Recovery is pre-auth by design (user has lost their devices)
 post_initiate
 post_recover

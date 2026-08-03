@@ -72,6 +72,10 @@ fn claim_key(id: &str) -> String {
     format!("enroll_claim:{id}")
 }
 
+fn result_key(id: &str) -> String {
+    format!("enroll_result:{id}")
+}
+
 /// Who may drive this grant. Written when the grant is created and never again.
 #[derive(Serialize, Deserialize)]
 struct Grant {
@@ -87,6 +91,17 @@ struct Claim {
     hybrid_vk: String,
     device_name: Option<String>,
     device_type: Option<String>,
+}
+
+/// What the joining device may collect once the primary has enrolled it.
+///
+/// Completing consumes the claim, so the `hybrid_vk` is carried over here: it is
+/// what the collector's signature is checked against, and it is a public key the
+/// device already holds.
+#[derive(Serialize, Deserialize)]
+struct EnrollmentResult {
+    device_id: String,
+    hybrid_vk: String,
 }
 
 // ── 1. The primary opens a grant ────────────────────────────────────────────
@@ -301,6 +316,21 @@ pub async fn post_complete(
         ],
     ).map_err(|e| AppError::Internal(e.to_string()))?;
 
+    // Only now that the row exists: the joining device is holding a keypair and
+    // waiting to be told which device it became. Written after the insert so a
+    // failed enrollment never leaves behind a result pointing at no device.
+    let result = EnrollmentResult {
+        device_id: new_device_id.to_string(),
+        hybrid_vk: claim.hybrid_vk.clone(),
+    };
+    state.store.set_ex(
+        &result_key(grant_id),
+        serde_json::to_vec(&result)
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .as_slice(),
+        GRANT_TTL_SECS,
+    )?;
+
     tracing::info!(
         new_device_id = %new_device_id,
         enrolled_by = %grant.device_id,
@@ -311,6 +341,71 @@ pub async fn post_complete(
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
     Ok((headers, Json(CompleteResponse { device_id: new_device_id })))
+}
+
+// ── 5. The joining device collects the outcome ──────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ResultRequest {
+    /// The joining device's signature over the grant id, under the key it
+    /// claimed with. This is the only thing standing in for a session here —
+    /// the device is asking *which device it is*, so it cannot yet
+    /// authenticate normally.
+    pub signature: String,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ResultResponse {
+    /// The primary has not completed yet. The user is probably still comparing
+    /// fingerprints; keep waiting.
+    Pending,
+    Enrolled { device_id: String },
+}
+
+/// Tell a device that claimed a grant which device it became.
+///
+/// Unauthenticated in the session sense and necessarily so — the `device_id`
+/// this returns is exactly what the caller is missing in order to authenticate.
+/// The proof is the signature: only the holder of the private half of the
+/// claimed key can produce it, so someone who photographed the enrollment code
+/// learns nothing here, not even whether a claim exists. That last part is why
+/// the signature is checked *before* the pending branch answers.
+pub async fn post_result(
+    State(state): State<AppState>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+    Path(grant_id): Path<String>,
+    Json(body): Json<ResultRequest>,
+) -> Result<Json<ResultResponse>> {
+    let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    rate_limit::enrollment_result_by_ip(&state.store, &ip)?;
+    let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
+
+    let signature = decode_exact(&body.signature, HYBRID_SIG_LEN, "signature")?;
+
+    // Completed: the claim is gone and the result carries the vk forward.
+    if let Some(bytes) = state.store.get(&result_key(grant_id))? {
+        let result: EnrollmentResult = serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Internal(format!("stored result is unreadable: {e}")))?;
+        let vk = crate::db::decode_b64(&result.hybrid_vk)?;
+        super::enroll::verify_enrollment_result_signature(&vk, grant_id, &signature)?;
+        return Ok(Json(ResultResponse::Enrolled {
+            device_id: result.device_id,
+        }));
+    }
+
+    // Not completed yet. Still checked against the claimed key, so "pending" is
+    // not an answer an interceptor can get.
+    if let Some(claim) = load_claim(&state, grant_id)? {
+        let vk = crate::db::decode_b64(&claim.hybrid_vk)?;
+        super::enroll::verify_enrollment_result_signature(&vk, grant_id, &signature)?;
+        return Ok(Json(ResultResponse::Pending));
+    }
+
+    Err(AppError::NotFound(
+        "enrollment grant not found or expired".into(),
+    ))
 }
 
 // ── shared ──────────────────────────────────────────────────────────────────
@@ -422,6 +517,38 @@ mod tests {
             decoded.user_id == "user-1" && decoded.device_id != "device-b",
             "same user, different device must not satisfy the binding"
         );
+    }
+
+    /// The three records live in separate namespaces.
+    ///
+    /// A result outlives the claim it came from — completion consumes the claim
+    /// but leaves the result for the joining device to collect. If the keys
+    /// collided, completing would either destroy the result or resurrect a
+    /// consumed claim, and a consumed claim is what makes replay fail.
+    #[test]
+    fn grants_claims_and_results_do_not_share_keys() {
+        let id = "11111111-1111-1111-1111-111111111111";
+        let keys = [grant_key(id), claim_key(id), result_key(id)];
+        let unique: std::collections::HashSet<&String> = keys.iter().collect();
+        assert_eq!(unique.len(), 3, "namespaces collide: {keys:?}");
+    }
+
+    /// The result carries the claimed `hybrid_vk` forward.
+    ///
+    /// Completion consumes the claim, so this copy is the only thing left to
+    /// check a collector's signature against. Dropping it would leave no way to
+    /// verify the caller and force the endpoint open — which is the failure this
+    /// whole design exists to avoid.
+    #[test]
+    fn a_result_keeps_the_key_its_signature_is_checked_against() {
+        let result = EnrollmentResult {
+            device_id: "device-1".into(),
+            hybrid_vk: "vk".into(),
+        };
+        let decoded: EnrollmentResult =
+            serde_json::from_slice(&serde_json::to_vec(&result).unwrap()).unwrap();
+        assert_eq!(decoded.device_id, "device-1");
+        assert_eq!(decoded.hybrid_vk, "vk");
     }
 
     /// A claim carries public halves only. If a private key ever appeared in

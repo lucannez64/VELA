@@ -209,6 +209,25 @@ pub(crate) fn verify_enrollment_signature(
     )
 }
 
+/// Prove the caller holds the private half of the key that claimed `grant_id`.
+///
+/// This is what stands in for a session on the joining device's side: it has no
+/// identity yet, so it authenticates by signing under the very key it presented
+/// at claim time. Someone who only saw the enrollment code cannot produce this.
+pub(crate) fn verify_enrollment_result_signature(
+    claimed_vk_bytes: &[u8],
+    grant_id: &str,
+    signature_bytes: &[u8],
+) -> Result<()> {
+    let message = vela_crypto::signing::enrollment_result_message(grant_id);
+    verify_hybrid_signature(
+        claimed_vk_bytes,
+        &message,
+        signature_bytes,
+        "signature does not match the key this grant was claimed with",
+    )
+}
+
 fn verify_hybrid_signature(
     verifying_key_bytes: &[u8],
     message: &[u8],

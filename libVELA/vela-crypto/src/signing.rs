@@ -62,6 +62,7 @@ pub const HYBRID_SIG_LEN: usize = ML_DSA_SIG_LEN + ED25519_SIG_LEN; // 4659
 const ML_DSA_CTX: &[u8] = b"vela device identity v1";
 const AUTH_MESSAGE_CONTEXT: &[u8] = b"vela auth challenge v1";
 const ENROLLMENT_MESSAGE_CONTEXT: &[u8] = b"vela device enrollment v1";
+const ENROLLMENT_RESULT_CONTEXT: &[u8] = b"vela enrollment result v3";
 
 fn append_len_prefixed(message: &mut Vec<u8>, value: &[u8]) {
     message.extend_from_slice(&(value.len() as u64).to_be_bytes());
@@ -91,6 +92,21 @@ pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]
     append_len_prefixed(&mut message, hybrid_ek);
     append_len_prefixed(&mut message, hybrid_vk);
     append_len_prefixed(&mut message, rms_capsule);
+    message
+}
+
+/// Build the message a joining device signs to collect the outcome of its own
+/// enrollment (v3).
+///
+/// The device that claimed a grant needs to learn the `device_id` the server
+/// minted for it, and it cannot authenticate to ask — that id is the thing it is
+/// missing. Signing the grant id with the private half of the key it claimed
+/// under proves it is that device, so an attacker who merely photographed the
+/// enrollment code learns nothing: they never held the private key.
+pub fn enrollment_result_message(grant_id: &str) -> Vec<u8> {
+    let mut message = Vec::with_capacity(ENROLLMENT_RESULT_CONTEXT.len() + grant_id.len() + 8);
+    message.extend_from_slice(ENROLLMENT_RESULT_CONTEXT);
+    append_len_prefixed(&mut message, grant_id.as_bytes());
     message
 }
 
@@ -355,6 +371,27 @@ mod tests {
             let sig = sign(&sk, b"correct message").unwrap();
             assert!(!verify(&vk, b"wrong message", &sig).unwrap());
         });
+    }
+
+    #[test]
+    fn enrollment_result_message_is_grant_specific_and_domain_separated() {
+        // A signature collected for one grant must not collect another's
+        // result: that would let a device that legitimately enrolled once
+        // replay its proof against an unrelated grant.
+        assert_ne!(
+            enrollment_result_message("grant-a"),
+            enrollment_result_message("grant-b")
+        );
+        // And it must not be confusable with the other two things a device
+        // signs under the same key.
+        assert_ne!(
+            enrollment_result_message("grant-a"),
+            auth_message("grant-a", b"")
+        );
+        assert_ne!(
+            enrollment_result_message("grant-a"),
+            enrollment_message(b"grant-a", b"", b"")
+        );
     }
 
     #[test]
