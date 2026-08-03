@@ -82,7 +82,7 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | D-2 | High | desktop | `rw` web-session grants the non-rotating RMS to the browser | code | **FIXED** (per-chunk vault keys instead of the RMS) |
 | D-3 | High | desktop | macOS "biometric" = Keychain read, no user-presence proof | code | **FIXED** (LocalAuthentication evaluation + ACL) |
 | D-5 | **High** | desktop | **Windows "Hello" was never invoked** — credential read only (found while fixing D-3) | code | **FIXED** (UserConsentVerifier gates every read) |
-| D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | partly fixed |
+| D-4 | Medium | desktop | IPC returns plaintext passwords to any same-uid caller | code | fixed |
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
@@ -605,8 +605,18 @@ user, with no user interaction.
 > timeout, a leaked pending entry — are invisible from the calling side, and
 > reusing the platform's own agent means there is no such dialog to get wrong.
 >
-> **What remains.** A machine with no fingerprint reader *and* no polkit agent
-> still releases on the peer check alone. Tracked in #106.
+> **And when nothing at all can confirm a person is here, it refuses.** A machine
+> with no Windows Hello enrolment, no fingerprint reader and no polkit agent used
+> to fall through and release on the peer check alone. But the peer check answers
+> *which process is asking*, never *did anyone ask* — and the attacker this
+> guards against is code running as the user, which passes it by definition.
+> Releasing on it alone was the scenario the finding describes, so it now fails
+> closed.
+>
+> The cost falls on exactly those machines and is a degradation rather than a
+> break: metadata is still served, so the extension still lists the matching
+> logins, and the window is raised so the user can copy from the app. Enrolling
+> any one factor restores one-click filling.
 
 **Location.** `desktopVELA/vela-desktop-core/src/ipc.rs:294-312`
 
