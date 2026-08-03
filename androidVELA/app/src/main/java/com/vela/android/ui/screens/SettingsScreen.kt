@@ -62,6 +62,7 @@ import com.vela.android.ui.components.VelaCardStyle
 import com.vela.android.ui.components.VelaListItem
 import com.vela.android.ui.components.VelaTextField
 import com.vela.android.ui.components.SegmentedControl
+import com.vela.android.ui.components.TrustedBrowsersSection
 import com.vela.android.ui.components.VelaSwitch
 import com.vela.android.sync.SyncSettingsStore
 import com.vela.android.ui.theme.VelaColors
@@ -183,6 +184,8 @@ fun SettingsScreen(
                 SegmentedAutoLock(autoLockMinutes, onUpdateAutoLockMinutes)
                 Spacer(Modifier.height(16.dp))
                 SegmentedClipboardClear(clipboardClearSeconds, onUpdateClipboardClearSeconds)
+                Spacer(Modifier.height(16.dp))
+                TrustedBrowsersSection()
             }
             Spacer(Modifier.height(24.dp))
         }
