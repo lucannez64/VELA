@@ -588,43 +588,50 @@ user, with no user interaction.
 >   ours is refused outright, and an unidentifiable peer counts as not-ours
 >   rather than as benign. This does not stop code already running as the user,
 >   but it makes the caller nameable, which is what the rest depends on.
-> * **A fresh user-presence proof**, valid 2 minutes and bound to the calling
->   pid, so a second process cannot ride on the confirmation the user gave their
->   browser, and locking the vault revokes it. Presence is proved without
->   touching the RMS — a new `verify_presence` path distinct from the unlock one,
->   which would otherwise cache a key as a side effect.
+> * **A fresh user-presence proof where the platform can ask for one** — Windows
+>   Hello, Touch ID / Face ID, or fprintd on Linux — valid 2 minutes and bound to
+>   the calling pid, so a second process cannot ride on the confirmation the user
+>   gave their browser, and locking the vault revokes it. Presence is proved
+>   without touching the RMS: a `verify_presence` path distinct from the unlock
+>   one, which would otherwise cache a key as a side effect.
 >
 > Metadata (names, usernames, URLs) is deliberately left ungated: it is not the
 > secret, and gating it would put a prompt in front of every suggestion.
 >
-> **Linux now has a presence factor.** fprintd first where a reader exists, then
-> polkit — the mechanism every other Linux application uses for this question,
-> with an agent the user's desktop already runs. `auth_self` prompts for the
-> user's own password, not an administrator's, and deliberately not
-> `auth_self_keep`: a remembered authorisation would defeat the point, since the
-> whole purpose is that an idle machine cannot be drained by something that read
-> the capability file. The desktop packages install
-> `/usr/share/polkit-1/actions/com.vela.VELA.policy`; a machine with neither
-> factor still reports `Unavailable` and says so rather than inventing a
-> confirmation.
+> **Where the platform cannot ask, the release rests on the peer check and the
+> unlocked session.** This is the common Linux case — most desktops have no
+> fingerprint reader — and it is a deliberate reversal of two earlier attempts:
+> a polkit fallback, and then failing closed when no factor existed at all.
 >
-> This was chosen over building a VELA confirmation dialog in both frontends. A
-> security prompt is exactly the kind of UI whose failure modes — approving on
-> timeout, a leaked pending entry — are invisible from the calling side, and
-> reusing the platform's own agent means there is no such dialog to get wrong.
+> polkit was removed, and it cost less than it looks. It put the user's *account
+> password* prompt in front of filling a saved password, on every release,
+> through an agent VELA does not control — the shape of prompt people learn to
+> clear without reading. And it never gated what it appeared to: the dialog
+> carried no per-request context. The message in the `.policy` file was a fixed
+> string, and the Linux path discarded the caller description it was handed
+> (`let _ = reason`), because polkit renders its own text. So malware did not
+> have to defeat the prompt — it timed its request to the moment the user clicked
+> fill in the browser, and the user approved the prompt they were already
+> expecting. The grant then landed on the malware's pid for the full window.
+> **fprintd has the same hole**: a swipe request with no caller in it. Only Hello
+> and Touch ID name the requesting process, because `verify_presence(reason)`
+> actually reaches their prompt text.
 >
-> **And when nothing at all can confirm a person is here, it refuses.** A machine
-> with no Windows Hello enrolment, no fingerprint reader and no polkit agent used
-> to fall through and release on the peer check alone. But the peer check answers
-> *which process is asking*, never *did anyone ask* — and the attacker this
-> guards against is code running as the user, which passes it by definition.
-> Releasing on it alone was the scenario the finding describes, so it now fails
-> closed.
+> What a presence prompt did buy, on every platform, is that an *idle* machine
+> could not be drained — and that is precisely what the session auto-lock
+> delivers. The vault relocks on idle, a locked vault serves nothing on this
+> path, and every relock clears any standing release grant.
 >
-> The cost falls on exactly those machines and is a degradation rather than a
-> break: metadata is still served, so the extension still lists the matching
-> logins, and the window is raised so the user can copy from the app. Enrolling
-> any one factor restores one-click filling.
+> **Residual risk, accepted.** Code running as the user, while the vault is
+> unlocked, in the same session, can still pull plaintext for a domain it names,
+> one request per domain (`search_by_domain` has no wildcard, and there is no
+> rate limit on this path). Shortening the auto-lock does not remove this: the
+> attacker polls and waits for an unlock rather than racing one, and a local
+> socket round-trip is sub-millisecond, so even a one-minute window is tens of
+> thousands of requests. A confirmation prompt does not remove it either, unless
+> the prompt names the caller *and* the user reads it — which is why removing
+> polkit forfeits nothing here. The bound on this case is the peer check plus
+> whatever keeps hostile code off the machine.
 
 **Location.** `desktopVELA/vela-desktop-core/src/ipc.rs:294-312`
 

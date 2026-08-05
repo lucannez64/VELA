@@ -538,83 +538,33 @@ pub mod linux_biometric {
         }
     }
 
-    /// The polkit action declared in `com.vela.VELA.policy`, installed by the
-    /// desktop packages into `/usr/share/polkit-1/actions/`.
-    const POLKIT_ACTION: &str = "com.vela.VELA.release-credential";
-
     /// Prove the user is present, for something other than unlocking.
     ///
-    /// Linux has no single user-presence API, so this tries what the machine
-    /// actually has, strongest first:
+    /// Linux has no general user-presence API, so this is fprintd or nothing: a
+    /// reader with enrolled fingers, or `Unavailable`.
     ///
-    /// 1. **fprintd**, when a reader exists with enrolled fingers.
-    /// 2. **polkit**, which is how every other Linux application asks this
-    ///    question. The user's desktop already runs an agent for it, so there is
-    ///    no VELA-specific dialog to get wrong, and `auth_self` prompts for the
-    ///    user's own password rather than an administrator's.
+    /// There used to be a polkit fallback here for machines without a reader.
+    /// It asked the user's own desktop agent for the account password on every
+    /// release — a password prompt in front of filling a password — and it
+    /// gated less than it appeared to: the dialog text came from the `.policy`
+    /// file, so the `reason` below was dropped and the prompt never said who
+    /// was asking. Malware only had to time its request to a fill the user had
+    /// just clicked, and the user approved it themselves. The one thing it did
+    /// buy — no drain off an idle machine — the session auto-lock already
+    /// provides, so it was removed rather than made optional.
     ///
-    /// A machine with neither reports `Unavailable` and says so, rather than
-    /// returning a confirmation nobody gave.
+    /// The same blind-prompt caveat applies to fprintd below. It is kept
+    /// because it is a swipe rather than a password, it is already there, and
+    /// it still costs an attacker the idle machine.
     pub fn verify_presence_for(reason: &str) -> PresenceOutcome {
-        let _ = reason; // fprintd and the polkit agent render their own prompts.
+        let _ = reason; // fprintd renders its own prompt.
         if tpm::fprint::is_fprint_available() && tpm::fprint::has_enrolled_fingers() {
             return match tpm::fprint::verify() {
                 Ok(()) => PresenceOutcome::Confirmed,
                 Err(e) => PresenceOutcome::Denied(format!("Fingerprint verification failed: {e}")),
             };
         }
-        polkit_verify()
-    }
-
-    /// Ask polkit to authorise [POLKIT_ACTION] for this process.
-    ///
-    /// `pkcheck` ships with polkit itself, so this needs no new dependency and
-    /// follows the same shell-out pattern as the fprintd path above.
-    /// `--allow-user-interaction` is what lets the agent actually prompt;
-    /// without it polkit answers "not authorised, but asking would help", which
-    /// is exit 3.
-    fn polkit_verify() -> PresenceOutcome {
-        let output = std::process::Command::new("pkcheck")
-            .arg("--action-id")
-            .arg(POLKIT_ACTION)
-            .arg("--process")
-            .arg(std::process::id().to_string())
-            .arg("--allow-user-interaction")
-            .output();
-
-        match output {
-            Ok(result) => interpret_pkcheck(
-                result.status.code(),
-                &String::from_utf8_lossy(&result.stderr),
-            ),
-            // No pkcheck on this machine: polkit is not installed. Not a denial.
-            Err(_) => PresenceOutcome::Unavailable,
-        }
-    }
-
-    /// Map `pkcheck`'s exit status to an outcome.
-    ///
-    /// Split out because the distinction that matters — a refusal versus polkit
-    /// being unable to answer — is carried entirely by the exit code, and
-    /// getting it backwards would either lock users out or wave everyone
-    /// through.
-    pub(crate) fn interpret_pkcheck(code: Option<i32>, stderr: &str) -> PresenceOutcome {
-        match code {
-            // Authorised.
-            Some(0) => PresenceOutcome::Confirmed,
-            // Not authorised. Exit 1 covers both "the user declined" and "the
-            // action is not registered", and pkcheck distinguishes them only in
-            // stderr — an unregistered action means our policy file was not
-            // installed, which is a deployment gap rather than a refusal.
-            Some(1) if stderr.contains("not registered") => PresenceOutcome::Unavailable,
-            Some(1) => PresenceOutcome::Denied("Authentication was not completed".to_string()),
-            // Not authorised, and interaction would be required — we asked for
-            // interaction, so reaching this means no agent answered.
-            Some(3) => PresenceOutcome::Unavailable,
-            // 2 is a usage/internal error; anything else is unknown. Neither is
-            // a statement that the user is present.
-            _ => PresenceOutcome::Unavailable,
-        }
+        PresenceOutcome::Unavailable
     }
 
     pub fn authenticate() -> BiometricAuthResult {
@@ -1541,57 +1491,6 @@ pub fn authenticate_with_password(password: &str) -> Option<[u8; 32]> {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         default_password::authenticate_with_password(password)
-    }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod polkit_tests {
-    use super::linux_biometric::interpret_pkcheck;
-    use super::PresenceOutcome;
-
-    /// The whole point of this mapping is telling a refusal apart from polkit
-    /// being unable to answer. Getting it backwards either locks out every
-    /// Linux user or waves everyone through, and neither failure is visible
-    /// from the calling side.
-    #[test]
-    fn authorised_is_the_only_confirmation() {
-        assert_eq!(interpret_pkcheck(Some(0), ""), PresenceOutcome::Confirmed);
-    }
-
-    #[test]
-    fn a_refusal_is_a_denial_not_an_absence() {
-        // The user was asked and said no. Falling back to "unavailable" here
-        // would let the caller proceed as if there were no presence factor.
-        assert!(matches!(
-            interpret_pkcheck(Some(1), "Not authorized"),
-            PresenceOutcome::Denied(_)
-        ));
-    }
-
-    #[test]
-    fn an_uninstalled_policy_is_an_absence_not_a_refusal() {
-        // Our .policy file did not get installed — a packaging gap. Reporting
-        // it as a denial would tell the user they failed an authentication
-        // they were never offered.
-        assert_eq!(
-            interpret_pkcheck(Some(1), "Action com.vela.VELA.release-credential is not registered"),
-            PresenceOutcome::Unavailable
-        );
-    }
-
-    #[test]
-    fn no_agent_to_answer_is_an_absence() {
-        // We passed --allow-user-interaction, so exit 3 means nothing was
-        // there to prompt with.
-        assert_eq!(interpret_pkcheck(Some(3), ""), PresenceOutcome::Unavailable);
-    }
-
-    #[test]
-    fn errors_and_signals_never_read_as_present() {
-        assert_eq!(interpret_pkcheck(Some(2), ""), PresenceOutcome::Unavailable);
-        assert_eq!(interpret_pkcheck(Some(127), ""), PresenceOutcome::Unavailable);
-        // Killed by a signal: no exit code at all.
-        assert_eq!(interpret_pkcheck(None, ""), PresenceOutcome::Unavailable);
     }
 }
 

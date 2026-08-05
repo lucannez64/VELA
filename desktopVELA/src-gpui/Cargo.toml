@@ -54,11 +54,6 @@ assets = [
     ["target/release/vela-desktop", "usr/bin/vela-desktop", "755"],
     ["../src-tauri/assets/com.vela.vault.desktop", "usr/share/applications/com.vela.vault.desktop", "644"],
     ["../src-tauri/icons/icon.png", "usr/share/icons/hicolor/512x512/apps/vela-desktop.png", "644"],
-    # Without this, Linux has no way to prove the user is present before a
-    # saved password is released over IPC, and the desktop falls back to the
-    # peer check alone (audit D-4). 644 and root-owned: polkit ignores an
-    # action file a non-root user could rewrite, which is the point.
-    ["../src-tauri/assets/com.vela.VELA.policy", "usr/share/polkit-1/actions/com.vela.VELA.policy", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -72,6 +67,4 @@ assets = [
     { source = "../target/release/vela-desktop", dest = "/usr/bin/vela-desktop", mode = "755" },
     { source = "../src-tauri/assets/com.vela.vault.desktop", dest = "/usr/share/applications/com.vela.vault.desktop", mode = "644" },
     { source = "../src-tauri/icons/icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/vela-desktop.png", mode = "644" },
-    # See the cargo-deb block above.
-    { source = "../src-tauri/assets/com.vela.VELA.policy", dest = "/usr/share/polkit-1/actions/com.vela.VELA.policy", mode = "644" },
 ]

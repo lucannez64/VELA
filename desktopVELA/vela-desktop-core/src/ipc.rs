@@ -219,13 +219,15 @@ pub mod server {
     ///
     ///  * the kernel says the peer runs as us — a token read out of
     ///    `ipc_auth.json` by something running as another user is not enough; and
-    ///  * the user proved presence within [PRESENCE_TTL]. One prompt covers a
-    ///    short burst of fills, because a prompt per field would train people to
-    ///    approve without reading, but it does not cover an idle machine.
+    ///  * the user proved presence within [PLAINTEXT_RELEASE_TTL], where the
+    ///    platform can ask. One prompt covers a short burst of fills, because a
+    ///    prompt per field would train people to approve without reading, but it
+    ///    does not cover an idle machine.
     ///
-    /// Where the platform offers no presence check at all, that half cannot be
-    /// enforced and the release proceeds on the peer check alone; the residual
-    /// gap is the one the issue calls out and is recorded in SECURITY_AUDIT.
+    /// Where the platform cannot ask, the release proceeds on the peer check
+    /// and the unlocked session: an idle machine auto-locks, and a locked vault
+    /// serves nothing on this path at all (the caller checks that first). See
+    /// the `Unavailable` arm for why that is the trade rather than a refusal.
     fn authorize_plaintext_release(host: &Arc<dyn Host>, peer: &PeerIdentity) -> Result<(), String> {
         if !peer.is_same_user() {
             return Err("This request did not come from your own session.".to_string());
@@ -246,27 +248,27 @@ pub mod server {
             }
             crate::biometric::PresenceOutcome::Denied(message) => Err(message),
             crate::biometric::PresenceOutcome::Unavailable => {
-                // Nothing on this machine can establish that a person is here.
+                // Nothing on this machine can ask whether a person is here:
+                // no Windows Hello enrolment, no biometry, no fingerprint
+                // reader. Release on the peer check and the unlocked session.
                 //
-                // This used to release the credential anyway, on the peer check
-                // alone. But the peer check answers "which process is asking",
-                // never "did anyone ask for this" — and the attacker this guards
-                // against is malware running as the user, which passes the peer
-                // check by definition. Releasing on it alone is the exact
-                // scenario D-4 describes, so it fails closed.
+                // This did fail closed for a while, with a polkit prompt on
+                // Linux to keep that from meaning "no filling, ever". Both are
+                // gone. What D-4 actually asks for is that a plaintext release
+                // not rest on a long-lived bearer token, and the session
+                // auto-lock delivers that: the vault relocks on idle, a locked
+                // vault serves nothing here, and every relock clears any
+                // standing grant. A machine sitting idle cannot be drained by
+                // something that read `ipc_auth.json`.
                 //
-                // The cost is real and falls on machines with no Windows Hello
-                // enrolment, no fingerprint reader and no polkit agent: filling
-                // from the extension stops there. It degrades rather than
-                // breaking — metadata is still served, so the extension still
-                // lists the matching logins, and the window is raised so the
-                // user can copy from the app. Enrolling any one factor restores
-                // one-click fill.
-                host.focus_main_window();
-                Err("This computer has no way to confirm it is really you — no \
-Windows Hello, fingerprint reader or polkit agent. Open VELA to copy the \
-password, or set one of those up to fill from the browser."
-                    .to_string())
+                // What is given up is narrower than it looks: code running as
+                // the user, on an unlocked vault, in the same session. A prompt
+                // only stops that if it names who is asking — polkit's could
+                // not (fixed message, caller description discarded) and neither
+                // can fprintd's, so malware timed to a fill the user just
+                // requested was approved by the user's own hand. Hello and
+                // Touch ID do name the caller, and still prompt here.
+                Ok(())
             }
         }
     }
@@ -871,11 +873,17 @@ password, or set one of those up to fill from the browser."
             assert_ne!(resp.msg_type, IpcMessageType::Error);
         }
 
-        /// CI has no Windows Hello, no fingerprint reader and no polkit agent,
-        /// so `verify_presence` reports `Unavailable` here — which makes this
-        /// the exact machine the fix is about.
+        /// CI has no Windows Hello and no fingerprint reader, so
+        /// `verify_presence` reports `Unavailable` here — the same machine most
+        /// Linux desktops are.
+        ///
+        /// Filling has to keep working there: the release rests on the peer
+        /// check and the unlocked session, and the auto-lock is what keeps an
+        /// idle machine from being drained. The locked-vault refusal is covered
+        /// by `autofill_locked_vault_requires_biometric`, which is the half
+        /// that actually holds this up.
         #[tokio::test]
-        async fn plaintext_is_refused_when_nothing_can_confirm_a_person_is_here() {
+        async fn plaintext_is_released_when_nothing_can_confirm_but_the_vault_is_open() {
             let (_dir, mock) = MockHost::new(true);
             let host: Arc<dyn Host> = mock.clone();
             let us = test_peer();
@@ -892,18 +900,11 @@ password, or set one of those up to fill from the browser."
             )
             .await;
 
-            // The peer check passes — this really is our own process, as any
-            // malware running as the user would also be. That is precisely why
-            // it cannot be the only thing standing here.
             assert!(us.is_same_user());
             assert_eq!(
                 resp.msg_type,
-                IpcMessageType::Error,
-                "no presence factor must fail closed, not fall through to the peer check"
-            );
-            assert!(
-                mock.focuses() > 0,
-                "the window should be raised so the user can copy from the app"
+                IpcMessageType::AutofillResponse,
+                "a machine with no presence factor must still be able to fill"
             );
         }
 

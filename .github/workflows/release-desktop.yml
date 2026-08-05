@@ -409,7 +409,7 @@ jobs:
                    'libayatana-appindicator' 'librsvg')
           optdepends=('gnome-keyring: system secret-storage backend'
                       'keepassxc: alternative secret-storage backend'
-                      'polkit: confirm you are present before a saved password is released to the browser extension')
+                      'fprintd: fingerprint unlock and fill confirmation')
           provides=('vela-desktop')
           conflicts=('vela-desktop')
           # Prebuilt binary: upstream already stripped it — re-stripping is
