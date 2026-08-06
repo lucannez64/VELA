@@ -135,6 +135,7 @@ pub async fn add_item(
             VaultItem::Identity { .. } => "identity",
             VaultItem::FileBlob { .. } => "fileblob",
             VaultItem::BreachMonitor { .. } => "breachmonitor",
+            VaultItem::Passkey { .. } => "passkey",
         }
     );
 

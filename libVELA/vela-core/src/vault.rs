@@ -20,6 +20,7 @@ pub enum ItemType {
     Identity,
     FileBlob,
     BreachMonitor,
+    Passkey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,6 +114,45 @@ pub enum VaultItem {
         #[serde(default)]
         breaches: Vec<BreachEntry>,
     },
+    /// A WebAuthn credential: one ES256 keypair scoped to one relying party.
+    ///
+    /// Unlike a [`VaultItem::Login`], the secret here is never released to
+    /// anything — not to the browser, not to the page, not over IPC. It is used
+    /// where it is stored, to sign one assertion at a time, and only the
+    /// signature leaves. That is the whole point of the item type; see
+    /// `security/formal/m7_oneshot_assertion.spthy` for the property it is
+    /// meant to deliver (`credential_never_leaks`, which holds even for the
+    /// credential in active use).
+    Passkey {
+        #[serde(flatten)]
+        meta: VaultMeta,
+        /// The relying party ID this credential is scoped to, e.g.
+        /// `example.com`. An assertion is only ever produced for a request
+        /// whose RP ID matches this exactly.
+        #[serde(alias = "rpId")]
+        rp_id: String,
+        #[serde(default, alias = "rpName")]
+        rp_name: String,
+        /// Opaque credential ID, base64url. The relying party stores this and
+        /// echoes it back in `allowCredentials`.
+        #[serde(alias = "credentialId")]
+        credential_id: String,
+        /// The user handle the relying party knows this credential by,
+        /// base64url.
+        #[serde(default, alias = "userHandle")]
+        user_handle: String,
+        #[serde(default, alias = "userName")]
+        user_name: String,
+        #[serde(default, alias = "userDisplayName")]
+        user_display_name: String,
+        /// The ES256 private scalar, base64url. **The secret.**
+        #[serde(alias = "privateKey")]
+        private_key: String,
+        /// WebAuthn signature counter. Incremented on every assertion so a
+        /// relying party can spot a cloned authenticator.
+        #[serde(default, alias = "signCount")]
+        sign_count: u32,
+    },
 }
 
 /// Redacted `Debug`, because the derived one printed the secrets.
@@ -156,6 +196,7 @@ impl VaultItem {
             }
             VaultItem::SecureNote { content, .. } => content.zeroize(),
             VaultItem::Identity { ssn, .. } => ssn.zeroize(),
+            VaultItem::Passkey { private_key, .. } => private_key.zeroize(),
             // Nothing secret: a file blob's bytes live in chunks, and a breach
             // monitor holds an address the user already published.
             VaultItem::FileBlob { .. } | VaultItem::BreachMonitor { .. } => {}
@@ -204,6 +245,12 @@ impl std::fmt::Debug for VaultItem {
             }
             VaultItem::BreachMonitor { email, breach_count, .. } => {
                 out.field("email", email).field("breach_count", breach_count);
+            }
+            VaultItem::Passkey { rp_id, user_name, sign_count, .. } => {
+                out.field("rp_id", rp_id)
+                    .field("user_name", user_name)
+                    .field("sign_count", sign_count)
+                    .field("private_key", &REDACTED);
             }
         }
         out.finish()
@@ -254,7 +301,8 @@ impl VaultItem {
             | VaultItem::SecureNote { meta, .. }
             | VaultItem::Identity { meta, .. }
             | VaultItem::FileBlob { meta, .. }
-            | VaultItem::BreachMonitor { meta, .. } => meta,
+            | VaultItem::BreachMonitor { meta, .. }
+            | VaultItem::Passkey { meta, .. } => meta,
         }
     }
 
@@ -274,12 +322,26 @@ impl VaultItem {
             VaultItem::Identity { .. } => ItemType::Identity,
             VaultItem::FileBlob { .. } => ItemType::FileBlob,
             VaultItem::BreachMonitor { .. } => ItemType::BreachMonitor,
+            VaultItem::Passkey { .. } => ItemType::Passkey,
         }
     }
 
+    /// Deliberately `None` for a passkey.
+    ///
+    /// This is what password autofill matches on, and a passkey has no password
+    /// to fill — surfacing one here would offer it as a credential to paste into
+    /// a form. Passkeys are looked up by relying party via [`VaultItem::rp_id`].
     pub fn url(&self) -> Option<&str> {
         match self {
             VaultItem::Login { url, .. } => Some(url),
+            _ => None,
+        }
+    }
+
+    /// The relying party this item is scoped to, for passkeys only.
+    pub fn rp_id(&self) -> Option<&str> {
+        match self {
+            VaultItem::Passkey { rp_id, .. } => Some(rp_id),
             _ => None,
         }
     }
@@ -288,6 +350,7 @@ impl VaultItem {
         match self {
             VaultItem::Login { username, .. } => Some(username),
             VaultItem::Identity { first_name, .. } => Some(first_name),
+            VaultItem::Passkey { user_name, .. } => Some(user_name),
             _ => None,
         }
     }

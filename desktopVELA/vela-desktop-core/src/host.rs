@@ -27,4 +27,16 @@ pub trait Host: Send + Sync + 'static {
     /// Notify the UI that vault items changed on disk (autofill save, sync,
     /// import, ...) so any open list view can refresh.
     fn notify_vault_items_changed(&self);
+
+    /// Put a blocking yes/no question to the user in the app's own window, and
+    /// report what they said.
+    ///
+    /// `None` means this host cannot ask at all — no window, no UI thread — and
+    /// is distinct from `Some(false)`: a refusal is an answer, an inability to
+    /// ask is not. [`crate::presence`] is the caller that cares, because a
+    /// passkey ceremony must not proceed on an assumption where the platform
+    /// has no biometric factor to offer.
+    ///
+    /// Blocking, and called off the async runtime — it waits for a human.
+    fn confirm_presence(&self, prompt: &str) -> Option<bool>;
 }

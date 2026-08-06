@@ -38,6 +38,14 @@ from pathlib import Path
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 
+# How long to wait on the desktop socket. Most requests are answered from
+# memory, so five seconds is generous. A passkey ceremony is different: it puts
+# a confirmation in front of a person and waits for them to read it and decide,
+# which is not something to hurry. Timing that out at five seconds would make
+# every passkey login fail for anyone who did not click instantly.
+DEFAULT_TIMEOUT_SECONDS = 5
+PASSKEY_TIMEOUT_SECONDS = 120
+
 # VELA Desktop's endpoint naming convention (see desktopVELA/src-tauri/src/ipc.rs
 # platform_endpoint()). Used to confine which endpoints this host will connect
 # to, so a rewritten ipc_auth.json can't redirect credential requests to an
@@ -217,7 +225,7 @@ def framed_exchange(stream, message):
     return json.loads(response.decode("utf-8"))
 
 
-def send_to_desktop(message):
+def send_to_desktop(message, timeout=DEFAULT_TIMEOUT_SECONDS):
     auth = load_ipc_auth()
     if not auth:
         return {"success": False, "error": "VELA Desktop IPC is not available"}
@@ -235,7 +243,7 @@ def send_to_desktop(message):
 
         if protocol == "unix_socket":
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(5)
+                sock.settimeout(timeout)
                 sock.connect(endpoint)
                 with sock.makefile("rwb", buffering=0) as stream:
                     return framed_exchange(stream, message)
@@ -256,6 +264,9 @@ def handle_message(message):
         "getLogins": handle_get_logins,
         "getAvailableLogins": handle_get_logins,
         "saveCredentials": handle_save_credentials,
+        "passkeyCreate": handle_passkey_create,
+        "passkeyGet": handle_passkey_get,
+        "passkeyList": handle_passkey_list,
         "getMasterKey": handle_not_implemented,
         "unlockVault": handle_not_implemented,
         "lockVault": handle_not_implemented,
@@ -339,6 +350,105 @@ def handle_save_credentials(message):
     if payload.get("success"):
         return {"success": True, "id": payload.get("id")}
     return {"success": False, "error": payload.get("error") or "Save failed"}
+
+
+def _passkey_payload(message, keys):
+    return {key: message.get(key) for key in keys if message.get(key) is not None}
+
+
+def handle_passkey_create(message):
+    response = send_to_desktop(
+        {
+            "msg_type": "passkey_create",
+            "payload": _passkey_payload(
+                message,
+                (
+                    "rp_id",
+                    "rp_name",
+                    "user_handle",
+                    "user_name",
+                    "user_display_name",
+                    "client_data_hash",
+                    "algorithms",
+                    "exclude_credentials",
+                    "require_user_verification",
+                ),
+            ),
+        },
+        timeout=PASSKEY_TIMEOUT_SECONDS,
+    )
+
+    if not response:
+        return {"success": False, "error": "Could not reach VELA Desktop"}
+    if response.get("msg_type") not in ("PasskeyCreateResponse", "passkey_create_response"):
+        return {"success": False, "error": _error_of(response)}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "credential_id": payload.get("credential_id"),
+        "attestation_object": payload.get("attestation_object"),
+        "authenticator_data": payload.get("authenticator_data"),
+    }
+
+
+def handle_passkey_get(message):
+    response = send_to_desktop(
+        {
+            "msg_type": "passkey_get",
+            "payload": _passkey_payload(
+                message,
+                (
+                    "rp_id",
+                    "client_data_hash",
+                    "allow_credentials",
+                    "require_user_verification",
+                ),
+            ),
+        },
+        timeout=PASSKEY_TIMEOUT_SECONDS,
+    )
+
+    if not response:
+        return {"success": False, "error": "Could not reach VELA Desktop"}
+    if response.get("msg_type") not in ("PasskeyGetResponse", "passkey_get_response"):
+        return {"success": False, "error": _error_of(response)}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "credential_id": payload.get("credential_id"),
+        "authenticator_data": payload.get("authenticator_data"),
+        "signature": payload.get("signature"),
+        "user_handle": payload.get("user_handle"),
+    }
+
+
+def handle_passkey_list(message):
+    """Public metadata only, and never prompts — the shim calls this on every
+    WebAuthn request to decide whether it has anything to offer, so it must be
+    cheap and silent."""
+    response = send_to_desktop(
+        {"msg_type": "passkey_list", "payload": {"rp_id": message.get("rp_id", "")}}
+    )
+
+    if not response or response.get("msg_type") not in (
+        "PasskeyListResponse",
+        "passkey_list_response",
+    ):
+        return {"success": False, "credentials": []}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "credentials": payload.get("credentials", []),
+        "locked": bool(payload.get("locked")),
+    }
+
+
+def _error_of(response):
+    payload = response.get("payload", {}) if response else {}
+    return payload.get("message") or payload.get("error") or "VELA Desktop refused the request"
 
 
 def handle_not_implemented(_message):

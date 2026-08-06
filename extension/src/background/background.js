@@ -205,6 +205,15 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "saveCredentials":
       handleSaveCredentials(data, sender, sendResponse);
       break;
+    case "passkeyList":
+      handlePasskeyList(data, sender, sendResponse);
+      return true;
+    case "passkeyGet":
+      handlePasskeyCeremony("passkeyGet", data, sender, sendResponse);
+      return true;
+    case "passkeyCreate":
+      handlePasskeyCeremony("passkeyCreate", data, sender, sendResponse);
+      return true;
     case "openVault":
     case "openSettings":
       handleOpenDesktop(command, sendResponse);
@@ -350,6 +359,88 @@ function getHttpDomain(url) {
     return parsed.hostname.replace(/^www\./, "");
   } catch (_) {
     return null;
+  }
+}
+
+// ── Passkeys ─────────────────────────────────────────────────────────────────
+//
+// A ceremony waits for the desktop to put a confirmation in front of a person,
+// so it gets a far longer budget than an ordinary request.
+const PASSKEY_CEREMONY_TIMEOUT_MS = 121000;
+
+/**
+ * Is this sender allowed to ask about this relying party?
+ *
+ * The shim checks the RP ID against the page's own location, but the shim runs
+ * in the page's world and anything there is under the page's control. This is
+ * the check that counts, because `sender.url` and `sender.frameId` come from
+ * the browser rather than from the content it is rendering.
+ *
+ * Top frame only. Cross-origin iframe WebAuthn exists and is gated on a
+ * permissions policy the extension cannot read from here; refusing is the
+ * conservative answer, and it matches how `authorizeCredentialRequest` already
+ * treats credential requests from subframes.
+ */
+async function authorizePasskeyRequest(rpId, sender) {
+  if (typeof rpId !== "string" || !rpId) {
+    return { ok: false, error: "Missing relying party" };
+  }
+  if (!sender?.tab) {
+    return { ok: false, error: "Passkey requests must come from a page" };
+  }
+  if (sender.frameId !== undefined && sender.frameId !== 0) {
+    return { ok: false, error: "Passkey requests must come from the top frame" };
+  }
+
+  const senderDomain = getHttpDomain(sender.url || "");
+  if (!senderDomain) {
+    return { ok: false, error: "Unsupported URL" };
+  }
+
+  const wanted = rpId.replace(/^www\./, "").toLowerCase();
+  const host = senderDomain.toLowerCase();
+  // The relying party ID must be the sender's own domain or a parent of it —
+  // the same rule the browser applies, restated where it cannot be spoofed.
+  if (host !== wanted && !host.endsWith(`.${wanted}`)) {
+    return { ok: false, error: "Relying party does not match the requesting page" };
+  }
+
+  const active = await getActiveTab();
+  if (!active || active.id !== sender.tab.id) {
+    return { ok: false, error: "Sender tab is not active" };
+  }
+
+  return { ok: true };
+}
+
+async function handlePasskeyList(data, sender, sendResponse) {
+  try {
+    const auth = await authorizePasskeyRequest(data?.rp_id, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, credentials: [], error: auth.error });
+      return;
+    }
+    const response = await sendNativeMessage({ action: "passkeyList", rp_id: data.rp_id });
+    sendResponse(response || { success: false, credentials: [] });
+  } catch (error) {
+    sendResponse({ success: false, credentials: [], error: error.message });
+  }
+}
+
+async function handlePasskeyCeremony(action, data, sender, sendResponse) {
+  try {
+    const auth = await authorizePasskeyRequest(data?.rp_id, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, error: auth.error });
+      return;
+    }
+    const response = await sendNativeMessage(
+      { action, ...data },
+      PASSKEY_CEREMONY_TIMEOUT_MS
+    );
+    sendResponse(response || { success: false, error: "No response from VELA Desktop" });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
   }
 }
 
@@ -553,13 +644,13 @@ function isConnectedResponse(response) {
   return false;
 }
 
-function sendNativeMessage(message) {
+function sendNativeMessage(message, timeoutMs = 10000) {
   console.log("[VELA] Trying native messaging...");
   return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
       console.log("[VELA] Native messaging timeout");
       resolve({ success: false, error: "Native messaging timeout" });
-    }, 10000);
+    }, timeoutMs);
 
     runtime.sendNativeMessage(NATIVEMessaging_PORT, message)
       .then((response) => {
