@@ -99,11 +99,21 @@ def candidate_auth_paths():
     elif system == "darwin":
         yield home / "Library" / "Application Support" / "com.vela.VELA" / "vela" / "ipc_auth.json"
     else:
+        # The desktop resolves this with `directories::ProjectDirs`, which on
+        # Linux gives `$XDG_DATA_HOME/vela` — the application name alone, not
+        # the reverse-DNS triple. The `com.vela.VELA` spellings below are kept
+        # only because older builds used them.
+        #
+        # Getting this wrong is invisible until someone sets XDG_DATA_HOME:
+        # with it unset the last candidate happens to be correct, so the
+        # extension works. With it set, every candidate missed and the only
+        # symptom was "Could not reach VELA Desktop".
         xdg_data_home = os.environ.get("XDG_DATA_HOME")
         if xdg_data_home:
+            yield Path(xdg_data_home) / "vela" / "vela" / "ipc_auth.json"
             yield Path(xdg_data_home) / "com.vela.VELA" / "vela" / "ipc_auth.json"
-        yield home / ".local" / "share" / "com.vela.VELA" / "vela" / "ipc_auth.json"
         yield home / ".local" / "share" / "vela" / "vela" / "ipc_auth.json"
+        yield home / ".local" / "share" / "com.vela.VELA" / "vela" / "ipc_auth.json"
 
 
 # FILE_ATTRIBUTE_REPARSE_POINT — a junction or symlink, i.e. a path that does
