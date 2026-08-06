@@ -1,0 +1,328 @@
+theory M10_FullLadder
+/*
+  Model 10 - the final deployment: a three-tier ladder over every origin.
+
+    M7 (one-shot assertion)      if the origin accepts passkey/SSO auth
+      else M9a (in-core login)   if the origin is a plain-form site
+        else M6 (bound grant)    JS/fingerprint-bound legacy sites
+
+  The vault tags each item with its origin's tier at minting time
+  ('passkey' | 'plain' | 'js'), and every serving path is gated on that tag, so
+  the three worlds cannot cross (the M8 airtightness argument, extended to
+  three modes). Concretely:
+
+    * passkey tier - the stored item IS the credential's private key; the
+      desktop answers a fresh challenge with a one-shot origin-bound assertion
+      signed by that key, consuming a user-presence token. The credential never
+      leaves, even for items in active use.
+    * plain tier   - the desktop core submits the credential to the site over
+      its own TLS leg and only a session artifact reaches the domain (M9a).
+      The credential never reaches the adversary. Whether the residual dies
+      with the session depends on a SITE property, made explicit here as
+      'hardened' vs 'selfserve' (see M9a).
+    * js tier      - a release consumes a human-issued grant bound to
+      (client, origin, item) AND a request signed by the enrolled client with a
+      nonce the desktop honours once (M6). Only this tier ever emits a
+      credential, and only on use - the working-set bound, confined to the
+      js-bound subset.
+
+  This version carries the three corrections made to M6, M7 and M9a (see those
+  files for the falsified traces that motivated them): the passkey credential
+  is load-bearing rather than an inert premise; the assertion path is gated on
+  user presence rather than being a free oracle; the fill path honours each
+  request nonce once, so the js tier's agreement is injective; and the plain
+  tier's "nothing persists" claim is stated as the site property it actually
+  depends on.
+
+  Together: passkey items and plain items leak ZERO even in use; js items leak
+  only the working set of the js subset. That is the full ladder the earlier
+  models converge on: M7 if not M9a if not M6.
+
+  Expected verdicts (all-traces unless marked):
+    passkey_item_never_leaks       VERIFIED - K(cred) never holds for a passkey
+        item, even in active use and even though pk(cred) and signatures under
+        cred are public.
+    plain_item_never_leaks         VERIFIED - K(cred) never holds for a plain
+        item, even after the site accepted its login.
+    js_unused_item_secret          VERIFIED - a js item never released stays
+        secret (working-set bound, js subset).
+    released_items_are_js          VERIFIED - only js items are ever served a
+        credential release; passkey/plain items cannot be drained that way.
+    asserted_items_are_passkey     VERIFIED - only passkey items get assertions.
+    authed_items_are_plain         VERIFIED - only plain items go through the
+        in-core login leg.
+    js_release_requires_client_request / js_request_is_single_use /
+    compromised_client_cannot_act_as_others VERIFIED - M6 injective agreement +
+        compromise bound, js tier.
+    assertion_requires_user_presence / assertions_bounded_by_presence /
+    assertion_is_origin_bound / assertion_one_shot VERIFIED - M7, passkey tier.
+    session_expiry_is_effective / no_takeover_at_hardened_sites VERIFIED - M9a
+        session death, plain tier, with the site property it depends on made
+        explicit.
+    passkey_auth_reachable / plain_login_reachable / js_fill_reachable /
+    js_used_item_leaks (exists-trace) VERIFIED - all three tiers are live; the
+        only vault item that reaches the adversary is a used js item.
+    session_enables_persistent_takeover (exists-trace) VERIFIED - the honest
+        bad news of the plain tier at a self-service site.
+*/
+begin
+
+builtins: signing, hashing
+
+// ===========================================================================
+// The vault - one rule per tier, fixed at minting time
+// ===========================================================================
+
+// Passkey tier: the item IS a per-origin credential keypair.
+rule Setup_Passkey:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O, 'passkey'), Registered($O, pk(~cred)) ]->
+    [ !Vault(~cred, $O, 'passkey'), !RpKey($O, pk(~cred)), Out( pk(~cred) ) ]
+
+// Plain tier: a reusable password the site also stores, plus the site's
+// credential-reset policy ('hardened' | 'selfserve').
+rule Setup_Plain:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O, 'plain'), SiteMode($O, $P) ]->
+    [ !Vault(~cred, $O, 'plain'), !SiteStore(~cred, $O), !SiteMode($O, $P) ]
+
+// JS tier: a reusable password that only the page can consume.
+rule Setup_Js:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O, 'js') ]->
+    [ !Vault(~cred, $O, 'js') ]
+
+// ===========================================================================
+// M7 tier - one-shot assertion at passkey-capable origins
+// ===========================================================================
+
+rule Human_User_Presence:
+    [ Fr(~up) ]
+  --[ UserPresent($O, ~up) ]->
+    [ UserPresence($O, ~up) ]
+
+rule Sign_Assertion:
+    [ !Vault(cred, $O, 'passkey'), UserPresence($O, up), In(<'auth', $O, chal>) ]
+  --[ Asserted($O, chal), AssertedWith($O, chal, up), AuthUsed(cred, $O) ]->
+    [ Out( sign(<$O, chal>, cred) ) ]
+
+rule RP_Challenge:
+    [ Fr(~chal) ]
+  --[ Challenge($O, ~chal) ]->
+    [ Out(<$O, ~chal>), StRP($O, ~chal) ]
+
+rule RP_Accept:
+    [ StRP(O, chal), !RpKey(O, pkey), In(sig) ]
+  --[ Accept(O, chal), Verified( verify(sig, <O, chal>, pkey) ) ]->
+    [ ]
+
+// ===========================================================================
+// M9a tier - in-core login at plain-form origins
+// ===========================================================================
+
+rule Human_Approve_Login:
+    [ !Vault(cred, $O, 'plain'), Fr(~g) ]
+  --[ LoginApproved(cred, $O) ]->
+    [ LoginGrant(cred, $O) ]
+
+// In-core login: the desktop submits the credential to the site over its OWN
+// channel (TLS, inside the trusted core) - a fact the adversary cannot read.
+rule Desktop_Login:
+    [ !Vault(cred, $O, 'plain'), LoginGrant(cred, $O), In(<'login', $O, tok>) ]
+  --[ LoginPerformed(cred, $O, tok) ]->
+    [ CredToSite(cred, $O, tok) ]
+
+rule Site_CheckAndIssue:
+    [ !SiteStore(cred, O), CredToSite(cred, O, tok), Fr(~sid) ]
+  --[ SessionIssued(O, ~sid, tok), LoginOk(cred, O) ]->
+    [ Out(<'session', O, ~sid>), StSite(O, ~sid, tok) ]
+
+rule Site_Use_Session:
+    [ StSite(O, sid, tok), In(<'use', O, sid>) ]
+  --[ SessionUsed(O, sid) ]->
+    [ ]
+
+rule Site_Expire_Session:
+    [ StSite(O, sid, tok) ]
+  --[ SessionExpired(O, sid) ]->
+    [ ]
+
+// At a 'selfserve' site a live session can set a new account credential
+// without re-proving the old one, so the residual outlives eviction.
+rule Site_Session_Escalate:
+    [ StSite(O, sid, tok), !SiteMode(O, 'selfserve'), In(<'setcred', O, sid, new>) ]
+  --[ CredentialRotated(O, new), AccountTakenOver(O) ]->
+    [ !SiteStore(new, O) ]
+
+// ===========================================================================
+// M6 tier - bound grant + per-client key at js-bound origins
+// ===========================================================================
+
+rule Client_Join:
+    [ Fr(~sk) ]
+  --[ Joined($C, pk(~sk)), SecretClientKey($C, ~sk) ]->
+    [ !MyKey($C, pk(~sk), ~sk), !OnScreen($C, pk(~sk)),
+      Out(<'join', $C, pk(~sk)>) ]
+
+rule Human_Confirm_Pairing:
+    [ !OnScreen($C, pkey) ]
+  --[ HumanPairConfirmed($C, h(pkey)) ]->
+    [ Confirmed($C, pkey) ]
+
+rule Desktop_Enroll:
+    [ In(<'join', $C, pkey>), Confirmed($C, pkey) ]
+  --[ Enrolled($C, pkey) ]->
+    [ !ClientKey($C, pkey) ]
+
+rule Client_Request:
+    [ !MyKey($C, pkey, sk), Fr(~r) ]
+  --[ ClientRequests($C, $O, ~r) ]->
+    [ Out(<'fill', $C, $O, ~r, sign(<'fill', $C, $O, ~r>, sk)>) ]
+
+rule Human_Approve:
+    [ !Vault(cred, $O, 'js'), Fr(~g) ]
+  --[ Issue($C, $O, cred, ~g) ]->
+    [ Grant($C, $O, cred, ~g) ]
+
+rule Desktop_Release:
+    [ Grant($C, $O, cred, g), !ClientKey($C, pkey), !Vault(cred, $O, 'js'),
+      In(<'fill', $C, $O, r, sig>) ]
+  --[ Released($C, $O, cred, g, r), RequestUsed(r),
+      Verified(verify(sig, <'fill', $C, $O, r>, pkey)) ]->
+    [ Out(cred) ]
+
+rule Grant_Expire:
+    [ Grant($C, $O, cred, g) ]
+  --[ Expired($C, $O, cred, g) ]->
+    [ ]
+
+rule Grant_Revoke:
+    [ Grant($C, $O, cred, g) ]
+  --[ Revoked($C, $O, cred, g) ]->
+    [ ]
+
+rule Corrupt_Client:
+    [ !MyKey($C, pkey, sk) ]
+  --[ Compromised($C) ]->
+    [ Out(sk) ]
+
+restriction VerifyTrue:
+  "All x #i. Verified(x) @ i ==> x = true"
+
+// The desktop's replay cache: each request nonce is honoured at most once.
+restriction RequestNonceIsFresh:
+  "All r #i #j. RequestUsed(r) @ i & RequestUsed(r) @ j ==> #i = #j"
+
+// ---- The ladder's claims ------------------------------------------------------
+
+lemma passkey_item_never_leaks:
+  "All c O #i.
+     Secret(c, O, 'passkey') @ i ==> not(Ex #j. K(c) @ j)"
+
+lemma plain_item_never_leaks:
+  "All c O #i.
+     Secret(c, O, 'plain') @ i ==> not(Ex #j. K(c) @ j)"
+
+lemma js_unused_item_secret:
+  "All c O #i.
+     Secret(c, O, 'js') @ i
+     & not(Ex C g r #j. Released(C, O, c, g, r) @ j)
+     ==> not(Ex #k. K(c) @ k)"
+
+lemma released_items_are_js:
+  "All C O c g r #i.
+     Released(C, O, c, g, r) @ i
+     ==> not(Ex #h. Secret(c, O, 'passkey') @ h)
+       & not(Ex #h. Secret(c, O, 'plain') @ h)"
+
+lemma asserted_items_are_passkey:
+  "All c O #i.
+     AuthUsed(c, O) @ i
+     ==> not(Ex #h. Secret(c, O, 'plain') @ h)
+       & not(Ex #h. Secret(c, O, 'js') @ h)"
+
+lemma authed_items_are_plain:
+  "All c O #i.
+     LoginOk(c, O) @ i
+     ==> not(Ex #h. Secret(c, O, 'passkey') @ h)
+       & not(Ex #h. Secret(c, O, 'js') @ h)"
+
+// ---- M6 tier carried over -----------------------------------------------------
+
+lemma js_release_requires_client_request:
+  "All C O c g r #i.
+     Released(C, O, c, g, r) @ i
+     ==> ( Ex #j. Issue(C, O, c, g) @ j & #j < #i )
+       & ( (Ex #h. ClientRequests(C, O, r) @ h & #h < #i)
+           | (Ex #h. Compromised(C) @ h & #h < #i) )"
+
+lemma js_request_is_single_use:
+  "All C1 O1 c1 g1 C2 O2 c2 g2 r #i #j.
+     Released(C1, O1, c1, g1, r) @ i & Released(C2, O2, c2, g2, r) @ j
+     ==> #i = #j"
+
+lemma compromised_client_cannot_act_as_others:
+  "All C C2 O c g r #i #k.
+     Compromised(C2) @ i
+     & Released(C, O, c, g, r) @ k
+     & not(C = C2)
+     & not(Ex #h. Compromised(C) @ h & #h < #k)
+     ==> Ex #j. ClientRequests(C, O, r) @ j & #j < #k"
+
+// ---- M7 tier carried over -----------------------------------------------------
+
+lemma assertion_requires_user_presence:
+  "All O chal #i.
+     Asserted(O, chal) @ i
+     ==> Ex up #j. UserPresent(O, up) @ j & #j < #i"
+
+lemma assertions_bounded_by_presence:
+  "All O c1 c2 up #i #j.
+     AssertedWith(O, c1, up) @ i & AssertedWith(O, c2, up) @ j
+     ==> #i = #j"
+
+lemma assertion_is_origin_bound:
+  "All O chal #i.
+     Accept(O, chal) @ i ==> Ex #j. Asserted(O, chal) @ j & #j < #i"
+
+lemma assertion_one_shot:
+  "All O chal #i #j.
+     Accept(O, chal) @ i & Accept(O, chal) @ j ==> #i = #j"
+
+// ---- M9a tier carried over ----------------------------------------------------
+
+lemma session_expiry_is_effective:
+  "All O sid #i.
+     SessionExpired(O, sid) @ i
+     ==> not(Ex #j. SessionUsed(O, sid) @ j & #i < #j)"
+
+lemma no_takeover_at_hardened_sites:
+  "All O #i.
+     AccountTakenOver(O) @ i
+     ==> Ex #j. SiteMode(O, 'selfserve') @ j"
+
+// ---- Existence -----------------------------------------------------------------
+
+lemma passkey_auth_reachable:
+  exists-trace
+  "Ex O chal #i. Accept(O, chal) @ i"
+
+lemma plain_login_reachable:
+  exists-trace
+  "Ex O sid #i. SessionUsed(O, sid) @ i"
+
+lemma js_fill_reachable:
+  exists-trace
+  "Ex C O c g r #i. Released(C, O, c, g, r) @ i"
+
+lemma js_used_item_leaks:
+  exists-trace
+  "Ex c O C g r #i #j #k.
+     Secret(c, O, 'js') @ i & Released(C, O, c, g, r) @ j & K(c) @ k"
+
+lemma session_enables_persistent_takeover:
+  exists-trace
+  "Ex O new #i #j.
+     AccountTakenOver(O) @ i & CredentialRotated(O, new) @ i & K(new) @ j"
+
+end

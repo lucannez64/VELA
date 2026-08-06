@@ -1,0 +1,35 @@
+theory M2_StorageEscapeAlone
+/*
+  Model 2 - storage-escape (SE) WITHOUT decision-escape.
+  The credential is stored encrypted under a hardware key `hk` that never
+  leaves the hardware (never Out). So the adversary cannot derive the key
+  (lemma `hw_key_secret` HOLDS). But the DECIDE step is still forgeable, so a
+  co-resident request makes the broker decrypt inside and release the plaintext.
+
+  Expected: `hw_key_secret` VERIFIED, `secrecy` FALSIFIED.
+  Machine-checks design invariant (b): SE alone still unwraps for the attacker;
+  a key held in hardware is worthless without a decision-escape gating its use.
+*/
+begin
+
+builtins: symmetric-encryption
+
+rule Setup:
+    [ Fr(~cred), Fr(~hk) ]
+  --[ Secret(~cred), SecretKey(~hk) ]->
+    [ !Vault( senc(~cred, ~hk) ), !Hw(~hk) ]
+
+// Broker decrypts INSIDE (key never leaves) but releases plaintext on a
+// forged, in-domain request. senc/sdec cancel by the equational theory.
+rule Release_SE_only:
+    [ !Vault(ct), !Hw(hk), In(<'request', requester>) ]
+  --[ Released(requester) ]->
+    [ Out( sdec(ct, hk) ) ]
+
+lemma hw_key_secret:
+  "All k #i. SecretKey(k) @ i ==> not (Ex #j. K(k) @ j)"
+
+lemma secrecy:
+  "All c #i. Secret(c) @ i ==> not (Ex #j. K(c) @ j)"
+
+end
