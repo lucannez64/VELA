@@ -28,6 +28,26 @@
 //! biometric — it proves presence, not identity, and the token records which
 //! one happened so [`crate::passkey`] can refuse a relying party that demanded
 //! real verification.
+//!
+//! ## How weak the dialog fallback actually is
+//!
+//! Weaker than "Wayland stops synthetic input", which is what an earlier
+//! version of this comment claimed. Wayland blocks compositor-level injection
+//! (`XTEST`), but `/dev/uinput` sits *below* the compositor and presents as a
+//! real hardware keyboard. On a machine where the user is in the `input` or
+//! `uinput` group — routine for ydotool, gaming peripherals and remote-desktop
+//! tools — a co-resident same-UID process can create a virtual keyboard and
+//! click Approve for itself. That was confirmed on a real Arch/Hyprland
+//! machine, where `/dev/uinput` was group-writable and a virtual device was
+//! created from an unprivileged process.
+//!
+//! So on such a machine the fallback is not a gate against the very adversary
+//! the model assumes, and `assertion_requires_user_presence` holds in the
+//! theory while being forgeable in practice. What survives untouched is the
+//! biometric path: no amount of synthetic input satisfies a fingerprint
+//! reader. Treat the dialog as a speed bump for the no-biometric case and the
+//! biometric as the real control — and see the `uinput` note in
+//! `security/formal/password-manager-ipc-tamarin-results.md`.
 
 use crate::host::Host;
 use crate::passkey::PresenceToken;

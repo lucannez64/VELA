@@ -40,9 +40,13 @@ impl Host for TauriHost {
     ///
     /// The question is "is a human at this machine right now", and a dialog
     /// drawn inside the page the request came from would be answerable by the
-    /// same thing that made the request. The OS dialog is drawn by the
-    /// compositor, and on Wayland a co-resident process cannot synthesize a
-    /// click into it.
+    /// same thing that made the request. A native dialog is at least drawn
+    /// outside the requester's reach.
+    ///
+    /// It is not unforgeable, though: where the user can write `/dev/uinput`
+    /// — common, and true on the machine this was tested on — a same-UID
+    /// process can synthesize the click. See the module docs on
+    /// `vela_desktop_core::presence` for what that costs.
     ///
     /// The buttons are labelled with the action rather than "OK"/"Cancel":
     /// somebody clicking through prompts should at least have had to click one
