@@ -1,0 +1,259 @@
+theory M8_Hybrid
+/*
+  Model 8 - the hybrid: M7's one-shot assertion for passkey/SSO-capable
+  origins, M6's bound-grant + per-client-key release for everything else (the
+  majority of sites). The vault tags every item with its origin's auth mode at
+  minting time, and each path is gated on the mode, so the two worlds cannot
+  cross:
+
+    * passkey origin  ('passkey')  - only the M7 path serves it: the stored
+      item IS the credential's private key, the desktop answers a fresh
+      challenge with a one-shot origin-bound assertion signed by that key, and
+      the key never leaves. A used item at a passkey origin still never reaches
+      the adversary. Serving an assertion consumes a user-presence token, so
+      the path is gated, not an oracle.
+    * legacy origin   ('legacy')   - only the M6 path serves it: a release
+      consumes a human-issued grant bound to (client, origin, item) AND a
+      request signed by the enrolled client and carrying a fresh nonce; the
+      credential reaches the domain on use, so the M3/M6 working-set bound
+      applies - but now confined to the legacy half of the vault.
+
+  This version carries the two corrections made to M6 and M7 (see those files
+  for the falsified traces that motivated them):
+
+    * the passkey credential is LOAD-BEARING - it is the signing key, not an
+      unused premise, so `passkey_item_never_leaks` is a real secrecy result
+      rather than a restatement of "no rule outputs it";
+    * the assertion path is GATED on user presence, and the fill path honours
+      each request nonce once, so the legacy half's agreement is injective.
+
+  Together: the vault's exposure is the legacy working set, not the whole vault
+  - and the passkey half contributes zero.
+
+  Expected verdicts (all-traces unless marked):
+    passkey_item_never_leaks         VERIFIED - even a used passkey item never
+        reaches the adversary, though the adversary sees pk(cred) and
+        signatures under cred.
+    legacy_unused_item_secret        VERIFIED - a legacy item never released
+        stays secret (working-set bound, confined to the legacy half).
+    released_items_are_legacy        VERIFIED - the release path only ever
+        serves legacy items; a passkey item cannot be drained via a credential.
+    asserted_items_are_passkey       VERIFIED - the assertion path only ever
+        serves passkey items.
+    legacy_release_requires_client_request / legacy_request_is_single_use
+        VERIFIED - M6's injective agreement carries over to the legacy half.
+    assertion_requires_user_presence / assertions_bounded_by_presence VERIFIED
+        - M7's gate carries over to the passkey half: n logins cost n human
+        actions, on both halves of the hybrid.
+    assertion_is_origin_bound / assertion_one_shot VERIFIED - M7's agreement
+        carries over to the passkey half.
+    compromised_client_cannot_act_as_others VERIFIED - M6's compromised-browser
+        bound carries over (legacy half only); the passkey half is immune to
+        browser compromise entirely, since no client ever holds the credential
+        key (passkey_item_never_leaks holds even with Corrupt_Client in play).
+    legacy_used_item_leaks / legacy_fill_reachable / passkey_auth_reachable
+        (exists-trace) VERIFIED - both paths are live; the consume residual
+        survives, confined to legacy items.
+*/
+begin
+
+builtins: signing, hashing
+
+// ===========================================================================
+// The vault - one rule per auth mode, fixed at minting time
+// ===========================================================================
+
+// A passkey item IS a per-origin credential keypair. The private half never
+// leaves `!Vault`; the public half is registered at the relying party.
+rule Vault_Setup_Passkey:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O, 'passkey'), Registered($O, pk(~cred)) ]->
+    [ !Vault(~cred, $O, 'passkey'), !RpKey($O, pk(~cred)), Out( pk(~cred) ) ]
+
+// A legacy item is a reusable password: no public half, nothing registered.
+rule Vault_Setup_Legacy:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O, 'legacy') ]->
+    [ !Vault(~cred, $O, 'legacy') ]
+
+// ===========================================================================
+// M7 half - one-shot assertion at passkey-capable origins
+// ===========================================================================
+
+// User presence / verification: one human action, one consumable token.
+rule Human_User_Presence:
+    [ Fr(~up) ]
+  --[ UserPresent($O, ~up) ]->
+    [ UserPresence($O, ~up) ]
+
+// One-shot assertion: sign <origin, challenge> with the passkey item's own
+// key, consuming one presence token. Only the signature leaves.
+rule Sign_Assertion:
+    [ !Vault(cred, $O, 'passkey'), UserPresence($O, up), In(<'auth', $O, chal>) ]
+  --[ Asserted($O, chal), AssertedWith($O, chal, up), AuthUsed(cred, $O) ]->
+    [ Out( sign(<$O, chal>, cred) ) ]
+
+rule RP_Challenge:
+    [ Fr(~chal) ]
+  --[ Challenge($O, ~chal) ]->
+    [ Out(<$O, ~chal>), StRP($O, ~chal) ]
+
+// The RP accepts only under the key registered for ITS OWN origin.
+rule RP_Accept:
+    [ StRP(O, chal), !RpKey(O, pkey), In(sig) ]
+  --[ Accept(O, chal), Verified( verify(sig, <O, chal>, pkey) ) ]->
+    [ ]
+
+// ===========================================================================
+// M6 half - bound grant + per-client key at legacy origins
+// ===========================================================================
+
+// First-use pairing, joining side: the client generates its own keypair and
+// displays the fingerprint phrase h(pk) on its own screen.
+rule Client_Join:
+    [ Fr(~sk) ]
+  --[ Joined($C, pk(~sk)), SecretClientKey($C, ~sk) ]->
+    [ !MyKey($C, pk(~sk), ~sk), !OnScreen($C, pk(~sk)),
+      Out(<'join', $C, pk(~sk)>) ]
+
+// First-use pairing, human side: confirms the fingerprint phrase off the
+// joining device's own screen (out of band, unforgeable by the adversary).
+rule Human_Confirm_Pairing:
+    [ !OnScreen($C, pkey) ]
+  --[ HumanPairConfirmed($C, h(pkey)) ]->
+    [ Confirmed($C, pkey) ]
+
+// First-use pairing, desktop side: enroll only a human-confirmed key.
+rule Desktop_Enroll:
+    [ In(<'join', $C, pkey>), Confirmed($C, pkey) ]
+  --[ Enrolled($C, pkey) ]->
+    [ !ClientKey($C, pkey) ]
+
+// The client signs its fill request, with a fresh nonce, using its own key.
+rule Client_Request:
+    [ !MyKey($C, pkey, sk), Fr(~r) ]
+  --[ ClientRequests($C, $O, ~r) ]->
+    [ Out(<'fill', $C, $O, ~r, sign(<'fill', $C, $O, ~r>, sk)>) ]
+
+// ISSUE: the human approves exactly one (client, legacy-origin, item).
+rule Human_Approve:
+    [ !Vault(cred, $O, 'legacy'), Fr(~g) ]
+  --[ Issue($C, $O, cred, ~g) ]->
+    [ Grant($C, $O, cred, ~g) ]
+
+// USE: release consumes the grant AND the enrolled client's signed request,
+// whose nonce the desktop honours only once. Gated on the item being legacy.
+// The credential reaches the domain on use - the consume residual, confined to
+// legacy items.
+rule Desktop_Release:
+    [ Grant($C, $O, cred, g), !ClientKey($C, pkey), !Vault(cred, $O, 'legacy'),
+      In(<'fill', $C, $O, r, sig>) ]
+  --[ Released($C, $O, cred, g, r), RequestUsed(r),
+      Verified(verify(sig, <'fill', $C, $O, r>, pkey)) ]->
+    [ Out(cred) ]
+
+// EXPIRE / REVOKE: the linear grant is removed; nothing can use it afterwards.
+rule Grant_Expire:
+    [ Grant($C, $O, cred, g) ]
+  --[ Expired($C, $O, cred, g) ]->
+    [ ]
+
+rule Grant_Revoke:
+    [ Grant($C, $O, cred, g) ]
+  --[ Revoked($C, $O, cred, g) ]->
+    [ ]
+
+// Compromised-browser case, legacy half: the client's private key leaks. This
+// is the ONLY way the adversary comes by a client key.
+rule Corrupt_Client:
+    [ !MyKey($C, pkey, sk) ]
+  --[ Compromised($C) ]->
+    [ Out(sk) ]
+
+restriction VerifyTrue:
+  "All x #i. Verified(x) @ i ==> x = true"
+
+// The desktop's replay cache: each request nonce is honoured at most once.
+restriction RequestNonceIsFresh:
+  "All r #i #j. RequestUsed(r) @ i & RequestUsed(r) @ j ==> #i = #j"
+
+// ---- The hybrid claims ------------------------------------------------------
+
+lemma passkey_item_never_leaks:
+  "All c O #i.
+     Secret(c, O, 'passkey') @ i ==> not(Ex #j. K(c) @ j)"
+
+lemma legacy_unused_item_secret:
+  "All c O #i.
+     Secret(c, O, 'legacy') @ i
+     & not(Ex C g r #j. Released(C, O, c, g, r) @ j)
+     ==> not(Ex #k. K(c) @ k)"
+
+lemma released_items_are_legacy:
+  "All C O c g r #i.
+     Released(C, O, c, g, r) @ i
+     ==> not(Ex #h. Secret(c, O, 'passkey') @ h)"
+
+lemma asserted_items_are_passkey:
+  "All c O #i.
+     AuthUsed(c, O) @ i
+     ==> not(Ex #h. Secret(c, O, 'legacy') @ h)"
+
+// ---- M6 half carried over ----------------------------------------------------
+
+lemma legacy_release_requires_client_request:
+  "All C O c g r #i.
+     Released(C, O, c, g, r) @ i
+     ==> ( Ex #j. Issue(C, O, c, g) @ j & #j < #i )
+       & ( (Ex #h. ClientRequests(C, O, r) @ h & #h < #i)
+           | (Ex #h. Compromised(C) @ h & #h < #i) )"
+
+lemma legacy_request_is_single_use:
+  "All C1 O1 c1 g1 C2 O2 c2 g2 r #i #j.
+     Released(C1, O1, c1, g1, r) @ i & Released(C2, O2, c2, g2, r) @ j
+     ==> #i = #j"
+
+lemma compromised_client_cannot_act_as_others:
+  "All C C2 O c g r #i #k.
+     Compromised(C2) @ i
+     & Released(C, O, c, g, r) @ k
+     & not(C = C2)
+     & not(Ex #h. Compromised(C) @ h & #h < #k)
+     ==> Ex #j. ClientRequests(C, O, r) @ j & #j < #k"
+
+// ---- M7 half carried over ----------------------------------------------------
+
+lemma assertion_requires_user_presence:
+  "All O chal #i.
+     Asserted(O, chal) @ i
+     ==> Ex up #j. UserPresent(O, up) @ j & #j < #i"
+
+lemma assertions_bounded_by_presence:
+  "All O c1 c2 up #i #j.
+     AssertedWith(O, c1, up) @ i & AssertedWith(O, c2, up) @ j
+     ==> #i = #j"
+
+lemma assertion_is_origin_bound:
+  "All O chal #i.
+     Accept(O, chal) @ i ==> Ex #j. Asserted(O, chal) @ j & #j < #i"
+
+lemma assertion_one_shot:
+  "All O chal #i #j.
+     Accept(O, chal) @ i & Accept(O, chal) @ j ==> #i = #j"
+
+// ---- Existence ---------------------------------------------------------------
+
+lemma passkey_auth_reachable:
+  exists-trace
+  "Ex O chal #i. Accept(O, chal) @ i"
+
+lemma legacy_fill_reachable:
+  exists-trace
+  "Ex C O c g r #i. Released(C, O, c, g, r) @ i"
+
+lemma legacy_used_item_leaks:
+  exists-trace
+  "Ex c O C g r #i #j #k.
+     Secret(c, O, 'legacy') @ i & Released(C, O, c, g, r) @ j & K(c) @ k"
+
+end

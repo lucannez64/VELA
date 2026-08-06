@@ -1,0 +1,51 @@
+theory M3_DecisionPlusStorageEscape
+/*
+  Model 3 - decision-escape (DE) + storage-escape (SE), sound binding.
+  RELEASE now requires a linear `Approved(cred)` token that ONLY the human-
+  approval rule produces and that the adversary cannot fabricate (no rule lets
+  it). So an item the human never approves is never released.
+
+  BUT a reusable credential must still be delivered to the consuming app, which
+  is in the domain: we model that as Out(cred) on release. So an item the user
+  DOES use (approves) still reaches the domain.
+
+  Expected:
+    `secrecy_unused` VERIFIED  - items never approved stay secret
+                                 (bulk vault bounded by the working set).
+    `used_item_leaks` (exists-trace) SATISFIED - an approved/used item reaches
+                                 the adversary (Proposition 3: consume-stage
+                                 residual; DE+SE bounds bulk, not the item in use).
+*/
+begin
+
+builtins: symmetric-encryption
+
+rule Setup:
+    [ Fr(~cred), Fr(~hk) ]
+  --[ Secret(~cred), Item(~cred) ]->
+    [ !Vault(~cred, ~hk), !Hw(~hk) ]
+
+// Human approval: produces a per-item token the adversary cannot forge.
+// (In a trace, this firing models the user choosing to use that item.)
+rule Human_Approve:
+    [ !Vault(cred, hk) ]
+  --[ Approve(cred) ]->
+    [ Approved(cred) ]
+
+// Release requires the human token AND a request; the request may come from the
+// domain (In), but without Approved(cred) it cannot fire.
+rule Release_DE_SE:
+    [ !Vault(cred, hk), !Hw(hk), Approved(cred), In(<'request', requester>) ]
+  --[ Released(cred, requester) ]->
+    [ Out(cred) ]
+
+lemma secrecy_unused:
+  "All c #i.
+     ( Secret(c) @ i & not (Ex #k. Approve(c) @ k) )
+       ==> not (Ex #j. K(c) @ j)"
+
+lemma used_item_leaks:
+  exists-trace
+  "Ex c #i #k #j. Secret(c) @ i & Approve(c) @ k & K(c) @ j"
+
+end
