@@ -32,10 +32,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
 use ciborium::value::Value as Cbor;
 use sha2::{Digest, Sha256};
 use tracing::warn;
-use vela_crypto::passkey::{
-    generate_credential_id, CredentialKey, COSE_ALG_ES256,
-};
 
+use crate::credential_key::{generate_credential_id, CredentialKey, COSE_ALG_ES256};
 use crate::vault::{VaultItem, VaultMeta};
 use crate::AppState;
 

@@ -1,10 +1,19 @@
 //! WebAuthn credential keys: ECDSA P-256 / SHA-256 (COSE alg `-7`, "ES256").
 //!
-//! Separate from [`crate::signing`] on purpose. That module holds VELA's own
-//! *device identity* key, which is hybrid ML-DSA-87 + Ed25519 because VELA
-//! controls both ends and can insist on post-quantum. A passkey credential key
-//! is verified by somebody else's relying party, so the algorithm is not ours
-//! to choose: ES256 is the one every WebAuthn verifier implements, and it is
+//! Deliberately here and not in `vela-crypto`, which holds VELA's own *device
+//! identity* key (hybrid ML-DSA-87 + Ed25519, because VELA controls both ends
+//! and can insist on post-quantum). Two reasons:
+//!
+//!  * `serverVELA` depends on `vela-crypto` by path and has no use for WebAuthn
+//!    credential keys. Putting `p256` there drags an ECDSA stack into the
+//!    server's dependency graph, where it fails the `multiple-versions = deny`
+//!    gate in `security/deny.toml` by splitting the resolution of unrelated
+//!    transitive crates. Nothing is gained by making the server carry it.
+//!  * WebAuthn code already lives in this crate — see [`crate::webauthn`], the
+//!    CTAP2 client used for recovery — so this is where a reader looks for it.
+//!
+//! A passkey credential key is verified by somebody else's relying party, so
+//! the algorithm is not ours to choose: ES256 is the one every WebAuthn verifier implements, and it is
 //! the only one a deployment can count on. EdDSA (`-8`) is in the registry but
 //! is refused often enough in practice that offering it alone would strand
 //! users on real sites.
@@ -21,10 +30,8 @@ use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey;
-use rand_core::OsRng;
+use p256::elliptic_curve::rand_core::OsRng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
-
-use crate::error::{Result, VelaError};
 
 /// COSE algorithm identifier for ECDSA w/ SHA-256, as a relying party expects
 /// to see it in `pubKeyCredParams` and in the credential public key.
@@ -59,25 +66,25 @@ pub struct CredentialKey {
 
 impl CredentialKey {
     /// Generate a fresh credential keypair from the OS CSPRNG.
-    pub fn generate() -> Result<Self> {
+    pub fn generate() -> Result<Self, String> {
         let secret = SecretKey::random(&mut OsRng);
         Self::from_secret(secret)
     }
 
     /// Reconstruct a credential key from its stored 32-byte private scalar.
-    pub fn from_scalar(bytes: &[u8]) -> Result<Self> {
+    pub fn from_scalar(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() != CREDENTIAL_KEY_LEN {
-            return Err(VelaError::SigningError(format!(
+            return Err(format!(
                 "credential key must be {CREDENTIAL_KEY_LEN} bytes, got {}",
                 bytes.len()
-            )));
+            ));
         }
         let secret = SecretKey::from_slice(bytes)
-            .map_err(|e| VelaError::SigningError(format!("P-256 secret key decode: {e}")))?;
+            .map_err(|e| format!("P-256 secret key decode: {e}"))?;
         Self::from_secret(secret)
     }
 
-    fn from_secret(secret: SecretKey) -> Result<Self> {
+    fn from_secret(secret: SecretKey) -> Result<Self, String> {
         let mut scalar = [0u8; CREDENTIAL_KEY_LEN];
         scalar.copy_from_slice(&secret.to_bytes());
         Ok(Self {
@@ -154,10 +161,9 @@ fn cose_key_es256(x: &[u8], y: &[u8]) -> Vec<u8> {
 }
 
 /// Generate an opaque credential ID.
-pub fn generate_credential_id() -> Result<[u8; CREDENTIAL_ID_LEN]> {
+pub fn generate_credential_id() -> Result<[u8; CREDENTIAL_ID_LEN], String> {
     let mut id = [0u8; CREDENTIAL_ID_LEN];
-    getrandom::getrandom(&mut id)
-        .map_err(|e| VelaError::SigningError(format!("OS random source unavailable: {e}")))?;
+    getrandom::getrandom(&mut id).map_err(|e| format!("OS random source unavailable: {e}"))?;
     Ok(id)
 }
 
@@ -165,7 +171,7 @@ pub fn generate_credential_id() -> Result<[u8; CREDENTIAL_ID_LEN]> {
 ///
 /// Present so tests can check an assertion the way a relying party would,
 /// rather than trusting the signer to agree with itself.
-pub fn verify_der(cose_public_key: &[u8], message: &[u8], signature_der: &[u8]) -> Result<bool> {
+pub fn verify_der(cose_public_key: &[u8], message: &[u8], signature_der: &[u8]) -> Result<bool, String> {
     use p256::ecdsa::signature::Verifier;
 
     let (x, y) = parse_cose_key_es256(cose_public_key)?;
@@ -175,20 +181,18 @@ pub fn verify_der(cose_public_key: &[u8], message: &[u8], signature_der: &[u8]) 
     sec1.extend_from_slice(&y);
 
     let verifying = VerifyingKey::from_sec1_bytes(&sec1)
-        .map_err(|e| VelaError::SigningError(format!("P-256 public key decode: {e}")))?;
-    let signature = Signature::from_der(signature_der)
-        .map_err(|e| VelaError::SigningError(format!("ES256 signature decode: {e}")))?;
+        .map_err(|e| format!("P-256 public key decode: {e}"))?;
+    let signature =
+        Signature::from_der(signature_der).map_err(|e| format!("ES256 signature decode: {e}"))?;
 
     Ok(verifying.verify(message, &signature).is_ok())
 }
 
 /// Pull `x` and `y` back out of the fixed COSE_Key layout written above.
-fn parse_cose_key_es256(cose: &[u8]) -> Result<([u8; 32], [u8; 32])> {
+fn parse_cose_key_es256(cose: &[u8]) -> Result<([u8; 32], [u8; 32]), String> {
     let expected_len = 10 + 32 + 3 + 32;
     if cose.len() != expected_len || cose[0] != 0xA5 {
-        return Err(VelaError::SigningError(
-            "not an ES256 COSE_Key in the layout this module writes".into(),
-        ));
+        return Err("not an ES256 COSE_Key in the layout this module writes".to_string());
     }
     let mut x = [0u8; 32];
     let mut y = [0u8; 32];

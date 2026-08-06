@@ -4,6 +4,7 @@ pub mod breach;
 pub mod clipboard;
 pub mod biometric;
 pub mod commands;
+pub mod credential_key;
 pub mod crypto;
 pub mod device;
 pub mod favicon;

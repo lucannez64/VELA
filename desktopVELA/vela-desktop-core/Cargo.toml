@@ -24,6 +24,10 @@ sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
+# WebAuthn credential keys (ES256). Kept out of vela-crypto on purpose so the
+# server, which depends on that crate and has no passkeys, does not carry an
+# ECDSA stack. See src/credential_key.rs.
+p256 = { version = "0.13", features = ["ecdsa"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
 directories = "5"
 data-encoding = "2"
