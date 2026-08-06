@@ -100,3 +100,8 @@ block2 = "0.6"
 [dev-dependencies]
 tempfile = "3"
 wiremock = "0.6"
+# A real WebAuthn relying party, used to verify our ceremony output rather than
+# trusting our own encoder to agree with itself. Same crate and version the
+# server uses. See src/passkey_rp_test.rs.
+webauthn-rs = "0.5.4"
+uuid = { version = "1.0", features = ["v4"] }
