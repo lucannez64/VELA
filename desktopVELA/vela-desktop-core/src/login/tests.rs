@@ -449,6 +449,145 @@ async fn a_redirect_off_the_site_is_refused() {
     );
 }
 
+// ── When the site will not talk to us ─────────────────────────────────────────
+
+/// A bot check is not a JavaScript login, and the error has to say which.
+///
+/// This test exists because the code got it wrong: pointed at real sites,
+/// GitLab's Cloudflare interstitial (403) and Hacker News' 429 were both
+/// reported as "this site signs in with JavaScript", which is a message that
+/// sends the user looking for a problem that is not there.
+#[tokio::test]
+async fn a_site_that_refuses_the_login_page_is_not_called_a_javascript_login() {
+    for status in [403u16, 429, 503] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/login"))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .set_body_string("<html><body>Just a moment…</body></html>"),
+            )
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let login_url = format!("{}/login", server.uri());
+        state.vault.write().add_item(login_item("i1", &login_url, false));
+
+        let error = perform_login(
+            &state,
+            &LoginRequest {
+                item_id: "i1".to_string(),
+                login_url: None,
+            },
+            grant_for(&server, "i1").await,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error, LoginError::SiteRefused { status });
+        let message = error.to_string();
+        assert!(message.contains(&status.to_string()), "{message}");
+        assert!(
+            !message.contains("JavaScript"),
+            "a bot check was blamed on the site's JavaScript: {message}"
+        );
+    }
+}
+
+/// A 401 on the credential POST is the site saying no. Reporting "signed in"
+/// because a cookie came back with it would be worse than saying nothing.
+#[tokio::test]
+async fn an_error_status_on_the_post_is_not_a_successful_login() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(login_page("/session")))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .append_header("set-cookie", "sid=anonymous; Path=/")
+                .set_body_string("<html><body>Wrong password</body></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state.vault.write().add_item(login_item("i1", &login_url, false));
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("the request itself succeeded");
+
+    assert!(
+        !outcome.looks_authenticated,
+        "a 401 was reported as a successful sign-in"
+    );
+}
+
+/// VELA says who it is. A test rather than a comment because the alternative —
+/// copying a browser's UA to get past bot checks — is a one-line change someone
+/// could make without noticing it is a policy decision, not a bug fix.
+#[tokio::test]
+async fn the_site_is_told_who_is_asking() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(login_page("/session")))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "sid=x; Path=/")
+                .set_body_string("ok"),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state.vault.write().add_item(login_item("i1", &login_url, false));
+
+    let _ = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("login should succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    let agent = requests[0]
+        .headers
+        .get("user-agent")
+        .expect("a user agent should be sent")
+        .to_str()
+        .unwrap();
+    assert!(agent.starts_with("VELA/"), "{agent}");
+    assert!(
+        !agent.contains("Mozilla") && !agent.contains("Chrome"),
+        "VELA is dressed up as a browser: {agent}"
+    );
+}
+
 // ── Form discovery ────────────────────────────────────────────────────────────
 
 #[test]
@@ -670,4 +809,70 @@ async fn a_rejected_password_is_not_reported_as_a_login() {
         !outcome.looks_authenticated,
         "the login form came back and we called it a success"
     );
+}
+
+// ── Against the real web ──────────────────────────────────────────────────────
+//
+// Everything above this line reads HTML written by this file, which proves the
+// parser agrees with its author and nothing else. `discover_form` is the part
+// of M9a with the most guessing in it, and the only honest way to know whether
+// it works is to point it at pages someone else wrote.
+//
+// `#[ignore]`d because it needs the network and because a site can redesign its
+// login page at any time — a CI failure caused by GitHub shipping a new form
+// would be noise. Run deliberately:
+//
+//     cargo test -p vela-desktop-core --lib real_login_pages -- --ignored --nocapture
+//
+// Read-only: these are GETs of public login pages. No credential is sent, and
+// `perform_login` is never called.
+#[tokio::test]
+#[ignore = "hits the live internet"]
+async fn real_login_pages_are_read_correctly_or_refused_clearly() {
+    let sites = [
+        ("GitHub", "https://github.com/login"),
+        ("Hacker News", "https://news.ycombinator.com/login"),
+        ("GitLab", "https://gitlab.com/users/sign_in"),
+        ("Wikipedia", "https://en.wikipedia.org/w/index.php?title=Special:UserLogin"),
+        ("Fastmail", "https://app.fastmail.com/login/"),
+        ("Reddit", "https://www.reddit.com/login/"),
+    ];
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .user_agent(super::USER_AGENT)
+        .build()
+        .unwrap();
+
+    for (name, url) in sites {
+        let parsed = Url::parse(url).unwrap();
+        let (status, body) = match client.get(url).send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                (status, response.text().await.unwrap_or_default())
+            }
+            Err(e) => {
+                println!("{name:<12} UNREACHABLE  {e}");
+                continue;
+            }
+        };
+
+        // The same order `perform_login` uses: a site that would not serve the
+        // page is reported as that, not as a page with no form on it.
+        if status >= 400 {
+            println!("{name:<12} REFUSED      HTTP {status} (bot check or rate limit)");
+            continue;
+        }
+
+        match discover_form(&body, &parsed) {
+            Ok(form) => println!(
+                "{name:<12} OK           action={} user={:?} pass={} extras={:?}",
+                form.action,
+                form.username_field,
+                form.password_field,
+                form.extras.keys().collect::<Vec<_>>()
+            ),
+            Err(e) => println!("{name:<12} REFUSED      {e}"),
+        }
+    }
 }

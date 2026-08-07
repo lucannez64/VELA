@@ -36,10 +36,19 @@
 //!
 //! ## Limits worth knowing before trusting this
 //!
+//!  * **Bot protection beats this, and often.** Pointed at six real login
+//!    pages, GitHub and Wikipedia parsed cleanly; GitLab answered a Cloudflare
+//!    interstitial (403) and Hacker News a 429, neither of which is a login
+//!    page at all. VELA identifies itself honestly rather than impersonating a
+//!    browser (see [`USER_AGENT`]), so any site that only talks to real
+//!    browsers is out of reach here and says so via
+//!    [`LoginError::SiteRefused`]. Treat in-core login as something that works
+//!    on some sites, not as a general replacement for autofill.
 //!  * **Form logins only.** [`discover_form`] reads the login page's HTML and
 //!    finds the form containing the password input. A site that logs in via
 //!    XHR from JavaScript has no such form, and this refuses rather than
-//!    guessing.
+//!    guessing. Of the six pages above, Reddit and Fastmail are genuinely in
+//!    this category.
 //!  * **No cross-domain hops.** The credential POST will not follow a redirect
 //!    off the registrable domain, so SSO flows fail here instead of quietly
 //!    sending the user's password to a third party that may or may not be their
@@ -203,8 +212,8 @@ impl LoginOutcome {
     /// which is what a rejected password almost always looks like. Reported as
     /// a hint so the caller can say "check the page" instead of asserting
     /// something it does not know.
-    fn infer(set_a_cookie: bool, final_page_has_password_field: bool) -> bool {
-        set_a_cookie && !final_page_has_password_field
+    fn infer(set_a_cookie: bool, final_page_has_password_field: bool, final_status: u16) -> bool {
+        set_a_cookie && !final_page_has_password_field && final_status < 400
     }
 }
 
@@ -220,6 +229,14 @@ pub enum LoginError {
     TargetMismatch { approved: String, requested: String },
     /// No password form on the page — a JavaScript login, most likely.
     NoLoginForm,
+    /// The site would not serve us the login page at all.
+    ///
+    /// Distinct from [`Self::NoLoginForm`] on purpose, and the distinction was
+    /// not there until real sites were tried: GitLab answers a non-browser
+    /// client with a Cloudflare interstitial (403) and Hacker News with a 429,
+    /// and both were being reported as "this site signs in with JavaScript".
+    /// That sends the user to look for a problem that isn't there.
+    SiteRefused { status: u16 },
     /// A form we found but will not use, e.g. one that submits by GET.
     UnsupportedForm(String),
     /// The site tried to send the credential somewhere else.
@@ -242,6 +259,12 @@ impl std::fmt::Display for LoginError {
                 f,
                 "No password form found on that page. Sites that sign in with JavaScript \
                  are not supported by in-app login yet."
+            ),
+            Self::SiteRefused { status } => write!(
+                f,
+                "The site would not serve the sign-in page to VELA (HTTP {status}). \
+                 Sites behind a bot check usually only answer a real browser; \
+                 sign in there in the browser instead."
             ),
             Self::UnsupportedForm(why) => write!(f, "Cannot use that login form: {why}"),
             Self::CrossSiteRedirect(host) => write!(
@@ -321,6 +344,14 @@ pub async fn perform_login(
     //    cookie the CSRF token is tied to.
     let page = fetch(&client, &jar, Method::Get, &target, None).await?;
     jar.absorb(&page.set_cookie, &target);
+    // Say "the site would not talk to us" when that is what happened. A bot
+    // check answers with a challenge page that has no password field, and
+    // calling that a JavaScript login sends the user after the wrong problem.
+    if page.status >= 400 {
+        return Err(LoginError::SiteRefused {
+            status: page.status,
+        });
+    }
     let form = discover_form(&page.body, &page.url)?;
 
     // 2. Post the credential over our own connection. This is the only place
@@ -366,7 +397,7 @@ pub async fn perform_login(
     Ok(LoginOutcome {
         landing_url,
         cookies,
-        looks_authenticated: LoginOutcome::infer(cookies_from_login, still_asking),
+        looks_authenticated: LoginOutcome::infer(cookies_from_login, still_asking, response.status),
         site_mode,
         residual_note: site_mode.residual_note().to_string(),
         user_verified: grant.verified,
@@ -383,6 +414,7 @@ enum Method {
 
 struct Fetched {
     url: Url,
+    status: u16,
     body: String,
     set_cookie: Vec<String>,
     redirect_to: Option<String>,
@@ -398,9 +430,28 @@ fn build_client() -> Result<reqwest::Client, LoginError> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(REQUEST_TIMEOUT)
+        .user_agent(USER_AGENT)
         .build()
         .map_err(|e| LoginError::Http(e.to_string()))
 }
+
+/// What we tell sites we are.
+///
+/// Truthfully, and knowing it costs us. Copying a Chrome UA string would get
+/// past more bot checks, and that is exactly the reason not to: a site that
+/// blocks non-browser clients has made a decision about who may talk to it, and
+/// dressing up as a browser to get around it is evading a control rather than
+/// satisfying one. It would also be brittle in a way the user pays for — the
+/// disguise stops working and the failure looks like a bug in VELA.
+///
+/// The cost is real. Sites behind Cloudflare and friends will answer this with
+/// a challenge, and in-core login will not work there; [`LoginError::SiteRefused`]
+/// says so plainly instead of blaming the site's JavaScript.
+const USER_AGENT: &str = concat!(
+    "VELA/",
+    env!("CARGO_PKG_VERSION"),
+    " (password manager; signing in on behalf of the account owner)"
+);
 
 async fn fetch(
     client: &reqwest::Client,
@@ -453,6 +504,7 @@ async fn fetch(
 
     Ok(Fetched {
         url: final_url,
+        status: status.as_u16(),
         body,
         set_cookie,
         redirect_to,
