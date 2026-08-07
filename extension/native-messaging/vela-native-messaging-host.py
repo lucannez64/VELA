@@ -277,6 +277,8 @@ def handle_message(message):
         "passkeyCreate": handle_passkey_create,
         "passkeyGet": handle_passkey_get,
         "passkeyList": handle_passkey_list,
+        "inCoreLogin": handle_in_core_login,
+        "inCoreLoginCandidates": handle_in_core_login_candidates,
         "getMasterKey": handle_not_implemented,
         "unlockVault": handle_not_implemented,
         "lockVault": handle_not_implemented,
@@ -453,6 +455,81 @@ def handle_passkey_list(message):
         "success": True,
         "credentials": payload.get("credentials", []),
         "locked": bool(payload.get("locked")),
+    }
+
+
+def handle_in_core_login_candidates(message):
+    """Which saved logins could sign in to this page. Metadata only, no prompt —
+    the popup calls it to decide whether to offer the button at all."""
+    response = send_to_desktop(
+        {
+            "msg_type": "in_core_login_candidates",
+            "payload": {"url": message.get("url", "")},
+        }
+    )
+
+    if not response or response.get("msg_type") not in (
+        "InCoreLoginCandidatesResponse",
+        "in_core_login_candidates_response",
+    ):
+        return {"success": False, "candidates": []}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "candidates": payload.get("candidates", []),
+        "locked": bool(payload.get("locked")),
+    }
+
+
+def handle_in_core_login(message):
+    """The M9a login itself.
+
+    Two things make this slow: the desktop puts a confirmation in front of a
+    human, and then it talks to a website over its own connection. So it gets
+    the passkey timeout rather than the default one — five seconds would fail
+    every login by someone who did not click instantly.
+
+    What comes back is cookies. Nothing in this reply carries the password;
+    that is a property of the desktop's response type, not of this function,
+    but it is why the payload can be passed through rather than filtered.
+    """
+    response = send_to_desktop(
+        {
+            "msg_type": "in_core_login",
+            "payload": {
+                "item_id": message.get("itemId") or message.get("item_id", ""),
+                "url": message.get("url", ""),
+            },
+        },
+        timeout=PASSKEY_TIMEOUT_SECONDS,
+    )
+
+    if not response or response.get("msg_type") not in (
+        "InCoreLoginResponse",
+        "in_core_login_response",
+    ):
+        return {"success": False, "error": _error_of(response)}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "cookies": payload.get("cookies", []),
+        "landingUrl": payload.get("landing_url", ""),
+        "looksAuthenticated": bool(payload.get("looks_authenticated")),
+        "siteMode": payload.get("site_mode", "self_serve"),
+        "residualNote": payload.get("residual_note", ""),
+        "userVerified": bool(payload.get("user_verified")),
+        "usedSecondFactor": bool(payload.get("used_second_factor")),
+        # Set when the site still wants something a vault cannot produce — a
+        # security key, a push, an SMS. The password was accepted; the login
+        # was not completed. Passing it through is what stops the popup
+        # reporting a half-finished sign-in as a finished one.
+        "awaitingSecondFactor": payload.get("awaiting_second_factor"),
+        # The site wanted a stronger factor and the item's opt-in let a TOTP
+        # code stand in. The user turned that on once; they are still told
+        # every time it is used.
+        "secondFactorDowngraded": bool(payload.get("second_factor_downgraded")),
     }
 
 

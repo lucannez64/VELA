@@ -66,6 +66,22 @@ pub enum VaultItem {
         /// silently drop someone's links.
         #[serde(default, alias = "appIds")]
         app_ids: Vec<String>,
+        /// Does this site make you re-prove the old password before changing
+        /// it? Set on desktop, where in-core login uses it to tell the user
+        /// what a leaked session is worth (`m9a_in_core_login.spthy`'s
+        /// `SiteMode`). Carried here for the same reason as `app_ids`: a field
+        /// this client does not know is a field it deletes from every one of
+        /// the user's devices on the next write (audit A-2).
+        #[serde(default, skip_serializing_if = "Option::is_none",
+                alias = "credentialChangeNeedsReauth")]
+        credential_change_needs_reauth: Option<bool>,
+        /// May a second-factor prompt be answered with this item's TOTP code
+        /// when the site asked for something stronger (a security key)? Set on
+        /// desktop by in-core login; carried here so a client that does not
+        /// know the field does not delete it for every device (audit A-2).
+        #[serde(default, skip_serializing_if = "Option::is_none",
+                alias = "allowSecondFactorDowngrade")]
+        allow_second_factor_downgrade: Option<bool>,
     },
     CreditCard {
         #[serde(flatten)]
@@ -589,6 +605,8 @@ mod tests {
             pass: "secret".to_string(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         }
     }
 
@@ -615,6 +633,8 @@ mod tests {
                 pass: "hunter2-SECRET".into(),
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
+                credential_change_needs_reauth: None,
+                allow_second_factor_downgrade: None,
             },
             VaultItem::CreditCard {
                 meta: meta("2"),

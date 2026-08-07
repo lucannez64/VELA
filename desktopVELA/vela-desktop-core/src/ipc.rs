@@ -56,6 +56,18 @@ pub enum IpcMessageType {
     #[serde(alias = "PasskeyListResponse")]
     #[serde(alias = "passkeyListResponse")]
     PasskeyListResponse,
+    #[serde(alias = "InCoreLogin")]
+    #[serde(alias = "inCoreLogin")]
+    InCoreLogin,
+    #[serde(alias = "InCoreLoginResponse")]
+    #[serde(alias = "inCoreLoginResponse")]
+    InCoreLoginResponse,
+    #[serde(alias = "InCoreLoginCandidates")]
+    #[serde(alias = "inCoreLoginCandidates")]
+    InCoreLoginCandidates,
+    #[serde(alias = "InCoreLoginCandidatesResponse")]
+    #[serde(alias = "inCoreLoginCandidatesResponse")]
+    InCoreLoginCandidatesResponse,
     SessionStatus,
     SyncStatus,
     OpenVault,
@@ -343,6 +355,10 @@ pub mod server {
             IpcMessageType::PasskeyCreate => handle_passkey_create(&message, host, peer).await,
             IpcMessageType::PasskeyGet => handle_passkey_get(&message, host, peer).await,
             IpcMessageType::PasskeyList => handle_passkey_list(&message, host, peer),
+            IpcMessageType::InCoreLogin => handle_in_core_login(&message, host, peer).await,
+            IpcMessageType::InCoreLoginCandidates => {
+                handle_in_core_login_candidates(&message, host, peer)
+            }
             _ => IpcMessage::error("Unknown message type".to_string()),
         }
     }
@@ -624,6 +640,179 @@ pub mod server {
         }
     }
 
+    // ── In-core login (M9a) ──────────────────────────────────────────────────
+    //
+    // The middle rung of the ladder, for sites that have no passkey to offer.
+    // `AutofillRequest` below answers "give me the password"; this answers
+    // "sign me in", and the difference is that the password stays here. What
+    // goes back is the session the site issued — which the model
+    // (`m9a_in_core_login.spthy`) is explicit about being in the domain, and
+    // which the response therefore annotates with what it is worth.
+
+    /// Which saved logins could sign in to this page — no secrets.
+    ///
+    /// The same shape as `handle_passkey_list`, and for the same reason: the
+    /// caller has to be able to decide whether to offer in-core login at all
+    /// without a prompt appearing, and it must be able to do that without the
+    /// password. Usernames and item names are already on the user's screen.
+    fn handle_in_core_login_candidates(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        if let Err(reason) = passkey_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+
+        let url = message.payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        let state = host.state();
+        {
+            let session = state.session.read();
+            if !session.active || session.is_expired() {
+                return IpcMessage {
+                    msg_type: IpcMessageType::InCoreLoginCandidatesResponse,
+                    payload: serde_json::json!({ "candidates": [], "locked": true }),
+                    capability: None,
+                };
+            }
+        }
+
+        let vault = state.vault.read();
+        let candidates: Vec<_> = vault
+            .search_by_domain(url)
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "item_id": item.id(),
+                    "name": item.name(),
+                    "username": item.username().unwrap_or_default(),
+                    "credential_change_needs_reauth": item.credential_change_needs_reauth(),
+                    // So the caller can warn *before* the click. Being told
+                    // afterwards that a security key was bypassed is being told
+                    // too late to decide anything.
+                    "allow_second_factor_downgrade": item.allow_second_factor_downgrade(),
+                })
+            })
+            .collect();
+
+        IpcMessage {
+            msg_type: IpcMessageType::InCoreLoginCandidatesResponse,
+            payload: serde_json::json!({ "candidates": candidates, "locked": false }),
+            capability: None,
+        }
+    }
+
+    async fn handle_in_core_login(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        if let Err(reason) = passkey_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+
+        let payload = &message.payload;
+        let item_id = payload
+            .get("item_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if item_id.is_empty() {
+            // Resolving "the login for this page" here would mean guessing when
+            // a user has several accounts on a site, and guessing wrong means
+            // signing them in as the wrong person. The caller asks for
+            // candidates and picks one.
+            return IpcMessage::error("Missing item_id".to_string());
+        }
+        let login_url = payload
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        // Work out the site *before* prompting, and prompt about that site. A
+        // prompt naming the item but not the destination would be answerable
+        // without knowing where the password is going.
+        let (site, item_name) = {
+            let state = host.state();
+            {
+                let session = state.session.read();
+                if !session.active || session.is_expired() {
+                    return IpcMessage::error("Vault is locked".to_string());
+                }
+            }
+            let vault = state.vault.read();
+            let Some(item) = vault.get_item(&item_id) else {
+                return IpcMessage::error("No such vault item".to_string());
+            };
+            match crate::login::site_for_item(item) {
+                Some(site) => (site, item.name().to_string()),
+                None => {
+                    return IpcMessage::error(
+                        "That login has no website address saved".to_string(),
+                    )
+                }
+            }
+        };
+
+        let presence = crate::presence::PresenceRequest {
+            rp_id: site,
+            requester: peer.describe(),
+            kind: crate::presence::CeremonyKind::SubmitPassword,
+        };
+
+        let grant = match with_login_grant(host, presence, item_id.clone()).await {
+            Ok(grant) => grant,
+            Err(reason) => {
+                warn!("Refused in-core login for {}: {}", peer.describe(), reason);
+                return IpcMessage::error(reason);
+            }
+        };
+
+        let request = crate::login::LoginRequest { item_id, login_url };
+        match crate::login::perform_login(host.state(), &request, grant).await {
+            Ok(outcome) => {
+                info!("In-core login to {} completed", item_name);
+                // Serialising the outcome wholesale is deliberate: the type has
+                // no field that can hold a credential, so there is nothing here
+                // to filter, and hand-copying fields is how a future field
+                // quietly stops being filtered.
+                let mut payload = serde_json::to_value(&outcome)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("success".to_string(), serde_json::json!(true));
+                }
+                IpcMessage {
+                    msg_type: IpcMessageType::InCoreLoginResponse,
+                    payload,
+                    capability: None,
+                }
+            }
+            Err(reason) => {
+                warn!("In-core login failed for {}: {}", peer.describe(), reason);
+                IpcMessage::error(reason.to_string())
+            }
+        }
+    }
+
+    /// Ask the human, then hand back the grant. One approval, one login.
+    ///
+    /// Separate from [`with_presence`] because the work that spends this token
+    /// is `async` — it talks to a website — while the prompt itself blocks a
+    /// thread waiting for a person. So the prompt runs in `spawn_blocking` and
+    /// the grant is carried out of it, rather than the ceremony running inside.
+    async fn with_login_grant(
+        host: &Arc<dyn Host>,
+        request: crate::presence::PresenceRequest,
+        item_id: String,
+    ) -> Result<crate::login::LoginGrant, String> {
+        let host = host.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::presence::confirm_login(&host, &request, &item_id).map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("Sign-in approval did not complete: {e}")))
+    }
+
     async fn handle_autofill_request(
         message: &IpcMessage,
         host: &Arc<dyn Host>,
@@ -751,6 +940,8 @@ pub mod server {
             pass: password,
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         };
 
         {
@@ -1581,6 +1772,8 @@ pub mod server {
                     pass: "s3cret".into(),
                     totp: None,
                     app_ids: Vec::new(),
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
                 });
             }
             let host: Arc<dyn Host> = mock.clone();
@@ -1663,6 +1856,281 @@ pub mod server {
             assert_eq!(resp.payload["success"], false);
             assert_eq!(resp.payload["error"], "Vault is locked");
             assert_eq!(mock.focuses(), 1);
+        }
+
+        // ── M9a: the in-core login tier ──────────────────────────────────────
+        //
+        // `security/formal/m9a_in_core_login.spthy` puts the session artifact
+        // in the domain and keeps the credential out of it. The IPC boundary is
+        // that `Out()`, so the question these ask is the model's question: what
+        // does a co-resident process get by asking for a login?
+
+        /// A site with a login form, plus a vault item pointing at it.
+        async fn seed_site_and_login(
+            mock: &Arc<MockHost>,
+        ) -> (wiremock::MockServer, String) {
+            use wiremock::matchers::{method as http_method, path as http_path};
+            use wiremock::{Mock, MockServer, ResponseTemplate};
+
+            let server = MockServer::start().await;
+            Mock::given(http_method("GET"))
+                .and(http_path("/login"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(
+                    r#"<form method="POST" action="/session">
+                       <input type="text" name="user"><input type="password" name="pw"></form>"#,
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(http_method("POST"))
+                .and(http_path("/session"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .append_header("set-cookie", "sid=granted; Path=/; HttpOnly")
+                        .set_body_string("<html>Welcome</html>"),
+                )
+                .mount(&server)
+                .await;
+
+            let now = chrono::Utc::now();
+            let item = VaultItem::Login {
+                meta: crate::vault::VaultMeta {
+                    id: "login-1".to_string(),
+                    name: "Test site".to_string(),
+                    notes: None,
+                    created_at: now,
+                    updated_at: now,
+                    last_modified_device: None,
+                    favorite: false,
+                    shared: false,
+                    share_recipient: None,
+                },
+                url: format!("{}/login", server.uri()),
+                username: "alice".to_string(),
+                pass: "hunter2-not-in-any-response".to_string(),
+                totp: None,
+                app_ids: Vec::new(),
+                credential_change_needs_reauth: None,
+                allow_second_factor_downgrade: None,
+            };
+            mock.state.vault.write().add_item(item);
+            (server, "login-1".to_string())
+        }
+
+        fn in_core_login(item_id: &str) -> IpcMessage {
+            message(
+                IpcMessageType::InCoreLogin,
+                serde_json::json!({ "item_id": item_id }),
+                "cap",
+            )
+        }
+
+        /// `credential_never_leaks`, at the boundary the model draws it at. The
+        /// caller gets a session; the password is not in the reply in any form.
+        #[tokio::test]
+        async fn an_in_core_login_returns_a_session_and_never_the_password() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            let (_server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::InCoreLoginResponse);
+            let rendered = serde_json::to_string(&resp).unwrap();
+            assert!(
+                !rendered.contains("hunter2-not-in-any-response"),
+                "the password crossed the IPC boundary: {rendered}"
+            );
+            assert_eq!(resp.payload["cookies"][0]["name"], "sid");
+            assert_eq!(resp.payload["cookies"][0]["http_only"], true);
+            assert_eq!(resp.payload["looks_authenticated"], true);
+        }
+
+        /// `Human_Approve_Login`: no approval, no login. Checked by asking the
+        /// site whether it heard from us at all — an error reply would also be
+        /// produced by a login that happened and then failed.
+        #[tokio::test]
+        async fn a_declined_in_core_login_never_contacts_the_site() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(false));
+            let host: Arc<dyn Host> = mock.clone();
+            let (server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(mock.presence_prompts(), 1, "the user should have been asked");
+            assert!(
+                server.received_requests().await.unwrap().is_empty(),
+                "a declined login still sent the password"
+            );
+        }
+
+        /// A machine with no way to ask refuses rather than proceeding. This is
+        /// the opposite of what `authorize_plaintext_release` does, and
+        /// deliberately: a fill is bounded by the working set, a login that
+        /// signs an attacker in as the user is not.
+        #[tokio::test]
+        async fn a_machine_that_cannot_ask_refuses_the_login() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(None);
+            let host: Arc<dyn Host> = mock.clone();
+            let (server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert!(server.received_requests().await.unwrap().is_empty());
+        }
+
+        /// A locked vault refuses before prompting, so a page cannot make the
+        /// vault nag its owner.
+        #[tokio::test]
+        async fn a_locked_vault_refuses_an_in_core_login_without_asking() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(false);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+
+            let resp = process_message(in_core_login("login-1"), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(resp.payload["message"], "Vault is locked");
+            assert_eq!(mock.presence_prompts(), 0);
+        }
+
+        /// The response says what the session is worth. `Site_Session_Escalate`
+        /// is the reason: at a site where a session can rotate the credential,
+        /// the takeover outlives the session, and the user is the only one who
+        /// can be told that.
+        #[tokio::test]
+        async fn the_response_says_what_the_session_residual_is_worth() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            let (_server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.payload["site_mode"], "self_serve");
+            assert!(
+                resp.payload["residual_note"]
+                    .as_str()
+                    .unwrap()
+                    .contains("change the account password"),
+                "{}",
+                resp.payload["residual_note"]
+            );
+        }
+
+        /// Candidates are metadata. It must never become a way to read a
+        /// password without a prompt.
+        #[tokio::test]
+        async fn listing_login_candidates_returns_no_password_and_does_not_prompt() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+            let (server, _item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::InCoreLoginCandidates,
+                    serde_json::json!({ "url": format!("{}/login", server.uri()) }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &test_peer(),
+            )
+            .await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::InCoreLoginCandidatesResponse);
+            assert_eq!(resp.payload["candidates"].as_array().unwrap().len(), 1);
+            assert_eq!(resp.payload["candidates"][0]["username"], "alice");
+            let rendered = serde_json::to_string(&resp).unwrap();
+            assert!(!rendered.contains("hunter2"), "{rendered}");
+            assert_eq!(mock.presence_prompts(), 0, "listing must not prompt");
+        }
+
+        /// The payload keys are a contract too, and a quieter one than the
+        /// message names: `vela-native-messaging-host.py` reads these strings
+        /// out of the reply, and a rename here produces a login that "succeeds"
+        /// with no cookies rather than an error anyone would notice. Pinning
+        /// the exact key set means a field added, removed or renamed in
+        /// `LoginOutcome` fails here, pointing at the Python that has to change
+        /// with it. Also the last line of defence on secrecy: a key set that
+        /// cannot grow without this failing cannot grow a password field.
+        #[tokio::test]
+        async fn the_login_response_payload_keys_are_the_ones_the_native_host_reads() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            let (_server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            let mut keys: Vec<&str> = resp
+                .payload
+                .as_object()
+                .expect("the payload is an object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys,
+                [
+                    "cookies",
+                    "landing_url",
+                    "looks_authenticated",
+                    "residual_note",
+                    "second_factor_downgraded",
+                    "site_mode",
+                    "success",
+                    "used_second_factor",
+                    "user_verified",
+                ]
+            );
+
+            let mut cookie_keys: Vec<&str> = resp.payload["cookies"][0]
+                .as_object()
+                .expect("a cookie is an object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            cookie_keys.sort_unstable();
+            // `same_site` and `expires_at` are skipped when absent, which this
+            // site's cookie exercises: it sets neither.
+            assert_eq!(
+                cookie_keys,
+                ["domain", "host_only", "http_only", "name", "path", "secure", "value"]
+            );
+        }
+
+        /// Same contract as the passkey names: `vela-native-messaging-host.py`
+        /// matches on these strings, so a silent rename breaks the feature.
+        #[test]
+        fn in_core_login_message_types_have_the_wire_names_the_native_host_expects() {
+            let name = |t: IpcMessageType| serde_json::to_string(&t).unwrap();
+
+            assert_eq!(name(IpcMessageType::InCoreLogin), "\"in_core_login\"");
+            assert_eq!(
+                name(IpcMessageType::InCoreLoginResponse),
+                "\"in_core_login_response\""
+            );
+            assert_eq!(
+                name(IpcMessageType::InCoreLoginCandidates),
+                "\"in_core_login_candidates\""
+            );
+            assert_eq!(
+                name(IpcMessageType::InCoreLoginCandidatesResponse),
+                "\"in_core_login_candidates_response\""
+            );
         }
     }
 }

@@ -103,7 +103,27 @@ async function computeLoginTOTP(item) {
   return "";
 }
 
+/// Guarded, because this is called three ways and they overlap.
+///
+/// A service worker runs its top-level code every time it wakes, and
+/// `onInstalled` / `onStartup` fire in that same instance — so at install and at
+/// browser start, `init()` ran twice and every listener was registered twice.
+/// Every message was then handled twice.
+///
+/// That was survivable while the handlers were idempotent: two identical
+/// `getLogins` calls return the same thing and the second `sendResponse` is
+/// dropped. It stopped being survivable with in-core login, which asks a human
+/// for permission — the desktop put up two approval dialogs for one click, and
+/// answering one left the other on screen. The same doubling applies to passkey
+/// ceremonies, which prompt for the same reason.
+let initialised = false;
+
 function init() {
+  if (initialised) {
+    return;
+  }
+  initialised = true;
+
   setupConnectionListeners();
   setupContextMenus();
   setupMessageListeners();
@@ -213,6 +233,12 @@ function handleExtensionMessage(message, sender, sendResponse) {
       return true;
     case "passkeyCreate":
       handlePasskeyCeremony("passkeyCreate", data, sender, sendResponse);
+      return true;
+    case "inCoreLoginCandidates":
+      handleInCoreLoginCandidates(sendResponse);
+      return true;
+    case "inCoreLogin":
+      handleInCoreLogin(data, sendResponse);
       return true;
     case "openVault":
     case "openSettings":
@@ -441,6 +467,193 @@ async function handlePasskeyCeremony(action, data, sender, sendResponse) {
     sendResponse(response || { success: false, error: "No response from VELA Desktop" });
   } catch (error) {
     sendResponse({ success: false, error: error.message });
+  }
+}
+
+// ── In-core login (M9a) ──────────────────────────────────────────────────────
+//
+// The autofill path puts a password into the page. This one never has the
+// password at all: the desktop signs in over its own connection and sends back
+// the cookies the site issued, which get installed here.
+//
+// Two consequences worth being explicit about. The extension needs the
+// `cookies` permission and host access to write them, which is a real increase
+// in what it can do — so both are *optional* permissions, requested at the
+// moment of use and for one origin, rather than held over every site forever.
+// And the session that lands in the browser is a genuine credential for that
+// site: better than a password because it expires and can be revoked, but not
+// nothing. `residualNote` from the desktop says which of those two cases the
+// site is in, and the popup shows it.
+
+/// Only ever act on the tab the user is looking at.
+async function resolveActiveHttpTab() {
+  const active = await getActiveTab();
+  if (!active?.id) {
+    return { ok: false, error: "No active tab" };
+  }
+  const domain = getHttpDomain(active.url || "");
+  if (!domain) {
+    return { ok: false, error: "This page is not a website VELA can sign in to" };
+  }
+  return { ok: true, tab: active, domain };
+}
+
+async function handleInCoreLoginCandidates(sendResponse) {
+  try {
+    const active = await resolveActiveHttpTab();
+    if (!active.ok) {
+      sendResponse({ success: false, candidates: [], error: active.error });
+      return;
+    }
+    const response = await sendNativeMessage({
+      action: "inCoreLoginCandidates",
+      url: active.tab.url
+    });
+    sendResponse(response || { success: false, candidates: [] });
+  } catch (error) {
+    sendResponse({ success: false, candidates: [], error: error.message });
+  }
+}
+
+async function handleInCoreLogin(data, sendResponse) {
+  try {
+    const active = await resolveActiveHttpTab();
+    if (!active.ok) {
+      sendResponse({ success: false, error: active.error });
+      return;
+    }
+    if (!data?.itemId) {
+      sendResponse({ success: false, error: "No login chosen" });
+      return;
+    }
+
+    const origin = new URL(active.tab.url).origin + "/*";
+    const granted = await browser.permissions.contains({
+      permissions: ["cookies"],
+      origins: [origin]
+    });
+    if (!granted) {
+      // Requesting from here would fail anyway: `permissions.request` needs a
+      // user gesture, and a service worker has none. The popup asks.
+      sendResponse({
+        success: false,
+        needsPermission: true,
+        origin,
+        error: "VELA needs permission to set cookies for this site"
+      });
+      return;
+    }
+
+    const response = await sendNativeMessage(
+      { action: "inCoreLogin", itemId: data.itemId, url: active.tab.url },
+      PASSKEY_CEREMONY_TIMEOUT_MS
+    );
+    if (!response?.success) {
+      sendResponse(response || { success: false, error: "No response from VELA Desktop" });
+      return;
+    }
+
+    const installed = await installSessionCookies(response.cookies || [], active.tab.url);
+    if (installed === 0) {
+      sendResponse({
+        success: false,
+        error: "The site did not issue a session VELA could install"
+      });
+      return;
+    }
+
+    // Navigate only within the site we just signed in to. The desktop already
+    // refuses to follow a redirect off the site, so a landing URL elsewhere
+    // means something is wrong, not that the user should be sent there.
+    let target = active.tab.url;
+    if (response.landingUrl && getHttpDomain(response.landingUrl) === active.domain) {
+      target = response.landingUrl;
+    }
+    await tabs.update(active.tab.id, { url: target });
+
+    sendResponse({
+      success: true,
+      cookiesInstalled: installed,
+      looksAuthenticated: Boolean(response.looksAuthenticated),
+      siteMode: response.siteMode,
+      residualNote: response.residualNote,
+      usedSecondFactor: Boolean(response.usedSecondFactor),
+      awaitingSecondFactor: response.awaitingSecondFactor || null,
+      secondFactorDowngraded: Boolean(response.secondFactorDowngraded)
+    });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Install the session the desktop brought back.
+ *
+ * Every cookie is written relative to the *tab's* origin rather than to
+ * whatever domain the response named. That matters: it means the browser's own
+ * rules — a cookie cannot be set for a domain the URL is not under, and never
+ * for a public suffix — are applied to the origin the user is actually on. A
+ * response asking us to plant a cookie on another site fails the domain check
+ * below and never reaches `cookies.set`.
+ */
+async function installSessionCookies(cookies, tabUrl) {
+  const tab = new URL(tabUrl);
+  const host = tab.hostname.toLowerCase();
+  let installed = 0;
+
+  for (const cookie of cookies) {
+    if (!cookie?.name) {
+      continue;
+    }
+    const domain = String(cookie.domain || "").toLowerCase();
+    const scoped = cookie.host_only
+      ? host === domain
+      : host === domain || host.endsWith(`.${domain}`);
+    if (!scoped) {
+      console.warn(`VELA: refused a session cookie scoped to ${domain}`);
+      continue;
+    }
+
+    const details = {
+      url: `${tab.protocol}//${host}${cookie.path || "/"}`,
+      name: cookie.name,
+      value: cookie.value ?? "",
+      path: cookie.path || "/",
+      secure: Boolean(cookie.secure),
+      httpOnly: Boolean(cookie.http_only),
+      sameSite: mapSameSite(cookie.same_site)
+    };
+    // Omitting `domain` is what makes a cookie host-only; sending the host
+    // explicitly would widen it to every subdomain.
+    if (!cookie.host_only) {
+      details.domain = domain;
+    }
+    if (typeof cookie.expires_at === "number") {
+      details.expirationDate = cookie.expires_at;
+    }
+
+    try {
+      await browser.cookies.set(details);
+      installed += 1;
+    } catch (error) {
+      console.warn(`VELA: could not install cookie ${cookie.name}: ${error.message}`);
+    }
+  }
+
+  return installed;
+}
+
+function mapSameSite(value) {
+  switch (String(value || "").toLowerCase()) {
+    case "strict":
+      return "strict";
+    case "lax":
+      return "lax";
+    // The site said `SameSite=None`, which Chrome spells differently.
+    case "none":
+      return "no_restriction";
+    default:
+      return "unspecified";
   }
 }
 

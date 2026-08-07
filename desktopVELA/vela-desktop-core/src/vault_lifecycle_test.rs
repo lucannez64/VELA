@@ -34,6 +34,8 @@ fn login(id: &str, name: &str, url: &str, user: &str, pass: &str) -> VaultItem {
         pass: pass.into(),
         totp: None,
         app_ids: Vec::new(),
+        credential_change_needs_reauth: None,
+        allow_second_factor_downgrade: None,
     }
 }
 

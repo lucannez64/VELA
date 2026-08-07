@@ -11,6 +11,7 @@ pub mod favicon;
 pub mod host;
 pub mod ipc;
 pub mod ipc_peer;
+pub mod login;
 pub mod passkey;
 pub mod presence;
 pub mod rclone;
