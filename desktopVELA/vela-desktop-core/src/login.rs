@@ -330,6 +330,21 @@ impl std::fmt::Display for LoginError {
 
 impl std::error::Error for LoginError {}
 
+/// The JS runtime's refusals are login refusals, and the user should read them
+/// as such rather than as a second vocabulary.
+impl From<crate::js_login::JsLoginError> for LoginError {
+    fn from(e: crate::js_login::JsLoginError) -> Self {
+        use crate::js_login::JsLoginError as J;
+        match e {
+            // A page with no form and no runtime to read its script is the
+            // original NoLoginForm case, worded the way it already was.
+            J::Unavailable | J::NoRequestCaptured => LoginError::NoLoginForm,
+            J::CrossSiteRequest(host) => LoginError::CrossSiteRedirect(host),
+            other => LoginError::UnsupportedForm(other.to_string()),
+        }
+    }
+}
+
 // ── The ceremony ──────────────────────────────────────────────────────────────
 
 /// Log in to the site as the user, and return only the session.
@@ -418,13 +433,36 @@ pub async fn perform_login(
     }
     // Relative form actions resolve against where the page ended up, not where
     // it was asked for.
-    let form = discover_form(&page.body, &page.url)?;
-
     // 2. Post the credential over our own connection. This is the only place
     //    the plaintext is used, and it does not leave this function.
-    let body = form.fill(&username, &password);
-    let response = fetch(&client, &jar, Method::Post, &form.action, Some(&body)).await?;
-    jar.absorb(&response.set_cookie, &form.action);
+    let response = match discover_form(&page.body, &page.url) {
+        Ok(form) => {
+            let body = form.fill(&username, &password);
+            let response = fetch(&client, &jar, Method::Post, &form.action, Some(&body)).await?;
+            jar.absorb(&response.set_cookie, &form.action);
+            response
+        }
+        // No form. Where the JS runtime is built in, let the page's own script
+        // say what request it would have made — see `crate::js_login`, and
+        // `security/formal/m9c_inprocess_sandbox.spthy` for what that costs.
+        // The credential is not handed to the runtime; it is substituted into
+        // the captured request afterwards, out here.
+        Err(LoginError::NoLoginForm) => {
+            let captured =
+                crate::js_login::capture_login_request(&page.body, &page.url, &username)
+                    .map_err(LoginError::from)?;
+            captured
+                .check_same_site(&target)
+                .map_err(LoginError::from)?;
+            let ready = captured.substitute(&password).map_err(LoginError::from)?;
+            let action = Url::parse(&ready.url)
+                .map_err(|e| LoginError::Http(format!("bad request URL: {e}")))?;
+            let response = fetch_raw(&client, &jar, &ready, &action).await?;
+            jar.absorb(&response.set_cookie, &action);
+            response
+        }
+        Err(other) => return Err(other),
+    };
     let mut cookies_from_login = !response.set_cookie.is_empty();
 
     // 3. Follow the site home, staying on the site.
@@ -757,6 +795,73 @@ async fn fetch(
     };
 
     // A redirect body is not worth reading, and a login page can be large.
+    let body = if redirect_to.is_some() {
+        String::new()
+    } else {
+        response.text().await.unwrap_or_default()
+    };
+
+    Ok(Fetched {
+        url: final_url,
+        status: status.as_u16(),
+        body,
+        set_cookie,
+        redirect_to,
+    })
+}
+
+/// Send a request the page's script composed, rather than a form we built.
+///
+/// Separate from [`fetch`] because the shapes differ: a form is name/value
+/// pairs and a known content type, while this carries whatever body and headers
+/// the script chose. The headers are the script's, minus the ones that are ours
+/// to set — a page that sets its own Cookie or Host header is not something to
+/// honour.
+async fn fetch_raw(
+    client: &reqwest::Client,
+    jar: &CookieJar,
+    request: &crate::js_login::CapturedRequest,
+    url: &Url,
+) -> Result<Fetched, LoginError> {
+    let method = reqwest::Method::from_bytes(request.method.as_bytes())
+        .map_err(|e| LoginError::Http(format!("bad method: {e}")))?;
+    let mut builder = client.request(method, url.clone());
+
+    for (name, value) in &request.headers {
+        let lowered = name.to_lowercase();
+        if matches!(lowered.as_str(), "cookie" | "host" | "content-length") {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    if let Some(header) = jar.header_for(url) {
+        builder = builder.header(reqwest::header::COOKIE, header);
+    }
+    if !request.body.is_empty() {
+        builder = builder.body(request.body.clone());
+    }
+
+    let response = builder
+        .send()
+        .await
+        .map_err(|e| LoginError::Http(e.to_string()))?;
+    let status = response.status();
+    let final_url = response.url().clone();
+    let set_cookie = response
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(str::to_string))
+        .collect();
+    let redirect_to = if status.is_redirection() {
+        response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+    } else {
+        None
+    };
     let body = if redirect_to.is_some() {
         String::new()
     } else {

@@ -9,8 +9,20 @@ edition = "2021"
 # dependency — both `src-tauri` and the future `src-gpui` binary link this.
 # See /home/hirew/.claude/plans/mighty-wibbling-wave.md Step 1.
 
+[features]
+default = []
+# The M9c experiment: a JS runtime inside the core, for logins on sites that
+# submit by `fetch` rather than by form. Off by default and likely to stay that
+# way — see `security/formal/m9c_inprocess_sandbox.spthy` for what it costs, and
+# src/js_login.rs for the two design choices that make this variant defensible.
+js-login = ["dep:boa_engine"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+# Pure Rust on purpose. M9c's escape rule assumes a C interpreter where a JS
+# bug becomes memory corruption in the process holding the vault; a memory-safe
+# engine is a different threat model, and the one worth prototyping against.
+boa_engine = { version = "0.21", optional = true }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
