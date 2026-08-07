@@ -64,6 +64,17 @@ pub enum VaultItem {
         /// from every one of the user's devices (audit A-2).
         #[serde(default, alias = "appIds")]
         app_ids: Vec<String>,
+        /// Does this site make you re-prove the old password before changing
+        /// it? The model's `SiteMode` (`security/formal/m9a_in_core_login.spthy`).
+        ///
+        /// It decides what an in-core login session is worth if it leaks. Where
+        /// this is true the site is 'hardened': the residual dies when the
+        /// session does. Where it is false a session can rotate the credential
+        /// to one the holder picked, and the takeover outlives eviction — so
+        /// `false` is the default, because a site has to be shown to be careful
+        /// rather than assumed to be. See [`crate::login::SiteMode`].
+        #[serde(default, alias = "credentialChangeNeedsReauth")]
+        credential_change_needs_reauth: bool,
     },
     CreditCard {
         #[serde(flatten)]
@@ -410,6 +421,19 @@ impl VaultItem {
         match self {
             VaultItem::Login { pass, .. } => Some(pass),
             _ => None,
+        }
+    }
+
+    /// Whether this site is 'hardened' in the M9a sense: a live session cannot
+    /// change the account password without re-proving the old one. Everything
+    /// that is not a login answers `false`, which is the safe answer.
+    pub fn credential_change_needs_reauth(&self) -> bool {
+        match self {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                ..
+            } => *credential_change_needs_reauth,
+            _ => false,
         }
     }
 
@@ -842,6 +866,7 @@ mod tests {
             pass: pass.into(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: false,
         }
     }
 
@@ -882,6 +907,7 @@ mod tests {
                 pass: "hunter2-SECRET".into(),
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
+                credential_change_needs_reauth: false,
             },
             VaultItem::CreditCard {
                 meta: meta("2", "Bank"),
@@ -1049,6 +1075,7 @@ mod tests {
             pass: "p".into(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: false,
         });
 
         assert_eq!(vault.search("GIT").len(), 2);

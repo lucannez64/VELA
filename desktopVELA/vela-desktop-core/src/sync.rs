@@ -1002,6 +1002,7 @@ mod tests {
             pass: "pw".to_string(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: false,
         }
     }
 

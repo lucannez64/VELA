@@ -66,6 +66,14 @@ pub enum VaultItem {
         /// silently drop someone's links.
         #[serde(default, alias = "appIds")]
         app_ids: Vec<String>,
+        /// Does this site make you re-prove the old password before changing
+        /// it? Set on desktop, where in-core login uses it to tell the user
+        /// what a leaked session is worth (`m9a_in_core_login.spthy`'s
+        /// `SiteMode`). Carried here for the same reason as `app_ids`: a field
+        /// this client does not know is a field it deletes from every one of
+        /// the user's devices on the next write (audit A-2).
+        #[serde(default, alias = "credentialChangeNeedsReauth")]
+        credential_change_needs_reauth: bool,
     },
     CreditCard {
         #[serde(flatten)]
@@ -589,6 +597,7 @@ mod tests {
             pass: "secret".to_string(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: false,
         }
     }
 
@@ -615,6 +624,7 @@ mod tests {
                 pass: "hunter2-SECRET".into(),
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
+                credential_change_needs_reauth: false,
             },
             VaultItem::CreditCard {
                 meta: meta("2"),

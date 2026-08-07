@@ -68,6 +68,11 @@ pub struct PresenceRequest {
 pub enum CeremonyKind {
     Register,
     Authenticate,
+    /// An M9a in-core login: the desktop is about to submit a saved password to
+    /// the site itself. Worded differently from the passkey cases on purpose —
+    /// what the user is agreeing to is their *password* being used, which is a
+    /// bigger thing than a signature and should not read like one.
+    SubmitPassword,
 }
 
 impl PresenceRequest {
@@ -84,6 +89,11 @@ impl PresenceRequest {
             ),
             CeremonyKind::Authenticate => format!(
                 "Sign in to {} with your passkey, at the request of {}?",
+                self.rp_id, self.requester
+            ),
+            CeremonyKind::SubmitPassword => format!(
+                "Sign in to {} by sending your saved password to that site, \
+                 at the request of {}?",
                 self.rp_id, self.requester
             ),
         }
@@ -119,20 +129,42 @@ impl std::fmt::Display for PresenceDenied {
 /// process can click for them. Only if there is no window either does this
 /// refuse outright, because at that point there is genuinely nobody to ask.
 pub fn confirm(host: &Arc<dyn Host>, request: &PresenceRequest) -> Result<PresenceToken, PresenceDenied> {
-    let prompt = request.prompt();
+    ask(host, &request.prompt()).map(PresenceToken::mint)
+}
 
-    match platform_presence(&prompt) {
-        crate::biometric::PresenceOutcome::Confirmed => Ok(PresenceToken::mint(true)),
+/// Ask the human, and mint a grant for one in-core login only if they said yes.
+///
+/// The M9a counterpart of [`confirm`], and separate from it because the grants
+/// are not interchangeable: a [`crate::login::LoginGrant`] names the item and
+/// the site it was approved for, so an approval cannot be redirected to another
+/// site after the fact. Both funnel through the same [`ask`], so there is still
+/// exactly one place in the tree that decides a human was present.
+pub fn confirm_login(
+    host: &Arc<dyn Host>,
+    request: &PresenceRequest,
+    item_id: &str,
+) -> Result<crate::login::LoginGrant, PresenceDenied> {
+    ask(host, &request.prompt()).map(|verified| {
+        crate::login::LoginGrant::mint(item_id.to_string(), request.rp_id.clone(), verified)
+    })
+}
+
+/// The one question. Answers `true` when a real verification factor was used
+/// and `false` when the human merely clicked a dialog — a distinction the
+/// callers care about and this function must not collapse.
+fn ask(host: &Arc<dyn Host>, prompt: &str) -> Result<bool, PresenceDenied> {
+    match platform_presence(prompt) {
+        crate::biometric::PresenceOutcome::Confirmed => Ok(true),
         crate::biometric::PresenceOutcome::Denied(message) => {
             Err(PresenceDenied::Declined(message))
         }
         crate::biometric::PresenceOutcome::Unavailable => {
-            // Presence, not verification: the token records that, and a relying
+            // Presence, not verification: the caller records that, and a relying
             // party asking for UV will be refused by the ceremony.
-            match host.confirm_presence(&prompt) {
-                Some(true) => Ok(PresenceToken::mint(false)),
+            match host.confirm_presence(prompt) {
+                Some(true) => Ok(false),
                 Some(false) => Err(PresenceDenied::Declined(
-                    "You declined this passkey request.".to_string(),
+                    "You declined this request.".to_string(),
                 )),
                 None => Err(PresenceDenied::NoWayToAsk),
             }
