@@ -585,6 +585,19 @@ fn find_totp_alternative_link(html: &str, base: &Url) -> Option<Url> {
 /// Heuristic, and it will not name every gate. What it must not do is the thing
 /// the old code did: let a page we cannot satisfy pass for a signed-in one.
 fn unanswered_second_factor(url: &Url, html: &str) -> Option<String> {
+    // A gate for the *second* factor comes after the first one was accepted, so
+    // a page still asking for a password is not one — it is a rejected login.
+    // Netflix taught this the expensive way: its sign-in page offers "use a
+    // passkey" alongside the password box, the word appears in the markup, and
+    // a failed login was reported as "your password was accepted, now use your
+    // security key". Wrong about both halves.
+    //
+    // This is the same rule `discover_second_factor_form` applies, written down
+    // there and then not applied here.
+    if html_has_password_field(html) {
+        return None;
+    }
+
     let lowered = html.to_lowercase();
 
     // A security key or passkey. Nothing in a vault can answer this — the whole

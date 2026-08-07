@@ -1086,6 +1086,69 @@ async fn a_login_page_that_redirects_is_still_a_login_page() {
     );
 }
 
+/// The Netflix false positive.
+///
+/// Its sign-in page offers passkey sign-in *next to* the password box, so the
+/// word is in the markup. A rejected password left us back on that page, and
+/// the gate detection read the word and reported "your password was accepted,
+/// now use your security key" — wrong about both halves, and it would have sent
+/// the user hunting for a key nothing had asked for.
+#[tokio::test]
+async fn a_login_page_that_merely_offers_passkeys_is_not_a_security_key_gate() {
+    let server = MockServer::start().await;
+    // A login page that mentions passkeys, as plenty now do.
+    let page_with_passkey_option = format!(
+        r#"<html><body>{}
+        <div class="alt-signin">
+          <button type="button">Sign in with a passkey</button>
+          <p>Use a security key or passkey instead of your password.</p>
+        </div></body></html>"#,
+        login_page("/session")
+    );
+
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(page_with_passkey_option.clone()))
+        .mount(&server)
+        .await;
+    // The password is rejected and the same page comes back.
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "device=abc; Path=/")
+                .set_body_string(page_with_passkey_option),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state
+        .vault
+        .write()
+        .add_item(login_item_with_totp("i1", &login_url));
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("the request itself succeeded");
+
+    assert_eq!(
+        outcome.awaiting_second_factor, None,
+        "a page offering passkeys was read as demanding one"
+    );
+    assert!(!outcome.looks_authenticated, "a rejected password is not a login");
+    assert!(!outcome.used_second_factor, "no TOTP code should have been spent");
+}
+
 // ── When the site will not talk to us ─────────────────────────────────────────
 
 /// A bot check is not a JavaScript login, and the error has to say which.
