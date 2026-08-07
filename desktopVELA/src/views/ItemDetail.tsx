@@ -232,6 +232,31 @@ export default function ItemDetail({ item, onEdit }: Props) {
             </div>
           )}
 
+          {/*
+            Shown only when it is on, and worded as what it does rather than
+            what it is called. This is the one setting in VELA that weakens a
+            site's own choice of factor, and somebody who turned it on weeks ago
+            should be able to see that from the item without going looking.
+          */}
+          {item.allow_second_factor_downgrade && (
+            <div className="p-6 rounded-2xl bg-error-container/20 border border-error/30 min-w-0">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-3">
+                Sign-in behaviour
+              </label>
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-error text-xl shrink-0">key_off</span>
+                <div className="text-sm text-on-surface min-w-0">
+                  VELA may answer this site's security-key prompt with your
+                  authenticator code
+                  <span className="block text-xs text-on-surface-variant mt-1">
+                    It signs in without you, using the weaker of the two factors
+                    this site offered. Edit the item to turn this off.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {item.card_number && (
             <>
               {item.cardholder_name && (

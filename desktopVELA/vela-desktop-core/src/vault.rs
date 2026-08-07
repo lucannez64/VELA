@@ -1146,6 +1146,56 @@ mod tests {
         }
     }
 
+    /// The exact JSON the desktop's item form sends, parsed by the type that
+    /// receives it.
+    ///
+    /// The two sides are written in different languages and nothing else checks
+    /// that they agree: `toBackendItem` in `src/context/AppContext.tsx` builds
+    /// this object, `update_item` deserialises it here, and a rename on either
+    /// side would show up as a setting that silently refuses to stick.
+    #[test]
+    fn the_item_form_can_set_both_second_factor_flags() {
+        let from_the_form = r#"{
+            "id": "1", "name": "GitHub",
+            "created_at": "2026-08-07T10:00:00Z", "updated_at": "2026-08-07T10:00:00Z",
+            "last_modified_device": null, "favorite": false, "shared": false,
+            "share_recipient": null,
+            "item_type": "login",
+            "url": "https://github.com", "username": "ada", "password": "p",
+            "totp": null, "notes": null,
+            "credential_change_needs_reauth": true,
+            "allow_second_factor_downgrade": true
+        }"#;
+
+        let item: VaultItem = serde_json::from_str(from_the_form).expect("the form's item");
+        match &item {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                pass,
+                ..
+            } => {
+                assert_eq!(*credential_change_needs_reauth, Some(true));
+                assert_eq!(*allow_second_factor_downgrade, Some(true));
+                assert_eq!(pass, "p", "the form spells the password field 'password'");
+            }
+            _ => panic!("expected a login"),
+        }
+        assert!(item.credential_change_needs_reauth());
+
+        // And turning them off is distinguishable from not mentioning them,
+        // which is what makes the preservation above correct.
+        let turned_off = from_the_form.replace("true,\n            \"allow", "false,\n            \"allow");
+        let item: VaultItem = serde_json::from_str(&turned_off).unwrap();
+        match &item {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                ..
+            } => assert_eq!(*credential_change_needs_reauth, Some(false)),
+            _ => panic!("expected a login"),
+        }
+    }
+
     /// A vault written before these fields exist must load, and must not be
     /// read as "the user turned both off".
     #[test]

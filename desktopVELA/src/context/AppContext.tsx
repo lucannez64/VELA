@@ -17,6 +17,13 @@ export interface VaultItem {
   url?: string;
   totp?: string;
   notes?: string;
+  /// Does this site make you re-prove the old password before changing it?
+  /// Decides what an in-core login session is worth if it leaks.
+  credential_change_needs_reauth?: boolean;
+  /// May VELA answer a second-factor prompt with this item's TOTP code when the
+  /// site asked for something stronger? Weakens the site's own choice, so it is
+  /// off unless the owner turns it on.
+  allow_second_factor_downgrade?: boolean;
   card_number?: string;
   card_exp?: string;
   card_cvv?: string;
@@ -87,6 +94,16 @@ export function toBackendItem(item: VaultItem): object {
         password: item.password || '',
         totp: item.totp || null,
         notes: item.notes || null,
+        // Omitted, not `false`, when the user has never decided. The backend
+        // treats an absent key as "unchanged" and an explicit `false` as
+        // "turned off" — sending false here would silently clear a decision
+        // made on another device. See VaultItem::preserving_app_ids.
+        ...(item.credential_change_needs_reauth === undefined
+          ? {}
+          : { credential_change_needs_reauth: item.credential_change_needs_reauth }),
+        ...(item.allow_second_factor_downgrade === undefined
+          ? {}
+          : { allow_second_factor_downgrade: item.allow_second_factor_downgrade }),
       };
     case 'creditCard':
       return {
@@ -143,6 +160,8 @@ export function fromBackendItem(item: any): VaultItem {
         password: item.password,
         totp: item.totp,
         notes: item.notes,
+        credential_change_needs_reauth: item.credential_change_needs_reauth,
+        allow_second_factor_downgrade: item.allow_second_factor_downgrade,
       };
     case 'creditCard':
       return {
