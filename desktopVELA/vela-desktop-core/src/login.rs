@@ -402,6 +402,12 @@ pub async fn perform_login(
     //    cookie the CSRF token is tied to.
     let page = fetch(&client, &jar, Method::Get, &target, None).await?;
     jar.absorb(&page.set_cookie, &target);
+    // Follow the site to wherever the login page actually lives. Netflix sends
+    // /login to /fr-en/login, and plenty of sites redirect for a locale, a
+    // trailing slash, or www — with `Policy::none()` on the client, not
+    // following meant reading an empty 302 body, finding no form in it, and
+    // telling the user their bank signs in with JavaScript.
+    let page = follow_redirects(&client, &mut jar, &target, page).await?;
     // Say "the site would not talk to us" when that is what happened. A bot
     // check answers with a challenge page that has no password field, and
     // calling that a JavaScript login sends the user after the wrong problem.
@@ -410,6 +416,8 @@ pub async fn perform_login(
             status: page.status,
         });
     }
+    // Relative form actions resolve against where the page ended up, not where
+    // it was asked for.
     let form = discover_form(&page.body, &page.url)?;
 
     // 2. Post the credential over our own connection. This is the only place

@@ -1021,6 +1021,71 @@ fn a_recovery_code_link_is_never_taken_for_an_authenticator_one() {
     );
 }
 
+/// The Netflix case: the login page is not where the URL says it is.
+///
+/// `/login` 302s to `/fr-en/login` for the locale, and with redirects off on
+/// the client that meant reading an empty 302 body, finding no form in it, and
+/// reporting "this site signs in with JavaScript". Locale, trailing-slash,
+/// http→https and www redirects on a login URL are all ordinary; none of them
+/// mean what that error said.
+///
+/// The relative form action is the second half: it has to resolve against where
+/// the page ended up, not where it was asked for, or the credential POST goes
+/// to the wrong path.
+#[tokio::test]
+async fn a_login_page_that_redirects_is_still_a_login_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/fr-en/login"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/fr-en/login"))
+        // A relative action, so it must resolve under /fr-en/.
+        .respond_with(ResponseTemplate::new(200).set_body_string(login_page("session")))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/fr-en/session"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "sid=ok; Path=/")
+                .set_body_string("<html><body>Welcome</body></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state.vault.write().add_item(login_item("i1", &login_url, false));
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("a redirecting login page should still work");
+
+    assert!(outcome.looks_authenticated);
+    let posted: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.url.path().to_string())
+        .collect();
+    assert!(
+        posted.iter().any(|p| p == "/fr-en/session"),
+        "the relative action resolved against the wrong page: {posted:?}"
+    );
+}
+
 // ── When the site will not talk to us ─────────────────────────────────────────
 
 /// A bot check is not a JavaScript login, and the error has to say which.
