@@ -7,9 +7,11 @@ import FaviconIcon from '../components/FaviconIcon';
 interface Props {
   item: VaultItem;
   onEdit?: () => void;
+  /** When true the live TOTP refresh is suspended (e.g. the edit modal is open). */
+  paused?: boolean;
 }
 
-export default function ItemDetail({ item, onEdit }: Props) {
+export default function ItemDetail({ item, onEdit, paused = false }: Props) {
   const { setSelectedItem, showToast, setCurrentView, setPendingShareItemId } = useApp();
   const { copyToClipboard } = useClipboard();
   const [showPassword, setShowPassword] = useState(false);
@@ -17,6 +19,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
   const [showCVV, setShowCVV] = useState(false);
   const [showCardPin, setShowCardPin] = useState(false);
   const [totpTimeLeft, setTotpTimeLeft] = useState(30);
+  const [totpPeriod, setTotpPeriod] = useState(30);
   const [totpCode, setTotpCode] = useState('--- ---');
   const [favorite, setFavorite] = useState(item.favorite);
 
@@ -32,21 +35,77 @@ export default function ItemDetail({ item, onEdit }: Props) {
   }, [item.id]);
 
   useEffect(() => {
-    const generateTOTP = async () => {
-      if (!item.totp) return;
+    if (!item.totp || paused) return;
+
+    // The countdown is driven by the local clock, not by a per-second backend
+    // round trip: the backend is consulted once per code, and every tick only
+    // re-derives the seconds-remaining from `expiresAt`. This keeps the timer
+    // correct even when the renderer throttles timers while the window is
+    // hidden or busy, and it stops the edit modal from being drowned in IPC
+    // + HMAC churn every second (a real source of selection lag on the
+    // software-rendered WebKitGTK path).
+    let busy = false;
+    let stopped = false;
+    let period = 30;
+    let expiresAt = 0;
+
+    const fetchCode = async () => {
+      if (busy || stopped) return;
+      busy = true;
       try {
-        const result = await invoke<{ code: string; remaining_secs: number }>('generate_totp', { secret: item.totp });
-        setTotpCode(result.code.slice(0, 3) + ' ' + result.code.slice(3));
+        const result = await invoke<{ code: string; remaining_secs: number; period: number }>(
+          'generate_totp',
+          { secret: item.totp },
+        );
+        if (stopped) return;
+        period = result.period || 30;
+        expiresAt = Date.now() + result.remaining_secs * 1000;
+        const mid = Math.ceil(result.code.length / 2);
+        setTotpCode(`${result.code.slice(0, mid)} ${result.code.slice(mid)}`);
+        setTotpPeriod(period);
         setTotpTimeLeft(result.remaining_secs);
       } catch (e) {
         console.error('Failed to generate TOTP:', e);
+      } finally {
+        busy = false;
       }
     };
 
-    generateTOTP();
-    const interval = setInterval(generateTOTP, 1000);
-    return () => clearInterval(interval);
-  }, [item.totp]);
+    const tick = () => {
+      if (stopped) return;
+      if (expiresAt <= 0) {
+        fetchCode();
+        return;
+      }
+      const remainingMs = expiresAt - Date.now();
+      if (remainingMs <= 0) {
+        // The current code just rolled over; fetch the next one.
+        fetchCode();
+        return;
+      }
+      setTotpTimeLeft(Math.max(1, Math.ceil(remainingMs / 1000)));
+    };
+
+    const onActive = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+
+    fetchCode();
+    const interval = setInterval(tick, 500);
+
+    // Renderer timers are throttled while the window is unfocused or hidden,
+    // which used to make the countdown stall. Re-deriving from the clock on
+    // focus/visibility (or rolling the code over) heals the countdown.
+    document.addEventListener('visibilitychange', onActive);
+    window.addEventListener('focus', onActive);
+
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onActive);
+      window.removeEventListener('focus', onActive);
+    };
+  }, [item.totp, paused]);
 
   const handleDelete = async () => {
     if (confirm('Are you sure you want to delete this item?')) {
@@ -203,7 +262,7 @@ export default function ItemDetail({ item, onEdit }: Props) {
               <div className="mt-6 h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-primary rounded-full transition-all duration-1000" 
-                  style={{ width: `${(totpTimeLeft / 30) * 100}%` }}
+                  style={{ width: `${(totpTimeLeft / totpPeriod) * 100}%` }}
                 />
               </div>
             </div>

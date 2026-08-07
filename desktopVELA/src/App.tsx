@@ -338,6 +338,7 @@ function AppContent() {
             selectedItem ? (
               <ItemDetail 
                 item={selectedItem} 
+                paused={showAddModal}
                 onEdit={() => {
                   setShowAddModal(true);
                 }}
