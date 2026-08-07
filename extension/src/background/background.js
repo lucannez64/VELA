@@ -103,7 +103,27 @@ async function computeLoginTOTP(item) {
   return "";
 }
 
+/// Guarded, because this is called three ways and they overlap.
+///
+/// A service worker runs its top-level code every time it wakes, and
+/// `onInstalled` / `onStartup` fire in that same instance — so at install and at
+/// browser start, `init()` ran twice and every listener was registered twice.
+/// Every message was then handled twice.
+///
+/// That was survivable while the handlers were idempotent: two identical
+/// `getLogins` calls return the same thing and the second `sendResponse` is
+/// dropped. It stopped being survivable with in-core login, which asks a human
+/// for permission — the desktop put up two approval dialogs for one click, and
+/// answering one left the other on screen. The same doubling applies to passkey
+/// ceremonies, which prompt for the same reason.
+let initialised = false;
+
 function init() {
+  if (initialised) {
+    return;
+  }
+  initialised = true;
+
   setupConnectionListeners();
   setupContextMenus();
   setupMessageListeners();
