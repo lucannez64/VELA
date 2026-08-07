@@ -1416,6 +1416,10 @@ async fn real_site_login() {
     let username = std::env::var("VELA_LOGIN_USER").unwrap_or_default();
     let password = std::env::var("VELA_LOGIN_PASSWORD").unwrap_or_default();
     let totp = std::env::var("VELA_LOGIN_TOTP").ok().filter(|s| !s.is_empty());
+    // Opt in to answering a stronger factor with a TOTP code, the same way a
+    // vault item does. Spelled out here rather than defaulted on, because the
+    // whole point of the setting is that the downgrade is a decision.
+    let allow_downgrade = std::env::var("VELA_LOGIN_ALLOW_DOWNGRADE").is_ok_and(|v| v == "1");
 
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
@@ -1438,7 +1442,7 @@ async fn real_site_login() {
         totp,
         app_ids: Vec::new(),
         credential_change_needs_reauth: false,
-        allow_second_factor_downgrade: false,
+        allow_second_factor_downgrade: allow_downgrade,
     });
 
     let parsed = normalize_url(&url).expect("VELA_LOGIN_URL should be a URL");
@@ -1458,6 +1462,8 @@ async fn real_site_login() {
         Ok(outcome) => {
             println!("looks_authenticated = {}", outcome.looks_authenticated);
             println!("used_second_factor  = {}", outcome.used_second_factor);
+            println!("downgraded          = {}", outcome.second_factor_downgraded);
+            println!("awaiting            = {:?}", outcome.awaiting_second_factor);
             println!("landing_url         = {}", outcome.landing_url);
             println!("cookies             = {}", outcome.cookies.len());
             for cookie in &outcome.cookies {
@@ -1471,6 +1477,56 @@ async fn real_site_login() {
                     cookie.same_site
                 );
             }
+            // The question `looks_authenticated` cannot answer.
+            //
+            // Everything above is inference over what the site sent back, and
+            // the GitHub run showed inference getting it wrong. This spends the
+            // session on a page the site only serves to a signed-in user, which
+            // is the difference between "we think this worked" and "this
+            // works". Set VELA_LOGIN_VERIFY_URL to such a page — for GitHub,
+            // https://github.com/settings/profile.
+            if let Ok(verify_url) = std::env::var("VELA_LOGIN_VERIFY_URL") {
+                let jar_header = outcome
+                    .cookies
+                    .iter()
+                    .map(|c| format!("{}={}", c.name, c.value))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let client = reqwest::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .user_agent(super::USER_AGENT)
+                    .build()
+                    .unwrap();
+                match client
+                    .get(&verify_url)
+                    .header(reqwest::header::COOKIE, jar_header)
+                    .send()
+                    .await
+                {
+                    Ok(response) => {
+                        let status = response.status();
+                        let location = response
+                            .headers()
+                            .get(reqwest::header::LOCATION)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_string();
+                        // A signed-out request to a private page is bounced to
+                        // a login or session page; a signed-in one is served.
+                        let signed_in = status.is_success()
+                            && !location.contains("login")
+                            && !location.contains("session");
+                        println!("--- verifying the session against {verify_url} ---");
+                        println!("status              = {status}");
+                        if !location.is_empty() {
+                            println!("redirected to       = {location}");
+                        }
+                        println!("SESSION REALLY WORKS = {signed_in}");
+                    }
+                    Err(e) => println!("verification failed = {e}"),
+                }
+            }
+
             // The claim, checked against the artifact rather than asserted.
             let serialized = serde_json::to_string(&outcome).unwrap();
             for (label, secret) in [
