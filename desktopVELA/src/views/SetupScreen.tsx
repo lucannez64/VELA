@@ -26,6 +26,7 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
   const [biometricAvailable, setBiometricAvailable] = useState<boolean | null>(null);
   const [biometricError, setBiometricError] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
+  const [confirmingDefer, setConfirmingDefer] = useState(false);
   const [isSettingUpSecurityKey, setIsSettingUpSecurityKey] = useState(false);
   const [showCloudBackupPicker, setShowCloudBackupPicker] = useState(false);
   const [cloudRemotes, setCloudRemotes] = useState<string[] | null>(null);
@@ -159,6 +160,31 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
     } catch (e) {
       // Best-effort cleanup of the local pending-shares cache — the shares
       // that were actually delivered are unaffected either way.
+    }
+    onStepChange('complete');
+  };
+
+  /// Leave setup without recovery configured.
+  ///
+  /// The gate above exists for a good reason — a vault with no recovery is one
+  /// forgotten password away from being gone, and nobody, VELA included, can
+  /// get it back. But refusing to let anyone past it is its own failure: it
+  /// strands people who have not yet got a security key to hand, or who are
+  /// setting up on a machine where the only rclone remote belongs to another
+  /// account, and the honest ones among them then hunt for a workaround.
+  ///
+  /// So this defers rather than dismisses. It costs a second, deliberate click
+  /// on a button that says what is being given up, and the banner in the main
+  /// window stays until recovery is actually configured, which is the part that
+  /// keeps "later" from meaning "never".
+  const handleDeferRecoverySetup = async () => {
+    try {
+      // Drop the half-finished split rather than leaving shares cached: a
+      // partial setup that is never completed is not worth keeping on disk,
+      // and starting again later re-splits from scratch anyway.
+      await invoke('finalize_recovery_setup');
+    } catch (e) {
+      // Best-effort, same as the completed path.
     }
     onStepChange('complete');
   };
@@ -580,6 +606,46 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
           >
             Continue
           </button>
+
+          {completedSteps < 2 && (
+            <div className="mt-4">
+              {!confirmingDefer ? (
+                <button
+                  onClick={() => setConfirmingDefer(true)}
+                  className="w-full py-3 px-6 text-sm text-on-surface-variant hover:text-on-surface transition-colors underline decoration-outline-variant underline-offset-4"
+                >
+                  Set this up later
+                </button>
+              ) : (
+                <div className="p-4 rounded-xl bg-error-container/20 border border-error/30">
+                  <div className="text-sm text-on-surface mb-1 font-medium">
+                    Without recovery, a forgotten master password means the vault
+                    is gone.
+                  </div>
+                  <div className="text-xs text-on-surface-variant mb-4">
+                    Not recoverable by support, by us, or by anyone — the whole
+                    design is that we cannot read it. You can finish this any
+                    time from Settings, and VELA will keep reminding you until
+                    you do.
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setConfirmingDefer(false)}
+                      className="flex-1 py-2.5 px-4 rounded-lg bg-surface-container-highest text-on-surface text-sm hover:opacity-90 transition-opacity"
+                    >
+                      Go back
+                    </button>
+                    <button
+                      onClick={handleDeferRecoverySetup}
+                      className="flex-1 py-2.5 px-4 rounded-lg border border-error/50 text-error text-sm hover:bg-error-container/30 transition-colors"
+                    >
+                      Continue without recovery
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </main>
     );

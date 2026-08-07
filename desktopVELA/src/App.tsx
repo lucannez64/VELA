@@ -7,6 +7,7 @@ import TitleBar from './components/TitleBar';
 import Sidebar from './components/Sidebar';
 import WelcomeScreen from './views/WelcomeScreen';
 import SetupScreen from './views/SetupScreen';
+import RecoveryReminder from './components/RecoveryReminder';
 import BiometricGate from './views/BiometricGate';
 import VaultBrowser from './views/VaultBrowser';
 import ItemDetail from './views/ItemDetail';
@@ -329,6 +330,13 @@ function AppContent() {
   return (
     <div className="h-screen flex flex-col bg-surface">
       <TitleBar />
+      {/*
+        Above the whole app, not tucked inside a view: setup can now be left
+        without recovery configured, and this is what keeps that a deferral
+        rather than a silent omission. It removes itself once two methods are
+        set up.
+      */}
+      <RecoveryReminder onOpenSettings={() => setCurrentView('settings')} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar 
           onAddItem={() => setShowAddModal(true)} 
