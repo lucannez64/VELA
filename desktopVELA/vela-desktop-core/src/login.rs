@@ -223,6 +223,10 @@ pub struct LoginOutcome {
     /// encouraging.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub awaiting_second_factor: Option<String>,
+    /// True when the site wanted a stronger factor and this item's opt-in let
+    /// VELA answer with a TOTP code instead. Surfaced rather than hidden: the
+    /// user turned this on once, and should still be told each time it is used.
+    pub second_factor_downgraded: bool,
 }
 
 impl LoginOutcome {
@@ -340,7 +344,7 @@ pub async fn perform_login(
     // Everything that touches the vault happens here, in one short block, and
     // nothing borrowed from it survives into the awaits below — an RwLock guard
     // held across an await is a deadlock waiting for a slow site.
-    let (username, password, totp_secret, item_url, site_mode) = {
+    let (username, password, totp_secret, item_url, site_mode, allow_downgrade) = {
         {
             let session = state.session.read();
             if !session.active || session.is_expired() {
@@ -349,7 +353,12 @@ pub async fn perform_login(
         }
         let vault = state.vault.read();
         let item = vault.get_item(&request.item_id).ok_or(LoginError::NoSuchItem)?;
-        let VaultItem::Login { totp, .. } = item else {
+        let VaultItem::Login {
+            totp,
+            allow_second_factor_downgrade,
+            ..
+        } = item
+        else {
             return Err(LoginError::NotALogin);
         };
         (
@@ -358,6 +367,7 @@ pub async fn perform_login(
             totp.clone().map(Zeroizing::new),
             item.url().unwrap_or_default().to_string(),
             SiteMode::from_item(item),
+            *allow_second_factor_downgrade,
         )
     };
 
@@ -421,6 +431,40 @@ pub async fn perform_login(
     //    The linear resource authorises one *login*, which is what the model's
     //    `LoginGrant` means; it was never one HTTP request.
     let mut used_second_factor = false;
+    let mut downgraded = false;
+
+    // 4a. The site may be holding a factor no vault can produce — a security
+    //     key, typically — while also offering "use your authenticator app
+    //     instead". Taking that offer completes the login by deliberately
+    //     using the *weaker* of the two factors the site presented, which is
+    //     a security decision belonging to the account owner and nobody else.
+    //     Hence opt-in per item, defaulting off: VELA does not quietly undo a
+    //     site's choice of a phishing-resistant factor.
+    if allow_downgrade
+        && totp_secret.is_some()
+        && discover_second_factor_form(&response.body, &response.url).is_none()
+        && unanswered_second_factor(&response.url, &response.body).is_some()
+    {
+        if let Some(link) = find_totp_alternative_link(&response.body, &response.url) {
+            if same_site(&target, &link) {
+                let alternative = fetch(&client, &jar, Method::Get, &link, None).await?;
+                jar.absorb(&alternative.set_cookie, &link);
+                let alternative =
+                    follow_redirects(&client, &mut jar, &target, alternative).await?;
+                // Only switch if the alternative really is a code prompt;
+                // otherwise stay where we were and report the gate honestly.
+                if discover_second_factor_form(&alternative.body, &alternative.url).is_some() {
+                    warn!(
+                        "In-core login to {} used the weaker second factor this item opts into",
+                        site_key(&target)
+                    );
+                    response = alternative;
+                    downgraded = true;
+                }
+            }
+        }
+    }
+
     if let Some(second) = discover_second_factor_form(&response.body, &response.url) {
         let Some(secret) = totp_secret.as_deref() else {
             return Err(LoginError::TwoFactorRequired);
@@ -475,7 +519,51 @@ pub async fn perform_login(
         user_verified: grant.verified,
         used_second_factor,
         awaiting_second_factor: awaiting,
+        second_factor_downgraded: downgraded,
     })
+}
+
+/// A link offering a code-based alternative to the factor the site is demanding.
+///
+/// Only ever followed when the item opted in. Matched on both the link target
+/// and its text, because sites split the signal between them — GitHub puts the
+/// method in the path (`/sessions/two-factor/app`) and the meaning in the words
+/// ("Use your authenticator app").
+fn find_totp_alternative_link(html: &str, base: &Url) -> Option<Url> {
+    use scraper::{Html, Selector};
+
+    let document = Html::parse_document(html);
+    let selector = Selector::parse("a[href]").expect("static selector");
+
+    for anchor in document.select(&selector) {
+        let href = anchor.value().attr("href")?.trim();
+        if href.is_empty() || href.starts_with('#') {
+            continue;
+        }
+        let text = anchor.text().collect::<String>().to_lowercase();
+        let haystack = format!("{} {}", href.to_lowercase(), text);
+
+        let offers_a_code = [
+            "two-factor/app",
+            "two_factor/app",
+            "authenticator app",
+            "authenticator",
+            "/totp",
+            "totp",
+            "authentication code",
+            "verification code",
+            "use a code",
+            "enter a code",
+        ]
+        .iter()
+        .any(|marker| haystack.contains(marker));
+        // "recovery code" is a different thing entirely — a one-shot backup the
+        // vault does not hold and must not spend.
+        if offers_a_code && !haystack.contains("recovery") && !haystack.contains("backup") {
+            return base.join(href).ok();
+        }
+    }
+    None
 }
 
 /// Is the site still holding a gate we did not open?

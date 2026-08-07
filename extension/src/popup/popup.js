@@ -316,7 +316,11 @@ async function startInCoreLogin(button) {
         `Password accepted. Finish with ${response.awaitingSecondFactor}.`
       );
     } else if (response.looksAuthenticated) {
-      showNotification(response.residualNote || "Signed in.");
+      showNotification(
+        response.secondFactorDowngraded
+          ? "Signed in using your authenticator code instead of the security key this site asked for."
+          : response.residualNote || "Signed in."
+      );
     } else {
       showNotification("VELA sent the sign-in, but the site did not clearly accept it.");
     }

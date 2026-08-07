@@ -74,6 +74,12 @@ pub enum VaultItem {
         /// the user's devices on the next write (audit A-2).
         #[serde(default, alias = "credentialChangeNeedsReauth")]
         credential_change_needs_reauth: bool,
+        /// May a second-factor prompt be answered with this item's TOTP code
+        /// when the site asked for something stronger (a security key)? Set on
+        /// desktop by in-core login; carried here so a client that does not
+        /// know the field does not delete it for every device (audit A-2).
+        #[serde(default, alias = "allowSecondFactorDowngrade")]
+        allow_second_factor_downgrade: bool,
     },
     CreditCard {
         #[serde(flatten)]
@@ -598,6 +604,7 @@ mod tests {
             totp: None,
             app_ids: Vec::new(),
             credential_change_needs_reauth: false,
+            allow_second_factor_downgrade: false,
         }
     }
 
@@ -625,6 +632,7 @@ mod tests {
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
                 credential_change_needs_reauth: false,
+                allow_second_factor_downgrade: false,
             },
             VaultItem::CreditCard {
                 meta: meta("2"),

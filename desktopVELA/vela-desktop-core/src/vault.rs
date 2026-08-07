@@ -75,6 +75,17 @@ pub enum VaultItem {
         /// rather than assumed to be. See [`crate::login::SiteMode`].
         #[serde(default, alias = "credentialChangeNeedsReauth")]
         credential_change_needs_reauth: bool,
+        /// May VELA answer a second-factor prompt with this item's TOTP code
+        /// when the site asked for something stronger?
+        ///
+        /// A site that demands a security key has chosen a phishing-resistant
+        /// factor. Where it also offers "use your authenticator app instead",
+        /// taking that route completes the login — by deliberately using the
+        /// weaker of the two factors the site offered. That is a real security
+        /// decision and it is the account owner's to make, so it is off unless
+        /// they turn it on, per item. See `crate::login::perform_login`.
+        #[serde(default, alias = "allowSecondFactorDowngrade")]
+        allow_second_factor_downgrade: bool,
     },
     CreditCard {
         #[serde(flatten)]
@@ -867,6 +878,7 @@ mod tests {
             totp: None,
             app_ids: Vec::new(),
             credential_change_needs_reauth: false,
+            allow_second_factor_downgrade: false,
         }
     }
 
@@ -908,6 +920,7 @@ mod tests {
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
                 credential_change_needs_reauth: false,
+                allow_second_factor_downgrade: false,
             },
             VaultItem::CreditCard {
                 meta: meta("2", "Bank"),
@@ -1076,6 +1089,7 @@ mod tests {
             totp: None,
             app_ids: Vec::new(),
             credential_change_needs_reauth: false,
+            allow_second_factor_downgrade: false,
         });
 
         assert_eq!(vault.search("GIT").len(), 2);

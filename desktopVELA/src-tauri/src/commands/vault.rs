@@ -617,6 +617,7 @@ pub async fn import_vault_bitwarden_json(
                 totp: entry.otp,
                 app_ids: Vec::new(),
                 credential_change_needs_reauth: false,
+                allow_second_factor_downgrade: false,
             };
 
             vault.add_item(item);

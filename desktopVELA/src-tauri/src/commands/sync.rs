@@ -1079,6 +1079,7 @@ mod tests {
             totp: None,
             app_ids: Vec::new(),
             credential_change_needs_reauth: false,
+            allow_second_factor_downgrade: false,
         }
     }
 

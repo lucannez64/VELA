@@ -558,7 +558,8 @@ async function handleInCoreLogin(data, sendResponse) {
       siteMode: response.siteMode,
       residualNote: response.residualNote,
       usedSecondFactor: Boolean(response.usedSecondFactor),
-      awaitingSecondFactor: response.awaitingSecondFactor || null
+      awaitingSecondFactor: response.awaitingSecondFactor || null,
+      secondFactorDowngraded: Boolean(response.secondFactorDowngraded)
     });
   } catch (error) {
     sendResponse({ success: false, error: error.message });

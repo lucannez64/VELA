@@ -41,6 +41,7 @@ fn login_item(id: &str, url: &str, hardened: bool) -> VaultItem {
         totp: None,
         app_ids: Vec::new(),
         credential_change_needs_reauth: hardened,
+        allow_second_factor_downgrade: false,
     }
 }
 
@@ -854,6 +855,172 @@ async fn answering_the_code_is_not_undone_by_the_url_it_lands_on() {
     assert!(outcome.looks_authenticated);
 }
 
+// ── The factor downgrade, which is opt-in ─────────────────────────────────────
+
+/// GitHub's shape: a security-key page that also offers the authenticator app.
+async fn security_key_site_offering_totp() -> (MockServer, tempfile::TempDir) {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(login_page("/session")))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .append_header("location", "/sessions/two-factor/webauthn")
+                .append_header("set-cookie", "_gh_sess=partial; Path=/; HttpOnly"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/sessions/two-factor/webauthn"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body><h1>Use your security key</h1>
+               <a href="/sessions/two-factor/app">Use your authenticator app</a>
+               <a href="/sessions/two-factor/recovery">Use a recovery code</a>
+               </body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/sessions/two-factor/app"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(two_factor_page()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/sessions/two-factor"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "sid=full-session; Path=/; HttpOnly")
+                .set_body_string("<html><body>Welcome, Ada</body></html>"),
+        )
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    (server, dir)
+}
+
+fn downgrade_item(id: &str, url: &str, opted_in: bool) -> VaultItem {
+    let mut item = login_item_with_totp(id, url);
+    if let VaultItem::Login {
+        allow_second_factor_downgrade,
+        ..
+    } = &mut item
+    {
+        *allow_second_factor_downgrade = opted_in;
+    }
+    item
+}
+
+/// The default. A site that chose a phishing-resistant factor keeps it, even
+/// though the vault holds a code that would have got us in.
+#[tokio::test]
+async fn a_stronger_factor_is_not_downgraded_without_the_opt_in() {
+    let (server, dir) = security_key_site_offering_totp().await;
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state
+        .vault
+        .write()
+        .add_item(downgrade_item("i1", &login_url, false));
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap();
+
+    assert!(!outcome.second_factor_downgraded);
+    assert!(!outcome.used_second_factor);
+    assert!(!outcome.looks_authenticated);
+    assert_eq!(
+        outcome.awaiting_second_factor.as_deref(),
+        Some("a security key or passkey")
+    );
+    // The weaker route was visible and deliberately not taken.
+    let asked: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.url.path().to_string())
+        .collect();
+    assert!(
+        !asked.iter().any(|p| p.contains("two-factor/app")),
+        "the authenticator route was taken without the opt-in: {asked:?}"
+    );
+}
+
+/// With the opt-in, the same site completes — and the outcome says so, because
+/// turning the setting on once is not the same as being told each time.
+#[tokio::test]
+async fn the_opt_in_completes_the_login_and_reports_the_downgrade() {
+    let (server, dir) = security_key_site_offering_totp().await;
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state
+        .vault
+        .write()
+        .add_item(downgrade_item("i1", &login_url, true));
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap();
+
+    assert!(outcome.second_factor_downgraded);
+    assert!(outcome.used_second_factor);
+    assert!(outcome.looks_authenticated);
+    assert_eq!(outcome.awaiting_second_factor, None);
+    assert!(outcome.cookies.iter().any(|c| c.name == "sid"));
+}
+
+/// A recovery code is a one-shot backup the vault does not hold and must never
+/// spend. It sits next to the authenticator link on the same page, so the
+/// distinction has to be made in the matching rather than by ordering luck.
+#[test]
+fn a_recovery_code_link_is_never_taken_for_an_authenticator_one() {
+    let base = Url::parse("https://github.com/sessions/two-factor/webauthn").unwrap();
+
+    // Wording that trips the code-shaped markers ("enter a code",
+    // "verification code") and must still be rejected, because it is a
+    // recovery route. Anything blander never reaches the exclusion at all and
+    // so would not test it — the first version of this test made exactly that
+    // mistake and passed with the exclusion deleted.
+    let recovery_first = r#"<html>
+      <a href="/sessions/two-factor/recovery">Enter a code from your recovery codes</a>
+      <a href="/sessions/two-factor/app">Use your authenticator app</a>
+    </html>"#;
+    let link = find_totp_alternative_link(recovery_first, &base).expect("a link");
+    assert_eq!(
+        link.path(),
+        "/sessions/two-factor/app",
+        "a recovery route was taken in preference to the authenticator one"
+    );
+
+    let only_recovery = r#"<html>
+      <a href="/sessions/two-factor/recovery">Enter a verification code from your recovery sheet</a>
+      <a href="/settings/backup">Use a backup authentication code</a>
+    </html>"#;
+    assert!(
+        find_totp_alternative_link(only_recovery, &base).is_none(),
+        "a recovery code would have been spent; the vault does not hold one"
+    );
+}
+
 // ── When the site will not talk to us ─────────────────────────────────────────
 
 /// A bot check is not a JavaScript login, and the error has to say which.
@@ -1271,6 +1438,7 @@ async fn real_site_login() {
         totp,
         app_ids: Vec::new(),
         credential_change_needs_reauth: false,
+        allow_second_factor_downgrade: false,
     });
 
     let parsed = normalize_url(&url).expect("VELA_LOGIN_URL should be a URL");

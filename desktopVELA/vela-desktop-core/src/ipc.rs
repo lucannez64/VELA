@@ -937,6 +937,7 @@ pub mod server {
             totp: None,
             app_ids: Vec::new(),
             credential_change_needs_reauth: false,
+            allow_second_factor_downgrade: false,
         };
 
         {
@@ -1768,6 +1769,7 @@ pub mod server {
                     totp: None,
                     app_ids: Vec::new(),
                     credential_change_needs_reauth: false,
+                    allow_second_factor_downgrade: false,
                 });
             }
             let host: Arc<dyn Host> = mock.clone();
@@ -1904,6 +1906,7 @@ pub mod server {
                 totp: None,
                 app_ids: Vec::new(),
                 credential_change_needs_reauth: false,
+                allow_second_factor_downgrade: false,
             };
             mock.state.vault.write().add_item(item);
             (server, "login-1".to_string())
@@ -2082,6 +2085,7 @@ pub mod server {
                     "landing_url",
                     "looks_authenticated",
                     "residual_note",
+                    "second_factor_downgraded",
                     "site_mode",
                     "success",
                     "used_second_factor",

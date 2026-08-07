@@ -467,6 +467,7 @@ pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<
                 totp: entry.otp,
                 app_ids: Vec::new(),
                 credential_change_needs_reauth: false,
+                allow_second_factor_downgrade: false,
             };
 
             vault.add_item(item);
@@ -516,6 +517,7 @@ mod tests {
             totp: None,
             app_ids: Vec::new(),
             credential_change_needs_reauth: false,
+            allow_second_factor_downgrade: false,
         }
     }
 

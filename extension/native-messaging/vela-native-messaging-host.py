@@ -526,6 +526,10 @@ def handle_in_core_login(message):
         # was not completed. Passing it through is what stops the popup
         # reporting a half-finished sign-in as a finished one.
         "awaitingSecondFactor": payload.get("awaiting_second_factor"),
+        # The site wanted a stronger factor and the item's opt-in let a TOTP
+        # code stand in. The user turned that on once; they are still told
+        # every time it is used.
+        "secondFactorDowngraded": bool(payload.get("second_factor_downgraded")),
     }
 
 
