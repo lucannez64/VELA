@@ -128,6 +128,13 @@ pub struct VaultBrowser {
     add_item_modal: Option<gpui::Entity<AddItemModal>>,
     _add_item_subscription: Option<gpui::Subscription>,
     list_state: ListState,
+    // Signature of the last filtered row set. The list only resets its cached
+    // layout/scroll when the row *count* changes; a same-count dataset swap
+    // (e.g. a search whose result count stays the same) would otherwise keep
+    // the old scroll position and cached heights, landing the filtered list
+    // mid-result and showing rows that don't match the query — the same class
+    // of stale-virtualized-layout bug fixed in `VaultBrowser.tsx`.
+    last_rows_signature: Vec<SharedString>,
     favicon_cache: FaviconCache,
 }
 
@@ -157,6 +164,7 @@ impl VaultBrowser {
             add_item_modal: None,
             _add_item_subscription: None,
             list_state: ListState::new(0, ListAlignment::Top, px(400.)),
+            last_rows_signature: Vec::new(),
             favicon_cache: favicon_ui::new_cache(),
         }
     }
@@ -289,12 +297,23 @@ impl Render for VaultBrowser {
         let palette = crate::theme::current_palette(cx);
         let filtered = self.filtered_items(cx);
         let rows = build_rows(&filtered);
-        // Only reset (which invalidates cached measurements/scroll position)
-        // when the row count actually changed — row *heights* never change
-        // for a given row kind, so a same-length content change (e.g. one
-        // search result swapped for another of the same total count) is
-        // still measured correctly without a reset.
-        if rows.len() != self.list_state.item_count() {
+        // Reset the list (which invalidates cached measurements and drops the
+        // scroll position) whenever the filtered dataset actually changed —
+        // not just when the row count changed. A same-count content swap, or
+        // a search whose result count happens to equal the previous one, must
+        // still land at the top of the fresh results instead of reusing the
+        // old scroll position. Row *heights* never change for a given row
+        // kind, so an identical signature (pure re-render, e.g. hover
+        // animation frames) is measured correctly without a reset.
+        let signature: Vec<SharedString> = rows
+            .iter()
+            .map(|row| match row {
+                Row::Header(letter) => SharedString::from(format!("h:{letter}")),
+                Row::Item(item) => SharedString::from(format!("i:{}", item.id())),
+            })
+            .collect();
+        if signature != self.last_rows_signature {
+            self.last_rows_signature = signature;
             self.list_state.reset(rows.len());
         }
         // `list`'s per-row render callback only gets `&mut App`, not
