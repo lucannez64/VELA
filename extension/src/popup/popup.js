@@ -306,15 +306,21 @@ async function startInCoreLogin(button) {
       return;
     }
 
-    // Say what the session is worth before closing, not after. `residualNote`
-    // is the desktop's per-site answer; if it says a session can change the
-    // password, that is the thing worth reading.
-    showNotification(
-      response.looksAuthenticated
-        ? response.residualNote || "Signed in."
-        : "VELA sent the sign-in, but the site did not clearly accept it."
-    );
-    setTimeout(() => window.close(), 2600);
+    // Three outcomes, and they must not be blurred together. The site can
+    // still be holding a gate no vault can open — a security key, a push —
+    // in which case the password was accepted, the tab has been taken to the
+    // challenge, and the user finishes by hand. Calling that "signed in" is
+    // the bug the first real GitHub run exposed.
+    if (response.awaitingSecondFactor) {
+      showNotification(
+        `Password accepted. Finish with ${response.awaitingSecondFactor}.`
+      );
+    } else if (response.looksAuthenticated) {
+      showNotification(response.residualNote || "Signed in.");
+    } else {
+      showNotification("VELA sent the sign-in, but the site did not clearly accept it.");
+    }
+    setTimeout(() => window.close(), 3200);
   } catch (e) {
     showNotification(e.message || "Sign-in failed");
     button.disabled = false;

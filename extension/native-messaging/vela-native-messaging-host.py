@@ -521,6 +521,11 @@ def handle_in_core_login(message):
         "residualNote": payload.get("residual_note", ""),
         "userVerified": bool(payload.get("user_verified")),
         "usedSecondFactor": bool(payload.get("used_second_factor")),
+        # Set when the site still wants something a vault cannot produce — a
+        # security key, a push, an SMS. The password was accepted; the login
+        # was not completed. Passing it through is what stops the popup
+        # reporting a half-finished sign-in as a finished one.
+        "awaitingSecondFactor": payload.get("awaiting_second_factor"),
     }
 
 

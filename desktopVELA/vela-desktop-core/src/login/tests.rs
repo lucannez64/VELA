@@ -757,6 +757,103 @@ async fn one_grant_covers_both_steps_of_a_two_step_login() {
     );
 }
 
+/// The regression from the first real GitHub login.
+///
+/// GitHub accepted the password, issued `_gh_sess` and friends, and parked us
+/// on `/sessions/two-factor/webauthn` because that account prefers a security
+/// key. Both "is the site still asking?" signals missed — a WebAuthn page has
+/// no password field and no code field — so the outcome said
+/// `looks_authenticated = true` while no session existed. A partial session
+/// reported as a login is worse than a failure: the browser would have
+/// installed it, navigated, and told the user they were signed in.
+#[tokio::test]
+async fn a_security_key_gate_is_not_reported_as_a_successful_login() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(login_page("/session")))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .append_header("location", "/sessions/two-factor/webauthn")
+                // The real cookies GitHub issued at this stage.
+                .append_header("set-cookie", "_gh_sess=partial; Path=/; HttpOnly; Secure")
+                .append_header("set-cookie", "logged_in=no; Path=/; HttpOnly; Secure"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/sessions/two-factor/webauthn"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            // No password field, no code field — which is why the old
+            // heuristics saw nothing to object to.
+            r#"<html><body><h1>Use your security key</h1>
+               <p>Insert your security key and tap it.</p>
+               <div data-webauthn-support="supported"></div>
+               </body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state
+        .vault
+        .write()
+        .add_item(login_item_with_totp("i1", &login_url));
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("the request itself succeeded");
+
+    assert!(
+        !outcome.looks_authenticated,
+        "a security-key gate was reported as a completed login"
+    );
+    assert_eq!(
+        outcome.awaiting_second_factor.as_deref(),
+        Some("a security key or passkey")
+    );
+    assert!(!outcome.used_second_factor);
+    // The partial session is still handed back — it is what lets the user
+    // finish in the browser — but it is not called a login.
+    assert!(outcome.cookies.iter().any(|c| c.name == "_gh_sess"));
+}
+
+/// The mirror image, and the reason detection is by markup rather than URL: a
+/// site that accepts the code very often serves the next page from a path that
+/// still says `two-factor`. Keying on the URL would report failure on success.
+#[tokio::test]
+async fn answering_the_code_is_not_undone_by_the_url_it_lands_on() {
+    let (server, _dir, state) = two_factor_site(true).await;
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap();
+
+    assert!(outcome.landing_url.contains("two-factor"), "{}", outcome.landing_url);
+    assert_eq!(outcome.awaiting_second_factor, None);
+    assert!(outcome.looks_authenticated);
+}
+
 // ── When the site will not talk to us ─────────────────────────────────────────
 
 /// A bot check is not a JavaScript login, and the error has to say which.

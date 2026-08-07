@@ -210,6 +210,19 @@ pub struct LoginOutcome {
     pub user_verified: bool,
     /// Whether the site asked for a second factor and the vault answered it.
     pub used_second_factor: bool,
+    /// Set when the site is still holding a gate the vault could not open —
+    /// a security key, a push, an SMS. Describes what it wants, for the user.
+    ///
+    /// This exists because the first real GitHub login reported success while
+    /// sitting on `/sessions/two-factor/webauthn`: the password had been
+    /// accepted, cookies had been issued, and neither of the two "is the site
+    /// still asking?" signals fired, because a security-key page has no
+    /// password field and no code field. A partial session that says "signed
+    /// in" is worse than a failure, so when this is set
+    /// [`Self::looks_authenticated`] is false regardless of what else looked
+    /// encouraging.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub awaiting_second_factor: Option<String>,
 }
 
 impl LoginOutcome {
@@ -221,8 +234,13 @@ impl LoginOutcome {
     /// which is what a rejected password almost always looks like. Reported as
     /// a hint so the caller can say "check the page" instead of asserting
     /// something it does not know.
-    fn infer(set_a_cookie: bool, final_page_has_password_field: bool, final_status: u16) -> bool {
-        set_a_cookie && !final_page_has_password_field && final_status < 400
+    fn infer(
+        set_a_cookie: bool,
+        site_still_asking: bool,
+        final_status: u16,
+        awaiting: Option<&str>,
+    ) -> bool {
+        set_a_cookie && !site_still_asking && final_status < 400 && awaiting.is_none()
     }
 }
 
@@ -429,21 +447,78 @@ pub async fn perform_login(
     // the same way a returned login form does: the site is still asking.
     let still_asking = html_has_password_field(&response.body)
         || discover_second_factor_form(&response.body, &response.url).is_some();
+    let awaiting = unanswered_second_factor(&response.url, &response.body);
     let cookies = jar.into_cookies();
 
     if cookies.is_empty() {
         warn!("In-core login to {} produced no cookies", site_key(&target));
     }
+    if let Some(what) = &awaiting {
+        warn!(
+            "In-core login to {} stopped at a gate needing {}",
+            site_key(&target),
+            what
+        );
+    }
 
     Ok(LoginOutcome {
         landing_url,
         cookies,
-        looks_authenticated: LoginOutcome::infer(cookies_from_login, still_asking, response.status),
+        looks_authenticated: LoginOutcome::infer(
+            cookies_from_login,
+            still_asking,
+            response.status,
+            awaiting.as_deref(),
+        ),
         site_mode,
         residual_note: site_mode.residual_note().to_string(),
         user_verified: grant.verified,
         used_second_factor,
+        awaiting_second_factor: awaiting,
     })
+}
+
+/// Is the site still holding a gate we did not open?
+///
+/// Detection is by *markup*, not by URL, and that is deliberate. The obvious
+/// implementation — look for `two-factor` in the path — reports failure after a
+/// successful TOTP login, because the page a site serves when the code is
+/// accepted is very often still under `/sessions/two-factor`. The URL only gets
+/// a vote when the page also shows a form we did not submit.
+///
+/// Heuristic, and it will not name every gate. What it must not do is the thing
+/// the old code did: let a page we cannot satisfy pass for a signed-in one.
+fn unanswered_second_factor(url: &Url, html: &str) -> Option<String> {
+    let lowered = html.to_lowercase();
+
+    // A security key or passkey. Nothing in a vault can answer this — the whole
+    // point of the factor is that it is bound to hardware.
+    if ["webauthn", "security key", "publickey-credentials", "u2f", "passkey"]
+        .iter()
+        .any(|marker| lowered.contains(marker))
+    {
+        return Some("a security key or passkey".to_string());
+    }
+    if lowered.contains("push notification") || lowered.contains("approve the sign-in") {
+        return Some("an approval in another app".to_string());
+    }
+    // An SMS or e-mailed code is a code, but not one the vault holds.
+    if (lowered.contains("sent you a code") || lowered.contains("text message"))
+        && discover_second_factor_form(html, url).is_none()
+    {
+        return Some("a code sent to you by the site".to_string());
+    }
+
+    // Last resort: the URL says we are mid-challenge and the page is still
+    // showing a form. On its own the URL means nothing, hence the conjunction.
+    let path = url.path().to_lowercase();
+    let gated = ["two-factor", "two_factor", "２fa", "/2fa", "/mfa", "challenge", "verify"]
+        .iter()
+        .any(|marker| path.contains(marker));
+    if gated && lowered.contains("<form") {
+        return Some("another sign-in step".to_string());
+    }
+    None
 }
 
 /// Follow a redirect chain, staying on the site.

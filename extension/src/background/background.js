@@ -557,7 +557,8 @@ async function handleInCoreLogin(data, sendResponse) {
       looksAuthenticated: Boolean(response.looksAuthenticated),
       siteMode: response.siteMode,
       residualNote: response.residualNote,
-      usedSecondFactor: Boolean(response.usedSecondFactor)
+      usedSecondFactor: Boolean(response.usedSecondFactor),
+      awaitingSecondFactor: response.awaitingSecondFactor || null
     });
   } catch (error) {
     sendResponse({ success: false, error: error.message });
