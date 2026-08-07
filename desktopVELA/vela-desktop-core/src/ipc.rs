@@ -2049,6 +2049,60 @@ pub mod server {
             assert_eq!(mock.presence_prompts(), 0, "listing must not prompt");
         }
 
+        /// The payload keys are a contract too, and a quieter one than the
+        /// message names: `vela-native-messaging-host.py` reads these strings
+        /// out of the reply, and a rename here produces a login that "succeeds"
+        /// with no cookies rather than an error anyone would notice. Pinning
+        /// the exact key set means a field added, removed or renamed in
+        /// `LoginOutcome` fails here, pointing at the Python that has to change
+        /// with it. Also the last line of defence on secrecy: a key set that
+        /// cannot grow without this failing cannot grow a password field.
+        #[tokio::test]
+        async fn the_login_response_payload_keys_are_the_ones_the_native_host_reads() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            let (_server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            let mut keys: Vec<&str> = resp
+                .payload
+                .as_object()
+                .expect("the payload is an object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys,
+                [
+                    "cookies",
+                    "landing_url",
+                    "looks_authenticated",
+                    "residual_note",
+                    "site_mode",
+                    "success",
+                    "user_verified",
+                ]
+            );
+
+            let mut cookie_keys: Vec<&str> = resp.payload["cookies"][0]
+                .as_object()
+                .expect("a cookie is an object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            cookie_keys.sort_unstable();
+            // `same_site` and `expires_at` are skipped when absent, which this
+            // site's cookie exercises: it sets neither.
+            assert_eq!(
+                cookie_keys,
+                ["domain", "host_only", "http_only", "name", "path", "secure", "value"]
+            );
+        }
+
         /// Same contract as the passkey names: `vela-native-messaging-host.py`
         /// matches on these strings, so a silent rename breaks the feature.
         #[test]

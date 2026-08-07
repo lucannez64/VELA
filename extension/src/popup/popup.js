@@ -9,10 +9,12 @@ const settingsBtn = document.getElementById("settingsBtn");
 
 let currentTabUrl = null;
 let availableLogins = [];
+let inCoreLoginCandidates = [];
 
 async function init() {
   await checkDesktopConnection();
   await getCurrentTab();
+  await loadInCoreLoginCandidates();
   await loadLogins();
   setupEventListeners();
 }
@@ -100,8 +102,15 @@ async function loadLogins() {
   }
 }
 
+/// Shown when the desktop would not release a plaintext password.
+///
+/// The in-core login section is rendered here too, and this is the case it was
+/// built for: a machine that will not hand over the password can still sign the
+/// user in, because that path never needed the password released in the first
+/// place.
 function showApprovalRequiredState() {
   mainContent.innerHTML = `
+    ${renderInCoreLoginSection()}
     <div class="empty-state">
       <svg class="empty-state-icon" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 1a4 4 0 00-4 4v2H5a2 2 0 00-2 2v7a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a4 4 0 00-4-4zm2 6V5a2 2 0 10-4 0v2h4z" clip-rule="evenodd" />
@@ -129,6 +138,8 @@ function showApprovalRequiredState() {
       </button>
     </div>
   `;
+
+  wireInCoreLoginSection();
 
   const openBtn = mainContent.querySelector("#openDesktopBtn");
   if (openBtn) {
@@ -187,11 +198,14 @@ function renderLogins() {
   }).join("");
 
   mainContent.innerHTML = `
+    ${renderInCoreLoginSection()}
     <div class="section-title">Logins for this page</div>
     <ul class="login-list">
       ${loginsHtml}
     </ul>
   `;
+
+  wireInCoreLoginSection();
 
   const loginItems = mainContent.querySelectorAll(".login-item");
   loginItems.forEach((item) => {
@@ -203,6 +217,118 @@ function renderLogins() {
       }
     });
   });
+}
+
+// ── In-core login (M9a) ──────────────────────────────────────────────────────
+//
+// The button below does something different from "Auto-fill": the password is
+// never sent to the page. VELA Desktop signs in over its own connection and the
+// browser receives only the session cookies. What that is worth depends on the
+// site — a session expires and can be revoked where a password does neither,
+// but at a site that lets a session change the account password it is not much
+// weaker than the password itself. The desktop says which case applies and the
+// toast repeats it, because the user is the only one who can act on it.
+
+async function loadInCoreLoginCandidates() {
+  if (!currentTabUrl) {
+    return;
+  }
+  try {
+    const response = await sendMessage({ command: "inCoreLoginCandidates" });
+    inCoreLoginCandidates = response?.candidates || [];
+  } catch (e) {
+    inCoreLoginCandidates = [];
+  }
+}
+
+function renderInCoreLoginSection() {
+  if (inCoreLoginCandidates.length === 0) {
+    return "";
+  }
+
+  const buttons = inCoreLoginCandidates
+    .map((candidate) => {
+      const who = candidate.username || candidate.name || "this account";
+      return `
+        <button class="in-core-login-btn" data-item-id="${escapeHtml(candidate.item_id || "")}"
+                style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 12px;
+                       background:#2a2d2e;color:#e2e2e5;border:1px solid #444748;border-radius:10px;
+                       font-size:12px;cursor:pointer;">
+          Sign in as ${escapeHtml(who)} without filling the password
+        </button>`;
+    })
+    .join("");
+
+  return `
+    <div class="section-title">Sign in from VELA</div>
+    <div style="padding:0 12px 10px;">
+      ${buttons}
+      <div style="font-size:11px;opacity:0.7;line-height:1.4;">
+        VELA Desktop signs in over its own connection. The page receives a
+        session, never your password.
+      </div>
+    </div>
+  `;
+}
+
+function wireInCoreLoginSection() {
+  mainContent.querySelectorAll(".in-core-login-btn").forEach((button) => {
+    button.addEventListener("click", () => startInCoreLogin(button));
+  });
+}
+
+async function startInCoreLogin(button) {
+  const itemId = button.dataset.itemId;
+  if (!itemId) {
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Waiting for your approval in VELA Desktop…";
+
+  try {
+    // The cookie permission is optional and asked for here, on a click, for one
+    // origin: `permissions.request` needs a user gesture, and the popup is the
+    // only place in this flow that has one. Being able to write cookies for
+    // every site the user visits is not something the extension should hold
+    // just in case.
+    if (!(await ensureCookiePermission())) {
+      showNotification("VELA needs permission to set cookies for this site");
+      button.disabled = false;
+      button.textContent = "Sign in without filling the password";
+      return;
+    }
+
+    const response = await sendMessage({ command: "inCoreLogin", itemId });
+    if (!response?.success) {
+      showNotification(response?.error || "Sign-in failed");
+      button.disabled = false;
+      button.textContent = "Sign in without filling the password";
+      return;
+    }
+
+    // Say what the session is worth before closing, not after. `residualNote`
+    // is the desktop's per-site answer; if it says a session can change the
+    // password, that is the thing worth reading.
+    showNotification(
+      response.looksAuthenticated
+        ? response.residualNote || "Signed in."
+        : "VELA sent the sign-in, but the site did not clearly accept it."
+    );
+    setTimeout(() => window.close(), 2600);
+  } catch (e) {
+    showNotification(e.message || "Sign-in failed");
+    button.disabled = false;
+    button.textContent = "Sign in without filling the password";
+  }
+}
+
+async function ensureCookiePermission() {
+  const origin = new URL(currentTabUrl).origin + "/*";
+  const request = { permissions: ["cookies"], origins: [origin] };
+  if (await browser.permissions.contains(request)) {
+    return true;
+  }
+  return browser.permissions.request(request);
 }
 
 function handleLoginAction(action, loginId) {
