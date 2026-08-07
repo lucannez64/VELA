@@ -73,8 +73,9 @@ pub enum VaultItem {
         /// to one the holder picked, and the takeover outlives eviction — so
         /// `false` is the default, because a site has to be shown to be careful
         /// rather than assumed to be. See [`crate::login::SiteMode`].
-        #[serde(default, alias = "credentialChangeNeedsReauth")]
-        credential_change_needs_reauth: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none",
+                alias = "credentialChangeNeedsReauth")]
+        credential_change_needs_reauth: Option<bool>,
         /// May VELA answer a second-factor prompt with this item's TOTP code
         /// when the site asked for something stronger?
         ///
@@ -84,8 +85,9 @@ pub enum VaultItem {
         /// weaker of the two factors the site offered. That is a real security
         /// decision and it is the account owner's to make, so it is off unless
         /// they turn it on, per item. See `crate::login::perform_login`.
-        #[serde(default, alias = "allowSecondFactorDowngrade")]
-        allow_second_factor_downgrade: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none",
+                alias = "allowSecondFactorDowngrade")]
+        allow_second_factor_downgrade: Option<bool>,
     },
     CreditCard {
         #[serde(flatten)]
@@ -443,7 +445,7 @@ impl VaultItem {
             VaultItem::Login {
                 credential_change_needs_reauth,
                 ..
-            } => *credential_change_needs_reauth,
+            } => credential_change_needs_reauth.unwrap_or(false),
             _ => false,
         }
     }
@@ -502,12 +504,36 @@ impl VaultItem {
     /// would quietly detach every phone app from it on the next sync.
     pub fn preserving_app_ids(mut self, existing: &VaultItem) -> Self {
         if let (
-            VaultItem::Login { app_ids, .. },
-            VaultItem::Login { app_ids: previous, .. },
+            VaultItem::Login {
+                app_ids,
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                ..
+            },
+            VaultItem::Login {
+                app_ids: previous_app_ids,
+                credential_change_needs_reauth: previous_reauth,
+                allow_second_factor_downgrade: previous_downgrade,
+                ..
+            },
         ) = (&mut self, existing)
         {
             if app_ids.is_empty() {
-                *app_ids = previous.clone();
+                *app_ids = previous_app_ids.clone();
+            }
+            // The M9a flags, for the same reason and with the same failure.
+            // They are `Option` precisely so that "the editor did not mention
+            // this" is a state distinct from "the user turned it off": a plain
+            // `bool` defaults to false on deserialise, and an edit form that
+            // has never heard of the field is indistinguishable from one where
+            // the user unticked it. Without this, changing a password would
+            // quietly clear the site's hardened annotation and re-arm a factor
+            // downgrade the owner had deliberately allowed.
+            if credential_change_needs_reauth.is_none() {
+                *credential_change_needs_reauth = *previous_reauth;
+            }
+            if allow_second_factor_downgrade.is_none() {
+                *allow_second_factor_downgrade = *previous_downgrade;
             }
         }
         self
@@ -877,8 +903,8 @@ mod tests {
             pass: pass.into(),
             totp: None,
             app_ids: Vec::new(),
-            credential_change_needs_reauth: false,
-            allow_second_factor_downgrade: false,
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         }
     }
 
@@ -919,8 +945,8 @@ mod tests {
                 pass: "hunter2-SECRET".into(),
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
-                credential_change_needs_reauth: false,
-                allow_second_factor_downgrade: false,
+                credential_change_needs_reauth: None,
+                allow_second_factor_downgrade: None,
             },
             VaultItem::CreditCard {
                 meta: meta("2", "Bank"),
@@ -1044,6 +1070,110 @@ mod tests {
         }
     }
 
+    /// The same failure as the app-links one, for the M9a flags.
+    ///
+    /// Found by asking why the flags had no UI, not by a test failing — which
+    /// is why it is written down. An edit form that has never heard of a field
+    /// sends the item without it; a `bool` would deserialise to `false` and the
+    /// user's decisions would be gone. Changing a password on a site would have
+    /// cleared its hardened annotation and re-armed a factor downgrade they had
+    /// deliberately allowed, with nothing on screen to say so.
+    #[test]
+    fn editing_a_login_here_keeps_the_second_factor_decisions() {
+        let mut configured = login("1", "GitHub", "https://github.com", "ada", "p");
+        if let VaultItem::Login {
+            credential_change_needs_reauth,
+            allow_second_factor_downgrade,
+            ..
+        } = &mut configured
+        {
+            *credential_change_needs_reauth = Some(true);
+            *allow_second_factor_downgrade = Some(true);
+        }
+
+        // What an edit form that predates these fields sends back.
+        let edited = login("1", "GitHub", "https://github.com", "ada", "p2")
+            .preserving_app_ids(&configured);
+
+        match &edited {
+            VaultItem::Login {
+                pass,
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                ..
+            } => {
+                assert_eq!(pass, "p2", "the actual edit still applies");
+                assert_eq!(*credential_change_needs_reauth, Some(true));
+                assert_eq!(*allow_second_factor_downgrade, Some(true));
+            }
+            _ => panic!("expected a login"),
+        }
+    }
+
+    /// And turning one off has to survive, which is the whole reason these are
+    /// `Option` rather than `bool`: `Some(false)` is a decision, `None` is
+    /// silence, and only silence inherits.
+    #[test]
+    fn turning_a_second_factor_flag_off_is_not_undone_by_the_old_value() {
+        let mut configured = login("1", "GitHub", "https://github.com", "ada", "p");
+        if let VaultItem::Login {
+            allow_second_factor_downgrade,
+            ..
+        } = &mut configured
+        {
+            *allow_second_factor_downgrade = Some(true);
+        }
+
+        let mut turned_off = login("1", "GitHub", "https://github.com", "ada", "p");
+        if let VaultItem::Login {
+            allow_second_factor_downgrade,
+            ..
+        } = &mut turned_off
+        {
+            *allow_second_factor_downgrade = Some(false);
+        }
+
+        match &turned_off.preserving_app_ids(&configured) {
+            VaultItem::Login {
+                allow_second_factor_downgrade,
+                ..
+            } => assert_eq!(
+                *allow_second_factor_downgrade,
+                Some(false),
+                "an explicit opt-out was overwritten by the previous opt-in"
+            ),
+            _ => panic!("expected a login"),
+        }
+    }
+
+    /// A vault written before these fields exist must load, and must not be
+    /// read as "the user turned both off".
+    #[test]
+    fn a_login_from_before_these_fields_reads_as_undecided() {
+        let json = r#"{
+            "item_type": "login", "id": "1", "name": "Old", "url": "https://x.example",
+            "username": "ada", "password": "p"
+        }"#;
+        let item: VaultItem = serde_json::from_str(json).expect("an older item should load");
+        match &item {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                ..
+            } => {
+                assert_eq!(*credential_change_needs_reauth, None);
+                assert_eq!(*allow_second_factor_downgrade, None);
+            }
+            _ => panic!("expected a login"),
+        }
+        // Undecided still behaves as the safe answer everywhere it is read.
+        assert!(!item.credential_change_needs_reauth());
+        // And round-trips without inventing a decision the user never made.
+        let back = serde_json::to_string(&item).unwrap();
+        assert!(!back.contains("credential_change_needs_reauth"), "{back}");
+        assert!(!back.contains("allow_second_factor_downgrade"), "{back}");
+    }
+
     #[test]
     fn app_links_sent_by_the_caller_win() {
         let mut previous = login("1", "Uber", "https://uber.com", "ada", "p");
@@ -1088,8 +1218,8 @@ mod tests {
             pass: "p".into(),
             totp: None,
             app_ids: Vec::new(),
-            credential_change_needs_reauth: false,
-            allow_second_factor_downgrade: false,
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         });
 
         assert_eq!(vault.search("GIT").len(), 2);

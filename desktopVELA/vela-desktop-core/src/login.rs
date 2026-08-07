@@ -367,7 +367,7 @@ pub async fn perform_login(
             totp.clone().map(Zeroizing::new),
             item.url().unwrap_or_default().to_string(),
             SiteMode::from_item(item),
-            *allow_second_factor_downgrade,
+            allow_second_factor_downgrade.unwrap_or(false),
         )
     };
 

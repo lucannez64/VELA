@@ -936,8 +936,8 @@ pub mod server {
             pass: password,
             totp: None,
             app_ids: Vec::new(),
-            credential_change_needs_reauth: false,
-            allow_second_factor_downgrade: false,
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         };
 
         {
@@ -1768,8 +1768,8 @@ pub mod server {
                     pass: "s3cret".into(),
                     totp: None,
                     app_ids: Vec::new(),
-                    credential_change_needs_reauth: false,
-                    allow_second_factor_downgrade: false,
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
                 });
             }
             let host: Arc<dyn Host> = mock.clone();
@@ -1905,8 +1905,8 @@ pub mod server {
                 pass: "hunter2-not-in-any-response".to_string(),
                 totp: None,
                 app_ids: Vec::new(),
-                credential_change_needs_reauth: false,
-                allow_second_factor_downgrade: false,
+                credential_change_needs_reauth: None,
+                allow_second_factor_downgrade: None,
             };
             mock.state.vault.write().add_item(item);
             (server, "login-1".to_string())

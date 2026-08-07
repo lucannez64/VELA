@@ -40,8 +40,8 @@ fn login_item(id: &str, url: &str, hardened: bool) -> VaultItem {
         pass: PASSWORD.to_string(),
         totp: None,
         app_ids: Vec::new(),
-        credential_change_needs_reauth: hardened,
-        allow_second_factor_downgrade: false,
+        credential_change_needs_reauth: Some(hardened),
+        allow_second_factor_downgrade: None,
     }
 }
 
@@ -909,7 +909,7 @@ fn downgrade_item(id: &str, url: &str, opted_in: bool) -> VaultItem {
         ..
     } = &mut item
     {
-        *allow_second_factor_downgrade = opted_in;
+        *allow_second_factor_downgrade = Some(opted_in);
     }
     item
 }
@@ -1441,8 +1441,8 @@ async fn real_site_login() {
         pass: password,
         totp,
         app_ids: Vec::new(),
-        credential_change_needs_reauth: false,
-        allow_second_factor_downgrade: allow_downgrade,
+        credential_change_needs_reauth: None,
+        allow_second_factor_downgrade: Some(allow_downgrade),
     });
 
     let parsed = normalize_url(&url).expect("VELA_LOGIN_URL should be a URL");

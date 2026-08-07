@@ -458,8 +458,8 @@ mod tests {
             pass: "hunter2pw".into(),
             totp: None,
             app_ids: Vec::new(),
-            credential_change_needs_reauth: false,
-            allow_second_factor_downgrade: false,
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         });
         vault
     }
