@@ -450,6 +450,18 @@ impl VaultItem {
         }
     }
 
+    /// Whether this item permits answering a stronger factor with its TOTP
+    /// code. Anything that is not a login answers `false`, the safe answer.
+    pub fn allow_second_factor_downgrade(&self) -> bool {
+        match self {
+            VaultItem::Login {
+                allow_second_factor_downgrade,
+                ..
+            } => allow_second_factor_downgrade.unwrap_or(false),
+            _ => false,
+        }
+    }
+
     pub fn display_value(&self) -> String {
         match self {
             VaultItem::Login { pass, .. } => pass.clone(),

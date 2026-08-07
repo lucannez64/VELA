@@ -249,12 +249,21 @@ function renderInCoreLoginSection() {
   const buttons = inCoreLoginCandidates
     .map((candidate) => {
       const who = candidate.username || candidate.name || "this account";
+      // Said before the click, not after. This item permits answering a
+      // security-key prompt with a TOTP code, and somebody about to press the
+      // button is the person who should know that.
+      const downgrades = candidate.allow_second_factor_downgrade
+        ? `<span style="display:block;margin-top:4px;font-size:11px;opacity:0.85;">
+             ⚠ May answer a security-key prompt with your authenticator code
+           </span>`
+        : "";
       return `
         <button class="in-core-login-btn" data-item-id="${escapeHtml(candidate.item_id || "")}"
                 style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 12px;
                        background:#2a2d2e;color:#e2e2e5;border:1px solid #444748;border-radius:10px;
                        font-size:12px;cursor:pointer;">
           Sign in as ${escapeHtml(who)} without filling the password
+          ${downgrades}
         </button>`;
     })
     .join("");

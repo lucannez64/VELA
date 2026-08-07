@@ -687,6 +687,10 @@ pub mod server {
                     "name": item.name(),
                     "username": item.username().unwrap_or_default(),
                     "credential_change_needs_reauth": item.credential_change_needs_reauth(),
+                    // So the caller can warn *before* the click. Being told
+                    // afterwards that a security key was bypassed is being told
+                    // too late to decide anything.
+                    "allow_second_factor_downgrade": item.allow_second_factor_downgrade(),
                 })
             })
             .collect();
