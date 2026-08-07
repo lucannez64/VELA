@@ -53,6 +53,13 @@
 //!    off the registrable domain, so SSO flows fail here instead of quietly
 //!    sending the user's password to a third party that may or may not be their
 //!    identity provider.
+//!  * **Second factors: TOTP only.** Where the site answers the password with a
+//!    code prompt, the item's saved authenticator secret answers it, inside the
+//!    same approval — see the note on that in [`perform_login`]. A site that
+//!    wants a security key, a push notification or an SMS cannot be satisfied
+//!    from a vault at all, and stops at [`LoginError::TwoFactorRequired`],
+//!    which says that the password was accepted so the user knows which half
+//!    worked.
 //!  * **Success is inferred.** The site does not tell us "that password was
 //!    right"; [`LoginOutcome::looks_authenticated`] is a heuristic over what
 //!    came back, and it is reported as one.
@@ -201,6 +208,8 @@ pub struct LoginOutcome {
     pub residual_note: String,
     /// Whether the human proved presence with a verification factor.
     pub user_verified: bool,
+    /// Whether the site asked for a second factor and the vault answered it.
+    pub used_second_factor: bool,
 }
 
 impl LoginOutcome {
@@ -229,6 +238,15 @@ pub enum LoginError {
     TargetMismatch { approved: String, requested: String },
     /// No password form on the page — a JavaScript login, most likely.
     NoLoginForm,
+    /// The site wants a second factor and this item has no TOTP secret saved.
+    ///
+    /// Worth its own variant rather than a generic failure: the user can fix it
+    /// (save the TOTP secret on the item) and the message should say so. It
+    /// also means the password *was* accepted, which is the one thing a bare
+    /// "login failed" would hide.
+    TwoFactorRequired,
+    /// A TOTP secret is saved but no code could be derived from it.
+    TwoFactorUnusable,
     /// The site would not serve us the login page at all.
     ///
     /// Distinct from [`Self::NoLoginForm`] on purpose, and the distinction was
@@ -259,6 +277,17 @@ impl std::fmt::Display for LoginError {
                 f,
                 "No password form found on that page. Sites that sign in with JavaScript \
                  are not supported by in-app login yet."
+            ),
+            Self::TwoFactorRequired => write!(
+                f,
+                "Your password was accepted, but this site then asked for a two-factor \
+                 code and this login has no authenticator secret saved. Add one to the \
+                 item, or finish signing in here in the browser."
+            ),
+            Self::TwoFactorUnusable => write!(
+                f,
+                "This login's saved authenticator secret could not produce a code. \
+                 Only time-based (TOTP) authenticator codes work here."
             ),
             Self::SiteRefused { status } => write!(
                 f,
@@ -293,7 +322,7 @@ pub async fn perform_login(
     // Everything that touches the vault happens here, in one short block, and
     // nothing borrowed from it survives into the awaits below — an RwLock guard
     // held across an await is a deadlock waiting for a slow site.
-    let (username, password, item_url, site_mode) = {
+    let (username, password, totp_secret, item_url, site_mode) = {
         {
             let session = state.session.read();
             if !session.active || session.is_expired() {
@@ -302,12 +331,13 @@ pub async fn perform_login(
         }
         let vault = state.vault.read();
         let item = vault.get_item(&request.item_id).ok_or(LoginError::NoSuchItem)?;
-        if !matches!(item, VaultItem::Login { .. }) {
+        let VaultItem::Login { totp, .. } = item else {
             return Err(LoginError::NotALogin);
-        }
+        };
         (
             item.username().unwrap_or_default().to_string(),
             Zeroizing::new(item.password().unwrap_or_default().to_string()),
+            totp.clone().map(Zeroizing::new),
             item.url().unwrap_or_default().to_string(),
             SiteMode::from_item(item),
         )
@@ -357,37 +387,48 @@ pub async fn perform_login(
     // 2. Post the credential over our own connection. This is the only place
     //    the plaintext is used, and it does not leave this function.
     let body = form.fill(&username, &password);
-    let mut response = fetch(&client, &jar, Method::Post, &form.action, Some(&body)).await?;
+    let response = fetch(&client, &jar, Method::Post, &form.action, Some(&body)).await?;
     jar.absorb(&response.set_cookie, &form.action);
-    let cookies_from_login = !response.set_cookie.is_empty();
+    let mut cookies_from_login = !response.set_cookie.is_empty();
 
-    // 3. Follow the site home, staying on the site. A 302 drops the body, but
-    //    307/308 would replay it, so a cross-site hop is refused rather than
-    //    followed — that is the difference between the site knowing the
-    //    password and an arbitrary third party knowing it.
-    let mut hops = 0;
-    while let Some(location) = response.redirect_to.clone() {
-        if hops >= MAX_REDIRECTS {
-            break;
+    // 3. Follow the site home, staying on the site.
+    let mut response = follow_redirects(&client, &mut jar, &target, response).await?;
+
+    // 4. The second factor, if the site asks for one.
+    //
+    //    Deliberately inside the same grant. The human approved "sign in to
+    //    this site", and a two-step site has not asked them a second question —
+    //    prompting again would be an extra click that buys nothing, because
+    //    whoever obtained the first approval obtains the second the same way.
+    //    The linear resource authorises one *login*, which is what the model's
+    //    `LoginGrant` means; it was never one HTTP request.
+    let mut used_second_factor = false;
+    if let Some(second) = discover_second_factor_form(&response.body, &response.url) {
+        let Some(secret) = totp_secret.as_deref() else {
+            return Err(LoginError::TwoFactorRequired);
+        };
+        let Some(code) = crate::totp::generate_totp_code(secret) else {
+            return Err(LoginError::TwoFactorUnusable);
+        };
+        let code = Zeroizing::new(code);
+
+        if !same_site(&target, &second.action) {
+            return Err(LoginError::CrossSiteRedirect(site_key(&second.action)));
         }
-        hops += 1;
 
-        let next = response
-            .url
-            .join(&location)
-            .map_err(|e| LoginError::Http(format!("bad redirect target: {e}")))?;
-        if !same_site(&target, &next) {
-            return Err(LoginError::CrossSiteRedirect(site_key(&next)));
-        }
-
-        // 303 always becomes GET; 301/302 become GET in every real browser;
-        // only 307/308 preserve the method, and we do not resend the body.
-        response = fetch(&client, &jar, Method::Get, &next, None).await?;
-        jar.absorb(&response.set_cookie, &next);
+        let body = second.fill(&code);
+        response = fetch(&client, &jar, Method::Post, &second.action, Some(&body)).await?;
+        jar.absorb(&response.set_cookie, &second.action);
+        cookies_from_login |= !response.set_cookie.is_empty();
+        response = follow_redirects(&client, &mut jar, &target, response).await?;
+        used_second_factor = true;
     }
 
     let landing_url = response.url.to_string();
-    let still_asking = html_has_password_field(&response.body);
+    // A second-factor page that comes back is a wrong or stale code, and reads
+    // the same way a returned login form does: the site is still asking.
+    let still_asking = html_has_password_field(&response.body)
+        || discover_second_factor_form(&response.body, &response.url).is_some();
     let cookies = jar.into_cookies();
 
     if cookies.is_empty() {
@@ -401,7 +442,43 @@ pub async fn perform_login(
         site_mode,
         residual_note: site_mode.residual_note().to_string(),
         user_verified: grant.verified,
+        used_second_factor,
     })
+}
+
+/// Follow a redirect chain, staying on the site.
+///
+/// A 302 drops the body, but 307/308 would replay it, so a cross-site hop is
+/// refused rather than followed — that is the difference between the site
+/// knowing the credential and an arbitrary third party knowing it. Shared by
+/// both POSTs, because the second factor deserves the same rule as the first.
+async fn follow_redirects(
+    client: &reqwest::Client,
+    jar: &mut CookieJar,
+    site: &Url,
+    mut response: Fetched,
+) -> Result<Fetched, LoginError> {
+    let mut hops = 0;
+    while let Some(location) = response.redirect_to.clone() {
+        if hops >= MAX_REDIRECTS {
+            break;
+        }
+        hops += 1;
+
+        let next = response
+            .url
+            .join(&location)
+            .map_err(|e| LoginError::Http(format!("bad redirect target: {e}")))?;
+        if !same_site(site, &next) {
+            return Err(LoginError::CrossSiteRedirect(site_key(&next)));
+        }
+
+        // 303 always becomes GET; 301/302 become GET in every real browser;
+        // only 307/308 preserve the method, and we do not resend the body.
+        response = fetch(client, jar, Method::Get, &next, None).await?;
+        jar.absorb(&response.set_cookie, &next);
+    }
+    Ok(response)
 }
 
 // ── HTTP, kept deliberately small ─────────────────────────────────────────────
@@ -820,6 +897,119 @@ fn looks_like_username_field(name: &str, id: Option<&str>, autocomplete: Option<
     ["user", "email", "login", "account", "ident", "mail"]
         .iter()
         .any(|needle| haystack.contains(needle))
+}
+
+/// The page a site shows after the password, when it wants a code too.
+#[derive(Debug)]
+struct SecondFactorForm {
+    action: Url,
+    code_field: String,
+    extras: BTreeMap<String, String>,
+}
+
+impl SecondFactorForm {
+    fn fill(&self, code: &str) -> BTreeMap<String, String> {
+        let mut body = self.extras.clone();
+        body.insert(self.code_field.clone(), code.to_string());
+        body
+    }
+}
+
+/// Find a two-factor prompt, if that is what came back.
+///
+/// Recognised by the field, not by the page: a form with a code-shaped input
+/// and *no* password input. Requiring the password field to be absent is what
+/// keeps this from firing on a returned login form — a wrong password and a
+/// two-factor prompt both come back as "a form", and mistaking the first for
+/// the second would spend a TOTP code on a page that never asked for one.
+///
+/// Returns `None` rather than an error when nothing matches, because "the site
+/// did not ask for a second factor" is the ordinary case.
+fn discover_second_factor_form(html: &str, base: &Url) -> Option<SecondFactorForm> {
+    use scraper::{Html, Selector};
+
+    let document = Html::parse_document(html);
+    let form_selector = Selector::parse("form").expect("static selector");
+    let password_selector = Selector::parse("input[type=password]").expect("static selector");
+    let input_selector = Selector::parse("input").expect("static selector");
+
+    for form in document.select(&form_selector) {
+        if form.select(&password_selector).next().is_some() {
+            continue;
+        }
+        if !form
+            .value()
+            .attr("method")
+            .is_some_and(|m| m.trim().eq_ignore_ascii_case("post"))
+        {
+            continue;
+        }
+
+        let mut code_field = None;
+        let mut extras = BTreeMap::new();
+        for input in form.select(&input_selector) {
+            let element = input.value();
+            let Some(name) = element.attr("name").filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            let kind = element.attr("type").unwrap_or("text").to_lowercase();
+            match kind.as_str() {
+                "hidden" | "submit" => {
+                    extras.insert(name.to_string(), element.attr("value").unwrap_or("").to_string());
+                }
+                "text" | "tel" | "number" | "" => {
+                    if looks_like_otp_field(
+                        name,
+                        element.attr("id"),
+                        element.attr("autocomplete"),
+                        element.attr("inputmode"),
+                    ) {
+                        code_field.get_or_insert_with(|| name.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let code_field = code_field?;
+        let action = match form.value().attr("action").map(str::trim) {
+            Some(a) if !a.is_empty() => base.join(a).ok()?,
+            _ => base.clone(),
+        };
+        return Some(SecondFactorForm {
+            action,
+            code_field,
+            extras,
+        });
+    }
+    None
+}
+
+fn looks_like_otp_field(
+    name: &str,
+    id: Option<&str>,
+    autocomplete: Option<&str>,
+    inputmode: Option<&str>,
+) -> bool {
+    // `autocomplete="one-time-code"` is the spec's own answer and the only
+    // unambiguous signal here; everything below it is a guess about wording.
+    if autocomplete.is_some_and(|a| a.to_lowercase().contains("one-time-code")) {
+        return true;
+    }
+    let haystack = format!("{} {}", name.to_lowercase(), id.unwrap_or("").to_lowercase());
+    let named = [
+        "otp", "totp", "2fa", "twofactor", "two_factor", "two-factor", "authenticator",
+        "auth_code", "authcode", "security_code", "verification", "mfa",
+    ]
+    .iter()
+    .any(|needle| haystack.contains(needle));
+    if named {
+        return true;
+    }
+    // A bare "code"/"token" field is only convincing when the markup also says
+    // it takes digits — "code" alone matches promo-code and postcode boxes.
+    (haystack.contains("code") || haystack.contains("token"))
+        && inputmode.is_some_and(|m| matches!(m.to_lowercase().as_str(), "numeric" | "tel"))
 }
 
 fn html_has_password_field(html: &str) -> bool {

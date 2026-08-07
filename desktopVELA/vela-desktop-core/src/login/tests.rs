@@ -449,6 +449,314 @@ async fn a_redirect_off_the_site_is_refused() {
     );
 }
 
+// ── The second factor ─────────────────────────────────────────────────────────
+
+/// A real base32 secret, so the code under test derives a real code.
+const TOTP_SECRET: &str = "JBSWY3DPEHPK3PXP";
+
+fn login_item_with_totp(id: &str, url: &str) -> VaultItem {
+    let mut item = login_item(id, url, false);
+    if let VaultItem::Login { totp, .. } = &mut item {
+        *totp = Some(TOTP_SECRET.to_string());
+    }
+    item
+}
+
+/// GitHub's shape: a separate page, one code field, a CSRF token to carry.
+fn two_factor_page() -> String {
+    r#"<html><body><h1>Two-factor authentication</h1>
+    <form method="POST" action="/sessions/two-factor">
+      <input type="hidden" name="authenticity_token" value="tok-2fa">
+      <input type="text" name="app_otp" autocomplete="one-time-code" inputmode="numeric">
+      <button type="submit">Verify</button>
+    </form></body></html>"#
+        .to_string()
+}
+
+async fn two_factor_site(accept_code: bool) -> (MockServer, tempfile::TempDir, Arc<AppState>) {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(login_page("/session")))
+        .mount(&server)
+        .await;
+    // The password is accepted, and the site then asks for a code.
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "stage=awaiting-2fa; Path=/")
+                .set_body_string(two_factor_page()),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/sessions/two-factor"))
+        .respond_with(if accept_code {
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "sid=full-session; Path=/; HttpOnly")
+                .set_body_string("<html><body>Welcome, Ada</body></html>")
+        } else {
+            // A wrong code re-serves the prompt, which is what real sites do.
+            ResponseTemplate::new(200).set_body_string(two_factor_page())
+        })
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state
+        .vault
+        .write()
+        .add_item(login_item_with_totp("i1", &login_url));
+    (server, dir, state)
+}
+
+#[tokio::test]
+async fn a_two_factor_site_is_answered_from_the_vault() {
+    let (server, _dir, state) = two_factor_site(true).await;
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("login should complete");
+
+    assert!(outcome.used_second_factor);
+    assert!(outcome.looks_authenticated);
+    assert!(
+        outcome.cookies.iter().any(|c| c.name == "sid"),
+        "the post-2FA session cookie is missing: {:?}",
+        outcome.cookies.iter().map(|c| &c.name).collect::<Vec<_>>()
+    );
+
+    // The code the site received is the one the shared secret produces, and the
+    // CSRF token from the *second* page was carried, not the first.
+    let posted = server.received_requests().await.unwrap();
+    let body = posted
+        .iter()
+        .find(|r| r.url.path() == "/sessions/two-factor")
+        .map(|r| String::from_utf8_lossy(&r.body).to_string())
+        .expect("the second-factor POST should have happened");
+    let expected = crate::totp::generate_totp_code(TOTP_SECRET).expect("a code");
+    assert!(body.contains(&format!("app_otp={expected}")), "{body}");
+    assert!(body.contains("authenticity_token=tok-2fa"), "{body}");
+}
+
+/// Neither the code nor the secret may cross the boundary. A TOTP secret is a
+/// standing credential — leaking it is worse than leaking one code.
+#[tokio::test]
+async fn neither_the_totp_secret_nor_the_code_leaves_the_core() {
+    let (server, _dir, state) = two_factor_site(true).await;
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap();
+
+    let serialized = serde_json::to_string(&outcome).unwrap();
+    assert!(!serialized.contains(TOTP_SECRET), "{serialized}");
+    assert!(!serialized.contains(PASSWORD), "{serialized}");
+    let code = crate::totp::generate_totp_code(TOTP_SECRET).unwrap();
+    assert!(!serialized.contains(&code), "the code was returned: {serialized}");
+}
+
+/// The password was accepted; the item just has no secret saved. Saying so is
+/// the difference between a user who can fix it and one who cannot.
+#[tokio::test]
+async fn a_two_factor_site_without_a_saved_secret_says_which_half_worked() {
+    let (server, dir, _state) = two_factor_site(true).await;
+    // Same site, but an item with no TOTP.
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state.vault.write().add_item(login_item("i1", &login_url, false));
+
+    let error = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error, LoginError::TwoFactorRequired);
+    let message = error.to_string();
+    assert!(message.contains("password was accepted"), "{message}");
+}
+
+/// A wrong or stale code re-serves the prompt, and that is not a login.
+#[tokio::test]
+async fn a_rejected_code_is_not_reported_as_signed_in() {
+    let (server, _dir, state) = two_factor_site(false).await;
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap();
+
+    assert!(outcome.used_second_factor);
+    assert!(
+        !outcome.looks_authenticated,
+        "the two-factor prompt came back and we called it a success"
+    );
+}
+
+/// The load-bearing distinction. A wrong password and a two-factor prompt both
+/// come back as "a form"; treating the first as the second would spend a TOTP
+/// code on a page that never asked for one, and report the failure as a
+/// second-factor problem.
+#[test]
+fn a_returned_login_form_is_not_a_second_factor_prompt() {
+    let base = Url::parse("https://site.example/session").unwrap();
+
+    assert!(
+        discover_second_factor_form(&login_page("/session"), &base).is_none(),
+        "a login form was taken for a two-factor prompt"
+    );
+    assert!(discover_second_factor_form(&two_factor_page(), &base).is_some());
+
+    // The case the "no password field" rule actually exists for, and the one a
+    // plain login form does not exercise: plenty of sites re-serve a combined
+    // page carrying both the password field and the code field. That is a
+    // login form — the password has not been accepted yet — and treating it as
+    // a second-factor prompt would post a TOTP code with no password at all,
+    // burning the code and reporting the wrong failure.
+    let combined = r#"<html><body>
+      <form method="POST" action="/session">
+        <input type="hidden" name="authenticity_token" value="t">
+        <input type="text" name="login">
+        <input type="password" name="password">
+        <input type="text" name="otp" autocomplete="one-time-code">
+      </form></body></html>"#;
+    assert!(
+        discover_second_factor_form(combined, &base).is_none(),
+        "a page still asking for the password was taken for a two-factor prompt"
+    );
+    // And it is still recognisable as the login form it is.
+    let form = discover_form(combined, &base).expect("a login form");
+    assert_eq!(form.password_field, "password");
+}
+
+/// The heuristics, stated as cases. A promo-code box is not a second factor.
+#[test]
+fn only_code_shaped_fields_count_as_a_second_factor() {
+    let base = Url::parse("https://site.example/").unwrap();
+    let form = |inner: &str| format!(r#"<form method="POST" action="/x">{inner}</form>"#);
+
+    // The spec's own signal.
+    assert!(discover_second_factor_form(
+        &form(r#"<input type="text" name="q" autocomplete="one-time-code">"#), &base).is_some());
+    // Named unambiguously.
+    for name in ["otp", "app_otp", "totp", "two_factor_code", "mfa_code", "authenticator"] {
+        assert!(
+            discover_second_factor_form(&form(&format!(r#"<input type="text" name="{name}">"#)), &base)
+                .is_some(),
+            "{name} should be recognised"
+        );
+    }
+    // "code" alone is a promo box until the markup says it takes digits.
+    assert!(discover_second_factor_form(
+        &form(r#"<input type="text" name="discount_code">"#), &base).is_none());
+    assert!(discover_second_factor_form(
+        &form(r#"<input type="text" name="discount_code" inputmode="numeric">"#), &base).is_some());
+    // A GET form is not submitted here either.
+    assert!(discover_second_factor_form(
+        r#"<form method="GET" action="/x"><input type="text" name="otp"></form>"#, &base).is_none());
+}
+
+/// The second factor gets the same origin rule as the first.
+#[tokio::test]
+async fn a_second_factor_form_pointing_off_site_is_refused() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(login_page("/session")))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><form method="POST" action="https://collector.example/take">
+               <input type="text" name="otp"></form></html>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let login_url = format!("{}/login", server.uri());
+    state
+        .vault
+        .write()
+        .add_item(login_item_with_totp("i1", &login_url));
+
+    let error = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        LoginError::CrossSiteRedirect("collector.example".to_string())
+    );
+}
+
+/// One approval covers the whole login, both steps. Asserted because it is a
+/// deliberate reading of the model's `LoginGrant`, not an accident: the human
+/// approved "sign in to this site", and the site's decision to ask twice is not
+/// a second question to them.
+#[tokio::test]
+async fn one_grant_covers_both_steps_of_a_two_step_login() {
+    let (server, _dir, state) = two_factor_site(true).await;
+
+    let outcome = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: None,
+        },
+        // Exactly one grant is minted, and the login below consumes it.
+        grant_for(&server, "i1").await,
+    )
+    .await
+    .expect("one grant should be enough");
+
+    assert!(outcome.used_second_factor);
+    let posted = server.received_requests().await.unwrap();
+    assert_eq!(
+        posted.iter().filter(|r| r.method.as_str() == "POST").count(),
+        2,
+        "both steps should have been posted under the one grant"
+    );
+}
+
 // ── When the site will not talk to us ─────────────────────────────────────────
 
 /// A bot check is not a JavaScript login, and the error has to say which.

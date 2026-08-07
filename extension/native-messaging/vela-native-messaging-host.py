@@ -520,6 +520,7 @@ def handle_in_core_login(message):
         "siteMode": payload.get("site_mode", "self_serve"),
         "residualNote": payload.get("residual_note", ""),
         "userVerified": bool(payload.get("user_verified")),
+        "usedSecondFactor": bool(payload.get("used_second_factor")),
     }
 
 

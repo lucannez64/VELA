@@ -2084,6 +2084,7 @@ pub mod server {
                     "residual_note",
                     "site_mode",
                     "success",
+                    "used_second_factor",
                     "user_verified",
                 ]
             );

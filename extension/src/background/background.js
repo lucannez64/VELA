@@ -556,7 +556,8 @@ async function handleInCoreLogin(data, sendResponse) {
       cookiesInstalled: installed,
       looksAuthenticated: Boolean(response.looksAuthenticated),
       siteMode: response.siteMode,
-      residualNote: response.residualNote
+      residualNote: response.residualNote,
+      usedSecondFactor: Boolean(response.usedSecondFactor)
     });
   } catch (error) {
     sendResponse({ success: false, error: error.message });
