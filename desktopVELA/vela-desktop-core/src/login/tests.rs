@@ -1119,6 +1119,111 @@ async fn a_rejected_password_is_not_reported_as_a_login() {
     );
 }
 
+/// A real login against a real site, driven by credentials from the environment.
+///
+/// The last untested claim in M9a: that a production site accepts a credential
+/// from a non-browser client and issues a session. Everything else has evidence
+/// — the parser against real pages, the core against an independent server, the
+/// browser chain end to end — but no real site has ever accepted a real login.
+///
+/// Credentials come from the environment and never from this file, so whoever
+/// runs it is the only one who sees them:
+///
+///     VELA_LOGIN_URL=https://github.com/login \
+///     VELA_LOGIN_USER='...' VELA_LOGIN_PASSWORD='...' \
+///     VELA_LOGIN_TOTP='<base32 secret or otpauth:// URI>' \
+///     cargo test -p vela-desktop-core --lib real_site_login -- --ignored --nocapture
+///
+/// The report below is deliberately redacted: cookie *names* and flags, never
+/// values; no password, no secret, no code. A session cookie value is a live
+/// credential and printing one to a terminal is how it ends up in a scrollback
+/// buffer, a screenshot or a paste.
+///
+/// It really does sign in. Expect the site to notice: a "new sign-in" mail, a
+/// device-verification challenge, or a block are all normal responses to a
+/// login from an unfamiliar client.
+#[tokio::test]
+#[ignore = "signs in to a real account; needs VELA_LOGIN_* in the environment"]
+async fn real_site_login() {
+    let Ok(url) = std::env::var("VELA_LOGIN_URL") else {
+        println!("set VELA_LOGIN_URL, VELA_LOGIN_USER, VELA_LOGIN_PASSWORD (and optionally VELA_LOGIN_TOTP)");
+        return;
+    };
+    let username = std::env::var("VELA_LOGIN_USER").unwrap_or_default();
+    let password = std::env::var("VELA_LOGIN_PASSWORD").unwrap_or_default();
+    let totp = std::env::var("VELA_LOGIN_TOTP").ok().filter(|s| !s.is_empty());
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    let now = Utc::now();
+    state.vault.write().add_item(VaultItem::Login {
+        meta: VaultMeta {
+            id: "real".to_string(),
+            name: "Real site".to_string(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+            last_modified_device: None,
+            favorite: false,
+            shared: false,
+            share_recipient: None,
+        },
+        url: url.clone(),
+        username,
+        pass: password,
+        totp,
+        app_ids: Vec::new(),
+        credential_change_needs_reauth: false,
+    });
+
+    let parsed = normalize_url(&url).expect("VELA_LOGIN_URL should be a URL");
+    let grant = LoginGrant::mint("real".to_string(), site_key(&parsed), true);
+
+    println!("--- in-core login against {} ---", site_key(&parsed));
+    match perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "real".to_string(),
+            login_url: None,
+        },
+        grant,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            println!("looks_authenticated = {}", outcome.looks_authenticated);
+            println!("used_second_factor  = {}", outcome.used_second_factor);
+            println!("landing_url         = {}", outcome.landing_url);
+            println!("cookies             = {}", outcome.cookies.len());
+            for cookie in &outcome.cookies {
+                println!(
+                    "  {:<28} domain={} host_only={} http_only={} secure={} same_site={:?}",
+                    cookie.name,
+                    cookie.domain,
+                    cookie.host_only,
+                    cookie.http_only,
+                    cookie.secure,
+                    cookie.same_site
+                );
+            }
+            // The claim, checked against the artifact rather than asserted.
+            let serialized = serde_json::to_string(&outcome).unwrap();
+            for (label, secret) in [
+                ("password", std::env::var("VELA_LOGIN_PASSWORD").unwrap_or_default()),
+                ("totp secret", std::env::var("VELA_LOGIN_TOTP").unwrap_or_default()),
+            ] {
+                if !secret.is_empty() {
+                    println!(
+                        "{label:<19} in response = {}",
+                        serialized.contains(&secret)
+                    );
+                }
+            }
+        }
+        Err(e) => println!("FAILED              = {e}"),
+    }
+}
+
 // ── Against the real web ──────────────────────────────────────────────────────
 //
 // Everything above this line reads HTML written by this file, which proves the
