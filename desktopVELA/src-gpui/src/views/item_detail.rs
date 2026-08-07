@@ -10,7 +10,7 @@
 //! `open`/xdg-open call, not yet wired).
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
     div, prelude::*, px, App, Context, EventEmitter, IntoElement, MouseButton, Render, SharedString,
@@ -49,6 +49,16 @@ fn type_label(item_type: ItemType) -> &'static str {
     }
 }
 
+/// Current unix time in milliseconds — the single source of truth the TOTP
+/// countdown is derived from, so it cannot drift or stall with background
+/// task scheduling.
+fn now_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub enum ItemDetailEvent {
     Back,
     /// The item was actually deleted — the owning `AppShell` should go back
@@ -72,6 +82,15 @@ pub struct ItemDetail {
     show_pin: bool,
     totp_code: SharedString,
     totp_remaining: u64,
+    /// Seconds per code (from the item's own `otpauth` params, default 30).
+    totp_period: u64,
+    /// Unix milliseconds at which the currently shown code rolls over. The
+    /// countdown is derived from this on the local clock rather than by
+    /// asking the backend once a second.
+    totp_expires_at: i64,
+    /// When true the TOTP refresh is suspended (the edit modal is open over
+    /// this screen) — the task does no work and emits no repaints.
+    paused: bool,
     _totp_task: Option<Task<()>>,
     favorite: bool,
     favicon_cache: FaviconCache,
@@ -90,37 +109,95 @@ impl ItemDetail {
         };
 
         let totp_task = totp_secret.map(|secret| {
+            // What the loop should do on the next iteration.
+            enum Tick {
+                /// Nothing to do — the edit modal has us paused. Re-check soon.
+                Idle,
+                /// Fetch a fresh code (initial load, or the current one rolled
+                /// over).
+                Generate,
+                /// Countdown updated; the current code expires in `ms`.
+                Countdown(u64),
+            }
             cx.spawn(async move |this, cx| loop {
-                let result = cx
-                    .background_spawn_guarded("generate totp", {
-                        let secret = secret.clone();
-                        async move { vela_desktop_core::totp::generate_totp(secret) }
-                    })
-                    .await
-                    .unwrap_or_else(|| Err("TOTP generation failed unexpectedly".to_string()));
-                let should_continue = this
-                    .update(cx, |this, cx| {
-                        match result {
-                            Ok(code) => {
-                                // Split into two roughly-even halves instead
-                                // of a hardcoded 3/3 — real TOTP secrets can
-                                // specify 6, 7, or 8 digits (RFC 6238), and
-                                // this previously assumed exactly 6.
-                                let mid = code.code.len().div_ceil(2);
-                                this.totp_code =
-                                    format!("{} {}", &code.code[..mid], &code.code[mid..]).into();
-                                this.totp_remaining = code.remaining_secs;
-                            }
-                            Err(e) => tracing::warn!("Failed to generate TOTP code: {e}"),
-                        }
+                // Ask the entity what to do. A missing entity means the view
+                // was dropped — stop the loop.
+                let Ok(step) = this.update(cx, |this, cx| {
+                    if this.paused {
+                        return Tick::Idle;
+                    }
+                    let now = now_unix_ms();
+                    if this.totp_expires_at == 0 || now >= this.totp_expires_at {
+                        return Tick::Generate;
+                    }
+                    let remaining_ms = (this.totp_expires_at - now) as u64;
+                    let remaining = remaining_ms.div_ceil(1000).max(1);
+                    if remaining != this.totp_remaining {
+                        this.totp_remaining = remaining;
                         cx.notify();
-                    })
-                    .is_ok();
-                if !should_continue {
+                    }
+                    Tick::Countdown(remaining_ms)
+                }) else {
                     break;
+                };
+
+                match step {
+                    // Paused behind the edit modal: no generation, no repaints.
+                    // Sleep briefly and re-check so unpausing resumes in time.
+                    Tick::Idle => {
+                        cx.background_spawn(async {
+                            std::thread::sleep(Duration::from_millis(250))
+                        })
+                        .await;
+                    }
+                    Tick::Generate => {
+                        let result = cx
+                            .background_spawn_guarded("generate totp", {
+                                let secret = secret.clone();
+                                async move { vela_desktop_core::totp::generate_totp(secret) }
+                            })
+                            .await
+                            .unwrap_or_else(|| Err("TOTP generation failed unexpectedly".to_string()));
+                        let alive = this
+                            .update(cx, |this, cx| {
+                                match result {
+                                    Ok(code) => {
+                                        let period = code.period.max(1);
+                                        // Split into two roughly-even halves
+                                        // instead of a hardcoded 3/3 — real
+                                        // TOTP secrets can specify 6, 7, or 8
+                                        // digits (RFC 6238).
+                                        let mid = code.code.len().div_ceil(2);
+                                        this.totp_period = period;
+                                        this.totp_expires_at =
+                                            now_unix_ms() + (code.remaining_secs as i64) * 1000;
+                                        this.totp_code =
+                                            format!("{} {}", &code.code[..mid], &code.code[mid..])
+                                                .into();
+                                        this.totp_remaining =
+                                            code.remaining_secs.max(1).min(period);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to generate TOTP code: {e}")
+                                    }
+                                }
+                                cx.notify();
+                            })
+                            .is_ok();
+                        if !alive {
+                            break;
+                        }
+                    }
+                    Tick::Countdown(remaining_ms) => {
+                        // Wake again when the displayed second changes (or
+                        // earlier, at rollover).
+                        let sleep_ms = remaining_ms.min(1000);
+                        cx.background_spawn(async move {
+                            std::thread::sleep(Duration::from_millis(sleep_ms))
+                        })
+                        .await;
+                    }
                 }
-                cx.background_spawn(async { std::thread::sleep(Duration::from_secs(1)) })
-                    .await;
             })
         });
 
@@ -134,6 +211,9 @@ impl ItemDetail {
             show_pin: false,
             totp_code: "--- ---".into(),
             totp_remaining: 30,
+            totp_period: 30,
+            totp_expires_at: 0,
+            paused: false,
             _totp_task: totp_task,
             favorite,
             favicon_cache: favicon_ui::new_cache(),
@@ -141,6 +221,16 @@ impl ItemDetail {
             error: None,
             show_delete_confirm: false,
         }
+    }
+
+    /// Suspend/resume the live TOTP refresh. The shell pauses the detail view
+    /// while the edit modal is open on top of it, so the loop stops driving
+    /// per-second backend calls and repaints behind the modal (which, on the
+    /// software-rendered gpui_wgpu path, is what made selecting a long TOTP
+    /// URL in the modal stutter and freeze).
+    pub fn set_paused(&mut self, paused: bool, cx: &mut Context<Self>) {
+        self.paused = paused;
+        cx.notify();
     }
 
     fn toggle_favorite(&mut self, cx: &mut Context<Self>) {
@@ -306,7 +396,7 @@ impl Render for ItemDetail {
         }
 
         let totp_section = if matches!(&item, VaultItem::Login { totp: Some(_), .. }) {
-            let progress = (self.totp_remaining as f32 / 30.0).clamp(0., 1.);
+            let progress = (self.totp_remaining as f32 / self.totp_period.max(1) as f32).clamp(0., 1.);
             Some(
                 div()
                     .p_4()

@@ -84,6 +84,10 @@ impl AppShell {
     }
 
     fn show_edit_modal(&mut self, item: vela_desktop_core::vault::VaultItem, cx: &mut Context<Self>) {
+        // The edit modal renders on top of ItemDetail; stop its TOTP loop so
+        // it isn't re-rendering every second behind the form (the source of
+        // the selection freeze/lag while editing a TOTP URL).
+        self.set_detail_paused(true, cx);
         let modal = cx.new({
             let app_state = self.app_state.clone();
             move |cx| AddItemModal::new_edit(app_state, item, cx)
@@ -92,6 +96,10 @@ impl AppShell {
             AddItemModalEvent::Close => {
                 this.edit_modal = None;
                 this._edit_subscription = None;
+                // The item detail is still showing underneath — resume its
+                // countdown (it re-derives from the clock, so any time spent
+                // paused is caught up immediately).
+                this.set_detail_paused(false, cx);
                 cx.notify();
             }
             AddItemModalEvent::Created | AddItemModalEvent::Updated => {
@@ -100,7 +108,8 @@ impl AppShell {
                 // Go back to the vault list — matches the simpler of the
                 // two reasonable choices (re-fetching ItemDetail in place
                 // being the other), and guarantees the list reflects the
-                // edit immediately.
+                // edit immediately. The old detail view (and its TOTP task)
+                // is dropped with it.
                 this.show_vault(cx);
                 cx.notify();
             }
@@ -108,6 +117,14 @@ impl AppShell {
         self.edit_modal = Some(modal);
         self._edit_subscription = Some(subscription);
         cx.notify();
+    }
+
+    /// Pause or resume the live TOTP refresh on the currently showing item
+    /// detail view, if there is one.
+    fn set_detail_paused(&self, paused: bool, cx: &mut Context<Self>) {
+        if let Content::ItemDetail(detail) = &self.content {
+            detail.update(cx, |detail, cx| detail.set_paused(paused, cx));
+        }
     }
 
     fn subscribe_sidebar(&mut self, cx: &mut Context<Self>) {
