@@ -1,0 +1,29 @@
+theory M1_InDomain
+/*
+  Model 1 - in-domain broker (no escape).
+  The broker's DECIDE/UNWRAP/RELEASE is triggered by a request arriving on the
+  adversary-controlled channel (In). This is the faithful encoding of the
+  Same-Domain Capability (SDC) assumption: a co-resident same-UID process can
+  emit exactly the request a legitimate client emits, because the only evidence
+  the broker checks is in-domain-forgeable.
+
+  Expected: lemma `secrecy` is FALSIFIED (Theorem 1: no in-domain check can
+  keep the credential from a same-UID requester).
+*/
+begin
+
+rule Setup:
+    [ Fr(~cred) ]
+  --[ Secret(~cred), Setup(~cred) ]->
+    [ !Vault(~cred) ]
+
+// DECIDE + UNWRAP + RELEASE in one step, driven by any request from the domain.
+rule Release_InDomain:
+    [ !Vault(cred), In(<'request', requester>) ]
+  --[ Released(cred, requester) ]->
+    [ Out(cred) ]
+
+lemma secrecy:
+  "All c #i. Secret(c) @ i ==> not (Ex #j. K(c) @ j)"
+
+end

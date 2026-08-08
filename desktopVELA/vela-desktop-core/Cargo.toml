@@ -24,6 +24,10 @@ sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
+# WebAuthn credential keys (ES256). Kept out of vela-crypto on purpose so the
+# server, which depends on that crate and has no passkeys, does not carry an
+# ECDSA stack. See src/credential_key.rs.
+p256 = { version = "0.13", features = ["ecdsa"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
 directories = "5"
 data-encoding = "2"
@@ -96,3 +100,8 @@ block2 = "0.6"
 [dev-dependencies]
 tempfile = "3"
 wiremock = "0.6"
+# A real WebAuthn relying party, used to verify our ceremony output rather than
+# trusting our own encoder to agree with itself. Same crate and version the
+# server uses. See src/passkey_rp_test.rs.
+webauthn-rs = "0.5.4"
+uuid = { version = "1.0", features = ["v4"] }

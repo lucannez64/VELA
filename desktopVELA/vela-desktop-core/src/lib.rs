@@ -4,12 +4,15 @@ pub mod breach;
 pub mod clipboard;
 pub mod biometric;
 pub mod commands;
+pub mod credential_key;
 pub mod crypto;
 pub mod device;
 pub mod favicon;
 pub mod host;
 pub mod ipc;
 pub mod ipc_peer;
+pub mod passkey;
+pub mod presence;
 pub mod rclone;
 pub mod session;
 pub mod settings;
@@ -24,6 +27,8 @@ pub mod webauthn;
 #[cfg(target_os = "linux")]
 pub mod wayland_shortcut;
 
+#[cfg(test)]
+mod passkey_rp_test;
 #[cfg(test)]
 mod vault_lifecycle_test;
 

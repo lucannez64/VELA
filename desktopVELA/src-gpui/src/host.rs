@@ -87,4 +87,21 @@ impl Host for GpuiHost {
     fn notify_vault_items_changed(&self) {
         let _ = self.tx.send(HostCommand::VaultItemsChanged);
     }
+
+    /// Not yet available on this binary.
+    ///
+    /// `HostCommand` is a fire-and-forget channel drained by a polling task in
+    /// `main.rs`; asking a question needs a modal view and a reply path, and
+    /// this build has neither yet. Returning `None` rather than `Some(false)`
+    /// says exactly that — [`vela_desktop_core::presence`] reads it as "no way
+    /// to ask" and refuses the ceremony.
+    ///
+    /// The consequence, stated plainly: on the gpui build a passkey works where
+    /// the platform has a biometric factor and is refused where it does not,
+    /// until the modal lands. Failing closed is the right direction for this
+    /// particular gate — an assertion oracle nobody can decline is worse than a
+    /// passkey that will not sign.
+    fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
+        None
+    }
 }

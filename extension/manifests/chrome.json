@@ -26,7 +26,8 @@
       "js": [
         "shared/browser-polyfill.js",
         "shared/autofill-utils.js",
-        "content/content-script.js"
+        "content/content-script.js",
+        "content/passkey-bridge.js"
       ],
       "css": [
         "content/content-styles.css"
@@ -56,6 +57,17 @@
     "notifications"
   ],
   "host_permissions": [],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/webauthn-shim.js"
+      ],
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ]
+    }
+  ],
   "commands": {
     "_execute_action": {
       "suggested_key": {

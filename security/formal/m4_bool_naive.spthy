@@ -1,0 +1,39 @@
+theory M4_NaiveBooleanApproval
+/*
+  Model 4 - decision-escape done WRONG: a bare boolean 'yes', not bound to an
+  item, is delivered into the domain (Out) and the release rule accepts any
+  item on presentation of a valid 'yes'.
+
+  The adversary reads the boolean off the domain channel and redeems it for an
+  item the user never intended.
+
+  Expected: `unintended_item_leaks` (exists-trace) SATISFIED - an item that was
+  never the subject of the user's approval still leaks.
+  Machine-checks design invariant (a): a boolean consumed in-domain is not a
+  control, even though it is unforgeable, because it is not bound to the request.
+*/
+begin
+
+rule Setup:
+    [ Fr(~cred) ]
+  --[ Secret(~cred), Item(~cred) ]->
+    [ !Vault(~cred) ]
+
+// A bare, item-agnostic approval token, emitted into the domain.
+rule Human_Approve_Bool:
+    [ Fr(~ok) ]
+  --[ ApproveBool(~ok) ]->
+    [ Out(~ok), !BoolGrant(~ok) ]
+
+// Release accepts ANY vault item if the caller presents a valid boolean.
+rule Release_Naive:
+    [ !Vault(cred), !BoolGrant(ok), In(<'request', ok, requester>) ]
+  --[ Released(cred), UsedGrant(ok) ]->
+    [ Out(cred) ]
+
+// The approved boolean was never bound to `c`, yet `c` leaks.
+lemma unintended_item_leaks:
+  exists-trace
+  "Ex c #i #j. Secret(c) @ i & K(c) @ j"
+
+end
