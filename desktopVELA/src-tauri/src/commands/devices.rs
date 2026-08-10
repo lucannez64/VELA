@@ -11,7 +11,7 @@ use crate::api::{ApiClient, EnrollDeviceRequest, NewDevicePayload, VerifyRequest
 use crate::commands::audit::{record_audit_event, AuditAction};
 use crate::crypto;
 use crate::AppState;
-use vela_crypto::aead::{decrypt, encrypt};
+use vela_crypto::aead::{decrypt, encrypt, open_vault_chunk};
 
 pub(crate) const VAULT_MAIN_CHUNK_ID: &str = "vault-main";
 pub(crate) const VAULT_DATA_PREFIX: &str = "vault-data-";
@@ -535,26 +535,28 @@ async fn try_download_chunk(
 ) -> Option<crate::vault::VaultStore> {
     let chunk_key_bytes: [u8; 32] = *crypto.chunk_key(chunk_id.as_bytes()).as_bytes();
     match client.get_chunk(token, chunk_id).await {
-        Ok((ciphertext, _, _, _)) => match decrypt(&chunk_key_bytes, &ciphertext) {
-            Ok(plaintext) => match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
-                Ok(v) => {
-                    tracing::info!("Vault downloaded from chunk '{}'", chunk_id);
-                    Some(v)
-                }
+        Ok((ciphertext, _, lamport, _)) => {
+            match open_vault_chunk(&chunk_key_bytes, &ciphertext, chunk_id, lamport) {
+                Ok(plaintext) => match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
+                    Ok(v) => {
+                        tracing::info!("Vault downloaded from chunk '{}'", chunk_id);
+                        Some(v)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to parse vault JSON from chunk '{}': {}",
+                            chunk_id,
+                            e
+                        );
+                        None
+                    }
+                },
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to parse vault JSON from chunk '{}': {}",
-                        chunk_id,
-                        e
-                    );
+                    tracing::warn!("Failed to decrypt chunk '{}': {}", chunk_id, e);
                     None
                 }
-            },
-            Err(e) => {
-                tracing::warn!("Failed to decrypt chunk '{}': {}", chunk_id, e);
-                None
             }
-        },
+        }
         Err(e) => {
             tracing::info!("Chunk '{}' not available: {}", chunk_id, e);
             None
