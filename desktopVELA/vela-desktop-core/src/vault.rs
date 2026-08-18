@@ -718,7 +718,12 @@ fn extract_host_and_port_fast(url: &str) -> Option<(&str, Option<u16>)> {
         return None;
     }
 
-    // `url::Url` elides a scheme's default port, so this has to as well.
+    // Drop an explicit port that equals the scheme's default — exactly what
+    // url's own parser does (`if opt_port == default_port() { opt_port = None }`,
+    // parser.rs), which is why the slow path's `parsed.port()` reports the same
+    // value. This is a mirror of the parser, not a divergence; the differential
+    // test (`fast_host_split_agrees_with_the_url_parser`) enforces the
+    // agreement across the corpus and ~5k generated URLs.
     let (rest, default_port) = if let Some(rest) = url.strip_prefix("https://") {
         (rest, 443)
     } else if let Some(rest) = url.strip_prefix("http://") {
@@ -1263,6 +1268,29 @@ mod tests {
             assert_eq!(loaded.get_item(&id).map(|i| i.id()), Some(id.as_str()));
         }
         assert!(loaded.get_item("nope").is_none());
+    }
+
+    #[test]
+    fn url_crate_elides_default_ports_like_the_fast_path() {
+        // Why the fast path's `port.filter(|p| *p != default_port)` is not a
+        // divergence from the URL parser: url's parser itself drops an
+        // explicit port equal to the scheme's default (`parser.rs`:
+        // `if opt_port == default_port() { opt_port = None }`), so
+        // `Url::port()` never reports one. Pinned here so an `url` upgrade
+        // that stopped eliding would surface as a test failure instead of a
+        // silent mismatch between the two extraction paths.
+        for (url, port) in [
+            ("https://example.com:443", None),
+            ("https://example.com", None),
+            ("http://example.com:80", None),
+            ("http://example.com", None),
+            ("http://example.com:443", Some(443)),
+            ("https://example.com:80", Some(80)),
+            ("https://example.com:8443", Some(8443)),
+        ] {
+            let parsed = url::Url::parse(url).unwrap();
+            assert_eq!(parsed.port(), port, "{url}");
+        }
     }
 
     #[test]
