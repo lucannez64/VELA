@@ -162,45 +162,67 @@ pub struct PasswordStrength {
     pub crack_time: String,
 }
 
-pub fn calculate_password_strength(password: &str) -> PasswordStrength {
-    let charset_size = if password.chars().any(|c| c.is_ascii_lowercase()) {
-        26
-    } else {
-        0
-    } + if password.chars().any(|c| c.is_ascii_uppercase()) {
-        26
-    } else {
-        0
-    } + if password.chars().any(|c| c.is_ascii_digit()) {
-        10
-    } else {
-        0
-    } + if password.chars().any(|c| !c.is_alphanumeric()) {
-        32
-    } else {
-        0
-    };
+/// Shannon-style entropy estimate for `password`.
+///
+/// One pass over the characters rather than the four independent
+/// `chars().any(..)` scans this used to run, and no `String` at all — the vault
+/// health scan calls this once per login, and the two allocated verdict strings
+/// were pure garbage on that path.
+fn password_entropy(password: &str) -> f64 {
+    let (mut lower, mut upper, mut digit, mut other) = (false, false, false, false);
 
-    let entropy = if charset_size > 0 {
+    for c in password.chars() {
+        // The four predicates are mutually exclusive, so `else if` matches what
+        // the separate scans decided.
+        if c.is_ascii_lowercase() {
+            lower = true;
+        } else if c.is_ascii_uppercase() {
+            upper = true;
+        } else if c.is_ascii_digit() {
+            digit = true;
+        } else if !c.is_alphanumeric() {
+            other = true;
+        }
+
+        if lower && upper && digit && other {
+            break;
+        }
+    }
+
+    let charset_size = u32::from(lower) * 26
+        + u32::from(upper) * 26
+        + u32::from(digit) * 10
+        + u32::from(other) * 32;
+
+    if charset_size > 0 {
+        // `len()` is the byte length, as it always was here.
         (password.len() as f64) * (charset_size as f64).log2()
     } else {
         0.0
-    };
+    }
+}
 
-    let (score, crack_time) = if entropy < 28.0 {
-        ("weak".to_string(), "instant".to_string())
+/// The verdict for an entropy value, as borrowed strings.
+fn strength_verdict(entropy: f64) -> (&'static str, &'static str) {
+    if entropy < 28.0 {
+        ("weak", "instant")
     } else if entropy < 36.0 {
-        ("fair".to_string(), "minutes".to_string())
+        ("fair", "minutes")
     } else if entropy < 60.0 {
-        ("good".to_string(), "months".to_string())
+        ("good", "months")
     } else {
-        ("strong".to_string(), "centuries".to_string())
-    };
+        ("strong", "centuries")
+    }
+}
+
+pub fn calculate_password_strength(password: &str) -> PasswordStrength {
+    let entropy = password_entropy(password);
+    let (score, crack_time) = strength_verdict(entropy);
 
     PasswordStrength {
         entropy,
-        score,
-        crack_time,
+        score: score.to_string(),
+        crack_time: crack_time.to_string(),
     }
 }
 
@@ -219,13 +241,49 @@ fn index_from(value: u32, n: u32) -> Option<u32> {
     ((value as u64) < bound).then(|| value % n)
 }
 
-fn uniform_index(n: usize) -> Result<usize, String> {
+/// A refilled block of OS randomness, handing out one 32-bit draw at a time.
+///
+/// Generation used to call `getrandom` once per character — a syscall per
+/// character of every password, plus one more for each rejected draw. One call
+/// now covers sixteen draws.
+struct RandomDraws {
+    buf: [u8; 64],
+    next: usize,
+}
+
+impl RandomDraws {
+    fn new() -> Self {
+        // Starting past the end forces a fill on the first draw.
+        Self { buf: [0u8; 64], next: 64 }
+    }
+
+    fn draw(&mut self) -> Result<u32, String> {
+        if self.next == self.buf.len() {
+            getrandom::getrandom(&mut self.buf)
+                .map_err(|_| "OS random source unavailable".to_string())?;
+            self.next = 0;
+        }
+        let bytes: [u8; 4] = self.buf[self.next..self.next + 4]
+            .try_into()
+            .expect("4 bytes");
+        self.next += 4;
+        Ok(u32::from_le_bytes(bytes))
+    }
+}
+
+impl Drop for RandomDraws {
+    /// The unconsumed tail still selects characters of the password that was
+    /// just generated; it does not outlive the call.
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.buf.zeroize();
+    }
+}
+
+fn uniform_index(draws: &mut RandomDraws, n: usize) -> Result<usize, String> {
     let n = n as u32;
     loop {
-        let mut buf = [0u8; 4];
-        getrandom::getrandom(&mut buf)
-            .map_err(|_| "OS random source unavailable".to_string())?;
-        if let Some(index) = index_from(u32::from_le_bytes(buf), n) {
+        if let Some(index) = index_from(draws.draw()?, n) {
             return Ok(index as usize);
         }
     }
@@ -261,9 +319,10 @@ pub fn generate_password(options: PasswordGeneratorOptions) -> Result<PasswordWi
     // Two fixes over the previous draw loop: a failing RNG returns instead of
     // panicking, and the index is drawn without modulo bias — `value % n`
     // favours the low indices whenever `n` does not divide 2^32.
+    let mut draws = RandomDraws::new();
     let mut password = String::with_capacity(options.length);
     for _ in 0..options.length {
-        password.push(charset[uniform_index(charset.len())?]);
+        password.push(charset[uniform_index(&mut draws, charset.len())?]);
     }
 
     let strength = calculate_password_strength(&password);
@@ -284,27 +343,26 @@ pub fn get_vault_health(state: &Arc<AppState>) -> Result<VaultHealth, String> {
     require_unlocked(state)?;
     let vault = state.vault.read();
 
-    let login_items: Vec<&VaultItem> = vault
-        .items
-        .iter()
-        .filter(|i| i.item_type() == ItemType::Login && i.password().is_some())
-        .collect();
-
-    let total_logins = login_items.len();
-
-    let mut weak_passwords = 0;
-    let mut password_counts: std::collections::HashMap<String, usize> =
+    // One pass, borrowing each password as a map key instead of cloning it, and
+    // scoring it without building the two verdict strings per login that
+    // `calculate_password_strength` returns.
+    let mut total_logins = 0usize;
+    let mut weak_passwords = 0usize;
+    let mut password_counts: std::collections::HashMap<&str, usize> =
         std::collections::HashMap::new();
 
-    for item in &login_items {
-        if let Some(password) = item.password() {
-            let strength = calculate_password_strength(password);
-            if strength.score == "weak" || strength.score == "fair" {
-                weak_passwords += 1;
-            }
+    for item in vault.items.iter().filter(|i| i.item_type() == ItemType::Login) {
+        let Some(password) = item.password() else {
+            continue;
+        };
+        total_logins += 1;
 
-            *password_counts.entry(password.to_string()).or_insert(0) += 1;
+        let (score, _) = strength_verdict(password_entropy(password));
+        if score == "weak" || score == "fair" {
+            weak_passwords += 1;
         }
+
+        *password_counts.entry(password).or_insert(0) += 1;
     }
 
     let reused_passwords = password_counts.values().filter(|&&count| count > 1).count();

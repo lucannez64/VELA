@@ -90,8 +90,12 @@ impl AuditLog {
     pub fn add_entry(&mut self, entry: AuditEntry) {
         self.entries.push(entry);
 
-        if self.entries.len() > 1000 {
-            self.entries = self.entries.split_off(self.entries.len() - 1000);
+        let excess = self.entries.len().saturating_sub(1000);
+        if excess > 0 {
+            // `split_off` allocated a fresh 1000-entry vector and dropped the
+            // old one on every event once the log was full; draining the front
+            // shifts in place and keeps the capacity.
+            self.entries.drain(..excess);
         }
     }
 }

@@ -32,32 +32,49 @@ pub struct PasswordStrength {
     pub crack_time: String,
 }
 
-pub fn calculate_password_strength(password: &str) -> PasswordStrength {
-    let charset_size = if password.chars().any(|c| c.is_ascii_lowercase()) {
-        26
-    } else {
-        0
-    } + if password.chars().any(|c| c.is_ascii_uppercase()) {
-        26
-    } else {
-        0
-    } + if password.chars().any(|c| c.is_ascii_digit()) {
-        10
-    } else {
-        0
-    } + if password.chars().any(|c| !c.is_alphanumeric()) {
-        32
-    } else {
-        0
-    };
+/// Shannon-style entropy estimate for `password`.
+///
+/// One pass over the characters rather than the four independent
+/// `chars().any(..)` scans this used to run, and no `String` at all — callers
+/// that only want a verdict (a vault-wide health scan, say) can pair it with
+/// [`strength_verdict`] and allocate nothing.
+pub fn password_entropy(password: &str) -> f64 {
+    let (mut lower, mut upper, mut digit, mut other) = (false, false, false, false);
 
-    let entropy = if charset_size > 0 {
+    for c in password.chars() {
+        // The four predicates are mutually exclusive, so `else if` reaches the
+        // same conclusion as the separate scans did.
+        if c.is_ascii_lowercase() {
+            lower = true;
+        } else if c.is_ascii_uppercase() {
+            upper = true;
+        } else if c.is_ascii_digit() {
+            digit = true;
+        } else if !c.is_alphanumeric() {
+            other = true;
+        }
+
+        if lower && upper && digit && other {
+            break;
+        }
+    }
+
+    let charset_size = u32::from(lower) * 26
+        + u32::from(upper) * 26
+        + u32::from(digit) * 10
+        + u32::from(other) * 32;
+
+    if charset_size > 0 {
+        // `len()` is the byte length, as it always was here.
         (password.len() as f64) * (charset_size as f64).log2()
     } else {
         0.0
-    };
+    }
+}
 
-    let (score, crack_time) = if entropy < 28.0 {
+/// The verdict for an entropy value, as borrowed strings.
+pub fn strength_verdict(entropy: f64) -> (&'static str, &'static str) {
+    if entropy < 28.0 {
         ("weak", "instant")
     } else if entropy < 36.0 {
         ("fair", "minutes")
@@ -65,7 +82,12 @@ pub fn calculate_password_strength(password: &str) -> PasswordStrength {
         ("good", "months")
     } else {
         ("strong", "centuries")
-    };
+    }
+}
+
+pub fn calculate_password_strength(password: &str) -> PasswordStrength {
+    let entropy = password_entropy(password);
+    let (score, crack_time) = strength_verdict(entropy);
 
     PasswordStrength {
         entropy,
@@ -104,12 +126,49 @@ fn index_from(value: u32, n: u32) -> Option<u32> {
     ((value as u64) < bound).then(|| value % n)
 }
 
-fn uniform_index(n: usize) -> Result<usize, PasswordError> {
+/// A refilled block of OS randomness, handing out one 32-bit draw at a time.
+///
+/// Generation used to call `getrandom` once per character — a syscall per
+/// character of every password, plus one more for each rejected draw. One call
+/// now covers sixteen draws.
+struct RandomDraws {
+    buf: [u8; 64],
+    next: usize,
+}
+
+impl RandomDraws {
+    fn new() -> Self {
+        // Starting past the end forces a fill on the first draw.
+        Self { buf: [0u8; 64], next: 64 }
+    }
+
+    fn draw(&mut self) -> Result<u32, PasswordError> {
+        if self.next == self.buf.len() {
+            getrandom::getrandom(&mut self.buf)
+                .map_err(|_| PasswordError::RandomSourceUnavailable)?;
+            self.next = 0;
+        }
+        let bytes: [u8; 4] = self.buf[self.next..self.next + 4]
+            .try_into()
+            .expect("4 bytes");
+        self.next += 4;
+        Ok(u32::from_le_bytes(bytes))
+    }
+}
+
+impl Drop for RandomDraws {
+    /// The unconsumed tail still selects characters of the password that was
+    /// just generated; it does not outlive the call.
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.buf.zeroize();
+    }
+}
+
+fn uniform_index(draws: &mut RandomDraws, n: usize) -> Result<usize, PasswordError> {
     let n = n as u32;
     loop {
-        let mut buf = [0u8; 4];
-        getrandom::getrandom(&mut buf).map_err(|_| PasswordError::RandomSourceUnavailable)?;
-        if let Some(index) = index_from(u32::from_le_bytes(buf), n) {
+        if let Some(index) = index_from(draws.draw()?, n) {
             return Ok(index as usize);
         }
     }
@@ -145,9 +204,10 @@ pub fn generate_password(
 
     // Returned rather than panicked: this runs behind `extern "C"` bridges,
     // where unwinding is undefined behaviour (audit L2).
+    let mut draws = RandomDraws::new();
     let mut password = String::with_capacity(options.length);
     for _ in 0..options.length {
-        password.push(charset[uniform_index(charset.len())?]);
+        password.push(charset[uniform_index(&mut draws, charset.len())?]);
     }
 
     let strength = calculate_password_strength(&password);

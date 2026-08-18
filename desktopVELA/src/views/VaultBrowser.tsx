@@ -207,12 +207,14 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     }
   }, [copyToClipboard, showToast]);
 
-  const typeCounts = {
+  // Four full vault scans per render (previously inline, so every re-render —
+  // including the auto-lock countdown's context churn — re-scanned all items).
+  const typeCounts = useMemo(() => ({
     all: propItems.length,
     login: propItems.filter(i => i.item_type === 'login').length,
     creditCard: propItems.filter(i => i.item_type === 'creditCard').length,
     secureNote: propItems.filter(i => i.item_type === 'secureNote').length,
-  };
+  }), [propItems]);
 
   return (
     <div ref={scrollParentRef} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">

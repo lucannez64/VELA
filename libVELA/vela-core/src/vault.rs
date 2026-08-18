@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -312,13 +313,53 @@ impl VaultItem {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "VaultStoreRepr")]
 pub struct VaultStore {
     pub items: Vec<VaultItem>,
     #[serde(default)]
     pub tombstones: Vec<Tombstone>,
     #[serde(skip, default = "HashMap::new")]
     item_index: HashMap<String, usize>,
+}
+
+/// Two stores hold the same vault when they hold the same items and tombstones.
+///
+/// Derived, `item_index` counted: a store just read off disk compared unequal
+/// to the identical store built by `add_item`, purely because one had had its
+/// index built and the other had not. The index is derived state, so it is not
+/// part of the value.
+impl PartialEq for VaultStore {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items && self.tombstones == other.tombstones
+    }
+}
+
+/// The wire shape of a `VaultStore`, so that deserializing one also builds its
+/// lookup index.
+///
+/// `item_index` is `#[serde(skip)]`, so a store read back from storage or off
+/// the sync wire arrived with an empty index and kept it until the first
+/// mutation — every `get_item` before that was a linear scan of the whole
+/// vault. Building it here costs one pass at load and makes the lookups after
+/// it O(1).
+#[derive(Deserialize)]
+struct VaultStoreRepr {
+    items: Vec<VaultItem>,
+    #[serde(default)]
+    tombstones: Vec<Tombstone>,
+}
+
+impl From<VaultStoreRepr> for VaultStore {
+    fn from(repr: VaultStoreRepr) -> Self {
+        let mut store = Self {
+            items: repr.items,
+            tombstones: repr.tombstones,
+            item_index: HashMap::new(),
+        };
+        store.reindex();
+        store
+    }
 }
 
 impl Default for VaultStore {
@@ -338,13 +379,21 @@ impl VaultStore {
 
     fn reindex(&mut self) {
         self.item_index.clear();
+        self.item_index.reserve(self.items.len());
         for (i, item) in self.items.iter().enumerate() {
             self.item_index.insert(item.id().to_string(), i);
         }
     }
 
+    /// Rebuild the index whenever it can no longer describe `items`.
+    ///
+    /// "The index is empty" was never a sufficient staleness test: `items` is
+    /// public, so a caller that replaces it wholesale left the index holding the
+    /// *old* positions and `get_item` handed back whichever item had moved into
+    /// that slot. Comparing lengths catches a wholesale replacement, and
+    /// `get_item` re-checks the id at the position it lands on for the rest.
     fn ensure_index(&mut self) {
-        if self.item_index.is_empty() && !self.items.is_empty() {
+        if self.item_index.len() != self.items.len() {
             self.reindex();
         }
     }
@@ -374,10 +423,16 @@ impl VaultStore {
 
     pub fn delete_item(&mut self, id: &str, device_id: Option<&str>) {
         self.ensure_index();
-        if let Some(&idx) = self.item_index.get(id) {
+        if let Some(idx) = self.item_index.remove(id) {
             self.items.remove(idx);
-            self.item_index.remove(id);
-            self.reindex();
+            // Only the entries after the hole moved. A full `reindex()` here
+            // re-hashed and re-allocated the id of every item in the vault on
+            // every single delete.
+            for position in self.item_index.values_mut() {
+                if *position > idx {
+                    *position -= 1;
+                }
+            }
         } else {
             self.items.retain(|item| item.id() != id);
         }
@@ -390,7 +445,15 @@ impl VaultStore {
 
     pub fn get_item(&self, id: &str) -> Option<&VaultItem> {
         if let Some(&idx) = self.item_index.get(id) {
-            return self.items.get(idx);
+            // The index is only refreshed on the `&mut self` paths, so a caller
+            // that wrote straight into the public `items` vector can leave it
+            // pointing at the wrong slot; trust it only when the id still
+            // matches, and fall back to the scan when it does not.
+            if let Some(item) = self.items.get(idx) {
+                if item.id() == id {
+                    return Some(item);
+                }
+            }
         }
         self.items.iter().find(|item| item.id() == id)
     }
@@ -403,16 +466,13 @@ impl VaultStore {
                 item.name().to_lowercase().contains(&query_lower)
                     || item
                         .username()
-                        .map(|u| u.to_lowercase().contains(&query_lower))
-                        .unwrap_or(false)
+                        .is_some_and(|u| u.to_lowercase().contains(&query_lower))
                     || item
                         .url()
-                        .map(|u| u.to_lowercase().contains(&query_lower))
-                        .unwrap_or(false)
+                        .is_some_and(|u| u.to_lowercase().contains(&query_lower))
                     || item
                         .notes()
-                        .map(|n| n.to_lowercase().contains(&query_lower))
-                        .unwrap_or(false)
+                        .is_some_and(|n| n.to_lowercase().contains(&query_lower))
             })
             .collect()
     }
@@ -422,59 +482,148 @@ impl VaultStore {
             return Vec::new();
         }
 
-        let base_domain_lower = base_domain.to_lowercase();
+        // Parsed once instead of once per item: the query side of `urls_match`
+        // re-lowercased the domain, re-parsed it as a URL and re-ran the
+        // public-suffix lookup for every entry in the vault, on the path
+        // autofill hits for each page load.
+        let query = DomainQuery::new(base_domain);
         self.items
             .iter()
             .filter(|item| {
                 item.item_type() == ItemType::Login
-                    && item
-                        .url()
-                        .map(|url| urls_match(&base_domain_lower, url))
-                        .unwrap_or(false)
+                    && item.url().is_some_and(|url| query.matches(url))
             })
             .collect()
     }
 }
 
-fn urls_match(current_url: &str, stored_url: &str) -> bool {
-    let current_lower = current_url.to_lowercase();
-    let stored_lower = stored_url.to_lowercase();
+/// The pre-parsed left-hand side of a URL match: everything `urls_match` used
+/// to recompute for the query on each candidate it was handed.
+struct DomainQuery {
+    host: String,
+    port: Option<u16>,
+    is_ip: bool,
+    registrable_domain: Option<String>,
+}
 
-    let (current_host, current_port) = extract_host_and_port(&current_lower);
-    let (stored_host, stored_port) = extract_host_and_port(&stored_lower);
-    let current_host = normalize_host(&current_host);
-    let stored_host = normalize_host(&stored_host);
-
-    if let (Some(cp), Some(sp)) = (current_port, stored_port) {
-        if cp != sp {
-            return false;
+impl DomainQuery {
+    fn new(url: &str) -> Self {
+        let lowered = to_lowercase_cow(url);
+        let (host, port) = extract_host_and_port(&lowered);
+        let host = normalize_host(&host).into_owned();
+        Self {
+            is_ip: is_ip_address(&host),
+            registrable_domain: psl::domain_str(&host).map(str::to_string),
+            host,
+            port,
         }
     }
 
-    if current_host == stored_host {
-        return true;
+    fn matches(&self, stored_url: &str) -> bool {
+        let lowered = to_lowercase_cow(stored_url);
+        let (stored_host, stored_port) = extract_host_and_port(&lowered);
+        let stored_host = normalize_host(&stored_host);
+
+        if let (Some(query_port), Some(stored_port)) = (self.port, stored_port) {
+            if query_port != stored_port {
+                return false;
+            }
+        }
+
+        if self.host == stored_host.as_ref() {
+            return true;
+        }
+
+        if self.is_ip || is_ip_address(&stored_host) {
+            return false;
+        }
+
+        let (Some(query_domain), Some(stored_domain)) = (
+            self.registrable_domain.as_deref(),
+            psl::domain_str(&stored_host),
+        ) else {
+            return false;
+        };
+
+        query_domain == stored_domain && is_subdomain_of(&self.host, &stored_host)
     }
-
-    if is_ip_address(&current_host) || is_ip_address(&stored_host) {
-        return false;
-    }
-
-    let Some(current_registrable_domain) = psl::domain_str(&current_host) else {
-        return false;
-    };
-    let Some(stored_registrable_domain) = psl::domain_str(&stored_host) else {
-        return false;
-    };
-
-    if current_registrable_domain != stored_registrable_domain {
-        return false;
-    }
-
-    current_host.ends_with(&format!(".{stored_host}"))
 }
 
-fn extract_host_and_port(url: &str) -> (String, Option<u16>) {
+/// `host.ends_with(&format!(".{suffix}"))`, without building the string.
+fn is_subdomain_of(host: &str, suffix: &str) -> bool {
+    let host = host.as_bytes();
+    let suffix = suffix.as_bytes();
+    let Some(dot) = host.len().checked_sub(suffix.len() + 1) else {
+        return false;
+    };
+    host[dot] == b'.' && &host[dot + 1..] == suffix
+}
+
+/// Lowercase only when it changes something, so the common already-lowercase
+/// URL is borrowed rather than copied.
+fn to_lowercase_cow(s: &str) -> Cow<'_, str> {
+    if s.is_ascii() && !s.bytes().any(|b| b.is_ascii_uppercase()) {
+        Cow::Borrowed(s)
+    } else {
+        Cow::Owned(s.to_lowercase())
+    }
+}
+
+/// Split `url` into host and port without going through the full URL parser.
+///
+/// `search_by_domain` parses one URL per login on every autofill lookup, and
+/// `url::Url::parse` — scheme handling, percent-decoding, IDNA — dominated that
+/// scan. `None` means "not obviously simple": userinfo, IPv6 literals,
+/// percent-encoding, backslashes, whitespace, non-ASCII and anything the parser
+/// would rewrite fall through to it, so it stays the authority on what those
+/// mean. Callers pass an already-lowercased URL.
+fn extract_host_and_port_fast(url: &str) -> Option<(&str, Option<u16>)> {
+    if !url.is_ascii() {
+        return None;
+    }
+
+    // `url::Url` elides a scheme's default port, so this has to as well.
+    let (rest, default_port) = if let Some(rest) = url.strip_prefix("https://") {
+        (rest, 443)
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        (rest, 80)
+    } else {
+        // The slow path prepends `https://` to a bare host, so that is the
+        // scheme this would have been parsed under.
+        (url, 443)
+    };
+
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port.parse::<u16>().ok()?)),
+        None => (authority, None),
+    };
+
+    // Only hosts the parser would hand back unchanged. The last label must
+    // start with a letter, which is what keeps the parser's IPv4 rewriting
+    // (`0x7f.1`, `127.1`, `2130706433`) out of the fast path.
+    let last_label = host.rsplit('.').find(|label| !label.is_empty())?;
+    if !last_label.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if !host
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+    {
+        return None;
+    }
+
+    Some((host, port.filter(|p| *p != default_port)))
+}
+
+fn extract_host_and_port(url: &str) -> (Cow<'_, str>, Option<u16>) {
     let url = url.trim();
+
+    if let Some((host, port)) = extract_host_and_port_fast(url) {
+        return (Cow::Borrowed(host), port);
+    }
+
     let parsed = if url.starts_with("http://") || url.starts_with("https://") {
         url::Url::parse(url).ok()
     } else {
@@ -482,25 +631,27 @@ fn extract_host_and_port(url: &str) -> (String, Option<u16>) {
     };
 
     if let Some(parsed) = parsed {
-        return (parsed.host_str().unwrap_or("").to_string(), parsed.port());
+        return (
+            Cow::Owned(parsed.host_str().unwrap_or("").to_string()),
+            parsed.port(),
+        );
     }
 
     if let Some(colon_pos) = url.rfind(':') {
-        let host = url[..colon_pos].to_string();
         if let Ok(port) = url[colon_pos + 1..].parse::<u16>() {
-            return (host, Some(port));
+            return (Cow::Borrowed(&url[..colon_pos]), Some(port));
         }
     }
 
-    (url.to_string(), None)
+    (Cow::Borrowed(url), None)
 }
 
 fn is_ip_address(host: &str) -> bool {
     host.split('.').all(|part| part.parse::<u8>().is_ok())
 }
 
-fn normalize_host(host: &str) -> String {
-    host.trim_matches('.').to_lowercase()
+fn normalize_host(host: &str) -> Cow<'_, str> {
+    to_lowercase_cow(host.trim_matches('.'))
 }
 
 #[cfg(test)]
@@ -701,6 +852,166 @@ mod tests {
         let found = store.get_item("1").unwrap();
         assert_eq!(found.url(), Some("https://new.com"));
         assert_eq!(found.username(), Some("bob"));
+    }
+
+    #[test]
+    fn deleting_from_the_middle_keeps_every_other_lookup_correct() {
+        let mut store = VaultStore::new();
+        for i in 0..6 {
+            store.add_item(login(&i.to_string(), "https://x.com", "user"));
+        }
+        store.delete_item("2", None);
+
+        assert!(store.get_item("2").is_none());
+        // The index entries after the hole are shifted rather than rebuilt, so
+        // an off-by-one there would surface as the wrong item coming back.
+        for id in ["0", "1", "3", "4", "5"] {
+            assert_eq!(store.get_item(id).map(|i| i.id()), Some(id));
+        }
+    }
+
+    /// A sync merge replaces `items` wholesale, which used to leave the index
+    /// pointing at the previous positions — `get_item` then returned whichever
+    /// item had moved into the slot.
+    #[test]
+    fn replacing_items_directly_does_not_return_the_wrong_item() {
+        let mut store = VaultStore::new();
+        store.add_item(login("a", "https://a.com", "alice"));
+        store.add_item(login("b", "https://b.com", "bob"));
+
+        store.items = vec![
+            login("b", "https://b.com", "bob"),
+            login("a", "https://a.com", "alice"),
+        ];
+
+        assert_eq!(store.get_item("a").unwrap().username(), Some("alice"));
+        assert_eq!(store.get_item("b").unwrap().username(), Some("bob"));
+
+        // And the next mutation repairs the index instead of building on a lie.
+        store.add_item(login("c", "https://c.com", "carol"));
+        assert_eq!(store.get_item("a").unwrap().username(), Some("alice"));
+        assert_eq!(store.get_item("c").unwrap().username(), Some("carol"));
+    }
+
+    #[test]
+    fn deserializing_a_vault_indexes_it() {
+        let mut store = VaultStore::new();
+        for i in 0..4 {
+            store.add_item(login(&i.to_string(), "https://x.com", "user"));
+        }
+        let json = serde_json::to_vec(&store).unwrap();
+        let loaded: VaultStore = serde_json::from_slice(&json).unwrap();
+
+        assert_eq!(
+            loaded.item_index.len(),
+            4,
+            "index is built at load, not on the first write"
+        );
+        for i in 0..4 {
+            let id = i.to_string();
+            assert_eq!(loaded.get_item(&id).map(|i| i.id()), Some(id.as_str()));
+        }
+        assert!(loaded.get_item("nope").is_none());
+        // The index is derived state, so it plays no part in equality.
+        assert_eq!(loaded, store);
+    }
+
+    #[test]
+    fn fast_host_split_agrees_with_the_url_parser() {
+        fn slow(url: &str) -> Option<(String, Option<u16>)> {
+            let parsed = if url.starts_with("http://") || url.starts_with("https://") {
+                url::Url::parse(url).ok()
+            } else {
+                url::Url::parse(&format!("https://{url}")).ok()
+            }?;
+            Some((parsed.host_str().unwrap_or("").to_string(), parsed.port()))
+        }
+
+        let corpus = [
+            "https://example.com",
+            "http://example.com",
+            "example.com",
+            "https://example.com/",
+            "https://example.com/login?next=/a#frag",
+            "https://login.sub.example.co.uk/path",
+            "https://example.com:8443",
+            "http://example.com:8080/x",
+            "https://example.com:443",
+            "http://example.com:80",
+            "http://example.com:443",
+            "https://example.com:80",
+            "example.com:8443",
+            "example.com:443",
+            "https://xn--bcher-kva.example",
+            "https://my-host.example-site.com",
+            "https://a.b.c.d.e.example.org",
+            "https://example.com.",
+            // Shapes the fast path is expected to decline on; when it does not,
+            // it still has to be right.
+            "https://user:pw@example.com",
+            "https://127.0.0.1:3000",
+            "http://0x7f.1",
+            "http://127.1",
+            "http://2130706433",
+            "https://[::1]:8080",
+            "https://exa mple.com",
+            "https://éxample.com",
+            "https://example.com:99999",
+            "https://example.com:",
+            "https://",
+            "",
+            "not a url at all",
+            "ftp://example.com",
+            "https://a..b",
+            "https://-example.com",
+        ];
+
+        // Plus every combination of the pieces that make up a stored URL, so
+        // the agreement is not just checked on hand-picked strings.
+        let mut generated = Vec::new();
+        for scheme in ["", "http://", "https://"] {
+            for host in [
+                "example.com", "a.example.com", "example.co.uk", "localhost",
+                "127.0.0.1", "0x7f.1", "2130706433", "ex-ample.com", "example.com.",
+                "a..b", "1example.com", "example.1",
+            ] {
+                for port in ["", ":80", ":443", ":8080", ":0", ":65535", ":65536"] {
+                    for path in ["", "/", "/login", "/a?b=c#d", "?q=1"] {
+                        generated.push(format!("{scheme}{host}{port}{path}"));
+                    }
+                }
+            }
+        }
+
+        for url in corpus.iter().map(|u| u.to_string()).chain(generated) {
+            let Some((host, port)) = extract_host_and_port_fast(&url) else {
+                continue;
+            };
+            assert_eq!(
+                Some((host.to_string(), port)),
+                slow(&url),
+                "fast path disagreed on {url:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn subdomain_suffix_check_matches_the_formatted_version() {
+        for (host, suffix) in [
+            ("login.example.com", "example.com"),
+            ("example.com", "example.com"),
+            ("notexample.com", "example.com"),
+            ("a.b", "b"),
+            ("b", "b"),
+            ("", "example.com"),
+            ("example.com", ""),
+        ] {
+            assert_eq!(
+                is_subdomain_of(host, suffix),
+                host.ends_with(&format!(".{suffix}")),
+                "{host:?} / {suffix:?}"
+            );
+        }
     }
 
     #[test]

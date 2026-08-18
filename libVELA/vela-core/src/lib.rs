@@ -8,6 +8,7 @@ pub mod password;
 pub mod vault;
 
 pub use password::{
-    calculate_password_strength, generate_password, PasswordGeneratorOptions, PasswordStrength,
+    calculate_password_strength, generate_password, password_entropy, strength_verdict,
+    PasswordGeneratorOptions, PasswordStrength,
 };
 pub use vault::{BreachEntry, ItemType, Tombstone, VaultItem, VaultStore};

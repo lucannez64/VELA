@@ -45,13 +45,37 @@ function AppContent() {
   sessionActiveRef.current = !!session?.active;
   const lastActivityRef = useRef(Date.now());
 
+  // Coalesces overlapping `loadItems` calls into one shared run. The sync
+  // path is the main culprit: `trigger_sync` is awaited and *then* `loadItems`
+  // runs, but the sync also emits `vault-items-changed`, so a single sync used
+  // to serialize + ship the whole ~1 MB vault over IPC twice back-to-back (and
+  // re-render the list twice). A call that lands while a load is in flight now
+  // queues a single follow-up run instead of spawning a second full fetch.
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const loadQueuedRef = useRef(false);
+
   const loadItems = useCallback(async () => {
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return loadInFlightRef.current;
+    }
+    const run = (async () => {
+      do {
+        loadQueuedRef.current = false;
+        try {
+          const vaultItems = await invoke<any[]>('get_items');
+          const mapped = vaultItems.map(fromBackendItem);
+          setItems(mapped as VaultItem[]);
+        } catch (e) {
+          console.error('Failed to load items:', e);
+        }
+      } while (loadQueuedRef.current);
+    })();
+    loadInFlightRef.current = run;
     try {
-      const vaultItems = await invoke<any[]>('get_items');
-      const mapped = vaultItems.map(fromBackendItem);
-      setItems(mapped as VaultItem[]);
-    } catch (e) {
-      console.error('Failed to load items:', e);
+      await run;
+    } finally {
+      loadInFlightRef.current = null;
     }
   }, [setItems]);
 
@@ -241,6 +265,12 @@ function AppContent() {
         if (!prev || !prev.active) return prev;
         const idleSecs = Math.floor((Date.now() - lastActivityRef.current) / 1000);
         const remaining = Math.max(0, autoLockSecs - idleSecs);
+        // `setSession` with a fresh object re-renders the whole tree through
+        // the context value. Skip it when the countdown didn't move — which
+        // is every tick while the user is actively using the app, since their
+        // activity keeps resetting `lastActivity` (so `remaining` stays pinned
+        // at `autoLockSecs` and this returns `prev`, a no-op for React).
+        if (remaining === prev.session_time_remaining_secs) return prev;
         return { ...prev, session_time_remaining_secs: remaining };
       });
     }, 1000);
