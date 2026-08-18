@@ -253,7 +253,7 @@ const TOMBSTONE_RETENTION_DAYS: i64 = 30;
 
 /// Merge server vault into the local vault, honouring tombstones so that
 /// deletions propagate across devices.
-fn merge_server_vaults(
+pub(crate) fn merge_server_vaults(
     local: &mut crate::vault::VaultStore,
     server: crate::vault::VaultStore,
     device_id: &str,

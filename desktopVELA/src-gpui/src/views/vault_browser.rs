@@ -40,7 +40,7 @@ use crate::icon::icon;
 use crate::theme::Palette;
 use crate::views::add_item_modal::{AddItemModal, AddItemModalEvent};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Filter {
     All,
     Login,
@@ -87,40 +87,32 @@ pub enum VaultBrowserEvent {
 impl EventEmitter<VaultBrowserEvent> for VaultBrowser {}
 
 /// One virtualized row: either an "A / B / C" section header or an item.
-/// Matches the original's `Row` union in `VaultBrowser.tsx`.
+/// Matches the original's `Row` union in `VaultBrowser.tsx`. The item is
+/// boxed: the enum is stored long-term in the rows cache (`Arc<Vec<Row>>`),
+/// and the unboxed variant made every cached row ~280 bytes (and tripped
+/// clippy's `large_size_differences`).
 enum Row {
     Header(SharedString),
-    Item(VaultItem),
+    Item(Box<VaultItem>),
 }
 
-/// Groups already-alphabetically-sorted items into header+item rows, one
-/// header per distinct leading letter — matches the original's `rows`
-/// `useMemo` exactly (group by uppercased first character of the trimmed
-/// name, `#` fallback for an empty name, groups sorted alphabetically —
-/// already guaranteed here since `filtered_items` pre-sorts by name).
-fn build_rows(items: &[VaultItem]) -> Vec<Row> {
-    let mut rows = Vec::with_capacity(items.len() * 2);
-    let mut current_letter: Option<char> = None;
-    for item in items {
-        let letter = item
-            .name()
-            .trim()
-            .chars()
-            .next()
-            .map(|c| c.to_ascii_uppercase())
-            .unwrap_or('#');
-        if current_letter != Some(letter) {
-            rows.push(Row::Header(letter.to_string().into()));
-            current_letter = Some(letter);
-        }
-        rows.push(Row::Item(item.clone()));
-    }
-    rows
+/// Cache key for the derived row set: the dataset version + filter +
+/// (lowercased) search query. These are the only inputs `refresh_rows` reads,
+/// so a hit means nothing about the visible list could have changed and the
+/// expensive part (lowercasing, sorting and cloning every item) is skipped.
+#[derive(PartialEq, Eq)]
+struct RowsKey {
+    version: u64,
+    filter: Filter,
+    query: String,
 }
 
 pub struct VaultBrowser {
     app_state: Arc<AppState>,
     items: Vec<VaultItem>,
+    /// Bumped every time `items` is replaced, so `refresh_rows` can tell a
+    /// same-filter/same-query re-render from an actual dataset change.
+    items_version: u64,
     health: Option<VaultHealth>,
     error: Option<SharedString>,
     filter: Filter,
@@ -128,13 +120,14 @@ pub struct VaultBrowser {
     add_item_modal: Option<gpui::Entity<AddItemModal>>,
     _add_item_subscription: Option<gpui::Subscription>,
     list_state: ListState,
-    // Signature of the last filtered row set. The list only resets its cached
-    // layout/scroll when the row *count* changes; a same-count dataset swap
-    // (e.g. a search whose result count stays the same) would otherwise keep
-    // the old scroll position and cached heights, landing the filtered list
-    // mid-result and showing rows that don't match the query — the same class
-    // of stale-virtualized-layout bug fixed in `VaultBrowser.tsx`.
-    last_rows_signature: Vec<SharedString>,
+    /// Cache for the derived row set. `render` runs on every keystroke, hover
+    /// animation frame and reload; before this cache it re-lowercased,
+    /// re-sorted and re-cloned the whole vault each time (see `refresh_rows`).
+    rows_key: Option<RowsKey>,
+    cached_rows: Arc<Vec<Row>>,
+    /// Per-`Filter::ALL` item counts for the filter chips, derived in the same
+    /// pass as `cached_rows` (was four independent scans per render).
+    cached_type_counts: [usize; 4],
     favicon_cache: FaviconCache,
 }
 
@@ -157,6 +150,7 @@ impl VaultBrowser {
         Self {
             app_state,
             items: Vec::new(),
+            items_version: 0,
             health: None,
             error: None,
             filter: Filter::All,
@@ -164,7 +158,9 @@ impl VaultBrowser {
             add_item_modal: None,
             _add_item_subscription: None,
             list_state: ListState::new(0, ListAlignment::Top, px(400.)),
-            last_rows_signature: Vec::new(),
+            rows_key: None,
+            cached_rows: Arc::new(Vec::new()),
+            cached_type_counts: [0; 4],
             favicon_cache: favicon_ui::new_cache(),
         }
     }
@@ -196,6 +192,7 @@ impl VaultBrowser {
                 match items {
                     Ok(items) => {
                         this.items = items;
+                        this.items_version = this.items_version.wrapping_add(1);
                         this.error = None;
                     }
                     Err(e) => this.error = Some(e.into()),
@@ -247,7 +244,10 @@ impl VaultBrowser {
                 });
             this.update(cx, |this, cx| {
                 match items {
-                    Ok(items) => this.items = items,
+                    Ok(items) => {
+                        this.items = items;
+                        this.items_version = this.items_version.wrapping_add(1);
+                    }
                     Err(e) => this.error = Some(e.into()),
                 }
                 this.health = health.ok();
@@ -258,17 +258,36 @@ impl VaultBrowser {
         .detach();
     }
 
-    fn filtered_items(&self, cx: &Context<Self>) -> Vec<VaultItem> {
+    /// Derives the filter/search row set, the "A / B / C" header grouping and
+    /// the filter-chip counts, cached by [`RowsKey`]. `render` runs on every
+    /// keystroke, hover frame and reload; before this cache it re-lowercased
+    /// and re-sorted (with a per-comparison allocation) and re-cloned every
+    /// vault item on each of those frames. The heavy part only depends on
+    /// `items`, `filter` and the query, so a key hit is a no-op.
+    ///
+    /// Returns whether the row set changed (used to reset the virtualized
+    /// list — the same stale-layout fix the old `last_rows_signature` did, but
+    /// computed from the actual inputs instead of by rebuilding the rows).
+    fn refresh_rows(&mut self, cx: &Context<Self>) -> bool {
         let query = self.search_state.read(cx).as_str().to_lowercase();
-        let mut items: Vec<VaultItem> = self
+        let key = RowsKey { version: self.items_version, filter: self.filter, query: query.clone() };
+        if self.rows_key.as_ref() == Some(&key) {
+            return false;
+        }
+
+        // Lowercase each candidate's name exactly once — it drives the query
+        // match, the sort, and the section letter — and only touch username
+        // /url when the query isn't empty (matching the original's early-out).
+        let mut matched: Vec<(String, VaultItem)> = self
             .items
             .iter()
             .filter(|item| self.filter.matches(item.item_type()))
-            .filter(|item| {
+            .filter_map(|item| {
+                let lower_name = item.name().to_lowercase();
                 if query.is_empty() {
-                    return true;
+                    return Some((lower_name, item.clone()));
                 }
-                item.name().to_lowercase().contains(&query)
+                let hits = lower_name.contains(&query)
                     || item
                         .username()
                         .map(|u| u.to_lowercase().contains(&query))
@@ -276,44 +295,73 @@ impl VaultBrowser {
                     || item
                         .url()
                         .map(|u| u.to_lowercase().contains(&query))
-                        .unwrap_or(false)
+                        .unwrap_or(false);
+                hits.then(|| (lower_name, item.clone()))
             })
-            .cloned()
             .collect();
-        items.sort_by(|a, b| a.name().to_lowercase().cmp(&b.name().to_lowercase()));
-        items
+        matched.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Matches the original's `rows` `useMemo`: one header per distinct
+        // leading letter (uppercased first character of the trimmed name, `#`
+        // for an empty name), groups already sorted by name here.
+        let mut rows = Vec::with_capacity(matched.len() * 2);
+        let mut current_letter: Option<char> = None;
+        for (_lower_name, item) in matched {
+            // Group by the *original* name's first char (like the original),
+            // not the lowercased one — `to_ascii_uppercase` leaves non-ASCII
+            // chars untouched, so a lowercased 'ä' would group differently
+            // than the original's 'Ä'.
+            let letter = item
+                .name()
+                .trim()
+                .chars()
+                .next()
+                .map(|c| c.to_ascii_uppercase())
+                .unwrap_or('#');
+            if current_letter != Some(letter) {
+                rows.push(Row::Header(letter.to_string().into()));
+                current_letter = Some(letter);
+            }
+            rows.push(Row::Item(Box::new(item)));
+        }
+
+        // All four filter-chip counts in one pass over the vault.
+        let mut counts = [0usize; 4];
+        for item in &self.items {
+            for (i, f) in Filter::ALL.iter().enumerate() {
+                if f.matches(item.item_type()) {
+                    counts[i] += 1;
+                }
+            }
+        }
+
+        self.cached_rows = Arc::new(rows);
+        self.cached_type_counts = counts;
+        self.rows_key = Some(key);
+        true
     }
 
     fn type_count(&self, filter: Filter) -> usize {
-        self.items
-            .iter()
-            .filter(|item| filter.matches(item.item_type()))
-            .count()
+        let index = Filter::ALL.iter().position(|&f| f == filter).expect("filter is in ALL");
+        self.cached_type_counts[index]
     }
 }
 
 impl Render for VaultBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
-        let filtered = self.filtered_items(cx);
-        let rows = build_rows(&filtered);
-        // Reset the list (which invalidates cached measurements and drops the
-        // scroll position) whenever the filtered dataset actually changed —
-        // not just when the row count changed. A same-count content swap, or
-        // a search whose result count happens to equal the previous one, must
-        // still land at the top of the fresh results instead of reusing the
-        // old scroll position. Row *heights* never change for a given row
-        // kind, so an identical signature (pure re-render, e.g. hover
-        // animation frames) is measured correctly without a reset.
-        let signature: Vec<SharedString> = rows
-            .iter()
-            .map(|row| match row {
-                Row::Header(letter) => SharedString::from(format!("h:{letter}")),
-                Row::Item(item) => SharedString::from(format!("i:{}", item.id())),
-            })
-            .collect();
-        if signature != self.last_rows_signature {
-            self.last_rows_signature = signature;
+        // Recomputes the filtered/grouped rows only when the dataset, filter
+        // or query actually changed; every other `render` (hover frames,
+        // keystrokes, reloads) is a cheap cache hit. Resets the list (which
+        // invalidates cached measurements and drops the scroll position)
+        // exactly when the dataset swap happens — same-count swaps land at
+        // the top of the fresh results instead of reusing the old scroll
+        // position, while row *heights* never change for a given row kind so
+        // an identical key (pure re-render) is measured correctly without a
+        // reset.
+        let rows_changed = self.refresh_rows(cx);
+        let rows = self.cached_rows.clone();
+        if rows_changed {
             self.list_state.reset(rows.len());
         }
         // `list`'s per-row render callback only gets `&mut App`, not

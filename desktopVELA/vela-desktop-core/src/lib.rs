@@ -25,6 +25,8 @@ pub mod webauthn;
 pub mod wayland_shortcut;
 
 #[cfg(test)]
+mod perf_bench;
+#[cfg(test)]
 mod vault_lifecycle_test;
 
 use parking_lot::RwLock;
