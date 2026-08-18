@@ -1037,7 +1037,7 @@ fn revoke_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .font_family(fonts::HEADLINE)
@@ -1150,7 +1150,7 @@ fn legacy_enroll_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .flex()
@@ -1310,7 +1310,7 @@ fn enrollment_error_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .font_family(fonts::HEADLINE)
@@ -1395,7 +1395,7 @@ fn enrollment_modal(
                 .flex_col()
                 .items_center()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .w_full()
@@ -1613,7 +1613,7 @@ fn web_access_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .font_family(fonts::HEADLINE)

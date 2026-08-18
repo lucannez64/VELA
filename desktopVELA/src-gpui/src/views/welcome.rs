@@ -994,7 +994,7 @@ fn recover_account_modal(
         .flex()
         .flex_col()
         .gap_4()
-        .on_mouse_down(MouseButton::Left, |_, _, _| {})
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         // Enter runs whichever step's primary button is on screen. The Remote
         // step has no field to type Enter into (it's a remote picker), so it
         // can never reach here.
@@ -1351,7 +1351,7 @@ fn import_code_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 // Enter from the password field imports. It can't fire from
                 // the enrollment-code box above — that's a `text_area`, where
                 // Enter inserts a newline and never reaches us.
@@ -1640,7 +1640,7 @@ fn join_waiting_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .flex()
@@ -1782,7 +1782,7 @@ fn reset_confirm_modal(palette: &Palette, screen: &WelcomeScreen, window: &mut W
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 // Enter confirms, but only once DELETE has actually been
                 // typed — the same guard the button carries.
                 .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {

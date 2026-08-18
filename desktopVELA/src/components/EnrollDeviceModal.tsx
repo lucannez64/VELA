@@ -131,10 +131,20 @@ export default function EnrollDeviceModal({ open, onClose, onEnrolled }: Props) 
   }, [expiresAt, claim]);
 
   const close = useCallback(() => {
-    void invoke('cancel_enrollment').catch(() => {});
+    // Dismissing the dialog must not kill the enrollment. The joining device is
+    // about to be walked through its own screens and this one is in the way;
+    // when it is reopened, `open_enrollment_invite` resumes the same grant and
+    // the poll below picks up the claim — otherwise the user would come back to
+    // a dead code and a joining device stuck on a fingerprint to pick.
     reset();
     onClose();
   }, [onClose, reset]);
+
+  // A deliberate abort, unlike `close` above.
+  const cancel = useCallback(() => {
+    void invoke('cancel_enrollment').catch(() => {});
+    close();
+  }, [close]);
 
   const pick = async (choice: string) => {
     const grantId = grantIdRef.current;
@@ -292,7 +302,7 @@ export default function EnrollDeviceModal({ open, onClose, onEnrolled }: Props) 
             )}
 
             <button
-              onClick={close}
+              onClick={cancel}
               className="w-full py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
             >
               None of these match — cancel
@@ -324,7 +334,9 @@ export default function EnrollDeviceModal({ open, onClose, onEnrolled }: Props) 
                 </div>
                 <p className="text-on-surface-variant text-xs mb-4">
                   This code cannot unlock your vault on its own — it only lets one device ask to
-                  join, once. You still have to confirm which device that was.
+                  join, once. You still have to confirm which device that was. You can close this
+                  window and come back later; it will pick up where it left off until the code
+                  expires.
                 </p>
                 <div className="flex items-center justify-center gap-2 mb-4 text-sm text-on-surface-variant">
                   <span className="material-symbols-outlined text-base animate-pulse">sync</span>
@@ -361,7 +373,7 @@ export default function EnrollDeviceModal({ open, onClose, onEnrolled }: Props) 
                     onClick={close}
                     className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
                   >
-                    Cancel
+                    Close
                   </button>
                 </div>
               </>

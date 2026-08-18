@@ -708,7 +708,7 @@ fn share_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .flex()
