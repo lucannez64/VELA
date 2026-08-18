@@ -1197,7 +1197,7 @@ fn security_key_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
                     if !this.registering_security_key {
                         this.register_security_key(cx);
@@ -1719,7 +1719,7 @@ fn delete_modal(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 // Enter confirms, but only once DELETE has actually been
                 // typed — the same guard the button carries.
                 .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
@@ -1975,7 +1975,7 @@ fn conflict_resolution_modal(
                 .border_color(gpui::Hsla { a: 0.3, h: 0.11, s: 0.9, l: 0.5 })
                 .flex()
                 .flex_col()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .p_6()

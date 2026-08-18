@@ -202,10 +202,22 @@ impl EnrollDeviceModal {
         .detach();
     }
 
+    /// Dismiss the dialog without killing the enrollment.
+    ///
+    /// The joining device is about to be walked through its own screens and
+    /// this one is in the way. When it is reopened, `open_enrollment_invite`
+    /// resumes the same grant and the poll picks up the claim — otherwise the
+    /// user would come back to a dead code and a joining device stuck on a
+    /// fingerprint to pick.
     fn close(&mut self, cx: &mut Context<Self>) {
-        cancel_enrollment(&self.app_state);
         self._poll_task = None;
         cx.emit(EnrollDeviceModalEvent::Close);
+    }
+
+    /// A deliberate abort, unlike `close` above.
+    fn cancel(&mut self, cx: &mut Context<Self>) {
+        cancel_enrollment(&self.app_state);
+        self.close(cx);
     }
 
     fn copy_code(&mut self, cx: &mut Context<Self>) {
@@ -247,7 +259,7 @@ impl Render for EnrollDeviceModal {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()
                             .flex()
@@ -343,7 +355,7 @@ impl EnrollDeviceModal {
             div()
                 .text_xs()
                 .text_color(palette.on_surface_variant)
-                .child("This code cannot unlock your vault on its own — it only lets one device ask to join, once. You still have to confirm which device that was."),
+                .child("This code cannot unlock your vault on its own — it only lets one device ask to join, once. You still have to confirm which device that was. You can close this window and come back later; it will pick up where it left off until the code expires."),
         )
         .child(
             div()
@@ -391,7 +403,7 @@ impl EnrollDeviceModal {
                 .child(modal_button(
                     palette,
                     "enroll-v3-cancel",
-                    "Cancel",
+                    "Close",
                     ButtonKind::Neutral,
                     window,
                     cx,
@@ -472,7 +484,7 @@ impl EnrollDeviceModal {
                 ButtonKind::Neutral,
                 window,
                 cx,
-                |this, cx| this.close(cx),
+                |this, cx| this.cancel(cx),
             ))
         } else {
             el.child(
@@ -502,7 +514,7 @@ impl EnrollDeviceModal {
                 ButtonKind::Neutral,
                 window,
                 cx,
-                |this, cx| this.close(cx),
+                |this, cx| this.cancel(cx),
             ))
         }
     }

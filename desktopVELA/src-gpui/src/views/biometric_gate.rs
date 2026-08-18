@@ -1052,7 +1052,7 @@ fn reset_confirm_modal(palette: &Palette, gate: &BiometricGate, window: &mut Win
                 .flex()
                 .flex_col()
                 .gap_4()
-                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 // Enter confirms, but only once DELETE has actually been
                 // typed — the same guard the button carries.
                 .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
