@@ -240,6 +240,12 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "inCoreLogin":
       handleInCoreLogin(data, sendResponse);
       return true;
+    case "loginArtifactsReady":
+      // The content script lifted a captcha token out of the page (or gave up
+      // waiting). Finish the pending recipe login.
+      handleLoginArtifactsReady(data, sender);
+      sendResponse({ success: true });
+      return true;
     case "openVault":
     case "openSettings":
       handleOpenDesktop(command, sendResponse);
@@ -544,45 +550,223 @@ async function handleInCoreLogin(data, sendResponse) {
       return;
     }
 
-    const response = await sendNativeMessage(
-      { action: "inCoreLogin", itemId: data.itemId, url: active.tab.url },
-      PASSKEY_CEREMONY_TIMEOUT_MS
-    );
-    if (!response?.success) {
-      sendResponse(response || { success: false, error: "No response from VELA Desktop" });
+    // The popup tells us how this site signs in (it learned it from the
+    // candidates, which carry the core's `login_mode`). "recipe_captcha"
+    // means a human has to solve the site's captcha in the tab first; that
+    // flow survives the popup closing, because the solve happens on the page.
+    const mode = data.mode === "recipe" || data.mode === "recipe_captcha" ? data.mode : "form";
+
+    if (mode === "recipe_captcha") {
+      await beginCaptchaWatch(data.itemId, active);
+      sendResponse({ success: true, waitingForCaptcha: true });
       return;
     }
 
-    const installed = await installSessionCookies(response.cookies || [], active.tab.url);
-    if (installed === 0) {
-      sendResponse({
-        success: false,
-        error: "The site did not issue a session VELA could install"
-      });
-      return;
-    }
-
-    // Navigate only within the site we just signed in to. The desktop already
-    // refuses to follow a redirect off the site, so a landing URL elsewhere
-    // means something is wrong, not that the user should be sent there.
-    let target = active.tab.url;
-    if (response.landingUrl && getHttpDomain(response.landingUrl) === active.domain) {
-      target = response.landingUrl;
-    }
-    await tabs.update(active.tab.id, { url: target });
-
-    sendResponse({
-      success: true,
-      cookiesInstalled: installed,
-      looksAuthenticated: Boolean(response.looksAuthenticated),
-      siteMode: response.siteMode,
-      residualNote: response.residualNote,
-      usedSecondFactor: Boolean(response.usedSecondFactor),
-      awaitingSecondFactor: response.awaitingSecondFactor || null,
-      secondFactorDowngraded: Boolean(response.secondFactorDowngraded)
-    });
+    // A recipe without a captcha (Steam) carries the browser's pre-session
+    // cookie jar along. The tab's cookies are gathered for every login: a
+    // plain-form site ignores them, but a site that falls back to the
+    // disposable browser (bot wall, or a JS-only page like Riot's) needs them
+    // seeded into the window before it loads — many login pages only render
+    // for an established session.
+    const artifacts = await gatherBrowserCookies(active.tab.url);
+    const result = await finishInCoreLogin(active.tab, data.itemId, artifacts);
+    sendResponse(result);
   } catch (error) {
     sendResponse({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Park a captcha-gated recipe login and ask the content script to watch for
+ * the token. The pending request lives in session storage so it survives a
+ * service-worker restart; the popup closes and the solve happens on the page.
+ */
+async function beginCaptchaWatch(itemId, active) {
+  await savePendingInCoreLogin({ itemId, tabId: active.tab.id, url: active.tab.url });
+  try {
+    // The content script reports the token via `loginArtifactsReady` whether
+    // it was already there or the human has to solve the widget first. Sent to
+    // the top frame only: the captcha's response textarea lives there, and a
+    // message to every frame would start one watch per frame.
+    await tabs.sendMessage(active.tab.id, { command: "watchLoginArtifacts" }, { frameId: 0 });
+  } catch (error) {
+    // The content script was not reachable (a page about to navigate, say).
+    // Drop the park rather than let it fire later against the wrong page.
+    console.warn("VELA: could not start the captcha watch:", error.message);
+    await clearPendingInCoreLogin();
+  }
+}
+
+/**
+ * Finish a captcha-gated recipe login once the token is in hand: lift the
+ * browser's cookie jar, ask the core to submit, install the session it brings
+ * back, and navigate the tab.
+ */
+async function continueCaptchaLogin(tab, captchaToken) {
+  const saved = await loadPendingInCoreLogin();
+  await clearPendingInCoreLogin();
+  if (!saved || saved.tabId !== tab.id || !captchaToken) {
+    return;
+  }
+
+  const cookies = await gatherBrowserCookies(tab.url);
+  const result = await finishInCoreLogin(tab, saved.itemId, { captchaToken, ...cookies });
+  if (!result?.success) {
+    notifyUser(result?.error || "VELA could not finish the sign-in.");
+    return;
+  }
+  if (result.awaitingSecondFactor) {
+    notifyUser(`Password accepted. Finish with ${result.awaitingSecondFactor}.`);
+  } else if (result.looksAuthenticated) {
+    notifyUser(result.residualNote || "Signed in.");
+  } else {
+    notifyUser("VELA sent the sign-in, but the site did not clearly accept it.");
+  }
+}
+
+/**
+ * The content script reported a captcha token (or gave up waiting, in which
+ * case the token is null and the parked login lapses).
+ */
+async function handleLoginArtifactsReady(data, sender) {
+  if (!data?.captchaToken) {
+    await clearPendingInCoreLogin();
+    notifyUser("The captcha was not completed in time. Try again.");
+    return;
+  }
+  const tab = sender?.tab || (await getActiveTab());
+  if (!tab?.id) {
+    return;
+  }
+  await continueCaptchaLogin(tab, data.captchaToken);
+}
+
+// The pending captcha login. Session storage when the browser has it (so the
+// park survives a service-worker restart); a module-level slot otherwise, which
+// is all an older Firefox can give us.
+let pendingInCoreLoginFallback = null;
+
+async function savePendingInCoreLogin(pending) {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.set({ pendingInCoreLogin: pending });
+      return;
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, parking in memory:", error.message);
+    }
+  }
+  pendingInCoreLoginFallback = pending;
+}
+
+async function loadPendingInCoreLogin() {
+  if (browser.storage?.session) {
+    try {
+      const saved = await browser.storage.session.get("pendingInCoreLogin");
+      if (saved.pendingInCoreLogin) {
+        return saved.pendingInCoreLogin;
+      }
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, reading memory:", error.message);
+    }
+  }
+  return pendingInCoreLoginFallback;
+}
+
+async function clearPendingInCoreLogin() {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.remove("pendingInCoreLogin");
+    } catch (error) {
+      // Nothing to do: the module-level fallback is cleared below either way.
+    }
+  }
+  pendingInCoreLoginFallback = null;
+}
+
+/**
+ * Ask the browser for the tab's cookie jar, shaped for the core.
+ *
+ * Only cookies whose scope covers the tab's origin come back from
+ * `getAll({url})`, so this cannot hand the core a cookie for a sibling domain
+ * the page is not under.
+ */
+async function gatherBrowserCookies(url) {
+  try {
+    const cookies = await browser.cookies.getAll({ url });
+    return {
+      browserCookies: cookies.map((cookie) => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path || "/",
+        secure: Boolean(cookie.secure),
+        http_only: Boolean(cookie.httpOnly),
+        same_site: mapSameSite(cookie.sameSite),
+        expires_at: typeof cookie.expirationDate === "number" ? cookie.expirationDate : null,
+        host_only: Boolean(cookie.hostOnly)
+      }))
+    };
+  } catch (error) {
+    console.warn("VELA: could not gather the browser cookie jar:", error.message);
+    return {};
+  }
+}
+
+/**
+ * Send the in-core login, install the session the core brought back, and
+ * navigate the tab to where the site landed.
+ */
+async function finishInCoreLogin(tab, itemId, browserArtifacts) {
+  const response = await sendNativeMessage(
+    { action: "inCoreLogin", itemId, url: tab.url, ...browserArtifacts },
+    PASSKEY_CEREMONY_TIMEOUT_MS
+  );
+  if (!response?.success) {
+    return response || { success: false, error: "No response from VELA Desktop" };
+  }
+
+  const installed = await installSessionCookies(response.cookies || [], tab.url);
+  const wroteLocal = await replicateLocalSession(tab.id, response.localSession);
+  const wroteDb = await replicateStoredDb(tab.id, response.cachedDb);
+  if (installed === 0 && !wroteLocal && !wroteDb) {
+    return {
+      success: false,
+      error: "The site did not issue a session VELA could install"
+    };
+  }
+
+  // Navigate only within the site we just signed in to. The desktop already
+  // refuses to follow a redirect off the site, so a landing URL elsewhere
+  // means something is wrong, not that the user should be sent there.
+  let target = tab.url;
+  if (response.landingUrl && getHttpDomain(response.landingUrl) === getHttpDomain(tab.url)) {
+    target = response.landingUrl;
+  }
+  await tabs.update(tab.id, { url: target });
+
+  return {
+    success: true,
+    cookiesInstalled: installed,
+    looksAuthenticated: Boolean(response.looksAuthenticated),
+    siteMode: response.siteMode,
+    residualNote: response.residualNote,
+    usedSecondFactor: Boolean(response.usedSecondFactor),
+    awaitingSecondFactor: response.awaitingSecondFactor || null,
+    secondFactorDowngraded: Boolean(response.secondFactorDowngraded),
+    usedBrowser: Boolean(response.usedBrowser)
+  };
+}
+
+function notifyUser(message) {
+  try {
+    browser.notifications.create({
+      type: "basic",
+      iconUrl: browser.runtime.getURL("icons/icon128.png"),
+      title: "VELA",
+      message: String(message || "").slice(0, 250)
+    });
+  } catch (error) {
+    console.warn("VELA: could not show a notification:", error.message);
   }
 }
 
@@ -605,10 +789,15 @@ async function installSessionCookies(cookies, tabUrl) {
     if (!cookie?.name) {
       continue;
     }
+    // A leading dot on a cookie domain means "any subdomain of" — the browser
+    // reports domain-scoped cookies that way. Strip it for the scope check,
+    // or a `.lolesports.com` session cookie is refused against the
+    // `lolesports.com` tab it belongs to.
     const domain = String(cookie.domain || "").toLowerCase();
+    const bareDomain = domain.startsWith(".") ? domain.slice(1) : domain;
     const scoped = cookie.host_only
-      ? host === domain
-      : host === domain || host.endsWith(`.${domain}`);
+      ? host === bareDomain
+      : host === bareDomain || host.endsWith(`.${bareDomain}`);
     if (!scoped) {
       console.warn(`VELA: refused a session cookie scoped to ${domain}`);
       continue;
@@ -626,7 +815,7 @@ async function installSessionCookies(cookies, tabUrl) {
     // Omitting `domain` is what makes a cookie host-only; sending the host
     // explicitly would widen it to every subdomain.
     if (!cookie.host_only) {
-      details.domain = domain;
+      details.domain = bareDomain;
     }
     if (typeof cookie.expires_at === "number") {
       details.expirationDate = cookie.expires_at;
@@ -641,6 +830,54 @@ async function installSessionCookies(cookies, tabUrl) {
   }
 
   return installed;
+}
+
+/**
+ * Replicate an auth SDK's IndexedDB records (Firebase's indexedDB persistence
+ * — monkeytype with "remember me") from the disposable browser into the
+ * user's own tab. The content script writes them into the tab's own IndexedDB
+ * for the same database/object store, so only that site's storage is touched.
+ */
+async function replicateStoredDb(tabId, cachedDb) {
+  if (!cachedDb || typeof cachedDb !== "object") {
+    return false;
+  }
+  const keys = Object.keys(cachedDb);
+  if (keys.length === 0) {
+    return false;
+  }
+  console.log(`[VELA] Replicating ${keys.length} IndexedDB records into tab ${tabId}`);
+  try {
+    await tabs.sendMessage(tabId, { command: "writeStoredDb", records: cachedDb });
+    return true;
+  } catch (error) {
+    console.warn("VELA: could not replicate the site's IndexedDB session:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Replicate a token-session site's localStorage (Firebase Auth keeps the
+ * session token there, not in a cookie) from the disposable browser into the
+ * user's own tab. The content script writes the keys scoped to the tab's own
+ * origin, so only that site's storage is touched.
+ */
+async function replicateLocalSession(tabId, localSession) {
+  if (!localSession || typeof localSession !== "object") {
+    return false;
+  }
+  const keys = Object.keys(localSession);
+  if (keys.length === 0) {
+    return false;
+  }
+  console.log(`[VELA] Replicating ${keys.length} localStorage keys into tab ${tabId}`);
+  try {
+    await tabs.sendMessage(tabId, { command: "writeLocalSession", entries: localSession });
+    return true;
+  } catch (error) {
+    console.warn("VELA: could not replicate the site's local session:", error.message);
+    return false;
+  }
 }
 
 function mapSameSite(value) {

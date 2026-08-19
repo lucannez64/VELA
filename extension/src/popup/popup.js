@@ -257,12 +257,20 @@ function renderInCoreLoginSection() {
              ⚠ May answer a security-key prompt with your authenticator code
            </span>`
         : "";
+      // A site whose login is a recipe gated by a captcha: the human has to
+      // solve it on the page, and VELA picks the token up from there. Named
+      // as such, so the click is not a surprise and the flow is understood.
+      const captchaMode = candidate.login_mode === "recipe_captcha";
+      const label = captchaMode
+        ? `Solve the captcha, then sign in as ${escapeHtml(who)}`
+        : `Sign in as ${escapeHtml(who)} without filling the password`;
       return `
         <button class="in-core-login-btn" data-item-id="${escapeHtml(candidate.item_id || "")}"
+                data-login-mode="${escapeHtml(candidate.login_mode || "form")}"
                 style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 12px;
                        background:#2a2d2e;color:#e2e2e5;border:1px solid #444748;border-radius:10px;
                        font-size:12px;cursor:pointer;">
-          Sign in as ${escapeHtml(who)} without filling the password
+          ${label}
           ${downgrades}
         </button>`;
     })
@@ -275,6 +283,11 @@ function renderInCoreLoginSection() {
       <div style="font-size:11px;opacity:0.7;line-height:1.4;">
         VELA Desktop signs in over its own connection. The page receives a
         session, never your password.
+        ${inCoreLoginCandidates.some((c) => c.login_mode === "recipe_captcha")
+          ? " For captcha-protected sites, solve the captcha in the tab and VELA finishes the sign-in."
+          : ""}
+        Some sites are signed in through a disposable browser window VELA opens
+        and closes on its own.
       </div>
     </div>
   `;
@@ -288,6 +301,7 @@ function wireInCoreLoginSection() {
 
 async function startInCoreLogin(button) {
   const itemId = button.dataset.itemId;
+  const mode = button.dataset.loginMode || "form";
   if (!itemId) {
     return;
   }
@@ -307,11 +321,22 @@ async function startInCoreLogin(button) {
       return;
     }
 
-    const response = await sendMessage({ command: "inCoreLogin", itemId });
+    const response = await sendMessage({ command: "inCoreLogin", itemId, mode });
     if (!response?.success) {
       showNotification(response?.error || "Sign-in failed");
       button.disabled = false;
       button.textContent = "Sign in without filling the password";
+      return;
+    }
+
+    // A captcha-gated recipe: the token can only be minted by a human solving
+    // the widget on the page, which means the popup has to get out of the way.
+    // Tell them what to do and close; the background finishes the sign-in.
+    if (response.waitingForCaptcha) {
+      showNotification(
+        "Complete the captcha on the page — VELA will finish the sign-in automatically."
+      );
+      setTimeout(() => window.close(), 2800);
       return;
     }
 
@@ -325,10 +350,16 @@ async function startInCoreLogin(button) {
         `Password accepted. Finish with ${response.awaitingSecondFactor}.`
       );
     } else if (response.looksAuthenticated) {
+      // A disposable browser window was used for this login (bot-walled
+      // sites). Say so, and that a second factor may have needed finishing
+      // there.
+      const browserNote = response.usedBrowser
+        ? " (a VELA browser window opened to complete it)"
+        : "";
       showNotification(
-        response.secondFactorDowngraded
+        (response.secondFactorDowngraded
           ? "Signed in using your authenticator code instead of the security key this site asked for."
-          : response.residualNote || "Signed in."
+          : response.residualNote || "Signed in.") + browserNote
       );
     } else {
       showNotification("VELA sent the sign-in, but the site did not clearly accept it.");
@@ -341,12 +372,14 @@ async function startInCoreLogin(button) {
   }
 }
 
-async function ensureCookiePermission() {
+function ensureCookiePermission() {
   const origin = new URL(currentTabUrl).origin + "/*";
   const request = { permissions: ["cookies"], origins: [origin] };
-  if (await browser.permissions.contains(request)) {
-    return true;
-  }
+  // `permissions.request` must run inside the click's user gesture. Awaiting
+  // `contains` first can drop that gesture on some Chromium builds (the error
+  // "permissions.request may only be called from a user input handler").
+  // Calling `request` directly is safe: it resolves immediately when the
+  // permission is already held, and only prompts when it is not.
   return browser.permissions.request(request);
 }
 

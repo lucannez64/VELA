@@ -500,6 +500,16 @@ def handle_in_core_login(message):
             "payload": {
                 "item_id": message.get("itemId") or message.get("item_id", ""),
                 "url": message.get("url", ""),
+                # Browser-minted artifacts for a recipe login: a CAPTCHA token
+                # the human solved on the page, and the browser's cookie jar for
+                # the tab. Passed through to the desktop, used once, never
+                # persisted. Absent for the plain-form path.
+                "captcha_token": message.get("captchaToken")
+                or message.get("captcha_token")
+                or "",
+                "browser_cookies": message.get("browserCookies")
+                or message.get("browser_cookies")
+                or [],
             },
         },
         timeout=PASSKEY_TIMEOUT_SECONDS,
@@ -512,6 +522,14 @@ def handle_in_core_login(message):
         return {"success": False, "error": _error_of(response)}
 
     payload = response.get("payload", {})
+    local = payload.get("local_session") or {}
+    cached = payload.get("cached_db") or {}
+    print(
+        f"[VELA-HOST] in_core_login payload: cookies={len(payload.get('cookies') or [])} "
+        f"local_session_keys={len(local) if isinstance(local, dict) else '?'} "
+        f"cached_db_records={len(cached) if isinstance(cached, dict) else '?'}",
+        file=sys.stderr,
+    )
     return {
         "success": True,
         "cookies": payload.get("cookies", []),
@@ -530,6 +548,19 @@ def handle_in_core_login(message):
         # code stand in. The user turned that on once; they are still told
         # every time it is used.
         "secondFactorDowngraded": bool(payload.get("second_factor_downgraded")),
+        # The login was completed in a disposable real browser window rather
+        # than by the desktop submitting over its own TLS. Surfaced so the
+        # popup can say a window appeared.
+        "usedBrowser": bool(payload.get("used_browser")),
+        # The site's localStorage/sessionStorage from the disposable browser,
+        # for token-session sites (Firebase Auth — monkeytype). Passed through
+        # so the extension can write the keys into the user's own tab.
+        # Empty/absent otherwise.
+        "localSession": payload.get("local_session") or {},
+        # The auth SDK's IndexedDB records (Firebase's indexedDB local
+        # persistence). Passed through for the extension to replicate into the
+        # user's own tab's IndexedDB. Empty/absent otherwise.
+        "cachedDb": payload.get("cached_db") or {},
     }
 
 
