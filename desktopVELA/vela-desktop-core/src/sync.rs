@@ -392,12 +392,32 @@ fn load_conflicts(state: &AppState) -> Vec<ConflictItem> {
     vec![]
 }
 
+/// What the server's vault chunks yielded on download.
+#[derive(Debug)]
+enum ServerVault {
+    /// The chunks decrypted and reassembled into a vault.
+    Available(crate::vault::VaultStore, i64),
+    /// The server holds vault chunks this account's key cannot open — server-
+    /// side corruption or a foreign chunk. Nothing can be merged from them; the
+    /// local vault is re-uploaded to overwrite them (a deliberate recovery:
+    /// the codebase's own comments name re-sync as the fix for a corrupt sync).
+    Unreadable(String),
+    /// The server has no vault chunks.
+    Empty,
+}
+
+/// One chunk's outcome from the concurrent download.
+enum ChunkOutcome {
+    Decrypted(usize, zeroize::Zeroizing<Vec<u8>>, i64),
+    Corrupt(usize, String),
+}
+
 async fn download_vault_from_manifest(
     state: &AppState,
     client: &ApiClient,
     token: &mut String,
     manifest: &crate::api::SyncManifest,
-) -> Result<Option<(crate::vault::VaultStore, i64)>, String> {
+) -> Result<ServerVault, String> {
     // What this device last accepted for each chunk, to catch a server that
     // serves an older revision back (audit C-2).
     let local_meta = load_local_sync_meta(state);
@@ -409,7 +429,7 @@ async fn download_vault_from_manifest(
     };
 
     if ids.is_empty() {
-        return Ok(None);
+        return Ok(ServerVault::Empty);
     }
 
     let shared_token = Arc::new(Mutex::new(token.clone()));
@@ -434,9 +454,14 @@ async fn download_vault_from_manifest(
                 *token.lock().await = new_t;
             }
             reject_rollback(&chunk_id, lamport, seen_lamport)?;
-            let chunk = vela_crypto::aead::open_vault_chunk(&key, &ciphertext, &chunk_id, lamport)
-                .map_err(|e| format!("Failed to decrypt chunk {chunk_id}: {e}"))?;
-            Ok::<_, String>((idx, chunk, lamport))
+            // A chunk this account's key cannot open is corruption (or a
+            // foreign chunk), not a rollback — it must not abort the sync
+            // forever. It is reported as `Corrupt` and the caller heals by
+            // re-uploading the local vault.
+            match vela_crypto::aead::open_vault_chunk(&key, &ciphertext, &chunk_id, lamport) {
+                Ok(chunk) => Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport)),
+                Err(e) => Ok::<_, String>(ChunkOutcome::Corrupt(idx, format!("chunk {chunk_id}: {e}"))),
+            }
         }));
     }
 
@@ -444,20 +469,31 @@ async fn download_vault_from_manifest(
     for handle in handles {
         results.push(handle.await.map_err(|e| format!("Download task panicked: {e}"))??);
     }
-    results.sort_by_key(|(idx, ..)| *idx);
+    results.sort_by_key(|outcome| match outcome {
+        ChunkOutcome::Decrypted(idx, ..) | ChunkOutcome::Corrupt(idx, ..) => *idx,
+    });
 
     *token = shared_token.lock().await.clone();
 
     let mut plaintext = Vec::new();
     let mut max_lamport = 0;
-    for (_, chunk, lamport) in results {
-        max_lamport = max_lamport.max(lamport);
-        plaintext.extend_from_slice(&chunk);
+    let mut corrupt = Vec::new();
+    for outcome in results {
+        match outcome {
+            ChunkOutcome::Decrypted(_, chunk, lamport) => {
+                max_lamport = max_lamport.max(lamport);
+                plaintext.extend_from_slice(&chunk);
+            }
+            ChunkOutcome::Corrupt(_, why) => corrupt.push(why),
+        }
+    }
+    if !corrupt.is_empty() {
+        return Ok(ServerVault::Unreadable(corrupt.join("; ")));
     }
 
     let vault: crate::vault::VaultStore =
         serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize synced vault: {e}"))?;
-    Ok(Some((vault, max_lamport)))
+    Ok(ServerVault::Available(vault, max_lamport))
 }
 
 async fn upload_vault_chunks(
@@ -737,32 +773,46 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
     let mut merged_conflicts: Vec<ConflictItem> = Vec::new();
     let mut max_server_lamport = 0;
 
-    if let Some((server_vault, server_lamport)) = download_vault_from_manifest(state, &client, &mut token, &manifest).await? {
-        state.ensure_unlocked_since(generation)?;
-        max_server_lamport = max_server_lamport.max(server_lamport);
+    match download_vault_from_manifest(state, &client, &mut token, &manifest).await? {
+        ServerVault::Available(server_vault, server_lamport) => {
+            state.ensure_unlocked_since(generation)?;
+            max_server_lamport = max_server_lamport.max(server_lamport);
 
-        // Merge + write-back atomically with respect to local edits: the vault
-        // write guard is held across the whole section (no awaits inside), so
-        // a concurrent add/update/delete either lands before the clone (and is
-        // merged) or after the write-back (and survives).
-        let conflicts = {
-            let mut vault_guard = state.vault.write();
-            let mut local_vault = vault_guard.clone();
-            let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id);
-            *vault_guard = local_vault;
-            conflicts
-        };
-        merged_conflicts.extend(conflicts);
+            // Merge + write-back atomically with respect to local edits: the vault
+            // write guard is held across the whole section (no awaits inside), so
+            // a concurrent add/update/delete either lands before the clone (and is
+            // merged) or after the write-back (and survives).
+            let conflicts = {
+                let mut vault_guard = state.vault.write();
+                let mut local_vault = vault_guard.clone();
+                let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id);
+                *vault_guard = local_vault;
+                conflicts
+            };
+            merged_conflicts.extend(conflicts);
 
-        // Persist only while holding proof the vault never locked in between.
-        state.ensure_unlocked_since(generation)?;
-        {
-            let crypto_guard = state.crypto.read();
-            if let Some(crypto) = crypto_guard.as_ref() {
-                let vault_snapshot = state.vault.read().clone();
-                let _ = state.store.save_vault(&vault_snapshot, crypto);
+            // Persist only while holding proof the vault never locked in between.
+            state.ensure_unlocked_since(generation)?;
+            {
+                let crypto_guard = state.crypto.read();
+                if let Some(crypto) = crypto_guard.as_ref() {
+                    let vault_snapshot = state.vault.read().clone();
+                    let _ = state.store.save_vault(&vault_snapshot, crypto);
+                }
             }
         }
+        ServerVault::Unreadable(why) => {
+            // The server's vault chunks cannot be opened with this account's
+            // key. Merge nothing from them; the upload below re-seals the local
+            // vault with fresh Lamports and overwrites the bad chunks. Loud on
+            // purpose: a device that cannot read the server is not silently
+            // trusted to clobber it.
+            tracing::error!(
+                "Sync: the server's vault chunks could not be decrypted ({why}); \
+                 re-uploading the local vault to heal them"
+            );
+        }
+        ServerVault::Empty => {}
     }
 
     let mut current_meta = load_local_sync_meta(state);
@@ -913,8 +963,14 @@ pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool
         if let Some(t) = new_tok {
             token = t;
         }
-        let Some((server_vault, _)) = download_vault_from_manifest(state, &client, &mut token, &manifest).await? else {
-            return Err("Server vault is empty".to_string());
+        let ServerVault::Available(server_vault, _) =
+            download_vault_from_manifest(state, &client, &mut token, &manifest).await?
+        else {
+            return Err(
+                "The server's vault is unavailable (empty or could not be decrypted); \
+                 cannot resolve the conflict against it"
+                    .to_string(),
+            );
         };
         state.session.write().set_server_token(token);
 
@@ -1147,5 +1203,137 @@ mod tests {
         assert!(conflicts.is_empty());
         let kept = local.items.iter().find(|i| i.id() == "a").unwrap();
         assert_eq!(kept.last_modified_device(), Some("this-device"));
+    }
+
+    /// The heal: a server chunk this account's key cannot open must surface as
+    /// `ServerVault::Unreadable` — so sync re-uploads the local vault to
+    /// overwrite it — rather than aborting the whole sync forever.
+    #[tokio::test]
+    async fn a_chunk_this_account_cannot_decrypt_is_unreadable_not_fatal() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&crate::crypto::Crypto::generate_rms());
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": [{
+                    "chunk_id": "vault-data-000000",
+                    "version": 1,
+                    "lamport_clock": 1,
+                    "last_writer": null,
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        // The chunk is sealed under a key this device does not hold — exactly
+        // what a concurrent-writer incident leaves on the server.
+        let foreign_key = [0x42u8; 32];
+        let bogus = vela_crypto::aead::seal(
+            &foreign_key,
+            b"{\"items\":[]}",
+            &vela_crypto::aead::vault_chunk_aad("vault-data-000000", 1),
+        )
+        .unwrap();
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("X-Chunk-Version", "1")
+                    .append_header("X-Lamport-Clock", "1")
+                    .set_body_raw(bogus, "application/octet-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::with_url(server.uri());
+        let manifest: crate::api::SyncManifest = serde_json::from_value(serde_json::json!({
+            "chunks": [{
+                "chunk_id": "vault-data-000000",
+                "version": 1,
+                "lamport_clock": 1,
+                "last_writer": null,
+            }]
+        }))
+        .unwrap();
+        let mut token = "tok".to_string();
+
+        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest)
+            .await
+            .expect("a corrupt chunk must not abort the download");
+        assert!(
+            matches!(&result, ServerVault::Unreadable(why) if why.contains("vault-data-000000")),
+            "expected Unreadable, got {result:?}"
+        );
+    }
+
+    /// The matching happy path: a chunk sealed under this device's own key
+    /// comes back `Available` and reassembles.
+    #[tokio::test]
+    async fn a_chunk_sealed_under_this_devices_key_is_available() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&crate::crypto::Crypto::generate_rms());
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": [{
+                    "chunk_id": "vault-data-000000",
+                    "version": 1,
+                    "lamport_clock": 1,
+                    "last_writer": null,
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let key = {
+            let crypto = state.crypto.read();
+            let crypto = crypto.as_ref().unwrap();
+            *crypto.chunk_key(b"vault-data-000000").as_bytes()
+        };
+        let sealed = vela_crypto::aead::seal(
+            &key,
+            b"{\"items\":[]}",
+            &vela_crypto::aead::vault_chunk_aad("vault-data-000000", 1),
+        )
+        .unwrap();
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("X-Chunk-Version", "1")
+                    .append_header("X-Lamport-Clock", "1")
+                    .set_body_raw(sealed, "application/octet-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::with_url(server.uri());
+        let manifest: crate::api::SyncManifest = serde_json::from_value(serde_json::json!({
+            "chunks": [{
+                "chunk_id": "vault-data-000000",
+                "version": 1,
+                "lamport_clock": 1,
+                "last_writer": null,
+            }]
+        }))
+        .unwrap();
+        let mut token = "tok".to_string();
+
+        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest)
+            .await
+            .expect("a good chunk must download");
+        assert!(matches!(result, ServerVault::Available(_, 1)));
     }
 }
