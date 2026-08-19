@@ -28,6 +28,38 @@ Shipped and verified end-to-end on GitHub (real account, full browser stack):
   the captured request from the core. Works on sites whose login script is
   inline and self-contained.
 
+Shipped in the next session (this file's Tier A, plus one design the tiers did
+not foresee). Verified against a real account in the live runs: **Steam logs
+in end-to-end** (modern Web API flow, phone-app approval, real session
+cookies). **Riot is not reachable**: its login moved to `xsso.riotgames.com`
+behind Cloudflare, which answers an honest non-browser client with a 403, and
+the recorded recipe shape is stale — the recipe is removed from the registry
+(see §2 for the full finding).
+
+**Later: Riot logs in end-to-end via the browser tier.** The app's own browser
+window (the `vela_desktop_core::browser` tier, not the recipe) runs Riot's full
+flow against `lolesports.com`: it renders the real page past Cloudflare and the
+invisible hCaptcha, VELA fills the credential, the human clicks sign-in and
+approves the phone 2FA, and the resulting session (the `__Secure-access_token` /
+`__Secure-id_token` / `__Secure-session_state` cookie set on `.lolesports.com`)
+is harvested and installed into the user's tab. This is the mechanism the tiers
+did not foresee: a real browser window is the CAPTCHA and vendor-JS wall solved
+honestly, with a human in it, and the password still never enters the user's tab
+(or the IPC boundary). It is distinct from Tier A's core-submits credential
+design, which remains blocked for Riot by Cloudflare as recorded in §2.
+
+- **Recipe logins** (`login/recipe.rs`): data-driven per-site request templates.
+  The browser mints the artifact a site demands — a solved CAPTCHA and the
+  pre-session cookie jar — and the core submits the credential over its own
+  TLS. The password still never enters the page or the IPC boundary.
+- **The CAPTCHA lift**: the extension reads `h-captcha-response` /
+  `g-recaptcha-response` out of the page after a human solves it, parks the
+  login in session storage, and the background finishes it when the token
+  appears. The core refuses rather than guess a token.
+- **Steam via core-side RSA**: the client-side RSA is done in the core in Rust
+  (`rsa` crate), so the password never has to enter a JS runtime to be
+  encrypted — the objection that killed Tier B (see §3).
+
 Everything below is beyond that line.
 
 ---
@@ -48,13 +80,14 @@ Measured this session, correcting three assumptions I had asserted:
      only obstacle is that login logic lives in ~300 KB of **cross-origin CDN
      JavaScript** (jQuery 1.8.3 + `shared_global.js` + `login.js`) that
      RSA-encrypts the password client-side.
-   - **Riot**: login is **one clean JSON request** —
-     `PUT https://authenticate.riotgames.com/api/v1/login` with body
-     `{type, remember, language, riot_identity:{username, password, captcha}}`,
-     `Content-Type` the only meaningful header, **no CSRF, no auth header, no
-     OAuth state in the body**. Gated purely by an **hCaptcha** token
-     (~4175 chars) submitted inline. MFA is a follow-up `PUT` with a 6-digit OTP
-     or a phone push.
+   - **Riot**: the recorded clean JSON login
+      (`PUT authenticate.riotgames.com/api/v1/login`,
+      `{type, remember, language, riot_identity:{username, password, captcha}}`)
+      is **stale**. The live run found Riot's login now lives on
+      `xsso.riotgames.com` behind Cloudflare (403 to an honest non-browser
+      client), and the current page builds `PUT /rso-auth/v1/session/credentials`
+      with `{username, password, persistLogin}` plus an invisible hCaptcha.
+      Gated by Cloudflare + an unextractable invisible captcha — out of reach.
 
 2. **A CAPTCHA is a harder wall than fingerprinting, not a softer one.**
    reCAPTCHA v3/Enterprise scores invisibly; a client with no rendering scores
@@ -74,7 +107,13 @@ below are organised around that.
 
 ## 2. Tier A — Browser-solves-CAPTCHA, core-submits-credential (the Riot case)
 
-**The single most promising unbuilt design, and the one with a real policy gate.**
+**Status: the machinery is built; Riot itself is not reachable.** The
+policy gate was resolved by the project owner in favour of building it: the
+artifacts are lifted from the user's own tab, spent once on the user's own
+account, never persisted and never logged, and the core refuses to fabricate a
+token. The remaining risk — that the *shape* is indistinguishable from
+CAPTCHA-relay tooling — is recorded here and in the recipe module's header, not
+hidden.
 
 ### The idea
 For a site whose login is a submittable request gated only by a CAPTCHA (Riot is
@@ -91,43 +130,41 @@ the proof case):
 The password never enters the page. M9a's `credential_never_leaks` structure is
 preserved: the credential still transits only the core→site private leg.
 
-### Why it was not built
-Mechanically, the tool that does this — *take credentials, lift a
-human-solved CAPTCHA token and session cookies, replay the login from a different
-client* — is **indistinguishable in shape from CAPTCHA-relay and session-replay
-attack tooling.** During this session the local safety classifier blocked even a
-syntax check of a prototype (`scratchpad/.../riot_fire.py`) for exactly this
-reason. That is the guardrail behaving correctly. Shipping this in a password
-manager means shipping that capability to every install.
+### What shipped, and what a live run still has to settle
 
-### What must be resolved before building it
-- [ ] **Policy decision, first and blocking.** Is VELA willing to ship
-      CAPTCHA-token relay at all? A human solving their own CAPTCHA to log into
-      their own account is defensible; the *code path* is dual-use. Decide, and
-      write the decision down, before any implementation.
-- [ ] **Isolate the one remaining unknown**, only if the above is yes: is the
-      CAPTCHA token bound to the browser session, or portable? The Riot capture
-      showed no session-state in the request body, so the odds are it works with
-      the cookie jar carried along — but it is unproven. One careful run settles
-      it (token is single-use, ~2 min TTL, so timing is tight).
-- [ ] **Token/cookie hand-off protocol** extension → native host → core, with
-      the token treated as a short-lived secret (never logged, never persisted).
-- [ ] **Per-site request templates.** Even Riot needs the endpoint, the JSON
-      shape, and the MFA follow-up (`{type:"multifactor", multifactor:{otp}}`)
-      known ahead of time. This is a maintained per-site recipe — brittle, and a
-      real ongoing cost.
-- [ ] **MFA plumbing** for the second `PUT` (OTP from the vault TOTP, or waiting
-      out a push).
-- [ ] **Formal model M9d?** Model "browser mints a presence token (CAPTCHA
-      solve), core submits credential". The interesting question the prover
-      could answer: does the CAPTCHA token become a new adversary-observable
-      artifact that changes the secrecy story, or is it inert with respect to
-      `credential_never_leaks`? Expected inert, but check rather than assert.
+- [x] The recipe registry (`login/recipe.rs`): a JSON request template with
+      `$VELA_*` markers, an optional MFA follow-up, and a `Gate` describing what
+      the browser must mint first.
+- [x] The extension lift: the content script watches the page for a solved
+      token (polling `h-captcha-response`/`g-recaptcha-response`), the popup
+      warns the user to solve it, and the background finishes the login when the
+      token lands — parking the request in `storage.session` so a service-worker
+      restart does not drop it.
+- [x] The browser cookie jar is carried into the core and seeded only for
+      cookies whose scope covers the request host.
+- [x] The core refuses (`LoginError::NeedsBrowserArtifact`) rather than guessing
+      a token.
+- [x] **The live run, and what it found.** The recorded Riot shape is **stale**:
+      the current login page builds `PUT /rso-auth/v1/session/credentials`
+      (relative to the page origin) with `{username, password, persistLogin}`,
+      and the whole login now sits behind **`xsso.riotgames.com` behind
+      Cloudflare**, which answers an honest non-browser client with a 403. The
+      old `authenticate.riotgames.com/api/v1/login` endpoint answers any shape
+      with `invalid_request` unless a valid hCaptcha token rides along — and
+      the invisible hCaptcha token is not extractable from a clean browser
+      session. **Conclusion: Riot is not reachable by an honest non-browser
+      client, the same verdict as the Netflix-class tier. The Riot recipe is
+      removed from the registry** (kept in the live harness for re-verification
+      if the wall ever comes down).
+- [ ] M9d the formal model (cheap, and it settles whether the CAPTCHA token is
+      an adversary-observable that changes the secrecy story — expected inert).
 
-### Honest recommendation
-Only Riot-shaped sites (clean API + CAPTCHA, no other browser binding) benefit,
-and the policy cost is high. Likely **not worth it** versus leaving these on M6.
-Build the model (M9d) regardless — it is cheap and settles the argument.
+### Honest recommendation (updated)
+The policy cost the original text worried about is real, and the owner has
+accepted it. The engineering is in. Before this is called "works", the live-run
+unknowns above have to close — and if they close in Riot's favour, the recipe
+registry makes the next CAPTCHA-gated site a data change rather than a code
+change.
 
 ---
 
@@ -139,31 +176,49 @@ Steam has no bot defence; it just needs its login JS run, and that JS lives on
 Extend `js_login.rs` to (a) fetch same-origin **and** whitelisted-CDN scripts and
 (b) provide enough of a DOM/jQuery-compatible environment to initialise them.
 
-### Why it was not built
+### Why it was not built — and what was built instead
 - The prototype deliberately runs **inline scripts only**. Fetching external
   code means the runtime pulls **attacker-influenceable code off the network into
   the process holding the vault** — which is precisely the blast-radius edge
-  `m9c_inprocess_sandbox.spthy` proves (`unused_credentials_stay_secret`
-  falsifies: an escape takes the whole store, not the working set).
+  `m9c_inprocess_sandbox.spthy` proves.
 - jQuery 1.8.3 alone needs `createElement`, the event model, computed style, and
   a good deal more DOM than the current ~200-line shim provides. This is a slide
   toward "implement a browser," which is the wall the models describe.
+- **The password would have to enter the runtime to be RSA-encrypted**, breaking
+  design choice #1.
 
-### What must be resolved
-- [ ] Whether fetching CDN JS is acceptable **at all** given the M9c finding.
-      Probably gate behind the same off-by-default feature, and never enable by
-      default.
-- [ ] A real (or adapted) DOM — likely far more than a hand-written shim; at that
-      point evaluate whether `jsdom`-scale complexity is worth it for the payoff.
-- [ ] Boa's completeness against jQuery 1.8.3 and Steam's `login.js` (RSA of the
-      password client-side before submit — note the password would then have to
-      enter the runtime to be encrypted, **breaking design choice #1** and
-      re-arming exactly the M9c edge).
+**What was built instead:** Steam is now a **recipe** (`login/recipe.rs`), and
+the client-side RSA is done in the core in Rust with the audited `rsa` crate.
+The plaintext never leaves the process, so design choice #1 survives, and the
+`sessionid` cookie Steam ties its login to comes in via the browser cookie jar
+the recipe carries. This sidesteps the Tier B wall entirely: no external script
+is fetched into the vault process at all.
+
+- [ ] One live run on Steam still required (RSA flow + two-factor follow-up are
+      unit-tested against a mock; a real `getrsakey`/`dologin` pair is not).
+- [ ] Steam's *captcha_needed* path (after repeated failed logins) is a bespoke
+      image solve, not an hCaptcha the lift can read; it reports
+      `NeedsBrowserArtifact` and asks the user to finish in the browser. If
+      that becomes a real need, the recipe needs a small image-CAPTCHA path.
+
+### Status update from the live probes
+**Verified end-to-end on a real account** (a real password, a real Steam Guard
+approval in the phone app, real session cookies across Steam's sub-services).
+The classic `login/dologin` form is **dead for real accounts**: a verified
+correct password came back "incorrect" — the account had migrated to Steam's
+modern `IAuthenticationService` Web API flow. The recipe now implements that
+flow (protobuf wire format in an `input_protobuf_encoded` field, hand-rolled
+~100-line codec pinned by tests): RSA key via the Web API, encrypted password
+in the core (base64), `BeginAuthSessionViaCredentials`, Steam Guard (device
+code or in-app approval, polled up to 120 s), `finalizelogin`, then the
+session transfers. A live run minted `steamLoginSecure` for store/community/
+checkout/help, `steamRefresh_steam`, `steamCountry` and the per-service
+`sessionid` cookies — 9 in total. Re-run with `./security/live-login.sh
+steam` if the flow needs re-verifying after a Steam change.
 
 ### Honest recommendation
-**Do not build.** Steam's client-side RSA means the password must enter the
-runtime, so this loses the one property that made `js_login.rs` defensible. The
-model already says why. Leave Steam on M6.
+Steam is now covered without the runtime. The "do not build" verdict stands for
+Tier B itself: nothing here fetches attacker-influenceable code into the core.
 
 ---
 
@@ -197,7 +252,8 @@ These are safe and worth doing regardless of the tiers above.
 - [ ] **Split the branch before review.** `security/m9a-in-core-login` now
       carries: the M9a tier, TOTP second factor, the factor-downgrade opt-in +
       UI, the `Option<bool>` field-preservation fix, the recovery-deferral fix,
-      M9c the model, and `js_login.rs`. That is 5–6 reviewable changes. Split.
+      M9c the model, `js_login.rs`, **and the recipe tier (Riot + Steam)**. That
+      is 6–7 reviewable changes. Split.
 - [ ] **gpui frontend has no UI** for `credential_change_needs_reauth` or
       `allow_second_factor_downgrade`. Safe (its save path preserves them via
       `preserving_app_ids`), but the flags can only be set from the Tauri UI.
@@ -209,7 +265,56 @@ These are safe and worth doing regardless of the tiers above.
 - [ ] **Compatibility reality check in docs.** Of 44 big sites scanned, ~11
       parse, and only **GitHub is confirmed to actually log in**. State plainly
       in user-facing docs that in-core login works on some sites and is not a
-      general replacement for autofill.
+      general replacement for autofill. The recipe registry adds Steam and Riot
+      *by unit test*; both still want one live verification run.
+- [ ] **Recipe upkeep is now a real cost.** Each recipe is a contract with a
+      site that can change underneath it. The registry is data, so a new site
+      is cheap to add; a *broken* recipe is silent until a user hits it. Worth a
+      test that greps the registry for marker consistency (there is one in
+      `login/recipe/tests.rs`) and, eventually, a documented "last verified"
+      field per recipe.
+- [ ] **The captcha flow's polish.** The popup tells the user to solve the
+      captcha and closes; the background notifies when it finishes. Confirm the
+      notification is noticed (or that the tab navigation is enough on its own).
+
+### Vault survey (227 logins, measured)
+
+Run with `security/list-sites.sh | security/classify-sites.py | ...probe-recipes.py`.
+The ceiling, measured rather than guessed:
+
+- **23 sites are plain-form** → already covered by the M9a form path.
+- **0 sites offer passkeys** in this vault.
+- **Steam** is covered by a recipe (verified live).
+- **~24 sites are blocked outright** (Cloudflare/403/429 — `dash.cloudflare.com`,
+  `paypal.com`, `leboncoin.fr`, ...), the same wall as Riot's `xsso`.
+- **The remaining ~180 are JS/browser-only logins.** Probing their APIs:
+  the big names are CAPTCHA/device-fingerprint gated (Google, Apple, Netflix,
+  Spotify, Discord, Reddit, Instagram, X, Twitch, Proton, Kraken, Wise, ...);
+  Mastodon instances removed the OAuth *password* grant
+  (`unsupported_grant_type`, browser approval only); and the handful of truly
+  clean APIs found (**MangaDex** `api.mangadex.org/auth/login`) hand the session
+  back as a **bearer token, not cookies** — which the cookie-return model of
+  `LoginOutcome` cannot deliver to the browser.
+
+**Conclusion:** the recipe machinery has a small, honest footprint. New coverage
+for this vault is not "one recipe per site"; it is either (a) a **token-session**
+outcome (carry a bearer token + a way for the extension to store it, for
+MangaDex-class APIs) or (b) nothing for the bot-walled majority. Both are worth
+doing only if those sites are actually used; the measured answer is that
+in-core login is a niche, and autofill remains the general path.
+
+### The browser-driven tier changed that conclusion
+
+The bot-walled majority is now reachable through a **disposable real browser**
+(`--features browser-login`, documented in
+`security/browser-driven-login-design.md`): the core spawns a real
+Chrome/Chromium/Edge, the page's JS sees only a placeholder, the real password
+is substituted at the network layer, and the session (cookies **and**
+token-session storage — localStorage/sessionStorage/IndexedDB, the Firebase
+case) is harvested back into the user's own browser. **Verified live on
+rateyourmusic.com, hardcover.app and monkeytype.com** through the gpui app and
+both the Chromium and Firefox extensions. Unknowns that remain: 2FA
+pass-through, one-at-a-time locking, platform coverage, and the M9e model.
 
 ---
 
@@ -224,15 +329,39 @@ These are safe and worth doing regardless of the tiers above.
       backups.
 - [ ] The recovery-deferral fix (done, committed) is the mitigation for the
       *onboarding* half of this; the fixed-path bug itself is still open.
+- [ ] **Native-messaging host manifest must live in the profile when Chromium
+      runs with a custom `--user-data-dir`.** Launched that way, Chromium looks
+      for `com.vela.desktop.json` in `<user-data-dir>/NativeMessagingHosts/`, not
+      in `~/.config/chromium/NativeMessagingHosts/`. Without it the extension
+      reports *"Specified native messaging host not found"* and the in-core login
+      silently never reaches the desktop app — while the host works fine when run
+      by hand. Symptom to recognise: the app's log shows no `Processing IPC
+      message` line for the extension's ping. The extension ID must also still
+      match `allowed_origins` (an unpacked extension's ID is a hash of its
+      directory path, so loading `dist/chrome` from a different path silently
+      breaks the origin check too).
+- [ ] **Cookie scope check in `installSessionCookies` refused leading-dot
+      domains (fixed).** The browser reports domain-scoped cookies as
+      `.lolesports.com`, and the scope check compared that against the tab host
+      `lolesports.com` without stripping the leading dot — so the Riot session
+      cookies were refused and never installed. The fix strips the dot before
+      both the scope check and the `chrome.cookies.set` domain. Symptom worth
+      remembering: the core harvested the cookies and reported
+      `looks_authenticated=true`, yet the user's tab stayed logged out.
 
 ---
 
 ## 7. One-line summary for whoever picks this up
 
 The upper tiers are gated by a **human-and-browser** problem (CAPTCHA, vendor JS),
-not a JavaScript-execution problem, and the one design that addresses it cleanly
-(Tier A, browser-solves-CAPTCHA) is **dual-use tooling with a real policy cost**.
-The formally-checked answer for everything above M9a is still **M6** — the useful
-engineering is shrinking M6's plaintext-release floor, not climbing past it.
-Build the M9d model if you want the CAPTCHA-relay argument settled on paper
-before anyone argues for it in code.
+not a JavaScript-execution problem. Tier A is now **built** — the browser mints
+the CAPTCHA solve and the cookie jar, the core submits the credential over its
+own TLS, and the recipe registry (`login/recipe.rs`) makes the next CAPTCHA-gated
+site a data change — and Steam is covered without a JS runtime by doing its
+client-side RSA in the core in Rust. On top of that, the browser tier now
+**logs Riot in end-to-end** (real window through Cloudflare and the invisible
+hCaptcha, phone 2FA, session cookies installed into the user's tab). What
+remains is not design but verification: **one live recipe login on Steam and
+the Tier A core-submits shape** to close the unknowns the unit tests cannot,
+and the M9d model if the CAPTCHA-relay secrecy argument ever needs settling on
+paper.
