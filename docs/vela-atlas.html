@@ -1,0 +1,1648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VELA · The Vault Atlas</title>
+<style>
+  :root{
+    --paper:#cfc9a1;
+    --paper-2:#c7c199;
+    --ink:#16160f;
+    --ink-2:rgba(22,22,15,.62);
+    --ink-3:rgba(22,22,15,.34);
+    --rule:rgba(22,22,15,.30);
+    --rule-soft:rgba(22,22,15,.16);
+    --mono: "Berkeley Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--mono); font-size:12px; line-height:1.45;
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:pointer}
+  ::selection{background:var(--ink);color:var(--paper)}
+
+  /* ── shell ───────────────────────────────────────────────── */
+  #shell{display:grid; grid-template-rows:auto 1fr; height:100vh; width:100vw; overflow:hidden}
+  #topbar{
+    display:flex; align-items:stretch; border-bottom:1px solid var(--ink);
+    min-height:44px; min-width:0; overflow:hidden;
+  }
+  #statbar{display:flex; align-items:stretch; flex:1 1 auto; min-width:0; overflow:hidden}
+  .stat{padding:5px 13px 6px; border-right:1px solid var(--rule); white-space:nowrap}
+  .stat:first-child{border-right:1px solid var(--ink)}
+  .stat .k{font-size:9.5px; letter-spacing:.14em; color:var(--ink-2); text-transform:uppercase}
+  .stat .v{font-size:14px; letter-spacing:.01em}
+  .stat.wide .v{font-size:15px}
+  #statbar .spring{flex:1 1 auto; border-right:none; min-width:0}
+  #controls{display:flex; align-items:center; gap:7px; padding:0 12px 0 8px; flex:0 0 auto;
+            border-left:1px solid var(--ink)}
+  .btn{
+    border:1px solid var(--ink); padding:5px 10px; font-size:10px;
+    letter-spacing:.12em; text-transform:uppercase; white-space:nowrap;
+  }
+  .btn:hover{background:rgba(22,22,15,.09)}
+  .btn.on{background:var(--ink); color:var(--paper)}
+
+  #body{display:grid; grid-template-columns:214px minmax(0,1fr) 400px; min-height:0; min-width:0}
+  #sidebar{border-right:1px solid var(--ink); overflow-y:auto; padding:6px 0 40px}
+  #stage{position:relative; overflow:hidden}
+  #panel{border-left:1px solid var(--ink); display:grid; grid-template-rows:auto 1fr; min-height:0}
+
+  /* ── sidebar ─────────────────────────────────────────────── */
+  .sec{font-size:9.5px; letter-spacing:.16em; color:var(--ink-2); padding:12px 10px 5px; text-transform:uppercase}
+  .sec:first-child{padding-top:6px}
+  .row{
+    display:grid; grid-template-columns:16px 1fr auto; gap:7px; align-items:start;
+    margin:2px 6px; padding:5px 7px; border:1px solid var(--ink); cursor:pointer;
+  }
+  .row.sub{margin-left:16px; border-color:var(--rule)}
+  .row:hover{background:rgba(22,22,15,.10)}
+  .row.sel{background:var(--ink); color:var(--paper)}
+  .row .key{font-size:10px; opacity:.72}
+  .row .nm{font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; word-break:break-word}
+  .row .ct{font-size:10px; opacity:.62}
+
+  /* ── stage ───────────────────────────────────────────────── */
+  #scene{display:block; width:100%; height:100%; cursor:grab}
+  #scene.drag{cursor:grabbing}
+  #zoombox{position:absolute; top:10px; right:10px; display:flex; flex-direction:column; gap:5px}
+  .zb{width:26px;height:26px; border:1px solid var(--ink); display:grid; place-items:center; font-size:14px; background:var(--paper)}
+  .zb:hover{background:rgba(22,22,15,.10)}
+  #hint{
+    position:absolute; left:0; right:0; bottom:0; padding:7px 16px;
+    font-size:10px; letter-spacing:.1em; color:var(--ink-2); text-transform:uppercase;
+    pointer-events:none;
+  }
+  #breadcrumb{
+    position:absolute; top:10px; left:14px; font-size:10px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-2); pointer-events:none;
+  }
+  #tip{
+    position:absolute; pointer-events:none; max-width:280px; padding:6px 9px;
+    background:var(--paper); border:1px solid var(--ink); font-size:10.5px; display:none;
+    box-shadow:3px 3px 0 rgba(22,22,15,.16);
+  }
+  #tip .t{letter-spacing:.09em; text-transform:uppercase}
+  #tip .d{color:var(--ink-2); margin-top:3px}
+
+  /* ── inspector ───────────────────────────────────────────── */
+  #inspector{
+    position:absolute; left:14px; bottom:34px; width:410px; max-height:62%;
+    background:var(--paper); border:1px solid var(--ink); display:none;
+    box-shadow:4px 4px 0 rgba(22,22,15,.18); flex-direction:column; overflow:hidden;
+  }
+  #inspector.open{display:flex}
+  #inspector .head{display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:6px 10px; background:var(--ink); color:var(--paper)}
+  #inspector .head .lbl{font-size:10px; letter-spacing:.14em; text-transform:uppercase}
+  #inspector .head .x{font-size:13px; line-height:1}
+  #inspector .meta{padding:8px 10px 4px; border-bottom:1px solid var(--rule-soft)}
+  #inspector .route{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2)}
+  #inspector .title{font-size:14px; margin-top:2px}
+  #inspector .bodywrap{overflow:auto; padding:8px 10px 10px}
+  #inspector pre{
+    margin:0; font:inherit; font-size:11px; white-space:pre-wrap; word-break:break-word;
+    background:rgba(22,22,15,.055); border-left:2px solid var(--ink); padding:7px 9px;
+  }
+  #inspector .note{margin-top:8px; color:var(--ink-2); font-size:11px}
+  #inspector .src{margin-top:8px; font-size:10px; color:var(--ink-2)}
+  #inspector .nav{display:flex; gap:6px; padding:7px 10px; border-top:1px solid var(--rule-soft)}
+
+  /* ── right panel ─────────────────────────────────────────── */
+  #tabs{display:flex; border-bottom:1px solid var(--ink)}
+  .tab{flex:1; padding:8px 10px; font-size:10px; letter-spacing:.14em; text-transform:uppercase; text-align:center}
+  .tab.on{background:var(--ink); color:var(--paper)}
+  #panelbody{overflow-y:auto; padding:14px 18px 60px}
+  #panelbody h1{font-size:9.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-2); font-weight:400; margin:0 0 4px}
+  #panelbody h2{font-size:22px; font-weight:400; letter-spacing:-.01em; margin:0 0 4px; line-height:1.15}
+  #panelbody .sub{color:var(--ink-2); margin:0 0 16px}
+  #panelbody h3{
+    font-size:9.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-2);
+    font-weight:400; margin:20px 0 7px; padding-bottom:5px; border-bottom:1px solid var(--rule);
+  }
+  #panelbody p{margin:0 0 11px; font-size:12.5px; line-height:1.62}
+  #panelbody .mk{background:var(--ink); color:var(--paper); padding:0 4px}
+  #panelbody ul{margin:0 0 11px; padding-left:15px}
+  #panelbody li{margin-bottom:5px; font-size:12px; line-height:1.55}
+  #panelbody .file{font-size:11px; color:var(--ink-2); margin-bottom:3px}
+  #panelbody .chip{
+    display:inline-block; border:1px solid var(--ink); padding:2px 7px; margin:0 4px 4px 0;
+    font-size:10px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer;
+  }
+  #panelbody .chip:hover{background:var(--ink); color:var(--paper)}
+  #panelbody .go{
+    display:inline-block; margin-top:4px; border-bottom:1px solid var(--ink);
+    font-size:11px; letter-spacing:.06em; cursor:pointer;
+  }
+  #panelbody .cond{border-left:2px solid var(--ink); padding:2px 0 2px 10px; margin-bottom:9px; font-size:12px}
+  #panelbody table{width:100%; border-collapse:collapse; margin-bottom:12px}
+  #panelbody td{padding:3px 0; font-size:11.5px; vertical-align:top; border-bottom:1px solid var(--rule-soft)}
+  #panelbody td.k{color:var(--ink-2); width:44%; padding-right:8px}
+</style>
+</head>
+<body>
+<div id="shell">
+  <div id="topbar"></div>
+  <div id="body">
+    <div id="sidebar"></div>
+    <div id="stage">
+      <canvas id="scene"></canvas>
+      <div id="breadcrumb"></div>
+      <div id="zoombox">
+        <button class="zb" data-z="in">+</button>
+        <button class="zb" data-z="out">&minus;</button>
+      </div>
+      <div id="tip"></div>
+      <div id="inspector">
+        <div class="head"><span class="lbl">Packet inspector</span><button class="x" id="insp-close">&times;</button></div>
+        <div class="meta"><div class="route" id="insp-route"></div><div class="title" id="insp-title"></div></div>
+        <div class="bodywrap">
+          <pre id="insp-body"></pre>
+          <div class="note" id="insp-note"></div>
+          <div class="src" id="insp-src"></div>
+        </div>
+        <div class="nav">
+          <button class="btn" id="insp-prev">&larr; Prev hop</button>
+          <button class="btn" id="insp-next">Next hop &rarr;</button>
+          <button class="btn" id="insp-flow">Whole flow</button>
+        </div>
+      </div>
+      <div id="hint">&rarr; go inside &middot; &larr; come back out &middot; &darr;&uarr; move &middot; hover to read &middot; click a dot to inspect it &middot; drag to pan &middot; scroll to zoom</div>
+    </div>
+    <div id="panel">
+      <div id="tabs">
+        <button class="tab on" data-tab="what">What it does</button>
+        <button class="tab" data-tab="built">How it's built</button>
+      </div>
+      <div id="panelbody"></div>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE MODEL — every number, path and payload below was read out of this
+   repository. Nothing here is illustrative filler.
+   ══════════════════════════════════════════════════════════════════════ */
+
+const STATS = [
+  { k:"repository",     v:"vela · local-first vault", wide:true },
+  { k:"rust crates",    v:"14" },
+  { k:"rust",           v:"63,628 lines" },
+  { k:"other clients",  v:"kotlin · swift · ts · wasm" },
+  { k:"server routes",  v:"47" },
+  { k:"tauri commands", v:"39" },
+  { k:"front ends",     v:"2 — one still being ported" },
+  { k:"traced flows",   v:"11" },
+];
+
+const OVERVIEW = {
+  title:"The Vault Atlas",
+  sub:"how a secret gets sealed, stored, synced and handed back",
+  what:[
+    "VELA is a **zero-knowledge** password vault. The whole design follows from one rule: the server may hold your data but must never be able to read it. Everything in this map is downstream of that.",
+    "The **loop** across the top is the unlock path — master password → Argon2id → the Root Master Seed → a BLAKE3 fan-out of purpose-bound keys → XChaCha20-Poly1305 → the vault in memory. The RMS is the only secret; every other key in the system is derived from it with a context string, so no key can be reused for the wrong job.",
+    "Below the loop is what the vault talks to: a **sync engine** that chunks and seals items with Lamport clocks, an IPC socket the browser extension speaks through, device identity keys that authenticate to the server, and a 2-of-3 Shamir split for recovery.",
+    "To the right is **serverVELA** — an Axum router in front of sled and stoolap. It sees ciphertext, signatures and revocation state. It never sees a vault item, an RMS, or a private key.",
+    "Nearly every hard problem here turned out to be a **trust-boundary** problem rather than a cryptography one: how a brand-new device proves it is the user's, how a browser extension proves it is the extension, how a client can tell a stale blob from a replayed one. The tall structures are the parts that decide who is allowed what.",
+  ],
+  built:[
+    "One Cargo workspace per surface: `libVELA` holds the shared crypto and the platform bridges, `desktopVELA` holds core + two front ends, `serverVELA` holds the API. Clients built on Kotlin, Swift, TypeScript and WASM all call back into the same Rust core through bridges rather than reimplementing crypto.",
+    "Primitives are hybrid post-quantum throughout: **ML-KEM-1024 + X25519** for encapsulation, **ML-DSA-87 + Ed25519** for device signatures. Both halves must verify; either alone is enough against a partial adversary.",
+    "The moving dots are real payloads. Click one to read the exact bytes crossing that wire, and the file that puts them there.",
+  ],
+  cond:[
+    "The Rust server speaks plain HTTP. TLS is expected to terminate in front of it; in production a request that cannot be proven HTTPS is rejected with 426.",
+    "Two desktop front ends exist in parallel — React-on-Tauri is what ships, the gpui port is still being brought level. Both drive the same core; the Tauri layer is wrappers only.",
+    "`libVELA/cyclo` is a lattice-folding research experiment. It is in the tree, not in the product.",
+  ],
+};
+
+/* ── groups ────────────────────────────────────────────────────────── */
+const GROUPS = [
+  { id:"unlock",   name:"The unlock path" },
+  { id:"vault",    name:"The vault" },
+  { id:"identity", name:"Identity & devices" },
+  { id:"recovery", name:"Recovery" },
+  { id:"server",   name:"The server" },
+  { id:"clients",  name:"What talks to it" },
+];
+
+/* ── nodes ─────────────────────────────────────────────────────────────
+   gx,gy = grid origin · w,d = footprint · h = height (tall = it decides
+   something; flat = it stores something).                              */
+const NODES = [
+/* ---- unlock path ---- */
+{ id:"PWD", key:"P", label:"Master password", group:"unlock", gx:0, gy:0, w:2, d:2, h:1.3,
+  files:["desktopVELA/src/views/BiometricGate.tsx","desktopVELA/src-gpui/src/views/biometric_gate.rs","libVELA/vela-core/src/password.rs"],
+  what:["The only thing the user actually knows. It is never stored, never sent, and never hashed with a fast hash — it exists just long enough to open the sealed seed, then it is zeroized.",
+        "The same module scores passwords the generator makes: `calculate_password_strength` and `password_entropy` are what the strength meter reads."],
+  built:["Held in a `Zeroizing<String>` and handed straight to `password_kdf::open_with_password`. On desktop the prompt sits behind the biometric gate, so most unlocks never type it at all."],
+  cond:[],
+  inside:[["read","prompt or biometric gate returns a Zeroizing<String>"],["measure","password_entropy → strength_verdict for the meter"],["hand off","open_with_password(blob, password)"],["wipe","Zeroizing drop on scope exit"]] },
+
+{ id:"ARG", key:"A", label:"Argon2id seal", group:"unlock", gx:4, gy:0, w:2, d:2, h:3.4,
+  files:["libVELA/vela-crypto/src/password_kdf.rs"],
+  what:["The wall between a stolen laptop and the vault. The sealed RMS blob is an **offline brute-force target**, so the password goes through Argon2id with a per-blob random salt rather than any fast hash.",
+        "Blobs are versioned and self-describing. v3 records the cost parameters it was sealed with, so raising the cost never becomes a flag day: old blobs keep opening at the cost they were written at, and `needs_reseal` tells the caller to upgrade one."],
+  built:["`\"VRMS\" ‖ 3 ‖ m_cost:u32 ‖ t_cost:u32 ‖ p_cost:u32 ‖ salt[16] ‖ ciphertext`. Default cost 64 MiB / t=3 / p=1, with a 19 MiB / t=2 interactive profile. Legacy blobs (plain BLAKE3, no magic header) are detected by the caller and lazily re-sealed after a successful open."],
+  cond:["Legacy pre-v2 blobs still open, by design, until the lazy migration has re-sealed them."],
+  inside:[["parse","magic VRMS + version byte"],["params","m_cost / t_cost / p_cost from the blob, not from the binary"],["derive","Argon2id(password, salt) → 32-byte key"],["open","XChaCha20-Poly1305 over the ciphertext"],["needs_reseal","compare stored cost against current default"]] },
+
+{ id:"RMS", key:"R", label:"Root master seed", group:"unlock", gx:8, gy:0, w:2, d:2, h:4.8,
+  files:["libVELA/vela-crypto/src/kdf.rs","desktopVELA/vela-desktop-core/src/crypto.rs"],
+  what:["32 bytes. **Every key in VELA descends from these.** Losing them loses the vault; leaking them loses everything at once, which is why they are the tallest thing on the map and the shortest-lived thing in memory.",
+        "The RMS never travels in the clear. To reach a second device it is sealed to that device's public KEM key; to survive a lost device it is split three ways with Shamir."],
+  built:["Generated once from the OS RNG at account creation. At rest it lives only inside the Argon2id blob (`rms_software.enc`) or an OS-credential store. In memory it is held behind the session lock and dropped on lock."],
+  cond:["Whether the seed sits in the OS keychain or in a software blob depends on platform capability, so the offline attack surface is not identical everywhere."],
+  inside:[["generate","getrandom → [u8;32]"],["seal","password_kdf::seal_with_password"],["derive","kdf::derive(context, rms) for every subkey"],["escrow","shamir::split(rms, 2, 3)"],["transfer","kem seal to a joining device"]] },
+
+{ id:"KDF", key:"K", label:"BLAKE3 key fan-out", group:"unlock", gx:12, gy:0, w:3, d:2, h:3.2,
+  files:["libVELA/vela-crypto/src/kdf.rs"],
+  what:["One seed in, nine **domain-separated** keys out. Each derivation is tagged with a context string, so the vault key can never accidentally be used as the audit-log key or the share key.",
+        "Per-chunk keys go one step further: `chunk_key(rms, chunk_id)` mixes the chunk id in, so a chunk's key is useless against any other chunk."],
+  built:["BLAKE3 native KDF mode. Contexts in the tree today: vault encryption, chunk key, device identity, identity signing, audit log, MAC, share encryption, ORAM position map, and 32 web-session chunk keys."],
+  cond:[],
+  inside:[["vault_encryption_key","\"vela vault encryption v1\""],["chunk_key","context + chunk_id"],["audit_log_key","\"vela audit log v1\""],["mac_key","\"vela mac key v1\""],["share_encryption_key","\"vela share encryption v1\""],["oram_position_map_key","\"vela oram position map v1\""],["device_identity_key_seed","\"vela device identity v1\""],["identity_signing_key_seed","\"vela identity signing v1\""],["web_session_chunk_keys","32 ids, one key each"]] },
+
+{ id:"AED", key:"E", label:"XChaCha20 AEAD", group:"unlock", gx:16, gy:0, w:2, d:2, h:2.5,
+  files:["libVELA/vela-crypto/src/aead.rs"],
+  what:["Every blob that leaves the process goes through here. A fresh **192-bit random nonce** is prepended to the ciphertext so the nonce always travels with what it protects — there is no nonce counter to get wrong.",
+        "Vault chunks are sealed with associated data binding the chunk id and its Lamport clock, so a server that relabels or replays a blob produces a decryption failure rather than a silent rollback."],
+  built:["XChaCha20-Poly1305. Overhead is 40 bytes: 24-byte nonce + 16-byte tag. Sealed-with-AAD blobs carry the magic `VAE1` so `is_sealed` can tell the two envelope generations apart during migration."],
+  cond:[],
+  inside:[["vault_chunk_aad","chunk_id ‖ lamport_clock"],["seal","nonce[24] ‖ ct ‖ tag[16]"],["open","AAD mismatch = hard failure"],["is_sealed","VAE1 magic probe for migration"]] },
+
+/* ---- the vault ---- */
+{ id:"VLT", key:"V", label:"Vault store", group:"vault", gx:16, gy:4, w:4, d:3, h:1.1,
+  files:["libVELA/vela-core/src/vault.rs","desktopVELA/vela-desktop-core/src/vault.rs"],
+  what:["The decrypted items, in memory, for as long as the session is unlocked. Six item types: login, credit card, secure note, identity, file blob, breach monitor.",
+        "It also owns **URL matching** — deciding whether a stored login belongs to the page asking for it. That check uses the Public Suffix List rather than a last-two-labels shortcut, which used to collapse `victim.co.uk` to a public suffix that matched nothing."],
+  built:["Serde-tagged enum over a shared `VaultMeta` (id, name, timestamps, last-modified device, favourite, shared). Deletions are `Tombstone` records, not removals, so a delete can propagate to other devices instead of being resurrected by the next merge."],
+  cond:["Item plaintext lives in process memory while unlocked; the protection there is the session lock and zeroization, not the OS."],
+  inside:[["items","Vec<VaultItem>, tagged by item_type"],["tombstones","deletions retained for propagation"],["urls_match","PSL-aware host comparison"],["linked apps","androidapp://<package> entries"],["breach fields","hibp state carried on the item"]] },
+
+{ id:"STO", key:"S", label:"Encrypted local store", group:"vault", gx:16, gy:9, w:3, d:3, h:0.65,
+  files:["desktopVELA/vela-desktop-core/src/store.rs"],
+  what:["What survives a restart. Nothing lands here in plaintext: the vault, the audit log, the share list and the conflict list are each sealed under their own derived key before they touch the disk."],
+  built:["Per-file envelopes (`vault.enc`, `audit.enc`, `shares.enc`, `conflicts.enc`) written under the app data directory, each opened only after the RMS is available."],
+  cond:["A file's freshness on disk is not authenticated against the server's view — rollback protection lives in the sync engine's Lamport check, not here."],
+  inside:[["vault.enc","sealed items"],["audit.enc","sealed local audit trail"],["shares.enc","sealed inbox / linked shares"],["conflicts.enc","sealed unresolved merges"],["ipc_auth.json","endpoint + capability for the extension"]] },
+
+{ id:"SYN", key:"C", label:"Sync engine", group:"vault", gx:11, gy:9, w:3, d:3, h:3.8,
+  files:["desktopVELA/vela-desktop-core/src/sync.rs","desktopVELA/src-tauri/src/commands/sync.rs"],
+  what:["The hardest module in the client, because it has to merge two vaults **without trusting the thing in the middle**.",
+        "Every chunk carries a Lamport clock; each writer sets `max(previous, local) + 1`. A clock that comes back *lower* than what this device already recorded is not a stale cache, it is a rollback attempt — and it is refused.",
+        "Merges honour tombstones so deletions propagate, and anything genuinely divergent becomes a conflict the user resolves rather than a silent overwrite."],
+  built:["Serialised behind a sync mutex so local edits cannot interleave with a merge. It captures the session generation before starting and aborts if the vault is locked mid-flight. A 401 triggers exactly one re-authentication and retry, because a 15-minute server token routinely outlives an idle unlocked app."],
+  cond:["Conflicts cannot be listed or resolved while the vault is locked — they are stored encrypted, so there is nothing to show.","The rollback guard used to exist only in the shared core, which the shipping Tauri build did not call. Both front ends run it now."],
+  inside:[["trigger_sync","take the mutex, capture session generation"],["manifest","GET /vault/sync → chunk_id, version, lamport_clock, last_writer"],["rollback guard","refuse lamport < last seen"],["open","AEAD with chunk_id ‖ lamport as AAD"],["merge","tombstone-aware, per item"],["conflicts","divergent items → conflicts.enc"],["push","PUT /vault/chunk/:id with If-Match"],["prune","drop tombstones past retention"]] },
+
+{ id:"API", key:"H", label:"HTTP api client", group:"vault", gx:7, gy:9, w:2, d:2, h:2.3,
+  files:["desktopVELA/vela-desktop-core/src/api.rs"],
+  what:["45 typed calls, one per server route the client actually uses. It is also the place that refuses to talk to the wrong kind of URL: `validate_server_url` allows https anywhere and plain http **only for loopback**, so a compromised renderer cannot redirect sync traffic — encrypted chunks plus a bearer token — to a plaintext endpoint."],
+  built:["reqwest with a 30-second timeout. Renewed tokens arrive on the `x-new-token` response header and are threaded back into the token store on every call that can produce one."],
+  cond:[],
+  inside:[["validate_server_url","https anywhere, http only for localhost"],["get_challenge","32-byte nonce"],["verify_signature","device_id + challenge + hybrid signature"],["get_sync_manifest","chunk list with clocks"],["get_chunk / put_chunk","If-Match + X-Lamport-Clock"],["x-new-token","token rotation on any authed call"]] },
+
+{ id:"ORM", key:"O", label:"Path ORAM", group:"vault", gx:21, gy:6, w:2, d:2, h:4.0,
+  files:["libVELA/vela-crypto/src/oram.rs","serverVELA/vela-server/src/vault/oram.rs"],
+  what:["Encryption hides *what* a chunk says. This hides **which chunk you asked for** — the access pattern itself, which otherwise tells a watching server which credential you just used.",
+        "For small vaults it does the honest cheap thing: at four active chunks or fewer, every sync downloads and re-uploads everything, so there is no pattern to read."],
+  built:["Client-side state machine only — position map (`chunk_id → leaf`) plus a stash, with no network or crypto of its own. The caller reads the path, decrypts the buckets, feeds them to `read_path`, then encrypts and uploads the write-back path. Bucket size 4, chunk size 1 MiB."],
+  cond:["The trivial-ORAM path is what runs for most real vaults today; full Path ORAM only engages past the threshold."],
+  inside:[["use_trivial_oram","≤4 chunks → read everything"],["position map","chunk_id → current leaf, sealed under its own key"],["read_path","root→leaf bucket sequence in"],["stash","blocks evicted from the path"],["write-back","re-encrypt and upload the whole path"]] },
+
+{ id:"BIO", key:"BM", label:"Biometric gate", group:"vault", gx:3, gy:9, w:2, d:2, h:2.6,
+  files:["desktopVELA/vela-desktop-core/src/biometric.rs"],
+  what:["Proof that a person, not just a process, is asking. It stands in front of unlock and in front of every plaintext credential release over IPC.",
+        "The last successful proof is remembered with the caller's pid and a timestamp — and deliberately **not persisted**, so a restart costs a fresh confirmation."],
+  built:["Per-platform: Windows Hello, macOS LocalAuthentication, and on Linux the freedesktop portal / polkit path. 1,521 lines of it, nearly all platform glue."],
+  cond:["Linux coverage depends on what the desktop session actually provides; there is no single guaranteed prompt across distributions."],
+  inside:[["available","probe platform capability"],["prompt","OS presence check"],["record","(caller pid, Instant) held in memory only"],["gate","plaintext release checked against that record"]] },
+
+{ id:"AUD", key:"AU", label:"Audit log", group:"vault", gx:21, gy:2, w:2, d:2, h:1.1,
+  files:["desktopVELA/vela-desktop-core/src/audit.rs"],
+  what:["A local record of security-relevant events — unlocks, releases, enrollments, revocations — sealed under its own derived key so the log cannot be read by anything that cannot already read the vault."],
+  built:["Append-only entries encrypted into `audit.enc` under `audit_log_key(rms)`."],
+  cond:["The log is local. It records what this device saw, not what the account did elsewhere."],
+  inside:[["append","event + timestamp + actor"],["seal","audit_log_key(rms)"],["read","decrypt whole log on demand"]] },
+
+{ id:"BRC", key:"BR", label:"Breach monitor", group:"vault", gx:21, gy:10, w:2, d:2, h:1.5,
+  files:["desktopVELA/vela-desktop-core/src/breach.rs"],
+  what:["Checks passwords and emails against Have I Been Pwned without telling HIBP anything. The password is SHA-1'd locally, and only the **first five hex characters** are sent; the response is a range of suffixes, and the match happens here."],
+  built:["`GET https://api.pwnedpasswords.com/range/{prefix}`, then a local scan of `SUFFIX:COUNT` lines. None of these functions write to the vault — the UI calls `add_item` separately with the result."],
+  cond:["It is a network call to a third party. Offline or air-gapped installs simply do not get breach data."],
+  inside:[["sha1","uppercase hex of the password"],["split","prefix[5] ‖ suffix[35]"],["range","fetch by prefix only"],["scan","match suffix locally → count"]] },
+
+/* ---- identity & devices ---- */
+{ id:"IDN", key:"I", label:"Device identity", group:"identity", gx:7, gy:13, w:2, d:2, h:3.4,
+  files:["libVELA/vela-crypto/src/identity.rs","libVELA/vela-crypto/src/signing.rs"],
+  what:["What makes a device *this* device. A long-term hybrid signing key authenticates it to the server; a separate decapsulation key opens everything shared with it.",
+        "These keys used to be handed to the app as base64 in a JVM or Swift `String` — immutable, possibly interned, never zeroized, and therefore still readable in a heap dump long after use. Now the material is created, used and destroyed **on the Rust side of the FFI**: callers get an opaque handle and the public halves, and persist a sealed blob they cannot read."],
+  built:["ML-DSA-87 (FIPS 204) + Ed25519, mirroring the KEM's level-5 hybrid. Both signatures must verify. `fips204` is used rather than RustCrypto's `ml-dsa`, which carries a timing side-channel advisory through v0.0.4. The only bytes crossing the FFI are a 32-byte sealing key — an array both sides can wipe, unlike a string."],
+  cond:["ML-DSA-87 is software-only today; only the Ed25519 half can live in a hardware enclave."],
+  inside:[["generate","hybrid signing + share keypairs"],["publics","IdentityPublics handed out; privates stay"],["sign_auth","device_id ‖ challenge → 4,691-byte hybrid signature"],["open_share","decapsulate a capsule sealed to this device"],["enrollment_fingerprint","short digest the user compares"],["rotate_share_key","new share keypair, same identity"],["seal","opaque blob for persistence"]] },
+
+{ id:"KEM", key:"G", label:"Hybrid KEM", group:"identity", gx:11, gy:13, w:2, d:2, h:3.0,
+  files:["libVELA/vela-crypto/src/kem.rs"],
+  what:["How a secret reaches a device that has never held it — the new-device capsule, every share, every web session. **If either the lattice assumption or the discrete-log assumption survives, the shared secret is still indistinguishable from random.**"],
+  built:["ML-KEM-1024 + X25519, combined with HKDF-SHA256 over `mlkem_ss ‖ x25519_ss` with salt `\"vela hybrid kem v1\"`. Encapsulation key is 1,568 + 32 bytes."],
+  cond:[],
+  inside:[["generate_keypair","(HybridPublicKey, HybridSecretKey)"],["encapsulate","→ (capsule, shared_secret)"],["hkdf","ikm = mlkem_ss ‖ x25519_ss"],["decapsulate","both halves or nothing"]] },
+
+{ id:"ENR", key:"N", label:"Enrollment v3", group:"identity", gx:15, gy:13, w:3, d:2, h:3.6,
+  files:["desktopVELA/vela-desktop-core/src/commands/enrollment_v3.rs","serverVELA/vela-server/src/device/rendezvous.rs"],
+  what:["The trust-bootstrap moment: an account with one device gets a second one, and **there is no pre-existing trust root to check a signature against**.",
+        "v2 sealed the seed under a symmetric transfer key that travelled inside the enrollment code, so reading the code was enough to open the capsule. v3 seals it to a public KEM key whose private half never left the joining device — intercepting both the code and the capsule now gets you nothing.",
+        "Claim and result are deliberately unauthenticated: the joining device has no identity yet, which is the entire point. Its binding comes from the grant being single-claim, and from a signature under the key it claimed with."],
+  built:["Grant → claim → fingerprint comparison → complete → result, four routes on the server and a state machine on both devices. Pending grants, invites and joins are held in memory only: a restart mid-enrollment means starting over rather than resuming a comparison the user never finished."],
+  cond:["The user has to actually compare the fingerprints. The protocol makes substitution detectable, not impossible."],
+  inside:[["post_grant","opening device creates a single-claim grant"],["claim","joining device posts hybrid_ek + hybrid_vk"],["fingerprint","both sides derive the same short code"],["user compares","the only human step in the protocol"],["complete","RMS sealed to the claimed KEM key"],["post_result","signature over grant_id → device_id"]] },
+
+{ id:"SAS", key:"F", label:"Verification codes", group:"identity", gx:19, gy:13, w:2, d:2, h:1.7,
+  files:["libVELA/vela-crypto/src/verification.rs"],
+  what:["A short digest of the exact enrollment locator, shown on both screens for the user to compare — the same short-authentication-string pattern as Signal's safety numbers or Bluetooth pairing.",
+        "If an attacker substitutes a QR code, spoofs a clipboard, or tricks the user into scanning something else, the two devices are hashing different content and the codes do not match."],
+  built:["A digest over the `VELA-ENROLL:v2:...` locator string, rendered short enough to read aloud."],
+  cond:["This is a mitigation for automated substitution, not a cryptographic proof of origin. It only helps if the user looks."],
+  inside:[["locator","VELA-ENROLL:v2:<server>:<token>:<key>"],["digest","hash the exact string, both sides"],["render","short comparable code"],["compare","human check before import"]] },
+
+{ id:"TOK", key:"T", label:"Session tokens", group:"identity", gx:7, gy:5, w:2, d:2, h:2.2,
+  files:["desktopVELA/vela-desktop-core/src/token.rs","serverVELA/vela-server/src/auth/token.rs"],
+  what:["A PASETO the server hands back once a device has proved possession of its signing key. It is short-lived, rotates on use, and its ceiling is the TTL it was granted — a short session cannot mint a long token.",
+        "Revocation reuses the same mechanism for everything: a revoked device, and an ended web session, are both just a `device:revoked:` entry."],
+  built:["PASETO v4.public, signed with a keypair persisted at `{DATA_DIR}/paseto.key` (0600) when `PASETO_SECRET_KEY` is unset — so sessions survive a restart with no manual step. Renewed tokens ride back on the `x-new-token` header."],
+  cond:[],
+  inside:[["mint","after /auth/verify succeeds"],["ttl","absolute ceiling from the grant"],["rotate","x-new-token on subsequent calls"],["revoke","device:revoked: entry in sled"]] },
+
+/* ---- recovery ---- */
+{ id:"SHM", key:"M", label:"Shamir 2-of-3", group:"recovery", gx:7, gy:17, w:2, d:2, h:2.8,
+  files:["libVELA/vela-crypto/src/shamir.rs"],
+  what:["Losing every device must not mean losing the vault, and no single custodian may be able to restore it alone. So the 32-byte seed is split three ways: **cloud backup, the VELA server behind a FIDO2-bound key, and a trusted contact.** Any two reconstruct it; any one is nothing."],
+  built:["Sharing over GF(2^8) with the AES irreducible polynomial, byte by byte, with a degree-(t−1) polynomial. Shares serialise as `(x, y_0…y_31)` plus a 16-byte MAC so a corrupted share is caught rather than silently reconstructing garbage."],
+  cond:["The trusted-contact share has no delivery channel the app can verify — it is shown to the user, who says they handed it over. That acknowledgement is a claim, not a receipt."],
+  inside:[["split","secret, threshold 2, n 3"],["share 1","cloud provider backup"],["share 2","server, gated by a FIDO2 credential"],["share 3","trusted contact"],["reconstruct","any 2 shares + MAC check"]] },
+
+{ id:"WAN", key:"W", label:"WebAuthn / FIDO2", group:"recovery", gx:11, gy:17, w:2, d:2, h:2.4,
+  files:["desktopVELA/vela-desktop-core/src/webauthn.rs","serverVELA/vela-server/src/recovery/webauthn.rs"],
+  what:["The hardware key that gates the server's Shamir share. Getting a *raw CTAP2* library to produce something a WebAuthn relying party will accept took closing two real gaps.",
+        "**clientDataJSON**: the CTAP2 crate hashes its own challenge parameter directly and has no concept of the browser's `{type, challenge, origin, crossOrigin}` envelope. This module builds that envelope and feeds its bytes in as the challenge, so the authenticator ends up hashing exactly what a browser would have.",
+        "**origin**: a native app has none, and the server strictly checks it. So the client fetches the deployment's real configured `WEBAUTHN_RP_ORIGIN` instead of inventing one."],
+  built:["`ctap-hid-fido2` for the ceremony, `webauthn-rs-proto` for the wire shapes — pinned to the exact version the server depends on, so the JSON matches by construction rather than by hand-transcription."],
+  cond:["Needs a physically connected USB/NFC key. There is no platform-authenticator fallback on desktop."],
+  inside:[["get_webauthn_config","fetch the deployment's real rp origin"],["register/start","server challenge"],["clientDataJSON","built here, not by a browser"],["CTAP2","talk to the key over USB/NFC"],["register/finish","relay envelope + attestation"]] },
+
+{ id:"RCV", key:"Y", label:"Recovery flow", group:"recovery", gx:15, gy:17, w:2, d:2, h:2.0,
+  files:["serverVELA/vela-server/src/recovery/","desktopVELA/vela-desktop-core/src/recovery.rs"],
+  what:["Initiate, recover, then enrol the replacement device — the sequence that turns two shares back into a working vault on hardware that has never seen the account."],
+  built:["Four server routes (`/recovery/initiate`, `/recovery/recover`, `/recovery/enroll-device`, plus share storage) and `ensure_shares_split` on the client, which is idempotent so re-entering setup does not reshard a seed."],
+  cond:["Setup is only finished once the cached shares are dropped. Both front ends now do that explicitly, but nothing forces it: abandon setup midway and all three shares stay on the device until you come back."],
+  inside:[["initiate","prove intent, get the server share offer"],["fido2","unlock share 2 with the security key"],["reconstruct","2 of 3 → RMS"],["enroll-device","new device gets an identity"],["reseal","RMS re-sealed under the new password"]] },
+
+/* ---- the server ---- */
+{ id:"SRV", key:"X", label:"Axum router", group:"server", gx:25, gy:2, w:3, d:3, h:2.2,
+  files:["serverVELA/vela-server/src/routes.rs","serverVELA/vela-server/src/main.rs"],
+  what:["47 routes and the front door for all of them. It holds ciphertext, public keys, revocation state and rate-limit counters — and by construction **nothing it could decrypt**.",
+        "Two guards wrap everything. `enforce_https` rejects any request in production that cannot be proven HTTPS — either it arrived on the native TLS listener or a *trusted* proxy said so — because otherwise a bearer token could cross a LAN in the clear. `security_headers` sets nosniff, DENY framing, no-referrer and a CSP that allows the built SPA and nothing else."],
+  built:["Axum with tower-http for CORS and tracing. Wildcard CORS is rejected in production. `/health` is exempt from the HTTPS check so a loopback probe works — and it answers `ok` or `degraded` without naming which backend is failing, since that is operator information, not public information."],
+  cond:["It serves plain HTTP itself. Every HTTPS guarantee here depends on a correctly configured terminator in front."],
+  inside:[["security_headers","outermost: nosniff, DENY, CSP"],["enforce_https","426 unless provably TLS"],["request_from_trusted_proxy","CIDR check before believing any header"],["cf_visitor_says_https","parse the JSON, don't substring it"],["cors","no wildcard in production"],["fallback","serve the web vault SPA when WEB_DIR is set"]] },
+
+{ id:"SDB", key:"D", label:"sled + stoolap", group:"server", gx:25, gy:7, w:3, d:3, h:0.6,
+  files:["serverVELA/vela-server/src/store.rs","serverVELA/vela-server/src/db.rs","serverVELA/vela-server/src/migration.rs"],
+  what:["Two stores with different jobs. sled holds keyed blobs with TTLs — challenges, revocations, chunk ciphertext, rate-limit counters. stoolap holds the relational side: accounts, devices, shares, sessions.",
+        "Everything in here is either encrypted by a client or public by nature."],
+  built:["`set_ex` for anything that should expire on its own (a 60-second challenge, for instance). Schema changes go through `migration.rs`, 684 lines of it."],
+  cond:["A repeated `$N` placeholder in stoolap does not rebind by index — a real quirk that has to be worked around in queries.","`memory://` is one shared database across tests, so test isolation is by convention."],
+  inside:[["challenge:<nonce>","single-use, 60 s TTL"],["device:revoked:<id>","revocation, reused for web sessions"],["chunk:<user>:<id>","opaque ciphertext + lamport"],["accounts / devices","stoolap relational tables"],["rate counters","per-ip and per-account"]] },
+
+{ id:"RTL", key:"L", label:"Rate limit & guards", group:"server", gx:25, gy:11, w:2, d:2, h:3.2,
+  files:["serverVELA/vela-server/src/rate_limit.rs","serverVELA/vela-server/src/middleware.rs","serverVELA/vela-server/src/net.rs"],
+  what:["The part that decides *who is asking*. Client IP is not read naively from a header — `net::client_ip` only believes forwarding headers when the peer address is inside a configured trusted-proxy CIDR, otherwise a spoofed header would reset anyone's limit.",
+        "Challenges are capped at 20 per minute per IP; the auth, enrollment and recovery paths each carry their own budget."],
+  built:["Counters in sled with TTLs, so a restart does not hand out a clean slate for free."],
+  cond:["Behind a misconfigured proxy every request looks like one client, which makes the limits either useless or a self-inflicted outage."],
+  inside:[["client_ip","trust headers only from a trusted CIDR"],["challenge_by_ip","20 / minute"],["auth attempts","per device and per ip"],["enrollment","grant creation and claim budgets"]] },
+
+{ id:"WBS", key:"B", label:"Ephemeral web session", group:"server", gx:29, gy:4, w:2, d:2, h:2.8,
+  files:["serverVELA/vela-server/src/web_session/mod.rs","EPHEMERAL_WEB_ACCESS_DESIGN.md"],
+  what:["No-install, revocable browser access to a vault. A browser starts a session with its ephemeral public keys and the hash of a poll secret only it holds, shows a QR, and waits. An enrolled device of that account scans it and grants — choosing **read-only snapshot or live read-write**, and a TTL.",
+        "The capsule is sealed to the browser's ephemeral KEM key, so the server relays a secret it cannot open. For read-write the browser then proves possession of its ephemeral signing key and gets a PASETO whose ceiling is the session expiry."],
+  built:["The session is self-contained: `session_id` doubles as the token's `device_id`, so revocation reuses the existing `device:revoked:` mechanism and no device row is ever created."],
+  cond:["A live read-write session hands per-chunk vault keys to a browser tab. That is the point, and it is also the largest deliberate exposure in the system — hence the TTL and the one-click revoke."],
+  inside:[["post_start","ephemeral ek/vk + poll-secret hash"],["QR","session id shown to the granting device"],["get_session","polled with the secret only the browser holds"],["post_grant","mode (ro/rw) + ttl, capsule sealed to the ek"],["post_token","prove the ephemeral signing key → PASETO"],["delete_session","revoke from any device"]] },
+
+{ id:"SHR", key:"Q", label:"Share relay", group:"server", gx:29, gy:9, w:2, d:2, h:1.5,
+  files:["serverVELA/vela-server/src/share/mod.rs","desktopVELA/vela-desktop-core/src/sharing.rs"],
+  what:["Sending a credential to another person, without the relay learning it. The sender fetches the recipient's published share encapsulation key, seals the item to it, and posts the capsule. The server stores an inbox row it cannot read."],
+  built:["`/share/send`, `/share/inbox`, `/share/linked`, `/share/recipient/:user_id/ek`, `/share/my-ek`. Linked shares stay updatable so a rotated password reaches the recipient instead of going stale."],
+  cond:["Who shared what with whom is visible to the server. Only the contents are not."],
+  inside:[["put_my_ek","publish this device's share key"],["get_recipient_ek","fetch theirs"],["seal_share","KEM-seal the item json"],["post_send","opaque capsule to the inbox"],["linked","updates propagate on rotation"]] },
+
+/* ---- clients ---- */
+{ id:"EXT", key:"Z", label:"Browser extension", group:"clients", gx:-5, gy:-3, w:3, d:2, h:1.3,
+  files:["extension/src/content/content-script.js","extension/src/background/background.js","extension/src/shared/autofill-utils.js","extension/src/popup/popup.js"],
+  what:["Finds the login form on the page, asks for a credential, and offers to save a new one. 1,710 lines of the content script are field detection, which is where the real difficulty of autofill lives.",
+        "It has **no vault access of its own**. It cannot reach the desktop app over localhost HTTP either — that path was removed."],
+  built:["Manifest v3 with separate Chromium and Firefox manifests. The background service worker is the only part that speaks to the native messaging host."],
+  cond:["Any page it runs on is hostile by assumption; nothing it sends is trusted by the desktop side without a capability token and a presence check."],
+  inside:[["detect","find username/password fields on the page"],["request","ask background for a credential for this host"],["fill","write into the fields, never into the DOM as text"],["offer save","new credential → SaveCredentials"]] },
+
+{ id:"NMH", key:"NM", label:"Native messaging host", group:"clients", gx:-1, gy:-3, w:2, d:2, h:1.6,
+  files:["extension/native-messaging/vela-native-messaging-host.py","extension/native-messaging/chrome/","extension/native-messaging/firefox/"],
+  what:["The bridge the browser is willing to launch. It exists because the alternative — a localhost HTTP listener — is reachable by every page in every browser, and this is reachable only by extensions the OS-level manifest names."],
+  built:["A 357-line Python host, spoken to over stdio with the standard 4-byte little-endian length prefix, relaying to the desktop app's Unix socket or Windows named pipe."],
+  cond:["Registration is per-browser and per-user; a manifest in the wrong directory means silent failure to connect."],
+  inside:[["stdio","4-byte length prefix + JSON"],["locate","read ipc_auth.json for endpoint + capability"],["connect","unix socket / named pipe"],["relay","message in, response out"]] },
+
+{ id:"IPC", key:"IPC", label:"IPC socket server", group:"clients", gx:-1, gy:4, w:2, d:2, h:3.2,
+  files:["desktopVELA/vela-desktop-core/src/ipc.rs","desktopVELA/vela-desktop-core/src/ipc_peer.rs"],
+  what:["The desktop app's only door for the browser, and the tightest one on the map. **OS-protected transport only** — a Unix socket or a Windows named pipe, never a TCP port.",
+        "Three things must hold before a plaintext credential leaves: a valid per-session **capability token**, a peer whose identity the OS confirms, and a fresh presence proof from the user. The release is recorded with the caller's pid and timestamp, held in memory only."],
+  built:["Newline-delimited JSON `IpcMessage { msg_type, payload, capability }`, capped at 1 MiB per message. The capability is 32 random bytes, base64url, regenerated every session and written to `ipc_auth.json` for the host to read. Host matching for autofill hands the full host to `urls_match` so the Public Suffix List decides, rather than truncating labels."],
+  cond:["The extension's own trustworthiness is not verifiable from here — only the transport, the capability and the user's confirmation are."],
+  inside:[["listen","unix socket / named pipe, 0600"],["capability","32-byte token, per session"],["peer identity","OS-level check on the connecting process"],["urls_match","PSL-aware, full host"],["biometric","presence proof before plaintext"],["respond","AutofillResponse / SaveResponse"]] },
+
+{ id:"TAU", key:"U", label:"Tauri + React", group:"clients", gx:-5, gy:4, w:3, d:3, h:1.9,
+  files:["desktopVELA/src-tauri/src/commands/","desktopVELA/src/App.tsx","desktopVELA/src/views/"],
+  what:["The desktop app that ships. 39 Tauri commands are the entire surface the renderer can reach — the React side holds no keys and makes no crypto calls; it asks Rust for everything."],
+  built:["Vite + React in a webview, Rust behind `#[tauri::command]`. The heavy logic moved down into `vela-desktop-core` so both front ends share it; the command layer is now mostly a translation of Tauri types into `&AppState`."],
+  cond:["Nothing but the `#[tauri::command]` wrappers lives here now: 39 commands over ~1,200 lines that translate argument shapes and emit the renderer's refresh event."],
+  inside:[["invoke","renderer → #[tauri::command]"],["AppState","session, vault, crypto, store, api"],["emit","vault_items_changed → refetch"],["window","quick search, tray, title bar"]] },
+
+{ id:"GPU", key:"J", label:"gpui desktop", group:"clients", gx:-5, gy:9, w:3, d:3, h:1.9,
+  files:["desktopVELA/src-gpui/src/","desktopVELA/vendor/gpui-ce/"],
+  what:["A second desktop front end with no webview at all — the same core, driven directly. Fifteen screens are ported; it is not what ships yet.",
+        "Because there is no renderer process, the Tauri-style 'tell the frontend to refetch' event has nothing to talk to: the caller just re-reads state after the awaited call returns."],
+  built:["gpui-ce, vendored under `vendor/gpui-ce` as its own workspace and patched — caret scrolling on the real typing path, and keyboard accessibility for editable text (tab stops during paint, tab/enter propagating instead of being swallowed)."],
+  cond:["The remaining gap is the global quick-search shortcut, which only registers through the Wayland portal — an X11 session gets no shortcut, because the key-grab path the Tauri build uses was never ported."],
+  inside:[["main","gpui app, no webview"],["views/","15 screens"],["sync_scheduler","background sync without a renderer"],["vendor patch","caret scroll + tab stops"]] },
+
+{ id:"AND", key:"AN", label:"Android + JNI", group:"clients", gx:-5, gy:14, w:3, d:3, h:1.9,
+  files:["androidVELA/app/src/main/java/com/vela/android/","libVELA/vela-android-bridge/src/lib.rs"],
+  what:["A native Android app that does its crypto in the same Rust, through a JNI bridge, and fills credentials into other apps through the platform autofill service.",
+        "Logins can be linked to apps by package (`androidapp://<package>`), which is how a vault entry for a website also fills its mobile app."],
+  built:["Kotlin + Compose (13.9k lines) over `vela-android-bridge` (1,478 lines of JNI). Cleartext networking is blocked globally except for scoped local development hosts listed in `network_security_config.xml`."],
+  cond:["Key material crosses the JNI boundary as a sealing key only — the same rule as the Apple bridge — so the JVM side never holds a private key."],
+  inside:[["NativeVelaCore","JNI entry points"],["VaultSyncManager","the sync loop, Android side"],["VelaAutofillService","platform autofill"],["LinkedApps","androidapp://<package> matching"]] },
+
+{ id:"IOS", key:"IS", label:"iOS + Apple bridge", group:"clients", gx:-1, gy:14, w:3, d:3, h:1.9,
+  files:["iosVELA/Sources/","iosVELA/AutoFill/","libVELA/vela-apple-bridge/src/lib.rs"],
+  what:["The same shape as Android: a Swift app and a credential-provider extension over a Rust bridge, so the crypto is not reimplemented a third time."],
+  built:["6.6k lines of Swift over a 1,125-line C-ABI bridge with a generated header, plus a smoke harness that links it outside Xcode."],
+  cond:["The autofill extension is a separate process with its own lifetime, so session state has to be re-established rather than assumed."],
+  inside:[["vela_apple_*","C ABI surface"],["AutoFill","credential provider extension"],["Shared","state between app and extension"]] },
+
+{ id:"WEB", key:"WV", label:"Web vault + wasm", group:"clients", gx:29, gy:0, w:2, d:2, h:1.4,
+  files:["webVELA/src/main.ts","webVELA/src/vela.ts","libVELA/vela-wasm-bridge/src/lib.rs"],
+  what:["The browser end of an ephemeral session. It generates its own ephemeral keypairs, shows the QR, polls for the grant, and opens the capsule **in the tab** — the server relays a secret it cannot read.",
+        "It is served same-origin by the server itself when `WEB_DIR` is set, so the CSP that allows it can be `'self'` and nothing more."],
+  built:["A small TypeScript SPA over `vela-wasm-bridge` (434 lines), which is the same Rust crypto compiled to WASM. The CSP allows `'wasm-unsafe-eval'` for exactly that reason."],
+  cond:["Everything it holds dies with the tab, and should — but while the tab is open, a live session's per-chunk keys are in browser memory."],
+  inside:[["keygen","ephemeral hybrid ek/vk in wasm"],["poll secret","hash sent, secret kept"],["QR","session id for the granting device"],["open capsule","decapsulate in the tab"],["render","vault, read-only or live"]] },
+];
+
+const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
+
+/* ── flows ─────────────────────────────────────────────────────────────
+   Each hop is one wire. `p` is what is actually on it.                  */
+const FLOWS = [
+{ id:"unlock", name:"Unlock the vault", short:"UNLOCK", hops:[
+  { a:"PWD", b:"ARG", bend:"x", p:{ t:"The master password", kind:"in memory", src:"libVELA/vela-crypto/src/password_kdf.rs",
+    body:`Zeroizing<String>          never stored · never sent
+  password  "••••••••••••••••••••••••"   len 24
+  entropy   ~142 bits        vela-core/src/password.rs
+
+→ password_kdf::open_with_password(blob, &password)`,
+    note:"This is the only secret the user supplies. It is dropped the moment the seed is open — and it is never put through a fast hash." }},
+  { a:"ARG", b:"RMS", bend:"x", p:{ t:"The sealed seed blob", kind:"on disk", src:"rms_software.enc · password_kdf.rs",
+    body:`"VRMS"   magic
+0x03     version — parameters recorded in the blob
+m_cost   65536 KiB      (interactive profile: 19456)
+t_cost   3              (interactive profile: 2)
+p_cost   1
+salt     16 B  random, per blob
+ct       48 B  XChaCha20-Poly1305(seed)`,
+    note:"v2 blobs did not record their cost, so raising it would have been a flag day. v3 does, and needs_reseal() tells the caller to upgrade one after a successful open." }},
+  { a:"RMS", b:"KDF", bend:"x", p:{ t:"Root master seed", kind:"32 bytes", src:"libVELA/vela-crypto/src/kdf.rs",
+    body:`rms: [u8; 32]
+
+  9f 2c 41 ee  b3 07 d5 90  …  (redacted)
+
+everything below descends from this and nothing else`,
+    note:"The single point of failure, by design. It exists in memory only while the session is unlocked." }},
+  { a:"KDF", b:"AED", bend:"x", p:{ t:"Derived keys", kind:"BLAKE3 KDF mode", src:"kdf::vault_encryption_key",
+    body:`derive("vela vault encryption v1", rms)   → vault key
+derive("vela chunk key v1" ‖ chunk_id, rms) → per chunk
+derive("vela audit log v1", rms)            → audit key
+derive("vela mac key v1", rms)              → mac key
+derive("vela share encryption v1", rms)     → shares
+derive("vela oram position map v1", rms)    → position map`,
+    note:"Context separation is the whole point: no key can be reused for a job it was not derived for, even by mistake." }},
+  { a:"AED", b:"VLT", bend:"y", p:{ t:"vault.enc opened", kind:"XChaCha20-Poly1305", src:"libVELA/vela-crypto/src/aead.rs",
+    body:`blob  =  nonce[24] ‖ ciphertext ‖ tag[16]
+aad   =  vault_chunk_aad(chunk_id, lamport_clock)
+overhead = 40 B
+
+open(key, blob, aad) → Zeroizing<Vec<u8>>`,
+    note:"The AAD binds the chunk id and its Lamport clock into the ciphertext, so a relabelled or replayed blob fails to open instead of quietly rolling the vault back." }},
+  { a:"VLT", b:"TAU", bend:"x", p:{ t:"Items, in memory", kind:"serde json", src:"libVELA/vela-core/src/vault.rs",
+    body:`[{ "item_type": "login",
+   "id": "b1e5…", "name": "GitHub",
+   "url": "https://github.com",
+   "username": "lucannez64",
+   "password": "«held in core, not sent to the view»",
+   "totp": "otpauth://…",
+   "updated_at": "2026-08-18T17:22:04Z",
+   "last_modified_device": "desk-01" }, …]`,
+    note:"The React and gpui front ends both read through the same core. Neither holds a key; a secret only crosses on explicit request." }},
+]},
+
+{ id:"save", name:"Save an item", short:"SAVE", hops:[
+  { a:"TAU", b:"VLT", bend:"x", p:{ t:"add_item", kind:"tauri command", src:"src-tauri/src/commands/vault.rs",
+    body:`invoke("add_item", {
+  item_type: "login",
+  name: "Fastmail", url: "https://fastmail.com",
+  username: "hery", password: "«generated»"
+})`,
+    note:"39 commands are the entire surface the renderer can reach. Everything else is unreachable from the webview." }},
+  { a:"VLT", b:"AED", bend:"y", p:{ t:"New item, clock bumped", kind:"in memory", src:"vela-desktop-core/src/vault.rs",
+    body:`meta.updated_at = now()
+meta.last_modified_device = "desk-01"
+lamport = max(previous, local) + 1`,
+    note:"Every write moves the Lamport clock forward. That is what lets another device — and this one — tell a newer chunk from an older one later." }},
+  { a:"AED", b:"STO", bend:"y", p:{ t:"vault.enc written", kind:"sealed blob", src:"vela-desktop-core/src/store.rs",
+    body:`seal(vault_key, items_json, aad) →
+  "VAE1" ‖ nonce[24] ‖ ct ‖ tag[16]
+
+sibling files, each under its own derived key:
+  audit.enc   shares.enc   conflicts.enc`,
+    note:"Nothing reaches the disk in plaintext. The conflict list is encrypted too, which is why conflicts cannot be shown while the vault is locked." }},
+]},
+
+{ id:"sync", name:"Sync a chunk", short:"SYNC", hops:[
+  { a:"VLT", b:"SYN", bend:"x", p:{ t:"Dirty chunk", kind:"in memory", src:"vela-desktop-core/src/sync.rs",
+    body:`trigger_sync(state)
+  sync_mutex.lock()            local edits cannot interleave
+  gen = session_generation     abort if the vault locks mid-flight
+  dirty = ["chunk-0"]`,
+    note:"The sync is serialised on purpose. A merge that interleaved with a local edit could resurrect an item the user just deleted." }},
+  { a:"SYN", b:"API", bend:"y", p:{ t:"GET /vault/sync", kind:"http", src:"vela-desktop-core/src/api.rs",
+    body:`GET /vault/sync
+Authorization: Bearer v4.public.…`,
+    note:"A 401 here means the 15-minute server token outlived the unlocked app. That triggers exactly one re-authentication and retry, not an error." }},
+  { a:"API", b:"SRV", bend:"x", p:{ t:"Request enters the server", kind:"http", src:"serverVELA/vela-server/src/routes.rs",
+    body:`enforce_https      426 unless provably TLS
+security_headers   nosniff · DENY · no-referrer · CSP
+cors               no wildcard in production`,
+    note:"In production a request that cannot be proven HTTPS is refused, because otherwise the bearer token above could cross a LAN in the clear." }},
+  { a:"SRV", b:"SDB", bend:"y", p:{ t:"Manifest read", kind:"sled + stoolap", src:"serverVELA/vela-server/src/vault/sync.rs",
+    body:`chunk:<user>:<chunk_id> → { blob, version, lamport_clock }`,
+    note:"The server stores an opaque blob, its version and its clock. It has never been able to read one." }},
+  { a:"SDB", b:"API", bend:"x", p:{ t:"Sync manifest", kind:"json", src:"api::SyncManifest",
+    body:`{ "chunks": [
+    { "chunk_id": "chunk-0",
+      "version": 41,
+      "lamport_clock": 118,
+      "last_writer": "phone-02" }
+] }`,
+    note:"last_writer is a hint for the UI, not a trust signal — the client verifies the ciphertext, not the label." }},
+  { a:"API", b:"SYN", bend:"y", p:{ t:"Rollback guard", kind:"check", src:"sync.rs · lamport check",
+    body:`last_seen("chunk-0") = 121
+server says          118
+
+118 < 121  →  REFUSED`,
+    note:"Lamport clocks only ever increase for a chunk. A lower value is not a stale cache, it is a rollback — deleted credentials reappearing, rotated passwords reverting. The other half of the defence is the clock baked into the AEAD's associated data." }},
+  { a:"SYN", b:"AED", bend:"y", p:{ t:"Seal the new chunk", kind:"XChaCha20-Poly1305", src:"aead::vault_chunk_aad",
+    body:`aad = vault_chunk_aad("chunk-0", 122)
+ct  = seal(chunk_key(rms, "chunk-0"), items, aad)`,
+    note:"Per-chunk keys mean a chunk's key is worthless against any other chunk." }},
+  { a:"AED", b:"API", bend:"y", p:{ t:"PUT /vault/chunk/:id", kind:"http", src:"api::put_chunk",
+    body:`PUT /vault/chunk/chunk-0
+If-Match: "41"
+X-Lamport-Clock: 122
+Content-Type: application/octet-stream
+
+<24 B nonce ‖ ciphertext ‖ 16 B tag>`,
+    note:"If-Match makes the write conditional, so two devices racing produce a conflict the user resolves rather than a silent overwrite." }},
+  { a:"API", b:"SRV", bend:"x", p:{ t:"Stored", kind:"http", src:"serverVELA/vela-server/src/vault/chunk.rs",
+    body:`200 OK
+x-new-token: v4.public.…      (rotated)`,
+    note:"Renewed tokens ride back on a header and are threaded into the token store by the same call that made the request." }},
+]},
+
+{ id:"auth", name:"Prove this device", short:"AUTH", hops:[
+  { a:"API", b:"RTL", bend:"x", p:{ t:"GET /auth/challenge", kind:"http", src:"serverVELA/vela-server/src/rate_limit.rs",
+    body:`client_ip(headers, peer_addr, config)
+  forwarding headers believed ONLY from a trusted CIDR
+
+challenge_by_ip  →  20 / minute`,
+    note:"If a spoofed X-Forwarded-For were trusted, any client could reset anyone's limit. The peer address decides whether the header is even read." }},
+  { a:"RTL", b:"SRV", bend:"y", p:{ t:"Nonce minted", kind:"sled", src:"serverVELA/vela-server/src/auth/challenge.rs",
+    body:`nonce = getrandom(32)
+store.set_ex("challenge:<b64>", 1, 60)   single use, 60 s`,
+    note:"Single-use and short-lived: the challenge is consumed on first use, so a captured one is worth nothing a minute later." }},
+  { a:"SRV", b:"API", bend:"x", p:{ t:"The challenge", kind:"json", src:"auth::challenge::ChallengeResponse",
+    body:`{ "challenge": "3sK1oQ…" }     base64, 32 random bytes`,
+    note:"" }},
+  { a:"API", b:"TOK", bend:"y", p:{ t:"Which identity signs", kind:"lookup", src:"vela-desktop-core/src/token.rs",
+    body:`device_id  "desk-01"
+identity   sealed blob → opaque handle (privates never returned)`,
+    note:"The caller gets a handle, not a key. Key material is created, used and destroyed on the Rust side of the FFI." }},
+  { a:"TOK", b:"IDN", bend:"y", p:{ t:"sign_auth", kind:"hybrid signature", src:"libVELA/vela-crypto/src/identity.rs",
+    body:`msg = device_id ‖ challenge
+
+ML-DSA-87 (FIPS 204)   4627 B
+Ed25519                  64 B
+                       ──────
+hybrid signature       4691 B`,
+    note:"Both halves must verify. Either one alone is enough against an adversary who has broken only the other assumption." }},
+  { a:"IDN", b:"API", bend:"y", p:{ t:"POST /auth/verify", kind:"json", src:"api::VerifyRequest",
+    body:`{ "device_id": "desk-01",
+  "challenge": "3sK1oQ…",
+  "signature": "«4691 B, base64»",
+  "device_name": "hery-desk",
+  "device_type": "desktop" }`,
+    note:"" }},
+  { a:"API", b:"SRV", bend:"x", p:{ t:"Verify and consume", kind:"check", src:"serverVELA/vela-server/src/auth/verify.rs",
+    body:`challenge:<b64>  present?     → consume, delete
+device:revoked:<id> present?  → 401
+verify ML-DSA-87 ∧ Ed25519    → both, or reject`,
+    note:"Revocation is one sled key. The same mechanism ends a web session, which is why a web session needs no device row at all." }},
+  { a:"SRV", b:"API", bend:"x", p:{ t:"PASETO issued", kind:"token", src:"serverVELA/vela-server/src/auth/token.rs",
+    body:`v4.public.eyJkZXZpY2VfaWQiOiJkZXNrLTAxIiwiZXhwIjoi…
+
+exp    ceiling is the granted TTL
+key    {DATA_DIR}/paseto.key (0600) when PASETO_SECRET_KEY is unset`,
+    note:"Persisting the keypair is what lets sessions survive a server restart without a manual step." }},
+  { a:"API", b:"TOK", bend:"y", p:{ t:"Token stored", kind:"in memory", src:"vela-desktop-core/src/token.rs",
+    body:`token_store.put("desk-01", token, exp)`,
+    note:"Rotations arriving later on x-new-token overwrite this entry in place." }},
+]},
+
+{ id:"autofill", name:"Fill a login", short:"AUTOFILL", hops:[
+  { a:"EXT", b:"NMH", bend:"x", p:{ t:"Page asks for a credential", kind:"extension message", src:"extension/src/background/background.js",
+    body:`{ "type": "autofill_request",
+  "url":  "https://github.com/login",
+  "host": "github.com" }`,
+    note:"The content script found a form. It has no vault access of its own, and the localhost HTTP path it used to have is gone." }},
+  { a:"NMH", b:"IPC", bend:"y", p:{ t:"Over the OS transport", kind:"native messaging", src:"extension/native-messaging/vela-native-messaging-host.py",
+    body:`stdio   <4-byte LE length> ‖ json
+then    unix socket  /run/user/1000/vela.sock       (0600)
+        or  \\\\.\\pipe\\vela-<session>
+
+{ "msg_type": "autofill_request",
+  "capability": "kQ7f…",                 32 B, base64url, per session
+  "payload": { "url": "https://github.com/login" } }`,
+    note:"A named pipe or a Unix socket is reachable only by processes the OS lets in. A localhost port is reachable by every page in every browser — which is why this replaced it." }},
+  { a:"IPC", b:"VLT", bend:"y", p:{ t:"Who is asking, and for what", kind:"checks", src:"vela-desktop-core/src/ipc.rs",
+    body:`capability matches this session?      yes
+peer identity confirmed by the OS?    yes
+message ≤ 1 MiB?                      yes
+
+urls_match("https://github.com/login", item.url)
+  full host, Public Suffix List — not last-two-labels`,
+    note:"The old last-two-labels reduction collapsed victim.co.uk to the public suffix co.uk, which matched nothing, and threw away the subdomain the real check needs." }},
+  { a:"VLT", b:"BIO", bend:"x", p:{ t:"Presence check", kind:"os prompt", src:"vela-desktop-core/src/biometric.rs",
+    body:`match found: "GitHub" (1 of 1)
+prompt → Windows Hello / LocalAuthentication / portal
+
+plaintext_release = Some((caller_pid, Instant::now()))`,
+    note:"Recorded in memory only. A restart costs a fresh confirmation rather than resuming a grant the user made before." }},
+  { a:"BIO", b:"IPC", bend:"x", p:{ t:"Release, once", kind:"ipc message", src:"vela-desktop-core/src/ipc.rs",
+    body:`{ "msg_type": "autofill_response",
+  "payload": { "username": "lucannez64",
+               "password": "«released for this request»",
+               "totp": "418 220" } }`,
+    note:"This is the only point in the system where a plaintext credential crosses a process boundary on purpose." }},
+  { a:"IPC", b:"NMH", bend:"y", p:{ t:"Back through the host", kind:"native messaging", src:"extension/native-messaging/",
+    body:`<4-byte LE length> ‖ json  →  stdout`,
+    note:"" }},
+  { a:"NMH", b:"EXT", bend:"x", p:{ t:"Filled", kind:"dom", src:"extension/src/content/content-script.js",
+    body:`fields.username.value = …
+fields.password.value = …
+document.dispatchEvent(new Event("input", { bubbles: true }))`,
+    note:"1,710 lines of the content script are field detection. That, not the crypto, is where autofill actually gets hard." }},
+]},
+
+{ id:"enroll", name:"Add a second device", short:"ENROLL", hops:[
+  { a:"TAU", b:"ENR", bend:"y", p:{ t:"Open a grant", kind:"command", src:"vela-desktop-core/src/commands/enrollment_v3.rs",
+    body:`pending_invite = Some(PendingInvite { .. })   in memory only`,
+    note:"Not persisted on purpose: a restart mid-enrollment means starting over, not resuming a comparison the user never finished." }},
+  { a:"ENR", b:"SRV", bend:"x", p:{ t:"POST /device/enrollment-grant", kind:"http", src:"serverVELA/vela-server/src/device/rendezvous.rs",
+    body:`→ { "grant_id": "g_7Kd2…", "expires_in": 300 }`,
+    note:"The grant id is the entire payload of a v3 enrollment code. There is nothing else in it — that is the change." }},
+  { a:"SRV", b:"AND", bend:"d", oob:true, p:{ t:"Out of band", kind:"qr code · human", src:"libVELA/vela-crypto/src/verification.rs",
+    body:`VELA-ENROLL:v3:g_7Kd2…
+
+scanned, or typed, by a person`,
+    note:"This hop is not authenticated and cannot be. There is no pre-existing trust root at the moment trust is being bootstrapped — that is what the fingerprint comparison two hops down is for." }},
+  { a:"AND", b:"KEM", bend:"y", p:{ t:"Joining device makes keys", kind:"ml-kem-1024 + x25519", src:"libVELA/vela-crypto/src/kem.rs",
+    body:`(hybrid_ek, hybrid_dk) = generate_keypair()
+  ek   1568 B ML-KEM  ‖  32 B X25519
+  dk   never leaves this device`,
+    note:"" }},
+  { a:"KEM", b:"SRV", bend:"x", p:{ t:"POST …/claim", kind:"json · unauthenticated", src:"rendezvous::post_claim",
+    body:`{ "hybrid_ek": "«1600 B, base64»",
+  "hybrid_vk": "«verify key»",
+  "device_name": "Pixel", "device_type": "android" }`,
+    note:"Unauthenticated because the joining device has no identity yet — asking for one is the whole point. Its binding comes from the grant being single-claim, not from a session." }},
+  { a:"SRV", b:"ENR", bend:"x", p:{ t:"GET …/claim", kind:"json", src:"api::EnrollmentClaim",
+    body:`the opening device reads the claimed keys
+and derives the short code from them`,
+    note:"" }},
+  { a:"ENR", b:"SAS", bend:"x", p:{ t:"Two codes, one comparison", kind:"human check", src:"identity::enrollment_fingerprint",
+    body:`desktop shows   4F2A · 91C7 · 30BE
+phone shows     4F2A · 91C7 · 30BE
+
+user picks the matching one`,
+    note:"The same short-authentication-string pattern as Signal's safety numbers or Bluetooth pairing. Substitute the QR and the two devices are hashing different content, so the codes diverge." }},
+  { a:"SAS", b:"RMS", bend:"y", p:{ t:"Confirmed — fetch the seed", kind:"in memory", src:"vela-desktop-core/src/crypto.rs",
+    body:`seal_rms_to_device(hybrid_ek, rms)`,
+    note:"v2 sealed the seed under a symmetric key that travelled inside the enrollment code, so reading the code was enough to open the capsule. v3 seals it to a key whose private half never left the joining device." }},
+  { a:"RMS", b:"SRV", bend:"x", p:{ t:"POST …/complete", kind:"opaque capsule", src:"rendezvous::post_complete",
+    body:`{ "capsule": "«ML-KEM ct ‖ X25519 ct ‖ AEAD(rms)»" }`,
+    note:"The server relays this without being able to open it. Intercepting both the code and the capsule now yields nothing." }},
+  { a:"SRV", b:"AND", bend:"d", p:{ t:"Capsule collected", kind:"http", src:"rendezvous::post_result",
+    body:`POST …/result   { "signature": "«over grant_id»" }
+→ { "device_id": "phone-02" }`,
+    note:"Also unauthenticated, for the same reason as the claim — but the signature proves possession of the key that claimed the grant, which someone who merely photographed the code does not have." }},
+  { a:"AND", b:"IDN", bend:"y", p:{ t:"A second device exists", kind:"local", src:"libVELA/vela-android-bridge/src/lib.rs",
+    body:`rms  = decapsulate(hybrid_dk, capsule)
+identity = generate()          own signing keys, not copied
+seal(rms) under this device's own protection`,
+    note:"The seed is shared; the device identity is not. Each device signs with its own key, so one can be revoked without touching the others." }},
+]},
+
+{ id:"share", name:"Share a credential", short:"SHARE", hops:[
+  { a:"VLT", b:"API", bend:"y", p:{ t:"Who is it for", kind:"http", src:"api::get_recipient_share_ek",
+    body:`GET /share/recipient/<user_id>/ek`,
+    note:"" }},
+  { a:"API", b:"SHR", bend:"x", p:{ t:"Their published key", kind:"json", src:"serverVELA/vela-server/src/share/mod.rs",
+    body:`{ "share_ek": "«ML-KEM-1024 ek ‖ X25519 pk»" }`,
+    note:"Share keys are published deliberately. They are public halves, and rotating one is a normal operation — rotate_share_key() leaves the device identity untouched." }},
+  { a:"SHR", b:"KEM", bend:"y", p:{ t:"Seal to the recipient", kind:"hybrid kem", src:"vela-desktop-core/src/crypto.rs",
+    body:`seal_share(share_ek, item_json) →
+  encapsulate(ek) → (capsule, ss)
+  AEAD(ss, item_json)`,
+    note:"" }},
+  { a:"KEM", b:"SHR", bend:"y", p:{ t:"POST /share/send", kind:"opaque", src:"api::send_share",
+    body:`{ "recipient": "u_2f9…",
+  "capsule": "«opaque»",
+  "kind": "login" }`,
+    note:"The relay learns that you shared something with someone. It does not learn what." }},
+  { a:"SHR", b:"SDB", bend:"y", p:{ t:"Inbox row", kind:"stoolap", src:"share/mod.rs",
+    body:`shares(id, recipient, sender, capsule, created_at)`,
+    note:"Linked shares stay updatable, so rotating a password reaches the recipient instead of leaving them with a stale one." }},
+]},
+
+{ id:"recovery", name:"Survive losing everything", short:"RECOVERY", hops:[
+  { a:"RMS", b:"SHM", bend:"y", p:{ t:"Split the seed", kind:"gf(2^8)", src:"libVELA/vela-crypto/src/shamir.rs",
+    body:`split(rms, threshold = 2, n = 3)
+
+share = (x, y_0 … y_31) ‖ mac[16]
+  x  non-zero field element, the evaluation point`,
+    note:"Any two shares reconstruct the seed; any one is indistinguishable from noise. The MAC means a corrupted share is caught rather than silently reconstructing garbage." }},
+  { a:"SHM", b:"WAN", bend:"x", p:{ t:"Share 2 gets a lock", kind:"ctap2 · fido2", src:"vela-desktop-core/src/webauthn.rs",
+    body:`clientDataJSON = {"type":"webauthn.create",
+                  "challenge":"…","origin":"https://…",
+                  "crossOrigin":false}
+
+fed to ctap-hid-fido2 AS the challenge, so the key hashes
+exactly what a browser would have hashed`,
+    note:"A raw CTAP2 library has no concept of the browser's envelope, and a native app has no implicit origin. Both gaps had to be closed for the server's webauthn-rs verifier to accept the ceremony." }},
+  { a:"WAN", b:"RCV", bend:"x", p:{ t:"PUT /recovery/share", kind:"http", src:"serverVELA/vela-server/src/recovery/",
+    body:`share 1 → cloud provider backup (rclone)
+share 2 → this server, behind the security key
+share 3 → trusted contact`,
+    note:"Three custodians, no one of whom can act alone. That constraint is what forced a 2-of-3 rather than an encrypted backup." }},
+  { a:"RCV", b:"SDB", bend:"y", p:{ t:"Stored, gated", kind:"stoolap", src:"recovery/mod.rs",
+    body:`recovery_share(user_id, blob, webauthn_cred_id)`,
+    note:"The server holds one share and the credential id that gates it. Holding one share is holding nothing." }},
+  { a:"SDB", b:"RCV", bend:"y", p:{ t:"…later, on new hardware", kind:"http", src:"recovery/initiate.rs · recover.rs",
+    body:`POST /recovery/initiate     prove intent
+POST /recovery/recover      after the security key ceremony
+POST /recovery/enroll-device`,
+    note:"" }},
+  { a:"RCV", b:"SHM", bend:"x", p:{ t:"Two of three", kind:"reconstruct", src:"shamir::reconstruct",
+    body:`reconstruct([share_1, share_2], 32) → rms`,
+    note:"" }},
+  { a:"SHM", b:"RMS", bend:"y", p:{ t:"Reseal under a new password", kind:"argon2id", src:"password_kdf::seal_with_password",
+    body:`"VRMS" ‖ 3 ‖ params ‖ salt[16] ‖ ct`,
+    note:"The account is back with the same seed, a new password blob and a brand-new device identity. The old devices can then be revoked." }},
+]},
+
+{ id:"web", name:"Open it in a browser", short:"WEB SESSION", hops:[
+  { a:"WEB", b:"SRV", bend:"y", p:{ t:"POST /web-session/start", kind:"json · unauthenticated", src:"serverVELA/vela-server/src/web_session/mod.rs",
+    body:`{ "account_id": "u_2f9…",
+  "ephemeral_ek": "«ML-KEM ek ‖ X25519»",
+  "ephemeral_vk": "«verify key»",
+  "poll_secret_hash": "blake3(secret)" }`,
+    note:"The browser keeps the poll secret and sends only its hash, so nobody else can poll the session it just opened." }},
+  { a:"SRV", b:"WBS", bend:"y", p:{ t:"Session id", kind:"json", src:"web_session::post_start",
+    body:`{ "session_id": "ws_5Ah…", "expires_in": 600 }`,
+    note:"session_id doubles as the token's device_id later, so revocation reuses device:revoked: and no device row is created." }},
+  { a:"WBS", b:"TAU", bend:"d", oob:true, p:{ t:"QR, scanned by a device that is already trusted", kind:"out of band", src:"webVELA/src/main.ts",
+    body:`ws_5Ah…`,
+    note:"The grant can only come from a device already enrolled on that account. That is the entire authorisation step." }},
+  { a:"TAU", b:"WBS", bend:"x", p:{ t:"POST …/grant", kind:"json", src:"web_session::post_grant",
+    body:`{ "mode": "ro",          ro = snapshot · rw = live
+  "ttl_secs": 900,
+  "capsule": "«sealed to the browser's ephemeral ek»" }`,
+    note:"Read-only seals a snapshot. Read-write seals the per-chunk vault keys — the largest deliberate exposure in the system, which is why it is TTL-bound and revocable from any device." }},
+  { a:"WBS", b:"WEB", bend:"y", p:{ t:"Capsule relayed", kind:"opaque", src:"web_session::get_keys",
+    body:`polled with the poll secret; the server never held the plaintext`,
+    note:"" }},
+  { a:"WEB", b:"WBS", bend:"y", p:{ t:"POST …/token", kind:"proof", src:"web_session::post_token",
+    body:`signature under the ephemeral vk
+→ PASETO, exp ≤ session expiry`,
+    note:"Only needed for a live session; a read-only snapshot needs no token at all because it makes no further authenticated calls." }},
+]},
+
+{ id:"oram", name:"Hide which chunk you read", short:"ORAM", hops:[
+  { a:"SYN", b:"ORM", bend:"x", p:{ t:"Which leaf is it on", kind:"client state", src:"libVELA/vela-crypto/src/oram.rs",
+    body:`use_trivial_oram()?   chunks ≤ 4 → read every chunk, always
+position_map["chunk-0"] = leaf 11`,
+    note:"For a small vault the honest cheap answer is to download everything, because then there is no access pattern to observe at all." }},
+  { a:"ORM", b:"API", bend:"y", p:{ t:"GET /vault/oram/:tree/path/:leaf", kind:"http", src:"api::get_oram_path",
+    body:`the whole root→leaf bucket sequence, not one block`,
+    note:"Asking for a path rather than a block is what hides the target: every read looks like every other read." }},
+  { a:"API", b:"SRV", bend:"x", p:{ t:"Path served", kind:"buckets", src:"serverVELA/vela-server/src/vault/oram.rs",
+    body:`bucket size 4 · chunk size 1 MiB
+buckets returned encrypted, contents opaque`,
+    note:"" }},
+  { a:"SRV", b:"ORM", bend:"y", p:{ t:"read_path", kind:"client state machine", src:"oram::PathOram::read_path",
+    body:`decrypt buckets → OramBlock::{ Real, Dummy }
+stash ← blocks evicted from the path
+remap  chunk-0 → a fresh random leaf`,
+    note:"The module does no I/O and no crypto of its own — the caller reads, decrypts, feeds it in, then encrypts and uploads the write-back path." }},
+  { a:"ORM", b:"API", bend:"y", p:{ t:"PUT the whole path back", kind:"http", src:"api::put_oram_path",
+    body:`every bucket re-encrypted with a fresh nonce, whether it changed or not`,
+    note:"Re-encrypting unchanged buckets is the point. If only the modified ones changed on the wire, the pattern would be readable again." }},
+]},
+
+{ id:"breach", name:"Check a password", short:"BREACH", hops:[
+  { a:"VLT", b:"BRC", bend:"y", p:{ t:"k-anonymity split", kind:"sha-1", src:"vela-desktop-core/src/breach.rs",
+    body:`sha1("password").to_uppercase()
+  = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8
+
+prefix  "5BAA6"      ← the only part that is sent
+suffix  "1E4C9B93F3F0682250B6CF8331B7EE68FD8"`,
+    note:"Five hex characters go out. HIBP cannot tell which of the ~800 hashes in that range you were asking about." }},
+  { a:"BRC", b:"VLT", bend:"y", p:{ t:"Matched locally", kind:"https · text", src:"api.pwnedpasswords.com/range/5BAA6",
+    body:`…
+1E4C9B93F3F0682250B6CF8331B7EE68FD8:3861493
+…
+
+parse_pwned_range(body, suffix) → Some(3_861_493)`,
+    note:"The comparison happens here, on a list of suffixes. Nothing that identifies the password ever leaves the machine." }},
+]},
+];
+
+/* ══════════════════════════════════════════════════════════════════════
+   GEOMETRY — isometric projection
+   ══════════════════════════════════════════════════════════════════════ */
+const TW = 34, TH = 17, ZU = 15;
+const iso = (gx, gy, gz) => ({ x:(gx - gy) * TW, y:(gx + gy) * TH - (gz || 0) * ZU });
+
+const cam = { x:0, y:0, s:1 };
+const W2S = p => ({ x: cam.x + p.x * cam.s, y: cam.y + p.y * cam.s });
+const G2S = (gx, gy, gz) => W2S(iso(gx, gy, gz));
+
+const state = {
+  hover:null, sel:null, selKind:null,      /* 'node' | 'flow' */
+  flow:null, inside:null, tab:"what",
+  playing:true, packets:[], picked:null, t0:performance.now(),
+};
+
+/* per-node route cache */
+FLOWS.forEach((f, fi) => f.hops.forEach((h, hi) => {
+  const A = NODE[h.a], B = NODE[h.b];
+  const c1 = { x:A.gx + A.w/2, y:A.gy + A.d/2 };
+  const c2 = { x:B.gx + B.w/2, y:B.gy + B.d/2 };
+  h.route = h.bend === "d" ? [c1, c2]
+          : h.bend === "y" ? [c1, { x:c1.x, y:c2.y }, c2]
+          :                  [c1, { x:c2.x, y:c1.y }, c2];
+  h.len = 0;
+  for (let i = 1; i < h.route.length; i++)
+    h.len += Math.hypot(h.route[i].x - h.route[i-1].x, h.route[i].y - h.route[i-1].y);
+  h.fi = fi; h.hi = hi;
+}));
+
+function pointOn(hop, t) {
+  const r = hop.route; let want = t * hop.len;
+  for (let i = 1; i < r.length; i++) {
+    const seg = Math.hypot(r[i].x - r[i-1].x, r[i].y - r[i-1].y);
+    if (want <= seg || i === r.length - 1) {
+      const k = seg === 0 ? 0 : Math.min(1, want / seg);
+      return { x:r[i-1].x + (r[i].x - r[i-1].x) * k, y:r[i-1].y + (r[i].y - r[i-1].y) * k };
+    }
+    want -= seg;
+  }
+  return r[r.length - 1];
+}
+
+/* which flows touch a node */
+const flowsOf = id => FLOWS.filter(f => f.hops.some(h => h.a === id || h.b === id));
+
+/* ══════════════════════════════════════════════════════════════════════
+   CANVAS
+   ══════════════════════════════════════════════════════════════════════ */
+const cvs = document.getElementById("scene");
+const ctx = cvs.getContext("2d");
+const INK = "#16160f", PAPER = "#cfc9a1";
+let DPR = 1, VW = 0, VH = 0;
+
+function hatch(kind) {
+  const s = 7, c = document.createElement("canvas");
+  c.width = c.height = s;
+  const g = c.getContext("2d");
+  g.strokeStyle = "rgba(22,22,15,.42)"; g.lineWidth = .8;
+  g.beginPath();
+  if (kind === "l") { g.moveTo(0, s); g.lineTo(s, 0); g.moveTo(-1, 1); g.lineTo(1, -1); g.moveTo(s-1, s+1); g.lineTo(s+1, s-1); }
+  else if (kind === "r") { g.moveTo(0, 0); g.lineTo(s, s); g.moveTo(-1, s-1); g.lineTo(1, s+1); g.moveTo(s-1, -1); g.lineTo(s+1, 1); }
+  else { g.moveTo(0, 3.5); g.lineTo(s, 3.5); }
+  g.stroke();
+  return ctx.createPattern(c, "repeat");
+}
+let HL, HR, HT;
+
+function resize() {
+  DPR = window.devicePixelRatio || 1;
+  const r = cvs.getBoundingClientRect();
+  VW = r.width; VH = r.height;
+  cvs.width = Math.round(VW * DPR); cvs.height = Math.round(VH * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  HL = hatch("l"); HR = hatch("r"); HT = hatch("t");
+}
+
+/* boxes for the current scene: the map, or the interior of one node */
+function sceneBoxes() {
+  if (!state.inside) return NODES.map(n => ({ ...n, ref:n }));
+  const n = state.inside, steps = n.inside || [];
+  return steps.map((s, i) => ({
+    id:"step" + i, key:String(i + 1), label:s[0], note:s[1],
+    gx:i * 4, gy:0, w:3, d:2, h:1.1 + (i % 3) * .5, step:true,
+  }));
+}
+function sceneRoads() {
+  if (!state.inside) {
+    const out = [];
+    FLOWS.forEach(f => f.hops.forEach(h => out.push({ hop:h, flow:f })));
+    return out;
+  }
+  const b = sceneBoxes(), out = [];
+  for (let i = 1; i < b.length; i++) {
+    const c1 = { x:b[i-1].gx + b[i-1].w/2, y:b[i-1].gy + b[i-1].d/2 };
+    const c2 = { x:b[i].gx + b[i].w/2, y:b[i].gy + b[i].d/2 };
+    const hop = { route:[c1, c2], len:Math.hypot(c2.x - c1.x, c2.y - c1.y), interior:true, idx:i - 1 };
+    out.push({ hop, flow:null });
+  }
+  return out;
+}
+
+function corners(b) {
+  const { gx, gy, w, d, h } = b;
+  return {
+    A:iso(gx, gy, h), B:iso(gx + w, gy, h), C:iso(gx + w, gy + d, h), D:iso(gx, gy + d, h),
+    A0:iso(gx, gy, 0), B0:iso(gx + w, gy, 0), C0:iso(gx + w, gy + d, 0), D0:iso(gx, gy + d, 0),
+  };
+}
+function silhouette(b) {
+  const c = corners(b);
+  return [c.A, c.B, c.B0, c.C0, c.D0, c.D].map(W2S);
+}
+function pip(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], c = poly[j];
+    if ((a.y > pt.y) !== (c.y > pt.y) && pt.x < (c.x - a.x) * (pt.y - a.y) / (c.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function path(pts, close) {
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  if (close) ctx.closePath();
+}
+
+function drawBox(b, mode) {
+  const c = corners(b);
+  const S = o => W2S(o);
+  const top   = [c.A, c.B, c.C, c.D].map(S);
+  const right = [c.B, c.C, c.C0, c.B0].map(S);
+  const left  = [c.D, c.C, c.C0, c.D0].map(S);
+  const dim = mode === "dim", hot = mode === "hot", sel = mode === "sel";
+
+  ctx.save();
+  if (dim) ctx.globalAlpha = .42;
+
+  /* left face */
+  path(left, true); ctx.fillStyle = PAPER; ctx.fill();
+  if (!dim) { ctx.save(); ctx.clip(); ctx.fillStyle = HL; path(left, true); ctx.fill(); ctx.restore(); }
+  /* right face */
+  path(right, true); ctx.fillStyle = PAPER; ctx.fill();
+  if (!dim) { ctx.save(); ctx.clip(); ctx.fillStyle = HR; path(right, true); ctx.fill(); ctx.restore(); }
+  /* top face */
+  path(top, true);
+  ctx.fillStyle = sel ? INK : PAPER; ctx.fill();
+  if (!dim && !sel) { ctx.save(); ctx.clip(); ctx.globalAlpha = .55; ctx.fillStyle = HT; path(top, true); ctx.fill(); ctx.restore(); }
+
+  /* edges */
+  ctx.strokeStyle = INK; ctx.lineWidth = hot || sel ? 1.7 : 1;
+  path(left, true); ctx.stroke();
+  path(right, true); ctx.stroke();
+  path(top, true); ctx.stroke();
+  ctx.restore();
+
+  /* key letter on the roof */
+  const mid = W2S({ x:(c.A.x + c.C.x) / 2, y:(c.A.y + c.C.y) / 2 });
+  const fs = Math.max(7, Math.min(13, 10 * cam.s));
+  if (fs > 6.5) {
+    ctx.save();
+    ctx.font = `500 ${fs}px "Berkeley Mono", ui-monospace, Menlo, monospace`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (!sel) { ctx.fillStyle = PAPER; ctx.globalAlpha = .8;
+      ctx.fillText(b.key, mid.x, mid.y + .5); ctx.globalAlpha = 1; }
+    ctx.fillStyle = sel ? PAPER : INK;
+    if (dim) ctx.globalAlpha = .5;
+    ctx.fillText(b.key, mid.x, mid.y);
+    ctx.restore();
+  }
+}
+
+function boxLabel(b) {
+  const c = corners(b);
+  const p = W2S({ x:(c.A.x + c.B.x) / 2, y:Math.min(c.A.y, c.B.y) - 8 });
+  const txt = (b.label || "").toUpperCase();
+  ctx.save();
+  ctx.font = `500 10px "Berkeley Mono", ui-monospace, Menlo, monospace`;
+  ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  const w = ctx.measureText(txt).width;
+  ctx.fillStyle = PAPER; ctx.fillRect(p.x - w/2 - 4, p.y - 12, w + 8, 14);
+  ctx.strokeStyle = INK; ctx.lineWidth = 1; ctx.strokeRect(p.x - w/2 - 4, p.y - 12, w + 8, 14);
+  ctx.fillStyle = INK; ctx.fillText(txt, p.x, p.y);
+  ctx.restore();
+}
+
+function drawGrid() {
+  const boxes = sceneBoxes();
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  boxes.forEach(b => { x0 = Math.min(x0, b.gx); x1 = Math.max(x1, b.gx + b.w); y0 = Math.min(y0, b.gy); y1 = Math.max(y1, b.gy + b.d); });
+  x0 -= 3; y0 -= 3; x1 += 3; y1 += 3;
+  ctx.save(); ctx.strokeStyle = "rgba(22,22,15,.11)"; ctx.lineWidth = 1;
+  for (let x = Math.floor(x0); x <= x1; x += 2) { const a = G2S(x, y0, 0), b = G2S(x, y1, 0); path([a, b]); ctx.stroke(); }
+  for (let y = Math.floor(y0); y <= y1; y += 2) { const a = G2S(x0, y, 0), b = G2S(x1, y, 0); path([a, b]); ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawRoads() {
+  const roads = sceneRoads();
+  roads.forEach(r => {
+    const active = state.inside ? true
+      : (state.flow ? r.flow === state.flow
+        : (state.sel && state.selKind === "node" ? (r.hop.a === state.sel || r.hop.b === state.sel) : false));
+    const anySel = state.flow || (state.sel && state.selKind === "node");
+    const pts = r.hop.route.map(p => G2S(p.x, p.y, 0));
+    ctx.save();
+    ctx.lineJoin = "round";
+    if (r.hop.oob || (r.flow && r.flow.hops[r.hop.hi] && r.flow.hops[r.hop.hi].oob)) ctx.setLineDash([5, 4]);
+    if (active) { ctx.strokeStyle = INK; ctx.lineWidth = 2.1; }
+    else if (anySel) { ctx.strokeStyle = "rgba(22,22,15,.17)"; ctx.lineWidth = 1; }
+    else { ctx.strokeStyle = "rgba(22,22,15,.42)"; ctx.lineWidth = 1.2; }
+    path(pts); ctx.stroke();
+    ctx.setLineDash([]);
+    /* diamond at the bend */
+    if (pts.length === 3 && (active || !anySel)) {
+      const m = pts[1], s = active ? 3.4 : 2.6;
+      ctx.fillStyle = INK;
+      path([{x:m.x, y:m.y-s}, {x:m.x+s, y:m.y}, {x:m.x, y:m.y+s}, {x:m.x-s, y:m.y}], true);
+      ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PACKETS
+   ══════════════════════════════════════════════════════════════════════ */
+const SPEED = 5.2;                                  /* grid units / second */
+state.packets = FLOWS.map((f, i) => ({ fi:i, hi:0, t:0, wait:i * .55 }));
+let iPacket = { idx:0, t:0, wait:0 };
+
+function advance(dt) {
+  state.packets.forEach(pk => {
+    if (state.picked === pk) return;
+    if (pk.wait > 0) { pk.wait -= dt; return; }
+    const hop = FLOWS[pk.fi].hops[pk.hi];
+    pk.t += dt * SPEED / Math.max(.4, hop.len);
+    if (pk.t >= 1) {
+      pk.t = 0; pk.hi++;
+      if (pk.hi >= FLOWS[pk.fi].hops.length) { pk.hi = 0; pk.wait = 1.4; }
+    }
+  });
+  const roads = sceneRoads();
+  if (state.inside && roads.length) {
+    if (iPacket.wait > 0) iPacket.wait -= dt;
+    else {
+      const h = roads[Math.min(iPacket.idx, roads.length - 1)].hop;
+      iPacket.t += dt * SPEED / Math.max(.4, h.len);
+      if (iPacket.t >= 1) { iPacket.t = 0; iPacket.idx++; if (iPacket.idx >= roads.length) { iPacket.idx = 0; iPacket.wait = 1; } }
+    }
+  }
+}
+function stepOnce() {
+  state.packets.forEach(pk => {
+    pk.wait = 0; pk.t = 0; pk.hi++;
+    if (pk.hi >= FLOWS[pk.fi].hops.length) pk.hi = 0;
+  });
+  if (state.picked) syncInspector();
+}
+function packetScreen(pk) {
+  const hop = FLOWS[pk.fi].hops[pk.hi];
+  const g = pointOn(hop, pk.t);
+  return { s:G2S(g.x, g.y, .28), hop };
+}
+function drawPackets() {
+  if (state.inside) {
+    const roads = sceneRoads();
+    if (!roads.length) return;
+    const h = roads[Math.min(iPacket.idx, roads.length - 1)].hop;
+    const g = pointOn(h, iPacket.t), s = G2S(g.x, g.y, .28);
+    ctx.save(); ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(s.x, s.y, 4.2, 0, 7); ctx.fill();
+    ctx.strokeStyle = PAPER; ctx.lineWidth = 1.4; ctx.stroke(); ctx.restore();
+    return;
+  }
+  state.packets.forEach(pk => {
+    const f = FLOWS[pk.fi];
+    const muted = state.flow && state.flow !== f;
+    if (pk.wait > 0 && !state.picked) return;
+    const { s } = packetScreen(pk);
+    const on = state.picked === pk;
+    ctx.save();
+    ctx.globalAlpha = muted ? .3 : 1;
+    if (on) {
+      ctx.strokeStyle = INK; ctx.lineWidth = 1.2;
+      ctx.strokeRect(s.x - 8.5, s.y - 8.5, 17, 17);
+    }
+    ctx.beginPath(); ctx.arc(s.x, s.y, on ? 5.4 : 4, 0, 7);
+    ctx.fillStyle = INK; ctx.fill();
+    ctx.strokeStyle = PAPER; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.restore();
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   RENDER
+   ══════════════════════════════════════════════════════════════════════ */
+function render() {
+  ctx.clearRect(0, 0, VW, VH);
+  drawGrid();
+  drawRoads();
+
+  const boxes = sceneBoxes().slice().sort((a, b) =>
+    (a.gx + a.w/2 + a.gy + a.d/2) - (b.gx + b.w/2 + b.gy + b.d/2));
+
+  const flowIds = state.flow ? new Set(state.flow.hops.flatMap(h => [h.a, h.b])) : null;
+  boxes.forEach(b => {
+    let mode = "";
+    if (state.inside) mode = (state.hover && state.hover.id === b.id) ? "hot" : "";
+    else {
+      if (flowIds && !flowIds.has(b.id)) mode = "dim";
+      if (state.sel === b.id && state.selKind === "node") mode = "sel";
+      else if (state.hover && state.hover.id === b.id) mode = "hot";
+    }
+    drawBox(b, mode);
+  });
+
+  drawPackets();
+
+  boxes.forEach(b => {
+    const show = (state.hover && state.hover.id === b.id) ||
+                 (!state.inside && state.sel === b.id && state.selKind === "node");
+    if (show) boxLabel(b);
+  });
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (state.playing) advance(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   VIEW CONTROL
+   ══════════════════════════════════════════════════════════════════════ */
+function fit(pad) {
+  const boxes = sceneBoxes();
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  boxes.forEach(b => {
+    const c = corners(b);
+    [c.A, c.B, c.C, c.D, c.A0, c.B0, c.C0, c.D0].forEach(p => {
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+      y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+    });
+  });
+  const m = pad === undefined ? 48 : pad;
+  const s = Math.min((VW - m * 2) / (x1 - x0), (VH - m * 2) / (y1 - y0));
+  cam.s = Math.max(.25, Math.min(2.4, s));
+  cam.x = VW / 2 - (x0 + x1) / 2 * cam.s;
+  cam.y = VH / 2 - (y0 + y1) / 2 * cam.s;
+}
+function centerOn(n, zoom) {
+  const c = corners(n);
+  const wx = (c.A.x + c.C.x) / 2, wy = (c.A.y + c.C0.y) / 2;
+  if (zoom) cam.s = Math.max(cam.s, 1.15);
+  cam.x = VW / 2 - wx * cam.s;
+  cam.y = VH / 2 - wy * cam.s;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   HIT TESTING
+   ══════════════════════════════════════════════════════════════════════ */
+function boxAt(pt) {
+  const boxes = sceneBoxes().slice().sort((a, b) =>
+    (b.gx + b.w/2 + b.gy + b.d/2) - (a.gx + a.w/2 + a.gy + a.d/2));
+  for (const b of boxes) if (pip(pt, silhouette(b))) return b;
+  return null;
+}
+function packetAt(pt) {
+  if (state.inside) return null;
+  let best = null, bd = 13;
+  state.packets.forEach(pk => {
+    if (pk.wait > 0 && state.picked !== pk) return;
+    const { s } = packetScreen(pk);
+    const d = Math.hypot(s.x - pt.x, s.y - pt.y);
+    if (d < bd) { bd = d; best = pk; }
+  });
+  return best;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TEXT
+   ══════════════════════════════════════════════════════════════════════ */
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+const fmt = s => esc(s)
+  .replace(/\*\*(.+?)\*\*/g, '<span class="mk">$1</span>')
+  .replace(/`([^`]+)`/g, '<span class="cd">$1</span>');
+document.head.insertAdjacentHTML("beforeend",
+  "<style>.cd{background:rgba(22,22,15,.09);padding:0 3px}</style>");
+
+/* ══════════════════════════════════════════════════════════════════════
+   CHROME — top bar, sidebar
+   ══════════════════════════════════════════════════════════════════════ */
+document.getElementById("topbar").innerHTML =
+  `<div id="statbar">` +
+  STATS.map(s => `<div class="stat${s.wide ? " wide" : ""}"><div class="k">${esc(s.k)}</div><div class="v">${esc(s.v)}</div></div>`).join("") +
+  `<div class="stat spring"></div></div>
+   <div id="controls">
+     <button class="btn on" id="btn-play">&#10073;&#10073; Pause the flow</button>
+     <button class="btn" id="btn-step">Trace one step</button>
+     <button class="btn" id="btn-reset">Reset view</button>
+   </div>`;
+
+function buildSidebar() {
+  const sb = document.getElementById("sidebar");
+  let html = "";
+  GROUPS.forEach(g => {
+    html += `<div class="sec">${esc(g.name)}</div>`;
+    NODES.filter(n => n.group === g.id).forEach(n => {
+      const c = n.files.length;
+      html += `<div class="row" data-node="${n.id}">
+        <span class="key">${esc(n.key)}</span>
+        <span class="nm">${esc(n.label)}</span>
+        <span class="ct">${c}</span></div>`;
+    });
+  });
+  html += `<div class="sec">Traced flows</div>`;
+  FLOWS.forEach(f => {
+    html += `<div class="row" data-flow="${f.id}">
+      <span class="key">&#9679;</span>
+      <span class="nm">${esc(f.name)}</span>
+      <span class="ct">${f.hops.length}</span></div>`;
+  });
+  sb.innerHTML = html;
+  sb.querySelectorAll("[data-node]").forEach(el =>
+    el.onclick = () => selectNode(el.dataset.node, true));
+  sb.querySelectorAll("[data-flow]").forEach(el =>
+    el.onclick = () => selectFlow(FLOWS.find(f => f.id === el.dataset.flow)));
+}
+function markSidebar() {
+  document.querySelectorAll("#sidebar .row").forEach(el => {
+    const on = (state.selKind === "node" && el.dataset.node === state.sel) ||
+               (state.selKind === "flow" && state.flow && el.dataset.flow === state.flow.id);
+    el.classList.toggle("sel", !!on);
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   RIGHT PANEL
+   ══════════════════════════════════════════════════════════════════════ */
+const pb = document.getElementById("panelbody");
+
+function renderPanel() {
+  const tab = state.tab;
+  let h = "";
+
+  if (state.selKind === "flow" && state.flow) {
+    const f = state.flow;
+    h += `<h1>Traced flow</h1><h2>${esc(f.name)}</h2>
+          <p class="sub">${f.hops.length} hops · click any dot on the map to read what is on that wire</p>`;
+    h += `<h3>The hops</h3>`;
+    f.hops.forEach((hp, i) => {
+      h += `<div class="cond" data-hop="${i}" style="cursor:pointer">
+        <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2)">
+          ${esc(NODE[hp.a].label)} &rarr; ${esc(NODE[hp.b].label)}</div>
+        <div>${esc(hp.p.t)}</div></div>`;
+    });
+    h += `<h3>Reads on</h3>`;
+    [...new Set(f.hops.flatMap(x => [x.a, x.b]))].forEach(id =>
+      h += `<span class="chip" data-node="${id}">${esc(NODE[id].label)}</span>`);
+  } else if (state.selKind === "node" && NODE[state.sel]) {
+    const n = NODE[state.sel];
+    const g = GROUPS.find(x => x.id === n.group);
+    h += `<h1>${esc(g ? g.name : "")}</h1><h2>${esc(n.label)}</h2>
+          <p class="sub">${n.files.length} file${n.files.length > 1 ? "s" : ""} · ${flowsOf(n.id).length} flow${flowsOf(n.id).length === 1 ? "" : "s"} pass through</p>`;
+    if (tab === "what") {
+      h += `<h3>What this is</h3>`;
+      n.what.forEach(p => h += `<p>${fmt(p)}</p>`);
+      if (n.cond.length) {
+        h += `<h3>Condition</h3>`;
+        n.cond.forEach(c => h += `<div class="cond">${fmt(c)}</div>`);
+      }
+      h += `<h3>Flows through it</h3>`;
+      flowsOf(n.id).forEach(f => h += `<span class="chip" data-flow="${f.id}">${esc(f.short)}</span>`);
+      if (n.inside && n.inside.length)
+        h += `<h3>Inside</h3><div class="go" data-inside="${n.id}">&rarr; goes inside — ${n.inside.length} steps in execution order</div>`;
+    } else {
+      h += `<h3>How it's built</h3>`;
+      n.built.forEach(p => h += `<p>${fmt(p)}</p>`);
+      h += `<h3>Where it lives</h3>`;
+      n.files.forEach(f => h += `<div class="file">${esc(f)}</div>`);
+      if (n.inside && n.inside.length) {
+        h += `<h3>Steps</h3><table>`;
+        n.inside.forEach(s => h += `<tr><td class="k">${esc(s[0])}</td><td>${esc(s[1])}</td></tr>`);
+        h += `</table><div class="go" data-inside="${n.id}">&rarr; goes inside</div>`;
+      }
+    }
+  } else {
+    h += `<h1>VELA</h1><h2>${esc(OVERVIEW.title)}</h2><p class="sub">${esc(OVERVIEW.sub)}</p>`;
+    if (tab === "what") {
+      h += `<h3>What this is</h3>`;
+      OVERVIEW.what.forEach(p => h += `<p>${fmt(p)}</p>`);
+      h += `<h3>How to read it</h3>
+        <p>Hover anything for a plain description. Height means authority: the <span class="mk">tall structures decide</span> something — what is allowed, what is fresh, who is asking — and the flat slabs store something.</p>
+        <p>The moving dots are real payloads. <span class="mk">Click one</span> to read the exact bytes on that wire and the file that puts them there. <span class="mk">&rarr; goes inside</span> a structure to see its steps in execution order.</p>
+        <h3>Traced flows</h3>`;
+      FLOWS.forEach(f => h += `<span class="chip" data-flow="${f.id}">${esc(f.short)}</span>`);
+    } else {
+      OVERVIEW.built.forEach(p => h += `<p>${fmt(p)}</p>`);
+      h += `<h3>Condition</h3>`;
+      OVERVIEW.cond.forEach(c => h += `<div class="cond">${fmt(c)}</div>`);
+      h += `<h3>The tree</h3>
+        <table>
+          <tr><td class="k">libVELA/vela-crypto</td><td>3,636 lines · every primitive</td></tr>
+          <tr><td class="k">libVELA/vela-core</td><td>1,302 lines · platform-neutral vault</td></tr>
+          <tr><td class="k">libVELA/vela-{android,apple,wasm}-bridge</td><td>3,037 lines · one core, four runtimes</td></tr>
+          <tr><td class="k">desktopVELA/vela-desktop-core</td><td>18,060 lines · the client brain</td></tr>
+          <tr><td class="k">desktopVELA/src-tauri</td><td>5,636 lines · 39 commands</td></tr>
+          <tr><td class="k">desktopVELA/src-gpui</td><td>the second front end</td></tr>
+          <tr><td class="k">serverVELA/vela-server</td><td>9,445 lines · 47 routes</td></tr>
+          <tr><td class="k">extension</td><td>3,871 lines · mv3 + native host</td></tr>
+          <tr><td class="k">androidVELA · iosVELA · webVELA</td><td>the other three clients</td></tr>
+        </table>`;
+    }
+  }
+  pb.innerHTML = h;
+  pb.scrollTop = 0;
+  pb.querySelectorAll("[data-node]").forEach(el => el.onclick = () => selectNode(el.dataset.node, true));
+  pb.querySelectorAll("[data-flow]").forEach(el => el.onclick = () => selectFlow(FLOWS.find(f => f.id === el.dataset.flow)));
+  pb.querySelectorAll("[data-inside]").forEach(el => el.onclick = () => enterInside(NODE[el.dataset.inside]));
+  pb.querySelectorAll("[data-hop]").forEach(el => el.onclick = () => {
+    const pk = state.packets[FLOWS.indexOf(state.flow)];
+    pk.hi = +el.dataset.hop; pk.t = .5; pk.wait = 0;
+    pick(pk);
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SELECTION
+   ══════════════════════════════════════════════════════════════════════ */
+function selectNode(id, center) {
+  state.sel = id; state.selKind = "node"; state.flow = null;
+  if (center && NODE[id]) centerOn(NODE[id], false);
+  markSidebar(); renderPanel(); breadcrumb();
+}
+function selectFlow(f) {
+  if (!f) return;
+  state.flow = f; state.selKind = "flow"; state.sel = null;
+  markSidebar(); renderPanel(); breadcrumb();
+}
+function clearSel() {
+  state.sel = null; state.selKind = null; state.flow = null;
+  markSidebar(); renderPanel(); breadcrumb();
+}
+function enterInside(n) {
+  if (!n || !n.inside || !n.inside.length) return;
+  state.inside = n; iPacket = { idx:0, t:0, wait:0 };
+  state.sel = n.id; state.selKind = "node"; state.flow = null;
+  fit(90); renderPanel(); breadcrumb(); markSidebar();
+}
+function exitInside() {
+  if (!state.inside) return;
+  const n = state.inside; state.inside = null;
+  fit(); centerOn(n, false); renderPanel(); breadcrumb();
+}
+function breadcrumb() {
+  const el = document.getElementById("breadcrumb");
+  el.textContent = state.inside
+    ? "vela / " + state.inside.label + " / inside — ← to come back out"
+    : (state.selKind === "flow" && state.flow ? "vela / flow / " + state.flow.name
+      : (state.sel ? "vela / " + NODE[state.sel].label : "vela / the map"));
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PACKET INSPECTOR
+   ══════════════════════════════════════════════════════════════════════ */
+const insp = document.getElementById("inspector");
+function pick(pk) {
+  state.picked = pk;
+  state.playing = false; syncPlayBtn();
+  insp.classList.add("open");
+  syncInspector();
+}
+function closeInspector() {
+  state.picked = null; insp.classList.remove("open");
+}
+function syncInspector() {
+  const pk = state.picked; if (!pk) return;
+  const f = FLOWS[pk.fi], hop = f.hops[pk.hi], p = hop.p;
+  document.getElementById("insp-route").innerHTML =
+    `${esc(f.short)} &nbsp;·&nbsp; hop ${pk.hi + 1}/${f.hops.length} &nbsp;·&nbsp; ` +
+    `${esc(NODE[hop.a].label)} &rarr; ${esc(NODE[hop.b].label)}`;
+  document.getElementById("insp-title").textContent = p.t;
+  document.getElementById("insp-body").textContent = p.body;
+  const note = document.getElementById("insp-note");
+  note.innerHTML = p.note ? fmt(p.note) : "";
+  document.getElementById("insp-src").textContent = (p.kind ? p.kind + "  ·  " : "") + (p.src || "");
+}
+function hopStep(d) {
+  const pk = state.picked; if (!pk) return;
+  const n = FLOWS[pk.fi].hops.length;
+  pk.hi = (pk.hi + d + n) % n; pk.t = .5;
+  syncInspector();
+}
+document.getElementById("insp-close").onclick = closeInspector;
+document.getElementById("insp-prev").onclick = () => hopStep(-1);
+document.getElementById("insp-next").onclick = () => hopStep(1);
+document.getElementById("insp-flow").onclick = () => {
+  if (state.picked) selectFlow(FLOWS[state.picked.fi]);
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   EVENTS
+   ══════════════════════════════════════════════════════════════════════ */
+const tip = document.getElementById("tip");
+const stage = document.getElementById("stage");
+let drag = null, moved = 0;
+
+function localPt(e) {
+  const r = cvs.getBoundingClientRect();
+  return { x:e.clientX - r.left, y:e.clientY - r.top };
+}
+
+cvs.addEventListener("mousemove", e => {
+  const pt = localPt(e);
+  if (drag) {
+    cam.x += pt.x - drag.x; cam.y += pt.y - drag.y;
+    moved += Math.abs(pt.x - drag.x) + Math.abs(pt.y - drag.y);
+    drag = pt; tip.style.display = "none";
+    return;
+  }
+  const pk = packetAt(pt);
+  const b = pk ? null : boxAt(pt);
+  state.hover = b;
+  cvs.style.cursor = (pk || b) ? "pointer" : "grab";
+
+  if (pk) {
+    const f = FLOWS[pk.fi], hop = f.hops[pk.hi];
+    showTip(pt, f.short + " · " + hop.p.kind, hop.p.t + " — click to inspect");
+  } else if (b) {
+    const src = state.inside ? { t:b.label, d:b.note }
+      : { t:b.label, d:(b.ref ? b.ref.what[0].replace(/\*\*/g, "").split(". ")[0] + "." : "") };
+    showTip(pt, src.t, src.d);
+  } else tip.style.display = "none";
+});
+function showTip(pt, title, desc) {
+  tip.innerHTML = `<div class="t">${esc(title)}</div>` + (desc ? `<div class="d">${esc(desc)}</div>` : "");
+  tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(pt.x + 16, stage.clientWidth - w - 8) + "px";
+  tip.style.top = Math.max(6, Math.min(pt.y + 16, stage.clientHeight - h - 30)) + "px";
+}
+cvs.addEventListener("mouseleave", () => { tip.style.display = "none"; state.hover = null; });
+cvs.addEventListener("mousedown", e => { drag = localPt(e); moved = 0; cvs.classList.add("drag"); });
+window.addEventListener("mouseup", e => {
+  if (drag && moved < 4) {
+    const pt = localPt(e);
+    const pk = packetAt(pt);
+    if (pk) pick(pk);
+    else {
+      const b = boxAt(pt);
+      if (b && !state.inside) { closeInspector(); selectNode(b.id, false); }
+      else if (b && state.inside) { showTip(pt, b.label, b.note); }
+      else { closeInspector(); if (!state.inside) clearSel(); }
+    }
+  }
+  drag = null; cvs.classList.remove("drag");
+});
+cvs.addEventListener("dblclick", e => {
+  const b = boxAt(localPt(e));
+  if (b && !state.inside && b.ref) enterInside(b.ref);
+});
+cvs.addEventListener("wheel", e => {
+  e.preventDefault();
+  const pt = localPt(e);
+  const k = Math.exp(-e.deltaY * .0016);
+  const ns = Math.max(.22, Math.min(3.2, cam.s * k));
+  cam.x = pt.x - (pt.x - cam.x) * (ns / cam.s);
+  cam.y = pt.y - (pt.y - cam.y) * (ns / cam.s);
+  cam.s = ns;
+}, { passive:false });
+
+document.querySelectorAll(".zb").forEach(b => b.onclick = () => {
+  const k = b.dataset.z === "in" ? 1.25 : .8;
+  const ns = Math.max(.22, Math.min(3.2, cam.s * k));
+  cam.x = VW/2 - (VW/2 - cam.x) * (ns / cam.s);
+  cam.y = VH/2 - (VH/2 - cam.y) * (ns / cam.s);
+  cam.s = ns;
+});
+
+/* tabs */
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
+  state.tab = t.dataset.tab; renderPanel();
+});
+
+/* transport */
+function syncPlayBtn() {
+  const b = document.getElementById("btn-play");
+  b.classList.toggle("on", state.playing);
+  b.innerHTML = state.playing ? "&#10073;&#10073; Pause the flow" : "&#9654; Resume the flow";
+}
+document.getElementById("btn-play").onclick = () => { state.playing = !state.playing; syncPlayBtn(); };
+document.getElementById("btn-step").onclick = () => { state.playing = false; syncPlayBtn(); stepOnce(); };
+document.getElementById("btn-reset").onclick = () => { state.inside = null; clearSel(); closeInspector(); fit(); breadcrumb(); renderPanel(); };
+
+/* keyboard */
+const ORDER = NODES.map(n => n.id);
+window.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if (state.picked) closeInspector();
+    else if (state.inside) exitInside();
+    else clearSel();
+    return;
+  }
+  if (e.key === "ArrowRight") {
+    if (state.picked) { hopStep(1); return; }
+    if (!state.inside && state.sel) enterInside(NODE[state.sel]);
+    e.preventDefault(); return;
+  }
+  if (e.key === "ArrowLeft") {
+    if (state.picked) { hopStep(-1); return; }
+    exitInside(); e.preventDefault(); return;
+  }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (state.inside) return;
+    const i = ORDER.indexOf(state.sel);
+    const j = (i + (e.key === "ArrowDown" ? 1 : -1) + ORDER.length) % ORDER.length;
+    selectNode(ORDER[i === -1 ? 0 : j], true);
+    return;
+  }
+  if (e.key === " ") { e.preventDefault(); state.playing = !state.playing; syncPlayBtn(); }
+  if (e.key === "." ) { state.playing = false; syncPlayBtn(); stepOnce(); }
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════════════════════════════ */
+window.addEventListener("resize", () => { resize(); });
+resize();
+buildSidebar();
+renderPanel();
+breadcrumb();
+fit();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
