@@ -51,7 +51,10 @@ desktopVELA/dist/
 
 # pnpm lock files (use bun.lock instead)
 **/pnpm-lock.yaml
-.claude/
+.claude/*
+# ...except skills: those are project knowledge meant to be shared,
+# unlike local settings and session state.
+!.claude/skills/
 
 # Native messaging host wrapper generated locally by register-host.sh /
 # register-firefox-host.sh (bakes in an absolute machine-specific path)

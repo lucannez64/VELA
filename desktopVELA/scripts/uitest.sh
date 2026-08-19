@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+#
+# Automated UI test for both VELA desktop front ends.
+#
+#   scripts/uitest.sh gpui            drive the gpui build
+#   scripts/uitest.sh tauri           drive the Tauri + React build
+#   scripts/uitest.sh both --record   both, recorded to one captioned mp4
+#
+# Each run gets a private headless X display and a throwaway XDG_DATA_HOME,
+# so it never touches the real vault at ~/.local/share/VELA and never appears
+# on your desktop session.
+#
+# Requires: Xvfb, i3, xdotool, imagemagick (import), and ffmpeg for --record.
+#
+# The clicks are coordinate-based against a 1600x1000 display. Change GEOM and
+# they all have to be re-derived — run with KEEP=1 and use the screenshots in
+# $OUT/shots to find the new ones.
+set -u
+
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+OUT=${OUT:-/tmp/vela-uitest}
+DISP=${DISP:-:99}
+GEOM=${GEOM:-1600x1000}
+FONT=${FONT:-/usr/share/fonts/TTF/DejaVuSans.ttf}
+PASSWORD='TestVault-2026!'
+RECORD=0
+export DISPLAY=$DISP
+
+for a in "$@"; do [ "$a" = "--record" ] && RECORD=1; done
+TARGET=${1:-both}
+
+mkdir -p "$OUT/shots" "$OUT/video" "$OUT/cap"
+
+# ── build ────────────────────────────────────────────────────────────────
+# Both crates produce a binary called `vela-desktop`, so they overwrite each
+# other in target/debug. Build one at a time and copy it aside.
+build_apps(){
+  ( cd "$REPO"
+    if [ ! -x "$OUT/vela-gpui" ]; then
+      echo "building gpui…"; cargo build -p vela-desktop-gpui || exit 1
+      cp target/debug/vela-desktop "$OUT/vela-gpui"
+    fi
+    if [ ! -x "$OUT/vela-tauri" ]; then
+      # The Tauri binary embeds the built frontend; `tauri::generate_context!`
+      # hard-fails at compile time if dist/ is missing.
+      [ -d "$REPO/dist" ] || { echo "building frontend…"; ( cd "$REPO" && npm install && npm run build ); }
+      echo "building tauri…"; cargo build -p vela-desktop || exit 1
+      cp target/debug/vela-desktop "$OUT/vela-tauri"
+    fi )
+}
+
+# ── headless display ─────────────────────────────────────────────────────
+start_x(){
+  stop_x
+  Xvfb "$DISP" -screen 0 "${GEOM}x24" -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
+  echo $! > "$OUT/xvfb.pid"
+  for _ in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
+  # A window manager is not optional: without one, GTK/WebKit windows never
+  # take keyboard focus and xdotool typing goes nowhere.
+  printf 'font pango:monospace 8\ndefault_border none\n' > "$OUT/i3.conf"
+  i3 -c "$OUT/i3.conf" >"$OUT/i3.log" 2>&1 &
+  echo $! > "$OUT/i3.pid"
+  sleep 1
+}
+stop_x(){
+  for p in i3 xvfb; do
+    [ -f "$OUT/$p.pid" ] && { kill "$(cat "$OUT/$p.pid")" 2>/dev/null; rm -f "$OUT/$p.pid"; }
+  done
+  sleep 1
+}
+
+# ── driving ──────────────────────────────────────────────────────────────
+click(){ xdotool mousemove "$1" "$2" click 1; sleep "${3:-2}"; }
+type_(){ xdotool type --delay 45 "$1"; sleep 1; }
+scroll(){ xdotool mousemove "$1" "$2"; xdotool click --repeat "${3:-10}" 5; sleep 2; }
+shot(){ import -window root "$OUT/shots/$1.png" 2>/dev/null; }
+say(){ [ "$RECORD" = 1 ] && echo "$(awk -v a="$(date +%s.%N)" -v b="$REC_T0" 'BEGIN{printf "%.2f", a-b}')|$1" >> "$CAP"; sleep "${2:-0}"; }
+wait_window(){ for _ in $(seq 1 60); do xdotool search --name "^VELA$" >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
+
+# `pkill -f vela-` also matches the shell running this script. Always use pids.
+launch(){
+  case $1 in
+    gpui)  nohup env -u WAYLAND_DISPLAY DISPLAY="$DISP" XDG_DATA_HOME="$OUT/data-gpui" \
+             RUST_LOG=warn "$OUT/vela-gpui" >"$OUT/run-gpui.log" 2>&1 & ;;
+    # GDK_BACKEND=x11 is mandatory: with a Wayland session in the environment
+    # tao's gtk init panics ("Failed to initialize gtk backend!"). The WEBKIT_*
+    # and LIBGL vars make WebKitGTK render without a GPU.
+    tauri) nohup env -u WAYLAND_DISPLAY GDK_BACKEND=x11 DISPLAY="$DISP" XDG_DATA_HOME="$OUT/data-tauri" \
+             WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1 \
+             RUST_LOG=warn "$OUT/vela-tauri" >"$OUT/run-tauri.log" 2>&1 & ;;
+  esac
+  echo $! > "$OUT/app.pid"
+  wait_window || { echo "!! $1 window never appeared; see $OUT/run-$1.log"; return 1; }
+}
+kill_app(){
+  [ -f "$OUT/app.pid" ] || return 0
+  kill "$(cat "$OUT/app.pid")" 2>/dev/null; sleep 3
+  kill -9 "$(cat "$OUT/app.pid")" 2>/dev/null; sleep 1; rm -f "$OUT/app.pid"
+}
+
+# ── the journey (same story through both front ends) ─────────────────────
+scenario_gpui(){
+  say "gpui front end — launching" 3
+  say "Welcome screen: create a new vault" 1;                  click 986 470 3
+  say "Setup wizard" 1;                                        click 800 626 3
+  say "Master password → Argon2id-sealed RMS" 1
+  click 800 567 1; type_ "$PASSWORD"; click 800 633 1; type_ "$PASSWORD"; click 800 703 7
+  shot gpui-recovery
+  say "Recovery: trusted contact is now a real method" 3
+  say "Enable it — splits the RMS with Shamir 2-of-3" 1;       click 1036 586 5
+  shot gpui-share
+  say "Share 3, generated by the shared core" 4
+  say "Copy it as a secret (kept out of clipboard history)" 1; click 800 583 3
+  say "Acknowledge the handover" 1;                            click 800 649 4
+  say "Marked delivered — progress 1 of 2" 4
+  say "Skip: this also drops the cached shares" 1;             click 800 790 5
+  say "Vault created" 3;                                       click 800 690 5
+  say "Unlock with the master password" 1
+  click 800 612 1; type_ "$PASSWORD"; click 800 676 8
+  say "Vault open — health read through the shared core" 4
+  say "Devices"   1; click 120 218 4
+  say "Sharing"   1; click 120 268 4
+  say "Audit log" 1; click 120 320 4
+  say "Settings"  1; click 120 421 4
+  say "Recovery section: all three methods live" 1; scroll 900 600 12
+  shot gpui-settings-recovery
+  say "Trusted contact: delivered. No 'finish setup' row —" 3
+  say "the cached shares were already cleared" 4
+}
+
+scenario_tauri(){
+  say "Tauri + React front end — launching" 3
+  say "Same welcome screen, different renderer" 1;             click 986 465 3
+  say "Master password → Argon2id-sealed RMS" 1
+  click 800 583 1; type_ "$PASSWORD"; click 800 677 1; type_ "$PASSWORD"; click 800 746 9
+  shot tauri-recovery
+  say "Recovery step" 3
+  say "Trusted contact — same core call, Tauri wrapper" 1;     click 1002 634 5
+  shot tauri-share
+  say "Share 3, generated by the shared core" 4
+  say "Copy to clipboard" 1;                                   click 800 606 3
+  say "Acknowledge the handover" 1;                            click 931 788 4
+  # React gates Continue on 2 of 3 methods and offers no skip, so the wizard
+  # cannot be finished headlessly. Restart to reach the unlock screen.
+  say "Marked sent — 1 of 2 (React gates Continue at 2)" 5
+  say "Restart to reach the unlock screen" 1
+  kill_app; launch tauri; sleep 6
+  say "Unlock with the master password" 1
+  click 800 583 1; type_ "$PASSWORD"; click 800 652 9
+  say "Vault open" 4
+  say "Devices"   1; click 127 221 4
+  say "Sharing"   1; click 127 277 4
+  say "Audit log" 1; click 127 333 4
+  say "Settings"  1; click 127 445 4
+  say "Recovery: trusted contact persisted as delivered" 1; scroll 900 600 12
+  shot tauri-settings-recovery
+  say "Both front ends drove the same core" 5
+}
+
+# ── recording ────────────────────────────────────────────────────────────
+start_rec(){
+  ffmpeg -y -f x11grab -video_size "$GEOM" -framerate 12 -i "$DISP" \
+    -c:v libx264 -preset veryfast -pix_fmt yuv420p "$OUT/video/$1.mp4" >"$OUT/ffmpeg-$1.log" 2>&1 &
+  echo $! > "$OUT/rec.pid"; REC_T0=$(date +%s.%N); sleep 2
+}
+stop_rec(){ [ -f "$OUT/rec.pid" ] && { kill -INT "$(cat "$OUT/rec.pid")" 2>/dev/null; sleep 4; rm -f "$OUT/rec.pid"; }; }
+
+# Burn the timestamped captions in afterwards, so the video explains itself.
+caption(){
+  local app=$1 label=$2
+  python3 - "$app" "$label" "$OUT" "$FONT" <<'PY'
+import subprocess, sys, os
+app,label,OUT,FONT = sys.argv[1:5]
+caps=[]
+for line in open(f"{OUT}/cap/{app}.txt"):
+    t,txt=line.rstrip("\n").split("|",1); caps.append((float(t),txt))
+dur=float(subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",
+                          f"{OUT}/video/{app}.mp4"],capture_output=True,text=True).stdout.strip())
+tf=f"{OUT}/cap/{app}-title.txt"; open(tf,"w").write(label)
+parts=[f"drawbox=x=0:y=ih-96:w=iw:h=96:color=black@0.68:t=fill",
+       f"drawtext=fontfile={FONT}:textfile={tf}:x=24:y=h-30:fontsize=17:fontcolor=0xA8B0A8"]
+for i,(t,txt) in enumerate(caps):
+    end = caps[i+1][0] if i+1<len(caps) else dur
+    f=f"{OUT}/cap/{app}-{i:02d}.txt"; open(f,"w").write(txt)
+    parts.append(f"drawtext=fontfile={FONT}:textfile={f}:x=(w-text_w)/2:y=h-76:fontsize=27:"
+                 f"fontcolor=white:enable='between(t,{t:.2f},{end:.2f})'")
+subprocess.run(["ffmpeg","-y","-v","error","-i",f"{OUT}/video/{app}.mp4","-vf",",".join(parts),
+                "-c:v","libx264","-preset","veryfast","-crf","24","-pix_fmt","yuv420p",
+                f"{OUT}/video/{app}-captioned.mp4"],check=True)
+PY
+}
+
+run_one(){
+  local app=$1
+  CAP="$OUT/cap/$app.txt"; : > "$CAP"
+  rm -rf "$OUT/data-$app"; mkdir -p "$OUT/data-$app"
+  [ "$RECORD" = 1 ] && start_rec "$app" || REC_T0=$(date +%s.%N)
+  launch "$app" && "scenario_$app"
+  sleep 2
+  [ "$RECORD" = 1 ] && stop_rec
+  kill_app
+}
+
+trap 'stop_rec; kill_app; [ "${KEEP:-0}" = 1 ] || stop_x' EXIT
+
+build_apps || exit 1
+start_x
+case $TARGET in
+  gpui|tauri) run_one "$TARGET" ;;
+  both)       run_one gpui; run_one tauri ;;
+  *) echo "usage: $0 [gpui|tauri|both] [--record]"; exit 2 ;;
+esac
+
+if [ "$RECORD" = 1 ]; then
+  [ -s "$OUT/video/gpui.mp4"  ] && caption gpui  "gpui front end  ·  headless X  ·  isolated data dir"
+  [ -s "$OUT/video/tauri.mp4" ] && caption tauri "Tauri + React front end  ·  headless X  ·  isolated data dir"
+  if [ "$TARGET" = both ]; then
+    printf "file '%s'\n" "$OUT/video/gpui-captioned.mp4" "$OUT/video/tauri-captioned.mp4" > "$OUT/video/list.txt"
+    ffmpeg -y -v error -f concat -safe 0 -i "$OUT/video/list.txt" -c copy "$OUT/video/vela-ui-test.mp4"
+    echo "video: $OUT/video/vela-ui-test.mp4"
+  fi
+fi
+echo "screenshots: $OUT/shots"
