@@ -155,13 +155,39 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     return flat;
   }, [filteredItems]);
 
+  // The virtualizer's internal size cache and scroll offset are keyed to row
+  // indices by default. When a search/filter swaps the dataset, index-keyed
+  // rows get reused with stale per-index positions and cached sizes, so the
+  // row that ends up at a given screen position can belong to a different
+  // item than the one whose click handler fires. Key rows by their content
+  // (item id / header letter) so the virtualizer reconciles and re-measures
+  // against the real item instead of a stale position.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollParentRef.current,
-    estimateSize: (index) => (rows[index]?.kind === 'header' ? 48 : 84),
+    getItemKey: (index) => {
+      const row = rowsRef.current[index];
+      return row
+        ? row.kind === 'header'
+          ? `header:${row.letter}`
+          : `item:${row.item.id}`
+        : index;
+    },
+    estimateSize: (index) => (rowsRef.current[index]?.kind === 'header' ? 48 : 84),
     overscan: 10,
     scrollMargin: listRef.current?.offsetTop ?? 0,
   });
+
+  // The dataset changed: reset the scroll position and drop the stale per-index
+  // size cache so the filtered results render fresh from the top instead of
+  // continuing where the previous list left off.
+  useEffect(() => {
+    rowVirtualizer.scrollToOffset(0);
+    rowVirtualizer.measure();
+  }, [rows, rowVirtualizer]);
 
   const handleOpenUrl = useCallback((url: string) => {
     if (url) {
@@ -181,12 +207,14 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     }
   }, [copyToClipboard, showToast]);
 
-  const typeCounts = {
+  // Four full vault scans per render (previously inline, so every re-render —
+  // including the auto-lock countdown's context churn — re-scanned all items).
+  const typeCounts = useMemo(() => ({
     all: propItems.length,
     login: propItems.filter(i => i.item_type === 'login').length,
     creditCard: propItems.filter(i => i.item_type === 'creditCard').length,
     secureNote: propItems.filter(i => i.item_type === 'secureNote').length,
-  };
+  }), [propItems]);
 
   return (
     <div ref={scrollParentRef} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">

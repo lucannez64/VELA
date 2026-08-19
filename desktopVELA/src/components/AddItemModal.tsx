@@ -159,6 +159,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                       type="password"
                       value={form.password}
                       onChange={e => setForm(prev => ({ ...prev, password: e.target.value }))}
+                      spellCheck={false}
+                      autoComplete="off"
                       className="w-full px-4 py-3 pr-24 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 font-mono"
                       placeholder="Password"
                     />
@@ -184,6 +186,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                     type="url"
                     value={form.url}
                     onChange={e => setForm(prev => ({ ...prev, url: e.target.value }))}
+                    spellCheck={false}
+                    autoComplete="off"
                     className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
                     placeholder="https://example.com"
                   />
@@ -195,6 +199,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                     type="text"
                     value={form.totp}
                     onChange={e => setForm(prev => ({ ...prev, totp: e.target.value }))}
+                    spellCheck={false}
+                    autoComplete="off"
                     className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 font-mono"
                     placeholder="Base32 secret or paste OTPAUTH URL"
                   />

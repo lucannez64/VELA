@@ -655,7 +655,7 @@ fn modal_body(palette: &Palette, id: &'static str) -> gpui::Stateful<gpui::Div> 
         .flex_col()
         .gap_4()
         // Swallow clicks so they don't reach the backdrop's dismiss handler.
-        .on_mouse_down(MouseButton::Left, |_, _, _| {})
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
 fn modal_header(palette: &Palette, icon_name: &'static str, title: &'static str) -> impl IntoElement {

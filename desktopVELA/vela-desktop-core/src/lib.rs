@@ -37,6 +37,8 @@ pub mod wayland_shortcut;
 #[cfg(test)]
 mod passkey_rp_test;
 #[cfg(test)]
+mod perf_bench;
+#[cfg(test)]
 mod vault_lifecycle_test;
 
 use parking_lot::RwLock;
@@ -117,6 +119,12 @@ pub struct AppState {
     /// mid-enrollment should mean starting over, not resuming a comparison the
     /// user never finished.
     pub pending_enrollment: RwLock<Option<commands::enrollment_v3::PendingEnrollment>>,
+    /// The grant this device opened, kept so that dismissing and reopening the
+    /// enrollment dialog resumes the same one-time code instead of stranding the
+    /// joining device, which is sitting on a fingerprint waiting to be picked.
+    /// Deliberately not persisted, like `pending_enrollment`: a restart should
+    /// cost a fresh grant.
+    pub pending_invite: RwLock<Option<commands::enrollment_v3::PendingInvite>>,
     /// The keypair this device generated to join an account, held between
     /// claiming a grant and opening the capsule sealed to it. The private
     /// halves in here never leave the process (audit P-1).
@@ -209,6 +217,7 @@ impl AppState {
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
             pending_enrollment: RwLock::new(None),
+            pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),
         }
     }
@@ -374,6 +383,7 @@ pub enum RateLimitResult {
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
             pending_enrollment: RwLock::new(None),
+            pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),
         }
     }

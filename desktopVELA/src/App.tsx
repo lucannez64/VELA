@@ -46,13 +46,35 @@ function AppContent() {
   sessionActiveRef.current = !!session?.active;
   const lastActivityRef = useRef(Date.now());
 
+  // main's perf improvement: coalesce overlapping `loadItems` calls into one
+  // shared run. The sync path is the main culprit — `trigger_sync` is awaited
+  // and then `loadItems` runs, but the sync also emits `vault-items-changed`,
+  // so one sync used to ship the vault over IPC twice and re-render twice.
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const loadQueuedRef = useRef(false);
+
   const loadItems = useCallback(async () => {
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return loadInFlightRef.current;
+    }
+    const run = (async () => {
+      do {
+        loadQueuedRef.current = false;
+        try {
+          const vaultItems = await invoke<any[]>('get_items');
+          const mapped = vaultItems.map(fromBackendItem);
+          setItems(mapped as VaultItem[]);
+        } catch (e) {
+          console.error('Failed to load items:', e);
+        }
+      } while (loadQueuedRef.current);
+    })();
+    loadInFlightRef.current = run;
     try {
-      const vaultItems = await invoke<any[]>('get_items');
-      const mapped = vaultItems.map(fromBackendItem);
-      setItems(mapped as VaultItem[]);
-    } catch (e) {
-      console.error('Failed to load items:', e);
+      await run;
+    } finally {
+      loadInFlightRef.current = null;
     }
   }, [setItems]);
 

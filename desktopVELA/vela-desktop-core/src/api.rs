@@ -237,7 +237,13 @@ impl ApiClient {
             .await?;
 
         if !resp.status().is_success() {
-            anyhow::bail!("Verify request failed: {}", resp.status());
+            let status = resp.status();
+            let detail = resp.text().await.unwrap_or_default();
+            let detail = detail.trim();
+            if detail.is_empty() {
+                anyhow::bail!("Verify request failed: {status}");
+            }
+            anyhow::bail!("Verify request failed: {status} ({detail})");
         }
 
         let verify_resp: VerifyResponse = resp.json().await?;
@@ -254,7 +260,13 @@ impl ApiClient {
             .await?;
 
         if !resp.status().is_success() {
-            anyhow::bail!("Sync manifest request failed: {}", resp.status());
+            let status = resp.status();
+            let detail = resp.text().await.unwrap_or_default();
+            let detail = detail.trim();
+            if detail.is_empty() {
+                anyhow::bail!("Sync manifest request failed: {status}");
+            }
+            anyhow::bail!("Sync manifest request failed: {status} ({detail})");
         }
 
         let new_token = extract_new_token(&resp);
@@ -276,7 +288,13 @@ impl ApiClient {
             .await?;
 
         if !resp.status().is_success() {
-            anyhow::bail!("Chunk request failed: {}", resp.status());
+            let status = resp.status();
+            let detail = resp.text().await.unwrap_or_default();
+            let detail = detail.trim();
+            if detail.is_empty() {
+                anyhow::bail!("Chunk request failed: {status}");
+            }
+            anyhow::bail!("Chunk request failed: {status} ({detail})");
         }
 
         let version: i64 = resp

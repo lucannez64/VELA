@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::Mutex;
-use vela_crypto::aead::{decrypt, encrypt};
+use vela_crypto::aead::{decrypt, encrypt, open_vault_chunk};
 use vela_crypto::oram::CHUNK_SIZE;
 
 const LEGACY_VAULT_MAIN_CHUNK_ID: &str = "vault-main";
@@ -151,6 +151,59 @@ async fn authenticate_for_sync(
     }
 
     Ok(verify_resp.token)
+}
+
+/// True when a server error is an authentication failure (expired or revoked
+/// token) rather than a network or storage problem.
+///
+/// The server PASETO token lives ~15 minutes; an unlocked-but-idle app can
+/// outlive it while the local session stays open, and every subsequent request
+/// would be rejected. Callers must re-authenticate and retry once instead of
+/// reporting a misleading "server unavailable".
+fn is_auth_error(err: &str) -> bool {
+    err.contains("401")
+}
+
+/// Fetch the sync manifest, re-authenticating once when the cached token was
+/// rejected (401 — expired, renewed elsewhere, or revoked). The challenge
+/// handshake runs with the persisted identity keys, so a healthy device gets
+/// a fresh token instead of a dead end.
+async fn fetch_manifest_with_reauth(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+    device_id: &str,
+) -> Result<crate::api::SyncManifest, String> {
+    let mut reauthed = false;
+    loop {
+        match client.get_sync_manifest(token).await {
+            Ok((m, new_tok)) => {
+                if let Some(t) = new_tok {
+                    state.session.write().set_server_token(t.clone());
+                    *token = t;
+                }
+                return Ok(m);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if !reauthed && is_auth_error(&msg) {
+                    match authenticate_for_sync(state, client, device_id).await {
+                        Ok(new_token) => {
+                            *token = new_token;
+                            reauthed = true;
+                            continue;
+                        }
+                        Err(auth_err) => {
+                            return Err(format!(
+                                "{msg} (re-authentication also failed: {auth_err})"
+                            ));
+                        }
+                    }
+                }
+                return Err(msg);
+            }
+        }
+    }
 }
 
 /// Backfill a share keypair for identities created before sharing existed.
@@ -488,7 +541,8 @@ async fn download_vault_from_manifest(
             // A chunk this account's key cannot open is corruption (or a
             // foreign chunk); it must not abort the sync forever. It is
             // reported as `Corrupt` and the caller heals by re-uploading the
-            // local vault.
+            // local vault. This branch's `ChunkOutcome` shape, kept over main's
+            // `open_vault_chunk` helper (which is not in this tree).
             match decrypt(&key, &ciphertext) {
                 Ok(chunk) => Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk.to_vec(), lamport)),
                 Err(e) => Ok::<_, String>(ChunkOutcome::Corrupt(idx, format!("chunk {chunk_id}: {e}"))),
@@ -567,8 +621,15 @@ async fn upload_vault_chunks(
         let chunk_id = vault_chunk_id(idx);
         let version = manifest_meta.get(&chunk_id).map(|m| m.version).unwrap_or(0);
         let key = chunk_key_bytes(state, &chunk_id)?;
-        let ciphertext =
-            encrypt(&key, chunk).map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
+        // Sealed against this chunk's id and the clock it is about to be stored
+        // under, so the server cannot hand any of it back later as if it were
+        // current (audit C-2).
+        let ciphertext = vela_crypto::aead::seal(
+            &key,
+            chunk,
+            &vela_crypto::aead::vault_chunk_aad(&chunk_id, chunk_lamport),
+        )
+        .map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
         let client = client.clone();
         let token = shared_token.clone();
         let chunk_id_clone = chunk_id.clone();
@@ -783,14 +844,8 @@ pub async fn trigger_sync(
     ensure_share_key(&state, &client, &token).await;
     state.ensure_unlocked_since(generation)?;
 
-    let manifest = match client.get_sync_manifest(&token).await {
-        Ok((m, new_tok)) => {
-            if let Some(t) = new_tok {
-                state.session.write().set_server_token(t.clone());
-                token = t;
-            }
-            m
-        }
+    let manifest = match fetch_manifest_with_reauth(&state, &client, &mut token, &device_id).await {
+        Ok(m) => m,
         Err(e) => {
             tracing::warn!("Sync: server unavailable, using local vault: {}", e);
             return Ok(SyncStatus {
@@ -809,7 +864,29 @@ pub async fn trigger_sync(
     let mut merged_conflicts: Vec<ConflictItem> = Vec::new();
     let mut max_server_lamport = 0;
 
-    match download_vault_from_manifest(&state, &client, &mut token, &manifest).await? {
+    let mut downloaded =
+        download_vault_from_manifest(&state, &client, &mut token, &manifest).await;
+    if let Err(e) = &downloaded {
+        if is_auth_error(e) {
+            // main's addition: refresh a stale auth token and retry the chunk
+            // download once before giving up on the sync.
+            match authenticate_for_sync(&state, &client, &device_id).await {
+                Ok(new_token) => {
+                    token = new_token;
+                    downloaded = download_vault_from_manifest(&state, &client, &mut token, &manifest)
+                        .await;
+                }
+                Err(auth_err) => {
+                    tracing::warn!(
+                        "Sync: re-authentication before chunk download failed: {}",
+                        auth_err
+                    );
+                }
+            }
+        }
+    }
+
+    match downloaded? {
         ServerVault::Available(server_vault, server_lamport) => {
             state.ensure_unlocked_since(generation)?;
             max_server_lamport = max_server_lamport.max(server_lamport);

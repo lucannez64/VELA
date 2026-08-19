@@ -110,13 +110,48 @@ pub struct EnrollmentInvite {
     pub expires_in: u64,
 }
 
+/// The grant this device opened, held between opening it and the user finishing
+/// the enrollment.
+///
+/// Its only job is to let the frontend resume an enrollment whose dialog was
+/// dismissed: the joining device is showing a fingerprint and waiting, and if
+/// reopening the dialog minted a *new* grant the user's next "copy code" would
+/// strand it. The code itself carries nothing worth stealing (a v3 code is a
+/// grant id and a server URL), so holding it here costs no extra exposure —
+/// the comparison the user has to finish is the same one, and it expires with
+/// the grant.
+pub struct PendingInvite {
+    pub code: String,
+    pub grant_id: String,
+    expires_at: std::time::Instant,
+}
+
 /// Open a grant and encode it as an enrollment code.
 ///
 /// Unlike v2 this performs no key generation, no capsule, and no enrollment:
 /// nothing is created on the account until the user has confirmed a fingerprint.
+///
+/// If a grant this device opened earlier is still alive, that one is returned
+/// instead of opening another: dismissing the dialog must not orphan a joining
+/// device that is already showing a fingerprint to pick.
 pub async fn open_enrollment_invite(state: &AppState) -> Result<EnrollmentInvite, String> {
     if !state.is_unlocked() {
         return Err("Vault is locked. Please unlock before enrolling a new device.".to_string());
+    }
+
+    {
+        let guard = state.pending_invite.read();
+        if let Some(inv) = guard.as_ref() {
+            let now = std::time::Instant::now();
+            let remaining = inv.expires_at.saturating_duration_since(now);
+            if !remaining.is_zero() {
+                return Ok(EnrollmentInvite {
+                    code: inv.code.clone(),
+                    grant_id: inv.grant_id.clone(),
+                    expires_in: remaining.as_secs().max(1),
+                });
+            }
+        }
     }
 
     let server_url = state.server_url.read().clone();
@@ -140,6 +175,11 @@ pub async fn open_enrollment_invite(state: &AppState) -> Result<EnrollmentInvite
     let code = format!("{ENROLLMENT_CODE_V3_PREFIX}{}", B64URL.encode(json));
 
     *state.pending_enrollment.write() = None;
+    *state.pending_invite.write() = Some(PendingInvite {
+        code: code.clone(),
+        grant_id: grant.grant_id.clone(),
+        expires_at: std::time::Instant::now() + std::time::Duration::from_secs(grant.expires_in),
+    });
 
     Ok(EnrollmentInvite {
         code,
@@ -227,8 +267,10 @@ pub async fn confirm_enrollment(
             .ok_or("This enrollment is no longer pending. Please start again.")?;
 
         if !fingerprints_match(&pending.fingerprint, chosen) {
-            // Gone, not retryable.
+            // Gone, not retryable. The grant is spent too: "start again" must
+            // open a fresh one, not resume the code that was just answered.
             *guard = None;
+            *state.pending_invite.write() = None;
             return Err("That is not the code the other device is showing. \
                         The enrollment has been cancelled — start again and compare carefully."
                 .to_string());
@@ -290,6 +332,7 @@ pub async fn confirm_enrollment(
     }
 
     *state.pending_enrollment.write() = None;
+    *state.pending_invite.write() = None;
 
     let own_device_id = state.store.load_device_id().unwrap_or_default();
     tracing::info!(
@@ -312,6 +355,7 @@ pub async fn confirm_enrollment(
 /// this device from completing it.
 pub fn cancel_enrollment(state: &AppState) {
     *state.pending_enrollment.write() = None;
+    *state.pending_invite.write() = None;
 }
 
 impl PendingEnrollment {

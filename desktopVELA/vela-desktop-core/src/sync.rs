@@ -155,6 +155,59 @@ async fn authenticate_for_sync(state: &AppState, client: &ApiClient, device_id: 
     Ok(verify_resp.token)
 }
 
+/// True when a server error is an authentication failure (expired or revoked
+/// token) rather than a network or storage problem.
+///
+/// The server PASETO token lives ~15 minutes; an unlocked-but-idle app can
+/// outlive it while the local session stays open, and every subsequent request
+/// would be rejected. Callers must re-authenticate and retry once instead of
+/// reporting a misleading "server unavailable".
+fn is_auth_error(err: &str) -> bool {
+    err.contains("401")
+}
+
+/// Fetch the sync manifest, re-authenticating once when the cached token was
+/// rejected (401 — expired, renewed elsewhere, or revoked). The challenge
+/// handshake runs with the persisted identity keys, so a healthy device gets
+/// a fresh token instead of a dead end.
+async fn fetch_manifest_with_reauth(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+    device_id: &str,
+) -> Result<crate::api::SyncManifest, String> {
+    let mut reauthed = false;
+    loop {
+        match client.get_sync_manifest(token).await {
+            Ok((m, new_tok)) => {
+                if let Some(t) = new_tok {
+                    state.session.write().set_server_token(t.clone());
+                    *token = t;
+                }
+                return Ok(m);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if !reauthed && is_auth_error(&msg) {
+                    match authenticate_for_sync(state, client, device_id).await {
+                        Ok(new_token) => {
+                            *token = new_token;
+                            reauthed = true;
+                            continue;
+                        }
+                        Err(auth_err) => {
+                            return Err(format!(
+                                "{msg} (re-authentication also failed: {auth_err})"
+                            ));
+                        }
+                    }
+                }
+                return Err(msg);
+            }
+        }
+    }
+}
+
 /// Backfill a share keypair for identities created before sharing existed.
 ///
 /// Generates the keypair locally, registers the public half with the server, and
@@ -200,7 +253,7 @@ const TOMBSTONE_RETENTION_DAYS: i64 = 30;
 
 /// Merge server vault into the local vault, honouring tombstones so that
 /// deletions propagate across devices.
-fn merge_server_vaults(
+pub(crate) fn merge_server_vaults(
     local: &mut crate::vault::VaultStore,
     server: crate::vault::VaultStore,
     device_id: &str,
@@ -750,14 +803,8 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
     ensure_share_key(state, &client, &token).await;
     state.ensure_unlocked_since(generation)?;
 
-    let manifest = match client.get_sync_manifest(&token).await {
-        Ok((m, new_tok)) => {
-            if let Some(t) = new_tok {
-                state.session.write().set_server_token(t.clone());
-                token = t;
-            }
-            m
-        }
+    let manifest = match fetch_manifest_with_reauth(state, &client, &mut token, &device_id).await {
+        Ok(m) => m,
         Err(e) => {
             tracing::warn!("Sync: server unavailable, using local vault: {}", e);
             return Ok(SyncStatus {
@@ -773,7 +820,29 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
     let mut merged_conflicts: Vec<ConflictItem> = Vec::new();
     let mut max_server_lamport = 0;
 
-    match download_vault_from_manifest(state, &client, &mut token, &manifest).await? {
+    let mut downloaded = download_vault_from_manifest(state, &client, &mut token, &manifest).await;
+    if let Err(e) = &downloaded {
+        if is_auth_error(e) {
+            // main's addition: a stale auth token should be refreshed and the
+            // chunk download retried once, so a long-lived session does not
+            // fail a sync it could have recovered from.
+            match authenticate_for_sync(state, &client, &device_id).await {
+                Ok(new_token) => {
+                    token = new_token;
+                    downloaded = download_vault_from_manifest(state, &client, &mut token, &manifest)
+                        .await;
+                }
+                Err(auth_err) => {
+                    tracing::warn!(
+                        "Sync: re-authentication before chunk download failed: {}",
+                        auth_err
+                    );
+                }
+            }
+        }
+    }
+
+    match downloaded? {
         ServerVault::Available(server_vault, server_lamport) => {
             state.ensure_unlocked_since(generation)?;
             max_server_lamport = max_server_lamport.max(server_lamport);
