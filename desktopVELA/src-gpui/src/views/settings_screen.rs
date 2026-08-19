@@ -80,6 +80,18 @@ pub struct SettingsScreen {
     security_key_pin_state: gpui::Entity<EditableTextState>,
     registering_security_key: bool,
     security_key_error: Option<SharedString>,
+    show_cloud_backup_modal: bool,
+    cloud_remotes: Option<Vec<SharedString>>,
+    selected_cloud_remote: Option<SharedString>,
+    loading_cloud_remotes: bool,
+    uploading_cloud_backup: bool,
+    cloud_backup_error: Option<SharedString>,
+    show_trusted_contact_modal: bool,
+    trusted_contact_share: Option<SharedString>,
+    loading_trusted_contact: bool,
+    acknowledging_trusted_contact: bool,
+    trusted_contact_error: Option<SharedString>,
+    finalizing_recovery: bool,
     _pulse_task: Task<()>,
 }
 
@@ -150,6 +162,18 @@ impl SettingsScreen {
             security_key_pin_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             registering_security_key: false,
             security_key_error: None,
+            show_cloud_backup_modal: false,
+            cloud_remotes: None,
+            selected_cloud_remote: None,
+            loading_cloud_remotes: false,
+            uploading_cloud_backup: false,
+            cloud_backup_error: None,
+            show_trusted_contact_modal: false,
+            trusted_contact_share: None,
+            loading_trusted_contact: false,
+            acknowledging_trusted_contact: false,
+            trusted_contact_error: None,
+            finalizing_recovery: false,
             _pulse_task: animation::spawn_pulse_ticker(cx),
         }
     }
@@ -219,6 +243,187 @@ impl SettingsScreen {
                     }
                     Ok(Err(e)) => this.security_key_error = Some(e.into()),
                     Err(e) => this.security_key_error = Some(format!("Task failed: {e}").into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn open_cloud_backup_modal(&mut self, cx: &mut Context<Self>) {
+        self.cloud_backup_error = None;
+        self.cloud_remotes = None;
+        self.selected_cloud_remote = None;
+        self.loading_cloud_remotes = true;
+        self.show_cloud_backup_modal = true;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn_guarded("list cloud backup remotes", async {
+                    vela_desktop_core::recovery::list_cloud_backup_remotes().await
+                })
+                .await
+                .unwrap_or_else(|| Err("Listing cloud remotes failed unexpectedly".to_string()));
+            this.update(cx, |this, cx| {
+                this.loading_cloud_remotes = false;
+                match result {
+                    Ok(remotes) => {
+                        let remotes: Vec<SharedString> =
+                            remotes.into_iter().map(SharedString::from).collect();
+                        this.selected_cloud_remote = remotes.first().cloned();
+                        this.cloud_remotes = Some(remotes);
+                    }
+                    Err(e) => this.cloud_backup_error = Some(e.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn close_cloud_backup_modal(&mut self, cx: &mut Context<Self>) {
+        self.show_cloud_backup_modal = false;
+        cx.notify();
+    }
+
+    fn upload_cloud_backup(&mut self, cx: &mut Context<Self>) {
+        let Some(remote) = self.selected_cloud_remote.clone() else { return };
+        self.uploading_cloud_backup = true;
+        self.cloud_backup_error = None;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            // `rclone` upload is blocking process I/O; `ensure_shares_split`
+            // ahead of it touches the vault. Both belong off the reactor.
+            let result = cx
+                .background_spawn_guarded("upload cloud backup share", async move {
+                    vela_desktop_core::recovery::setup_cloud_backup_recovery(
+                        &app_state,
+                        remote.to_string(),
+                    )
+                    .await
+                })
+                .await
+                .unwrap_or_else(|| Err("Uploading the recovery share failed unexpectedly".to_string()));
+            this.update(cx, |this, cx| {
+                this.uploading_cloud_backup = false;
+                match result {
+                    Ok(()) => {
+                        this.show_cloud_backup_modal = false;
+                        crate::toast::show(cx, "Recovery share uploaded", crate::toast::ToastKind::Success);
+                        let app_state = this.app_state.clone();
+                        Self::load_recovery_status(&app_state, cx);
+                    }
+                    Err(e) => this.cloud_backup_error = Some(e.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn open_trusted_contact_modal(&mut self, cx: &mut Context<Self>) {
+        self.trusted_contact_error = None;
+        self.trusted_contact_share = None;
+        self.loading_trusted_contact = true;
+        self.show_trusted_contact_modal = true;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn_guarded("read trusted contact share", async move {
+                    vela_desktop_core::recovery::get_trusted_contact_share(&app_state).await
+                })
+                .await
+                .unwrap_or_else(|| Err("Generating the recovery share failed unexpectedly".to_string()));
+            this.update(cx, |this, cx| {
+                this.loading_trusted_contact = false;
+                match result {
+                    Ok(share) => this.trusted_contact_share = Some(share.into()),
+                    Err(e) => this.trusted_contact_error = Some(e.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn close_trusted_contact_modal(&mut self, cx: &mut Context<Self>) {
+        self.show_trusted_contact_modal = false;
+        // Don't leave a recovery share in the view after the modal closes.
+        self.trusted_contact_share = None;
+        cx.notify();
+    }
+
+    fn copy_trusted_contact_share(&mut self, cx: &mut Context<Self>) {
+        let Some(share) = self.trusted_contact_share.clone() else { return };
+        // Key material: copied as a secret so it stays out of clipboard history.
+        crate::clipboard::copy(cx, "Recovery share", share.as_ref());
+    }
+
+    fn acknowledge_trusted_contact(&mut self, cx: &mut Context<Self>) {
+        self.acknowledging_trusted_contact = true;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn_guarded("acknowledge trusted contact share", async move {
+                    vela_desktop_core::recovery::acknowledge_trusted_contact_share(&app_state).await
+                })
+                .await
+                .unwrap_or_else(|| Err("Recording the handover failed unexpectedly".to_string()));
+            this.update(cx, |this, cx| {
+                this.acknowledging_trusted_contact = false;
+                // Best-effort bookkeeping — the share was shown either way.
+                if let Err(e) = result {
+                    tracing::warn!("Could not record trusted-contact handover: {e}");
+                }
+                this.show_trusted_contact_modal = false;
+                this.trusted_contact_share = None;
+                crate::toast::show(cx, "Trusted contact share delivered", crate::toast::ToastKind::Success);
+                let app_state = this.app_state.clone();
+                Self::load_recovery_status(&app_state, cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Drop the locally cached shares once the user says setup is done.
+    ///
+    /// Until this runs, all three shares sit in `recovery_setup.enc` on this
+    /// device, which makes the 2-of-3 split decorative. The delivered flags
+    /// survive; only the material goes.
+    fn finalize_recovery(&mut self, cx: &mut Context<Self>) {
+        self.finalizing_recovery = true;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn_guarded("finalize recovery setup", async move {
+                    vela_desktop_core::recovery::finalize_recovery_setup(&app_state).await
+                })
+                .await
+                .unwrap_or_else(|| Err("Finishing recovery setup failed unexpectedly".to_string()));
+            this.update(cx, |this, cx| {
+                this.finalizing_recovery = false;
+                match result {
+                    Ok(()) => {
+                        crate::toast::show(cx, "Recovery setup finished", crate::toast::ToastKind::Success);
+                        let app_state = this.app_state.clone();
+                        Self::load_recovery_status(&app_state, cx);
+                    }
+                    Err(e) => tracing::warn!("Could not clear cached recovery shares: {e}"),
                 }
                 cx.notify();
             })
@@ -636,6 +841,10 @@ impl Render for SettingsScreen {
             .when(self.show_delete_modal, |el| el.child(delete_modal(&palette, self, window, cx)))
             .when(self.conflict_modal.is_some(), |el| el.child(conflict_resolution_modal(&palette, self, window, cx)))
             .when(self.show_security_key_modal, |el| el.child(security_key_modal(&palette, self, window, cx)))
+            .when(self.show_cloud_backup_modal, |el| el.child(cloud_backup_modal(&palette, self, window, cx)))
+            .when(self.show_trusted_contact_modal, |el| {
+                el.child(trusted_contact_modal(&palette, self, window, cx))
+            })
             .into_any_element()
     }
 }
@@ -1005,12 +1214,11 @@ fn security_section(
         )
 }
 
-/// Port of `RecoverySettings.tsx`'s method list. Security key is real
-/// (native CTAP2 ceremony, see `vela_desktop_core::webauthn`); cloud backup
-/// (needs rclone remote-picker wiring) and trusted contact (needs the
-/// `TrustedContactRecovery` flow) stay honest read-only status rows for
-/// now — deliberately out of scope for this pass, matching this codebase's
-/// per-feature (not per-screen) stubbing convention.
+/// Port of `RecoverySettings.tsx`'s method list. All three methods are real:
+/// cloud backup (rclone remote picker), security key (native CTAP2 ceremony,
+/// see `vela_desktop_core::webauthn`) and trusted contact (Share 3, shown for
+/// the user to deliver out of band). "Finish setup" drops the locally cached
+/// shares — while they are all still here, the 2-of-3 split protects nothing.
 fn recovery_section(
     palette: &Palette,
     screen: &SettingsScreen,
@@ -1023,6 +1231,8 @@ fn recovery_section(
     let trusted_contact_done = status.as_ref().map(|s| s.trusted_contact_acknowledged).unwrap_or(false);
     let completed_count =
         [cloud_backup_done, security_key_done, trusted_contact_done].iter().filter(|d| **d).count();
+    let setup_in_progress = status.as_ref().map(|s| s.setup_in_progress).unwrap_or(false);
+    let finalizing = screen.finalizing_recovery;
 
     div()
         .child(section_label(palette, "Recovery"))
@@ -1065,14 +1275,35 @@ fn recovery_section(
                                 ),
                         ),
                 )
-                .child(recovery_method_row(
-                    palette,
-                    "cloud_upload",
-                    "Cloud backup",
-                    cloud_backup_done,
-                    "Upload a recovery share via rclone",
-                    "Not ported yet — manage from the web or mobile app for now.",
-                ))
+                .child({
+                    let mut row = recovery_method_row(
+                        palette,
+                        "cloud_upload",
+                        "Cloud backup",
+                        cloud_backup_done,
+                        "Upload a recovery share via rclone",
+                        "",
+                    )
+                    .into_any_element();
+                    if !cloud_backup_done {
+                        row = div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(row)
+                            .child(
+                                div().flex().justify_end().child(
+                                    action_button(palette, "enable-cloud-backup", "Enable", window, cx)
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| this.open_cloud_backup_modal(cx)),
+                                        ),
+                                ),
+                            )
+                            .into_any_element();
+                    }
+                    row
+                })
                 .child({
                     let mut row = recovery_method_row(
                         palette,
@@ -1101,14 +1332,74 @@ fn recovery_section(
                     }
                     row
                 })
-                .child(recovery_method_row(
-                    palette,
-                    "person_add",
-                    "Trusted contact",
-                    trusted_contact_done,
-                    "Give a share to someone you trust",
-                    "Not ported yet — manage from the web or mobile app for now.",
-                )),
+                .child({
+                    let mut row = recovery_method_row(
+                        palette,
+                        "person_add",
+                        "Trusted contact",
+                        trusted_contact_done,
+                        "Give a share to someone you trust",
+                        "",
+                    )
+                    .into_any_element();
+                    if !trusted_contact_done {
+                        row = div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(row)
+                            .child(
+                                div().flex().justify_end().child(
+                                    action_button(palette, "enable-trusted-contact", "Enable", window, cx)
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| this.open_trusted_contact_modal(cx)),
+                                        ),
+                                ),
+                            )
+                            .into_any_element();
+                    }
+                    row
+                })
+                // Setup stays "in progress" while the split shares are still
+                // cached locally. Finishing is what removes them, so it is an
+                // explicit action rather than a side effect of navigating away.
+                .when(setup_in_progress, |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(palette.on_surface_variant)
+                                    .child(
+                                        "Recovery shares are still cached on this device. \
+                                         Finish setup once you've delivered the ones you enabled.",
+                                    ),
+                            )
+                            .child(
+                                div().flex().justify_end().child(
+                                    action_button(
+                                        palette,
+                                        "finish-recovery-setup",
+                                        if finalizing { "Finishing…" } else { "Finish setup" },
+                                        window,
+                                        cx,
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            if !this.finalizing_recovery {
+                                                this.finalize_recovery(cx);
+                                            }
+                                        }),
+                                    ),
+                                ),
+                            ),
+                    )
+                }),
         )
 }
 
@@ -2130,4 +2421,303 @@ fn conflict_resolution_modal(
                 })
         )
         .into_any_element()
+}
+
+/// Shared chrome for the two recovery modals added alongside the security-key
+/// one: a dimmed backdrop that closes on click, and a body that doesn't.
+fn recovery_modal_shell(
+    palette: &Palette,
+    id: &'static str,
+    body_id: &'static str,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+    on_dismiss: impl Fn(&mut SettingsScreen, &mut Context<SettingsScreen>) + 'static,
+) -> (gpui::Stateful<gpui::Div>, gpui::Stateful<gpui::Div>) {
+    let backdrop = div()
+        .id(id)
+        .absolute()
+        .inset_0()
+        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .flex()
+        .items_center()
+        .justify_center()
+        .p_4()
+        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_dismiss(this, cx)));
+
+    let body = div()
+        .id(body_id)
+        .map(|el| crate::keyboard::trap_tab(el, body_id, window, cx))
+        .w(px(420.))
+        .p_8()
+        .rounded_2xl()
+        .bg(palette.surface_container)
+        .border_1()
+        .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+        .flex()
+        .flex_col()
+        .gap_4()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+    (backdrop, body)
+}
+
+fn modal_title(palette: &Palette, title: &'static str) -> impl IntoElement {
+    div()
+        .font_family(fonts::HEADLINE)
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_xl()
+        .text_color(palette.on_surface)
+        .child(title)
+}
+
+fn modal_action_row(
+    palette: &Palette,
+    cancel_id: &'static str,
+    confirm_id: &'static str,
+    confirm_label: SharedString,
+    confirm_enabled: bool,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+    on_cancel: impl Fn(&mut SettingsScreen, &mut Context<SettingsScreen>) + 'static,
+    on_confirm: impl Fn(&mut SettingsScreen, &mut Context<SettingsScreen>) + 'static,
+) -> impl IntoElement {
+    let cancel_hover = animation::hover_transition(cancel_id, window, cx);
+    let cancel_t = *cancel_hover.evaluate(window, cx);
+    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+
+    let confirm_hover = animation::hover_transition(confirm_id, window, cx);
+    let confirm_t = *confirm_hover.evaluate(window, cx);
+    let confirm_bg = animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, confirm_t);
+
+    div()
+        .flex()
+        .gap_4()
+        .child(
+            div()
+                .id(cancel_id)
+                .flex_1()
+                .py_3()
+                .rounded_xl()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(cancel_bg)
+                .text_color(palette.on_surface)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .cursor_pointer()
+                .child("Cancel")
+                .on_hover(move |is_hovered, _, cx| {
+                    cancel_hover.update(cx, |v, cx| {
+                        *v = *is_hovered as u8 as f32;
+                        cx.notify();
+                    });
+                })
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_cancel(this, cx))),
+        )
+        .child(
+            div()
+                .id(confirm_id)
+                .flex_1()
+                .py_3()
+                .rounded_xl()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(confirm_bg)
+                .text_color(palette.on_primary)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .when(confirm_enabled, |el| el.cursor_pointer())
+                .opacity(if confirm_enabled { 1.0 } else { 0.6 })
+                .child(confirm_label)
+                .on_hover(move |is_hovered, _, cx| {
+                    confirm_hover.update(cx, |v, cx| {
+                        *v = *is_hovered as u8 as f32;
+                        cx.notify();
+                    });
+                })
+                .when(confirm_enabled, |el| {
+                    el.on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_confirm(this, cx)))
+                }),
+        )
+}
+
+/// Share 1: pick the rclone remote to upload it to.
+fn cloud_backup_modal(
+    palette: &Palette,
+    screen: &SettingsScreen,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+) -> impl IntoElement {
+    let uploading = screen.uploading_cloud_backup;
+    let has_remote = screen.selected_cloud_remote.is_some();
+
+    let (backdrop, body) = recovery_modal_shell(
+        palette,
+        "cloud-backup-modal-backdrop",
+        "cloud-backup-modal-body",
+        window,
+        cx,
+        |this, cx| this.close_cloud_backup_modal(cx),
+    );
+
+    backdrop.child(
+        body.child(modal_title(palette, "Cloud backup"))
+            .child(div().text_sm().text_color(palette.on_surface_variant).child(
+                "Pick the rclone remote to upload recovery Share 1 to. You'll need this same \
+                 remote configured on any device you later recover onto.",
+            ))
+            .map(|el| {
+                if screen.loading_cloud_remotes {
+                    return el.child(
+                        div()
+                            .text_sm()
+                            .text_color(palette.on_surface_variant)
+                            .child("Checking configured rclone remotes…"),
+                    );
+                }
+                match screen.cloud_remotes.as_ref() {
+                    Some(remotes) if !remotes.is_empty() => el.child(
+                        div()
+                            .id("settings-cloud-remotes")
+                            .max_h(px(180.))
+                            .overflow_y_scroll()
+                            .rounded_xl()
+                            .border_1()
+                            .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                            .bg(palette.surface_bright)
+                            .flex()
+                            .flex_col()
+                            .children(remotes.iter().enumerate().map(|(index, remote)| {
+                                let is_selected = screen.selected_cloud_remote.as_ref() == Some(remote);
+                                let remote_for_click = remote.clone();
+                                div()
+                                    .id(("settings-cloud-remote", index))
+                                    .px_4()
+                                    .py_3()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .cursor_pointer()
+                                    .when(is_selected, |el| el.bg(gpui::Hsla { a: 0.1, ..palette.primary }))
+                                    .child(icon(
+                                        if is_selected { "radio_button_checked" } else { "radio_button_unchecked" },
+                                        px(16.),
+                                        if is_selected { palette.primary } else { palette.outline },
+                                    ))
+                                    .child(div().text_sm().text_color(palette.on_surface).child(remote.clone()))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.selected_cloud_remote = Some(remote_for_click.clone());
+                                            cx.notify();
+                                        }),
+                                    )
+                            })),
+                    ),
+                    _ => el.child(div().text_sm().text_color(palette.on_surface_variant).child(
+                        "No configured rclone remotes found. Install rclone and configure a remote, \
+                         then come back here.",
+                    )),
+                }
+            })
+            .when_some(screen.cloud_backup_error.clone(), |el, error| {
+                el.child(div().text_sm().text_color(palette.error).child(error))
+            })
+            .child(modal_action_row(
+                palette,
+                "cloud-backup-cancel",
+                "cloud-backup-confirm",
+                if uploading { "Uploading…".into() } else { SharedString::from("Upload share") },
+                has_remote && !uploading,
+                window,
+                cx,
+                |this, cx| this.close_cloud_backup_modal(cx),
+                |this, cx| this.upload_cloud_backup(cx),
+            )),
+    )
+}
+
+/// Share 3, shown for the user to deliver themselves.
+///
+/// A lone share below the 2-of-3 threshold is information-theoretically
+/// indistinguishable from random bytes, so displaying it reveals nothing
+/// about the vault — it only means something beside a second share.
+fn trusted_contact_modal(
+    palette: &Palette,
+    screen: &SettingsScreen,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+) -> impl IntoElement {
+    let has_share = screen.trusted_contact_share.is_some();
+    let acknowledging = screen.acknowledging_trusted_contact;
+
+    let (backdrop, body) = recovery_modal_shell(
+        palette,
+        "trusted-contact-modal-backdrop",
+        "trusted-contact-modal-body",
+        window,
+        cx,
+        |this, cx| this.close_trusted_contact_modal(cx),
+    );
+
+    backdrop.child(
+        body.child(modal_title(palette, "Trusted contact"))
+            .child(div().text_sm().text_color(palette.on_surface_variant).child(
+                "One of three recovery pieces. Send it to someone you trust — they only need to \
+                 hand it back if you lose every device.",
+            ))
+            .map(|el| {
+                if screen.loading_trusted_contact {
+                    return el.child(
+                        div()
+                            .text_sm()
+                            .text_color(palette.on_surface_variant)
+                            .child("Generating recovery share…"),
+                    );
+                }
+                match screen.trusted_contact_share.as_ref() {
+                    Some(share) => el.child(
+                        div()
+                            .id("settings-trusted-contact-share")
+                            .max_h(px(160.))
+                            .overflow_y_scroll()
+                            .p_3()
+                            .rounded_xl()
+                            .border_1()
+                            .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                            .bg(palette.surface_bright)
+                            .font_family(fonts::MONO)
+                            .text_xs()
+                            .text_color(palette.on_surface)
+                            .child(share.clone()),
+                    ),
+                    None => el,
+                }
+            })
+            .when_some(screen.trusted_contact_error.clone(), |el, error| {
+                el.child(div().text_sm().text_color(palette.error).child(error))
+            })
+            .when(has_share, |el| {
+                el.child(
+                    div().flex().justify_end().child(
+                        action_button(palette, "copy-trusted-contact-share", "Copy share", window, cx)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| this.copy_trusted_contact_share(cx)),
+                            ),
+                    ),
+                )
+            })
+            .child(modal_action_row(
+                palette,
+                "trusted-contact-cancel",
+                "trusted-contact-confirm",
+                if acknowledging { "Saving…".into() } else { SharedString::from("I've sent it") },
+                has_share && !acknowledging,
+                window,
+                cx,
+                |this, cx| this.close_trusted_contact_modal(cx),
+                |this, cx| this.acknowledge_trusted_contact(cx),
+            )),
+    )
 }
