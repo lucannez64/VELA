@@ -32,12 +32,13 @@ mod views;
 use std::sync::Arc;
 
 use gpui::{
-    div, prelude::*, px, size, App, Bounds, Context, Entity, IntoElement, Render, Subscription,
-    TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
+    div, prelude::*, px, rgba, size, App, Bounds, Context, Entity, IntoElement, MouseButton,
+    Render, Subscription, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
 use ksni::TrayMethods;
 
-use theme::{ActiveTheme, ThemeId};
+use crate::icon::icon;
+use theme::{ActiveTheme, Palette, ThemeId};
 use titlebar::{TitleBar, TitleBarEvent};
 use vela_desktop_core::{commands::session, AppState};
 use views::app_shell::{AppShell, AppShellEvent};
@@ -63,6 +64,9 @@ impl RootView {
     fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<ActiveTheme>(|_, cx| cx.notify()).detach();
         cx.observe_global::<toast::ToastGlobal>(|_, cx| cx.notify()).detach();
+        // A presence confirmation (in-core login, passkey use) arrives from a
+        // background thread and is parked in a global; render it as a modal.
+        cx.observe_global::<host::PresencePromptGlobal>(|_, cx| cx.notify()).detach();
         // The quick-search popup lives in its own window, so it can't reach
         // this view through `cx.subscribe` (that needs both entities in one
         // window's tree). It publishes the picked item as a global instead,
@@ -239,7 +243,165 @@ impl Render for RootView {
                 div().flex_1().overflow_hidden().child(content),
             )
             .children(toast::render(&palette, cx))
+            .when_some(
+                cx.try_global::<host::PresencePromptGlobal>()
+                    .and_then(|g| g.0.clone()),
+                |el, prompt| el.child(presence_modal(&palette, prompt)),
+            )
     }
+}
+
+/// The modal that asks "Sign in to X by sending your saved password…?" —
+/// the gpui build's answer to the Tauri app's confirmation dialog. It answers
+/// through the reply channel the requesting thread is blocked on, then
+/// dismisses itself.
+fn presence_modal(palette: &Palette, prompt: host::PresencePrompt) -> gpui::AnyElement {
+    let approve = prompt.reply.clone();
+    let deny = prompt.reply.clone();
+    let (site, requester) = parse_presence_prompt(&prompt.prompt);
+    let details = if let Some(requester) = &requester {
+        format!("Requested by {requester}")
+    } else {
+        prompt.prompt.clone()
+    };
+
+    div()
+        .id("presence-scrim")
+        .absolute()
+        .inset_0()
+        .bg(rgba(0x0000_00a8))
+        // `occlude()` is the whole fix: it sets this hitbox to
+        // `HitboxBehavior::BlockMouse`, which stops the window's hit-test loop
+        // at this element. Without it, gpui's hit-test only *stops* on
+        // BlockMouse hitboxes — handlers on this div don't prevent hits from
+        // reaching the vault behind, so clicks and hover both fall through.
+        .occlude()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .max_w(px(460.))
+                .mx_6()
+                .rounded_2xl()
+                .bg(palette.surface_container)
+                .p_6()
+                .flex()
+                .flex_col()
+                .gap_5()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .size(px(40.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .bg(palette.primary_dim)
+                                .child(icon("shield_lock", px(22.), palette.surface)),
+                        )
+                        .child(
+                            div()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .font_family(fonts::LABEL)
+                                        .text_color(palette.on_surface)
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .child("Approve sign in"),
+                                )
+                                .child(
+                                    div()
+                                        .font_family(fonts::BODY)
+                                        .text_color(palette.on_surface_variant)
+                                        .text_size(px(12.))
+                                        .child(details),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .rounded_lg()
+                        .bg(palette.surface_container_highest)
+                        .px_4()
+                        .py_3()
+                        .child(
+                            div()
+                                .font_family(fonts::BODY)
+                                .text_color(palette.on_surface_variant)
+                                .text_size(px(12.))
+                                .child("VELA would sign you in to"),
+                        )
+                        .child(
+                            div()
+                                .font_family(fonts::BODY)
+                                .text_color(palette.on_surface)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(site),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            div()
+                                .px_5()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(palette.surface_container_high)
+                                .text_color(palette.on_surface)
+                                .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let _ = deny.send(Some(false));
+                                    cx.set_global(host::PresencePromptGlobal(None));
+                                })
+                                .child("Deny"),
+                        )
+                        .child(
+                            div()
+                                .px_5()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(palette.primary)
+                                .text_color(palette.on_primary)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let _ = approve.send(Some(true));
+                                    cx.set_global(host::PresencePromptGlobal(None));
+                                })
+                                .child("Approve"),
+                        ),
+                ),
+        )
+        .into_any_element()
+}
+
+/// Pull the site name and requester out of the presence prompt text
+/// ("Sign in to {site} by sending your saved password to that site, at the
+/// request of {requester}") so the modal can show them cleanly instead of the
+/// raw sentence.
+fn parse_presence_prompt(prompt: &str) -> (String, Option<String>) {
+    let site = prompt
+        .strip_prefix("Sign in to ")
+        .and_then(|s| s.split(" by sending").next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(prompt)
+        .to_string();
+    let requester = prompt
+        .split("at the request of ")
+        .nth(1)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    (site, requester)
 }
 
 fn main() {
@@ -483,6 +645,14 @@ fn main() {
                     }
                     host::HostCommand::VaultItemsChanged => {
                         cx.update(host::notify_vault_items_changed);
+                    }
+                    host::HostCommand::ConfirmPresence { prompt, reply } => {
+                        cx.update(|cx| {
+                            cx.set_global(host::PresencePromptGlobal(Some(host::PresencePrompt {
+                                prompt,
+                                reply,
+                            })));
+                        });
                     }
                 }
             }

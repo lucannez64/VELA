@@ -54,7 +54,27 @@ pub enum HostCommand {
     /// reload rather than keep showing stale rows. The Tauri build emits a
     /// `vault-items-changed` event for exactly this.
     VaultItemsChanged,
+    /// Ask the human to approve or deny a presence-sensitive action (an in-core
+    /// login, a passkey use). Carries a reply channel back to the caller, which
+    /// blocks on it — the gpui build's answer to the Tauri app's modal.
+    ConfirmPresence {
+        prompt: String,
+        reply: std::sync::mpsc::Sender<Option<bool>>,
+    },
 }
+
+/// One pending presence-confirmation, shown as a modal over the whole window.
+#[derive(Clone)]
+pub struct PresencePrompt {
+    pub prompt: String,
+    pub reply: std::sync::mpsc::Sender<Option<bool>>,
+}
+
+/// The channel to the window: set by `main.rs`'s command-drain loop when a
+/// `ConfirmPresence` arrives, cleared by the modal's buttons when they answer.
+#[derive(Default)]
+pub struct PresencePromptGlobal(pub Option<PresencePrompt>);
+impl Global for PresencePromptGlobal {}
 
 pub struct GpuiHost {
     app_state: Arc<AppState>,
@@ -88,20 +108,25 @@ impl Host for GpuiHost {
         let _ = self.tx.send(HostCommand::VaultItemsChanged);
     }
 
-    /// Not yet available on this binary.
+    /// Ask the human to approve or deny, and wait for the answer.
     ///
-    /// `HostCommand` is a fire-and-forget channel drained by a polling task in
-    /// `main.rs`; asking a question needs a modal view and a reply path, and
-    /// this build has neither yet. Returning `None` rather than `Some(false)`
-    /// says exactly that — [`vela_desktop_core::presence`] reads it as "no way
-    /// to ask" and refuses the ceremony.
-    ///
-    /// The consequence, stated plainly: on the gpui build a passkey works where
-    /// the platform has a biometric factor and is refused where it does not,
-    /// until the modal lands. Failing closed is the right direction for this
-    /// particular gate — an assertion oracle nobody can decline is worse than a
-    /// passkey that will not sign.
-    fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
-        None
+    /// The prompt is handed to the window through the command channel and
+    /// rendered as a modal; this call blocks the requesting thread (the IPC
+    /// server's) until the human clicks Approve or Deny. A failed send — the
+    /// window is gone — reads as "no way to ask", which
+    /// [`vela_desktop_core::presence`] refuses.
+    fn confirm_presence(&self, prompt: &str) -> Option<bool> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if self
+            .tx
+            .send(HostCommand::ConfirmPresence {
+                prompt: prompt.to_string(),
+                reply: tx,
+            })
+            .is_err()
+        {
+            return None;
+        }
+        rx.recv().ok().flatten()
     }
 }
