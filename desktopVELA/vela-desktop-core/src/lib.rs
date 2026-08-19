@@ -3,6 +3,11 @@ pub mod audit;
 pub mod breach;
 pub mod clipboard;
 pub mod biometric;
+/// The browser-driven login tier: a disposable real browser driven by the core
+/// over CDP. Only compiled behind `--features browser-login`. See
+/// `security/browser-driven-login-design.md`.
+#[cfg(feature = "browser-login")]
+pub mod browser;
 pub mod commands;
 pub mod credential_key;
 pub mod crypto;

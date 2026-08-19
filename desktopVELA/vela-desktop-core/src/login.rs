@@ -67,13 +67,17 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 use zeroize::Zeroizing;
 
 use crate::vault::VaultItem;
 use crate::AppState;
+
+/// The per-site login recipes that let in-core login reach sites whose login
+/// is not a plain HTML form. See [`recipe`] for the design.
+pub mod recipe;
 
 /// How many redirects to follow before giving up.
 const MAX_REDIRECTS: usize = 8;
@@ -164,6 +168,51 @@ pub struct LoginRequest {
     /// Page to log in at. Defaults to the item's stored URL, and must in any
     /// case be on the same registrable domain as it.
     pub login_url: Option<String>,
+    /// Artifacts minted in the browser, for sites whose login demands more than
+    /// a password — see [`BrowserArtifacts`]. Absent for the plain-form path.
+    pub browser: Option<BrowserArtifacts>,
+}
+
+/// Things only a browser can mint, lifted from the page and carried to the
+/// core so it can complete a login the browser alone started.
+///
+/// Both fields are short-lived secrets: a CAPTCHA token is single-use and dies
+/// in minutes, and the cookie jar is the page's pre-session state. They are
+/// never persisted, never logged, and they do not survive this request — the
+/// core uses them for one submission and drops them.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BrowserArtifacts {
+    /// A CAPTCHA a human solved on the page (`h-captcha-response` /
+    /// `g-recaptcha-response`). The core will not guess one, because a login
+    /// attempt carrying a stale or missing token both fails and looks like the
+    /// user trying to automate the site.
+    #[serde(default)]
+    pub captcha_token: Option<String>,
+    /// The browser's cookie jar for the tab, so the core's request carries the
+    /// same pre-session state the page has — CSRF tokens, and the
+    /// per-request `sessionid` sites like Steam tie their login to.
+    #[serde(default)]
+    pub cookies: Vec<BrowserCookie>,
+}
+
+/// One cookie from the browser's jar, with the attributes needed to re-use it.
+///
+/// The same shape as [`SessionCookie`], kept separate so the two are not
+/// confused: a [`SessionCookie`] is what the site *issued* to us, while this
+/// is what the browser already *held*.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct BrowserCookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_site: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+    pub host_only: bool,
 }
 
 /// One cookie the site issued, with the attributes needed to reinstall it.
@@ -227,6 +276,25 @@ pub struct LoginOutcome {
     /// VELA answer with a TOTP code instead. Surfaced rather than hidden: the
     /// user turned this on once, and should still be told each time it is used.
     pub second_factor_downgraded: bool,
+    /// True when the login was completed in a disposable real browser (the
+    /// `browser-login` tier) rather than by the core submitting over its own
+    /// TLS. Surfaced so the caller can tell the user a window appeared.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub used_browser: bool,
+    /// The site's `localStorage`/`sessionStorage` from the disposable browser,
+    /// for token-session sites (Firebase Auth stores it in sessionStorage when
+    /// "remember me" is off). The caller replicates these keys in the user's
+    /// own tab so the session carries over. Treated like the session cookies: a
+    /// short-lived secret, never logged, never persisted.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub local_session: std::collections::BTreeMap<String, String>,
+    /// The auth SDK's IndexedDB records, for sites whose token-session lives
+    /// there (Firebase's `indexedDBLocalPersistence` — monkeytype with
+    /// "remember me" on). Keyed by the record key (`firebase:authUser:…`), so
+    /// the caller can write them straight back into the user's own tab's
+    /// IndexedDB. Same secrecy handling as `local_session`.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub cached_db: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl LoginOutcome {
@@ -281,6 +349,13 @@ pub enum LoginError {
     UnsupportedForm(String),
     /// The site tried to send the credential somewhere else.
     CrossSiteRedirect(String),
+    /// The site's login is gated by something only the browser can provide — a
+    /// CAPTCHA the human must solve on the page — and it was not provided.
+    ///
+    /// Not a failure of the site or of the credential; the login was not
+    /// attempted, because attempting it with a missing artifact would both fail
+    /// and look like an automated attack.
+    NeedsBrowserArtifact(String),
     Http(String),
 }
 
@@ -322,6 +397,11 @@ impl std::fmt::Display for LoginError {
                 f,
                 "The site redirected the sign-in to {host}, which is a different site. \
                  Your password was not sent there."
+            ),
+            Self::NeedsBrowserArtifact(what) => write!(
+                f,
+                "{what} Complete the captcha in the browser tab first, then try again \
+                 — VELA picks the token up from the page and finishes the sign-in."
             ),
             Self::Http(message) => write!(f, "Could not reach the site: {message}"),
         }
@@ -392,22 +472,58 @@ pub async fn perform_login(
         None => item_url.clone(),
     };
 
+    // The tab's pre-session cookies, for the browser tier's disposable window
+    // to seed before it loads the starting page.
+    let browser_cookies: &[crate::login::BrowserCookie] = request
+        .browser
+        .as_ref()
+        .map(|b| b.cookies.as_slice())
+        .unwrap_or(&[]);
+
     // Two independent checks, and both have to pass. The first says the caller
     // is not redirecting this item's password to another site; the second says
     // the human's approval was for this site and not merely for this item. They
     // catch different lies: a caller that names a legitimate-looking item, and
     // a caller that swaps the target after the prompt was answered.
-    if !same_site(&item_url, &target) {
+    //
+    // Where the browser tier is compiled in, a mismatch is *not* automatically
+    // a refusal: a site whose login is an OAuth flow initiated from another
+    // domain (Riot via a sports site) legitimately starts on a page outside
+    // the item's site. The browser tier handles that — it starts at the tab's
+    // page, the human initiates the flow there, and the credential is only
+    // ever submitted to the page the human is submitting on. So a mismatch
+    // falls through to the browser tier instead.
+    let browser_tier_available = cfg!(feature = "browser-login");
+    if !same_site(&item_url, &target) && !browser_tier_available {
         return Err(LoginError::TargetMismatch {
             approved: site_key(&item_url),
             requested: site_key(&target),
         });
     }
-    if grant.item_id != request.item_id || grant.site != site_key(&target) {
+    if (grant.item_id != request.item_id || grant.site != site_key(&target)) && !browser_tier_available {
         return Err(LoginError::TargetMismatch {
             approved: grant.site.clone(),
             requested: site_key(&target),
         });
+    }
+
+    // A site with a recipe skips the page-fetch and form-discovery flow
+    // entirely: its login is a JSON API or a challenge-then-submit dance, and
+    // the browser minted whatever artifact the site demands (a solved CAPTCHA,
+    // the pre-session cookie set). See `crate::login::recipe` for the shape and
+    // for why each recipe re-checks that its endpoint is on the approved site.
+    if let Some(recipe) = crate::login::recipe::for_url(&target) {
+        return crate::login::recipe::perform(
+            &username,
+            &password,
+            totp_secret.as_deref().map(String::as_str),
+            &grant,
+            &target,
+            recipe,
+            request.browser.as_ref(),
+            site_mode,
+        )
+        .await;
     }
 
     let client = build_client()?;
@@ -427,6 +543,29 @@ pub async fn perform_login(
     // check answers with a challenge page that has no password field, and
     // calling that a JavaScript login sends the user after the wrong problem.
     if page.status >= 400 {
+        // Where the browser tier is compiled in, hand the whole login to a
+        // disposable real browser instead of refusing: the site gets the real
+        // browser it demanded, and the password still never enters the page's
+        // JavaScript (the placeholder is substituted at the network layer by
+        // the core). A visible window appears, so the user sees it happen and
+        // can finish a second factor in it.
+        #[cfg(feature = "browser-login")]
+        {
+            let outcome = crate::browser::login(
+                &target,
+                &username,
+                &password,
+                browser_cookies,
+                site_mode,
+                grant.verified,
+            )
+            .await?;
+            return Ok(LoginOutcome {
+                used_browser: true,
+                ..outcome
+            });
+        }
+        #[cfg(not(feature = "browser-login"))]
         return Err(LoginError::SiteRefused {
             status: page.status,
         });
@@ -448,18 +587,45 @@ pub async fn perform_login(
         // The credential is not handed to the runtime; it is substituted into
         // the captured request afterwards, out here.
         Err(LoginError::NoLoginForm) => {
-            let captured =
-                crate::js_login::capture_login_request(&page.body, &page.url, &username)
-                    .map_err(LoginError::from)?;
-            captured
-                .check_same_site(&target)
-                .map_err(LoginError::from)?;
-            let ready = captured.substitute(&password).map_err(LoginError::from)?;
-            let action = Url::parse(&ready.url)
-                .map_err(|e| LoginError::Http(format!("bad request URL: {e}")))?;
-            let response = fetch_raw(&client, &jar, &ready, &action).await?;
-            jar.absorb(&response.set_cookie, &action);
-            response
+            match crate::js_login::capture_login_request(&page.body, &page.url, &username) {
+                Ok(captured) => {
+                    captured
+                        .check_same_site(&target)
+                        .map_err(LoginError::from)?;
+                    let ready = captured.substitute(&password).map_err(LoginError::from)?;
+                    let action = Url::parse(&ready.url)
+                        .map_err(|e| LoginError::Http(format!("bad request URL: {e}")))?;
+                    let response = fetch_raw(&client, &jar, &ready, &action).await?;
+                    jar.absorb(&response.set_cookie, &action);
+                    response
+                }
+                Err(js_error) => {
+                    // Neither a form nor a runnable inline script. Where the
+                    // browser tier is compiled in, hand the whole login to a
+                    // disposable real browser: a bundled-JS login page (Riot's
+                    // app) is exactly what it is for, and the password still
+                    // never enters the page's JavaScript. A visible window
+                    // appears and the user clicks the site's sign-in button.
+                    #[cfg(feature = "browser-login")]
+                    {
+                        let outcome = crate::browser::login(
+                            &target,
+                            &username,
+                            &password,
+                            browser_cookies,
+                            site_mode,
+                            grant.verified,
+                        )
+                        .await?;
+                        return Ok(LoginOutcome {
+                            used_browser: true,
+                            ..outcome
+                        });
+                    }
+                    #[cfg(not(feature = "browser-login"))]
+                    return Err(LoginError::from(js_error));
+                }
+            }
         }
         Err(other) => return Err(other),
     };
@@ -566,6 +732,9 @@ pub async fn perform_login(
         used_second_factor,
         awaiting_second_factor: awaiting,
         second_factor_downgraded: downgraded,
+        used_browser: false,
+        local_session: std::collections::BTreeMap::new(),
+        cached_db: std::collections::BTreeMap::new(),
     })
 }
 
@@ -935,8 +1104,54 @@ impl CookieJar {
         }
     }
 
+    /// Seed the jar from the browser's cookies, for a recipe login.
+    ///
+    /// The same rule applies here as when [`SessionCookie`]s go back to the
+    /// browser: a cookie is only carried when its scope covers the request
+    /// host. The browser's jar is for the page the user is looking at; a
+    /// cookie scoped to a site that host is not under is refused rather than
+    /// replayed, so a page cannot quietly get a sibling domain's pre-session
+    /// state submitted on its behalf.
+    fn seed_browser(&mut self, cookies: &[BrowserCookie], url: &Url) {
+        let Some(host) = url.host_str().map(str::to_lowercase) else {
+            return;
+        };
+        for cookie in cookies {
+            let domain = cookie.domain.to_lowercase();
+            let scoped = if cookie.host_only {
+                host == domain
+            } else {
+                host == domain || host.ends_with(&format!(".{domain}"))
+            };
+            if !scoped {
+                debug!("Refused to seed a browser cookie scoped to {domain} for {host}");
+                continue;
+            }
+            self.cookies.insert(
+                (domain.clone(), cookie.path.clone(), cookie.name.clone()),
+                SessionCookie {
+                    name: cookie.name.clone(),
+                    value: cookie.value.clone(),
+                    domain,
+                    path: cookie.path.clone(),
+                    secure: cookie.secure,
+                    http_only: cookie.http_only,
+                    same_site: cookie.same_site.clone(),
+                    expires_at: cookie.expires_at,
+                    host_only: cookie.host_only,
+                },
+            );
+        }
+    }
+
     fn into_cookies(self) -> Vec<SessionCookie> {
         self.cookies.into_values().collect()
+    }
+
+    /// A copy of the jar's contents, for a caller that holds the jar by
+    /// reference and must hand the session out without consuming it.
+    fn snapshot(&self) -> Vec<SessionCookie> {
+        self.cookies.values().cloned().collect()
     }
 }
 

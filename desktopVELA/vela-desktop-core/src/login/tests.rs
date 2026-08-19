@@ -104,6 +104,7 @@ async fn the_password_never_appears_in_what_leaves_the_core() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -155,6 +156,7 @@ async fn the_site_receives_the_credential_and_the_csrf_token() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -198,6 +200,7 @@ async fn a_grant_for_another_site_is_refused() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         elsewhere,
     )
@@ -225,6 +228,7 @@ async fn a_grant_for_another_item_is_refused() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         wrong_item,
     )
@@ -251,6 +255,7 @@ async fn a_login_url_off_the_items_site_is_refused() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: Some("https://phish.example/login".to_string()),
+            browser: None,
         },
         grant,
     )
@@ -282,6 +287,7 @@ async fn a_locked_vault_refuses() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant,
     )
@@ -347,6 +353,7 @@ async fn successful_login(hardened: bool) -> (LoginOutcome, tempfile::TempDir) {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -396,6 +403,7 @@ async fn a_same_site_redirect_is_followed_and_its_cookies_kept() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -438,6 +446,7 @@ async fn a_redirect_off_the_site_is_refused() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -523,6 +532,7 @@ async fn a_two_factor_site_is_answered_from_the_vault() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -561,6 +571,7 @@ async fn neither_the_totp_secret_nor_the_code_leaves_the_core() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -589,6 +600,7 @@ async fn a_two_factor_site_without_a_saved_secret_says_which_half_worked() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -610,6 +622,7 @@ async fn a_rejected_code_is_not_reported_as_signed_in() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -717,6 +730,7 @@ async fn a_second_factor_form_pointing_off_site_is_refused() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -742,6 +756,7 @@ async fn one_grant_covers_both_steps_of_a_two_step_login() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         // Exactly one grant is minted, and the login below consumes it.
         grant_for(&server, "i1").await,
@@ -812,6 +827,7 @@ async fn a_security_key_gate_is_not_reported_as_a_successful_login() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -844,6 +860,7 @@ async fn answering_the_code_is_not_undone_by_the_url_it_lands_on() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -931,6 +948,7 @@ async fn a_stronger_factor_is_not_downgraded_without_the_opt_in() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -975,6 +993,7 @@ async fn the_opt_in_completes_the_login_and_reports_the_downgrade() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1066,6 +1085,7 @@ async fn a_login_page_that_redirects_is_still_a_login_page() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1135,6 +1155,7 @@ async fn a_login_page_that_merely_offers_passkeys_is_not_a_security_key_gate() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1180,6 +1201,7 @@ async fn a_site_that_refuses_the_login_page_is_not_called_a_javascript_login() {
             &LoginRequest {
                 item_id: "i1".to_string(),
                 login_url: None,
+                browser: None,
             },
             grant_for(&server, "i1").await,
         )
@@ -1226,6 +1248,7 @@ async fn an_error_status_on_the_post_is_not_a_successful_login() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1268,6 +1291,7 @@ async fn the_site_is_told_who_is_asking() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1499,6 +1523,7 @@ async fn a_rejected_password_is_not_reported_as_a_login() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1582,6 +1607,7 @@ async fn real_site_login() {
         &LoginRequest {
             item_id: "real".to_string(),
             login_url: None,
+            browser: None,
         },
         grant,
     )
@@ -1796,6 +1822,7 @@ async fn a_javascript_only_login_completes_through_the_runtime() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1850,6 +1877,7 @@ async fn a_script_that_posts_off_site_is_refused() {
         &LoginRequest {
             item_id: "i1".to_string(),
             login_url: None,
+            browser: None,
         },
         grant_for(&server, "i1").await,
     )
@@ -1859,5 +1887,41 @@ async fn a_script_that_posts_off_site_is_refused() {
     assert_eq!(
         error,
         LoginError::CrossSiteRedirect("collector.example".to_string())
+    );
+}
+
+// ── Recipe branch (Tier A) ────────────────────────────────────────────────────
+
+/// A recipe's mandatory CAPTCHA gate refuses before any request goes out when
+/// the browser did not mint a token. Exercised at the module level with a mock
+/// server (`recipe::tests::riot_login_refuses_when_the_captcha_was_not_minted_in_the_browser`),
+/// because every registered recipe's endpoints are real URLs that a unit test
+/// must not touch. This test pins the recipe *routing* instead: an item whose
+/// site has a recipe must be refused for a wrong target before any recipe
+/// endpoint is reached.
+#[tokio::test]
+async fn a_recipe_site_is_still_scoped_to_its_approved_domain() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state(dir.path());
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", "https://store.steampowered.com/", false));
+
+    let error = perform_login(
+        &state,
+        &LoginRequest {
+            item_id: "i1".to_string(),
+            login_url: Some("https://phish.example/login".to_string()),
+            browser: None,
+        },
+        LoginGrant::mint("i1".to_string(), "steampowered.com".to_string(), true),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(error, LoginError::TargetMismatch { .. }),
+        "expected a target-mismatch refusal, got {error:?}"
     );
 }

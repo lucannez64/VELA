@@ -691,6 +691,14 @@ pub mod server {
                     // afterwards that a security key was bypassed is being told
                     // too late to decide anything.
                     "allow_second_factor_downgrade": item.allow_second_factor_downgrade(),
+                    // How this site signs in, so the caller can render the
+                    // right button and orchestrate the right flow: "form" for
+                    // the ordinary page-fetch path, "recipe" for a recipe with
+                    // no human gate, "recipe_captcha" for one the browser must
+                    // sit through a CAPTCHA for first.
+                    "login_mode": crate::login::recipe::mode_for_site(
+                        crate::login::site_for_item(item),
+                    ),
                 })
             })
             .collect();
@@ -728,6 +736,33 @@ pub mod server {
             .get("url")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+
+        // Browser-minted artifacts for a recipe login: the CAPTCHA token the
+        // human solved on the page, and the browser's cookie jar for the tab.
+        // Both are short-lived and single-use — they are parsed here, used for
+        // one submission inside `perform_login`, and never persisted.
+        let browser_artifacts = {
+            let captcha_token = payload
+                .get("captcha_token")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string);
+            let cookies: Vec<crate::login::BrowserCookie> = serde_json::from_value(
+                payload
+                    .get("browser_cookies")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            )
+            .unwrap_or_default();
+            if captcha_token.is_none() && cookies.is_empty() {
+                None
+            } else {
+                Some(crate::login::BrowserArtifacts {
+                    captcha_token,
+                    cookies,
+                })
+            }
+        };
 
         // Work out the site *before* prompting, and prompt about that site. A
         // prompt naming the item but not the destination would be answerable
@@ -768,7 +803,11 @@ pub mod server {
             }
         };
 
-        let request = crate::login::LoginRequest { item_id, login_url };
+        let request = crate::login::LoginRequest {
+            item_id,
+            login_url,
+            browser: browser_artifacts,
+        };
         match crate::login::perform_login(host.state(), &request, grant).await {
             Ok(outcome) => {
                 info!("In-core login to {} completed", item_name);
@@ -2051,6 +2090,10 @@ pub mod server {
             assert_eq!(resp.msg_type, IpcMessageType::InCoreLoginCandidatesResponse);
             assert_eq!(resp.payload["candidates"].as_array().unwrap().len(), 1);
             assert_eq!(resp.payload["candidates"][0]["username"], "alice");
+            // This mock site has no recipe, so it must come back as the plain
+            // form path. Pinning the key so the popup's flow decision cannot
+            // silently change shape.
+            assert_eq!(resp.payload["candidates"][0]["login_mode"], "form");
             let rendered = serde_json::to_string(&resp).unwrap();
             assert!(!rendered.contains("hunter2"), "{rendered}");
             assert_eq!(mock.presence_prompts(), 0, "listing must not prompt");
