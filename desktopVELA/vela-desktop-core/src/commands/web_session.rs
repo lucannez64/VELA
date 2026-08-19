@@ -1,4 +1,8 @@
-//! Toolkit-agnostic core of `src-tauri/src/commands/web_session.rs`.
+//! Approver side of ephemeral web access (`EPHEMERAL_WEB_ACCESS_DESIGN.md`).
+//!
+//! This enrolled device scans/pastes a browser's link QR, the user picks a
+//! mode and duration, and we seal the appropriate capsule to the browser's
+//! ephemeral KEM key and POST it to `/web-session/:id/grant`.
 //!
 //! Capsule envelope (sealed plaintext, JSON):
 //! ```json

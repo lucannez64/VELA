@@ -2,18 +2,21 @@
 //! search, the vault-health score, add/update/delete, and Bitwarden-JSON
 //! import/export. Toolkit-agnostic (`&AppState`, no `tauri::State`).
 //!
-//! The original's `export_vault_bitwarden_json` + `save_vault_export_file`
-//! + a strict `validate_export_path` (guarding against a compromised
-//! *renderer* using the IPC command as an arbitrary file-overwrite
-//! primitive) collapse here into one `export_vault_bitwarden_json` that
-//! also takes the destination path directly: gpui has no separate
-//! renderer process, so the caller (`SettingsScreen`, via a native
-//! `rfd` save dialog) already only ever supplies a path the user
-//! themselves picked through the OS — there's no untrusted IPC boundary
-//! left to defend against.
+//! Export comes in two halves. [`export_vault_bitwarden_json`] serializes
+//! and returns the JSON; [`save_vault_export_file`] writes it to a path,
+//! through [`validate_export_path`].
+//!
+//! gpui hands that path straight from a native `rfd` dialog, so the user
+//! picked it themselves and there is no untrusted boundary to defend. The
+//! Tauri build's path arrives over IPC from a renderer, where a compromised
+//! one could otherwise use the command as an arbitrary file-overwrite
+//! primitive. The guard therefore lives here rather than in either front
+//! end: absolute, `.json`, no `..`, an existing directory, and never inside
+//! the app's own data directory.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -141,6 +144,23 @@ pub fn get_items(state: &Arc<AppState>) -> Result<Vec<VaultItem>, String> {
     require_unlocked(state)?;
     let vault = state.vault.read();
     Ok(vault.items.clone())
+}
+
+/// Items of a single type, selected by the string tag both front ends use.
+/// An unrecognised tag returns the whole vault, which is what the Tauri
+/// command has always done — the sidebar sends "all" for the unfiltered view.
+pub fn get_items_by_type(state: &Arc<AppState>, item_type: &str) -> Result<Vec<VaultItem>, String> {
+    require_unlocked(state)?;
+    let vault = state.vault.read();
+    let itype = match item_type.to_lowercase().as_str() {
+        "login" => ItemType::Login,
+        "creditcard" | "card" => ItemType::CreditCard,
+        "securenote" | "note" => ItemType::SecureNote,
+        "identity" => ItemType::Identity,
+        "file" | "fileblob" => ItemType::FileBlob,
+        _ => return Ok(vault.items.clone()),
+    };
+    Ok(vault.by_type(&itype).into_iter().cloned().collect())
 }
 
 pub fn get_item(state: &Arc<AppState>, id: &str) -> Result<Option<VaultItem>, String> {
@@ -339,6 +359,16 @@ pub struct VaultHealth {
     pub status: String,
 }
 
+/// Record that the generator produced a password.
+///
+/// [`generate_password`] is pure — it takes options, not state — so nothing
+/// in it can write the audit entry. Whichever front end ran it has to say so
+/// here, or the log quietly loses the event (which is exactly what the gpui
+/// build did before this existed).
+pub fn log_password_generated(state: &Arc<AppState>, length: usize) {
+    record_audit_event(state, AuditAction::PasswordGenerated { length });
+}
+
 pub fn get_vault_health(state: &Arc<AppState>) -> Result<VaultHealth, String> {
     require_unlocked(state)?;
     let vault = state.vault.read();
@@ -486,6 +516,59 @@ pub struct ImportResult {
 
 /// Imports a Bitwarden-compatible JSON export (as read from a file the user
 /// picked via a native open dialog) as new Login items.
+/// Where an export is allowed to land.
+///
+/// Absolute, `.json`, no `..` component, an existing and accessible parent
+/// directory, and never inside the app's own data directory — writing there
+/// would let a caller overwrite `vault.enc` / `ipc_auth.json` through the
+/// export command. The returned path is the *canonicalized* parent joined
+/// with the original file name, so a symlinked directory is resolved before
+/// the containment check rather than after it.
+pub fn validate_export_path(store_path: &Path, raw: &str) -> Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Export path is empty".to_string());
+    }
+    let path = PathBuf::from(trimmed);
+
+    if !path.is_absolute() {
+        return Err("Export path must be absolute".to_string());
+    }
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err("Export path must not contain parent-directory components".to_string());
+    }
+    let is_json = path.extension().map(|e| e.eq_ignore_ascii_case("json")).unwrap_or(false);
+    if !is_json {
+        return Err("Export path must have a .json extension".to_string());
+    }
+
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => return Err("Export path has no parent directory".to_string()),
+    };
+    let canon_parent =
+        std::fs::canonicalize(parent).map_err(|e| format!("Export directory is not accessible: {e}"))?;
+    if !canon_parent.is_dir() {
+        return Err("Export path parent is not a directory".to_string());
+    }
+
+    if let Ok(store_canon) = std::fs::canonicalize(store_path) {
+        if canon_parent.starts_with(&store_canon) {
+            return Err("Cannot export into the application data directory".to_string());
+        }
+    }
+
+    let file_name = path.file_name().ok_or_else(|| "Export path has no file name".to_string())?;
+    Ok(canon_parent.join(file_name))
+}
+
+/// Write an export to a user-chosen path, after [`validate_export_path`].
+pub fn save_vault_export_file(state: &Arc<AppState>, path: &str, data: &str) -> Result<(), String> {
+    require_unlocked(state)?;
+    let validated = validate_export_path(state.store.store_path(), path)?;
+    std::fs::write(validated, data).map_err(|e| format!("Failed to write export file: {}", e))
+}
+
 pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<ImportResult, String> {
     let import: BitwardenImport = serde_json::from_str(data).map_err(|e| format!("Failed to parse import data: {}", e))?;
 
@@ -842,5 +925,86 @@ mod tests {
         assert_eq!(items[0].username(), Some("alice"));
         assert_eq!(items[0].password(), Some("s3cret"));
         assert_eq!(items[0].url(), Some("https://github.com"));
+    }
+
+    // ── export path guard (moved from src-tauri/src/commands/vault.rs) ──
+
+    fn store_and_export_dirs() -> (tempfile::TempDir, tempfile::TempDir) {
+        let store = tempfile::tempdir().unwrap();
+        let export = tempfile::tempdir().unwrap();
+        (store, export)
+    }
+
+    #[test]
+    fn export_path_accepts_absolute_json_under_real_dir() {
+        let (store, export) = store_and_export_dirs();
+        let raw = export.path().join("vault-backup.json");
+        let validated = validate_export_path(store.path(), raw.to_str().unwrap()).unwrap();
+        assert_eq!(validated, std::fs::canonicalize(export.path()).unwrap().join("vault-backup.json"));
+    }
+
+    #[test]
+    fn export_path_rejects_relative_and_empty() {
+        let (store, _export) = store_and_export_dirs();
+        let err = validate_export_path(store.path(), "backup.json").unwrap_err();
+        assert!(err.contains("absolute"), "{err}");
+        let err = validate_export_path(store.path(), "   ").unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn export_path_rejects_parent_traversal() {
+        let (store, export) = store_and_export_dirs();
+        let raw = export.path().join("..").join("evil.json");
+        let err = validate_export_path(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("parent-directory"), "{err}");
+    }
+
+    #[test]
+    fn export_path_requires_json_extension() {
+        let (store, export) = store_and_export_dirs();
+        for name in ["vault.json.bak", "vault.txt", "vault", ".json_hidden"] {
+            let raw = export.path().join(name);
+            let err = validate_export_path(store.path(), raw.to_str().unwrap()).unwrap_err();
+            assert!(err.contains(".json"), "{name}: {err}");
+        }
+        // Case-insensitive extension is accepted.
+        let raw = export.path().join("vault.JSON");
+        assert!(validate_export_path(store.path(), raw.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn export_path_rejects_missing_directory() {
+        let (store, _export) = store_and_export_dirs();
+        let err = validate_export_path(store.path(), "/nonexistent-dir-xyz/a.json").unwrap_err();
+        assert!(err.contains("not accessible"), "{err}");
+    }
+
+    #[test]
+    fn export_path_never_writes_into_app_data_dir() {
+        let (store, _export) = store_and_export_dirs();
+        // Directly inside the store dir...
+        let raw = store.path().join("export.json");
+        let err = validate_export_path(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("application data directory"), "{err}");
+        // ...or a nested subdirectory of it.
+        let nested = store.path().join("sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        let raw = nested.join("export.json");
+        let err = validate_export_path(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("application data directory"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_path_canonicalizes_symlinked_parents() {
+        // A symlinked directory must resolve to its real path, which also
+        // means a symlink INTO the data dir is caught by the data-dir guard.
+        let (store, export) = store_and_export_dirs();
+        let link = export.path().join("link-to-store");
+        std::os::unix::fs::symlink(store.path(), &link).unwrap();
+        let raw = link.join("export.json");
+        let err = validate_export_path(store.path(), raw.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("application data directory"), "{err}");
     }
 }

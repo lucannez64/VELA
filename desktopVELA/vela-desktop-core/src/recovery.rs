@@ -5,16 +5,16 @@
 //! shown to the user for a trusted contact). Any 2 of 3 shares reconstruct
 //! the RMS.
 //!
-//! Only the pieces `webauthn::register_security_key` and a real Settings UI
-//! need are extracted here: `ensure_shares_split`, `deliver_security_key_
-//! share`, and `get_recovery_setup_status`. Cloud-backup (rclone) and
-//! trusted-contact delivery stay in `src-tauri` for now — deliberately out
-//! of scope for the WebAuthn/FIDO2 effort this was extracted for.
+//! All three delivery channels live here, so either front end can drive a
+//! complete 2-of-3 setup: cloud backup over rclone, the security-key share
+//! the server holds behind a WebAuthn credential, and the trusted-contact
+//! share the user carries out of band. `src-tauri` keeps only the
+//! `#[tauri::command]` wrappers.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiClient, RecoveryShareData};
+use crate::api::{ApiClient, RecoveryRecoverRequest, RecoveryShareData};
 use crate::AppState;
 
 const RECOVERY_SETUP_FILE: &str = "recovery_setup.enc";
@@ -148,6 +148,182 @@ pub fn get_recovery_setup_status(state: &AppState) -> Result<RecoveryStatus, Str
     })
 }
 
+/// Share 3, base64, for the user to hand to their trusted contact.
+///
+/// Splitting on demand (rather than at account creation) is what lets the
+/// three methods be enabled in any order against one split: `ensure_shares_
+/// split` is idempotent while a setup is in progress, so reading this does
+/// not invalidate a share already delivered elsewhere.
+///
+/// This returns key material to the caller by design — that is the whole
+/// mechanism — so it is the one recovery call a UI must not log, cache, or
+/// leave on screen after the user has copied it.
+pub async fn get_trusted_contact_share(state: &AppState) -> Result<String, String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
+    ensure_shares_split(state)?;
+    let pending = load_pending(state);
+    let share3 = pending.share3.ok_or("Recovery share was not generated")?;
+    Ok(B64.encode(&share3))
+}
+
+/// Mark the trusted-contact share as handed over. The app cannot verify that
+/// it actually was — there is no channel to check — so this records the
+/// user's word for it, which is what the 2-of-3 progress count reads.
+pub async fn acknowledge_trusted_contact_share(state: &AppState) -> Result<(), String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
+    let mut pending = load_pending(state);
+    pending.trusted_contact_acknowledged = true;
+    save_pending(state, &pending)
+}
+
+/// End setup by dropping the cached shares.
+///
+/// Until this runs, all three shares sit in `recovery_setup.enc` on this
+/// device — which would defeat the point of splitting them across three
+/// custodians if it were left that way. The delivered/acknowledged flags
+/// survive; only the material goes.
+pub async fn finalize_recovery_setup(state: &AppState) -> Result<(), String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
+    let path = state.store.store_path().join(RECOVERY_SETUP_FILE);
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut pending = load_pending(state);
+    pending.share1 = None;
+    pending.share2 = None;
+    pending.share3 = None;
+    save_pending(state, &pending)
+}
+
+/// Queue a recovery-contact invitation locally.
+///
+/// Nothing sends it yet: this records who the user nominated so the UI can
+/// list them, and no share travels with it. The share itself goes through
+/// [`get_trusted_contact_share`], out of band, by hand.
+pub async fn send_recovery_invite(state: &AppState, email: &str) -> Result<(), String> {
+    let email = email.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 {
+        return Err("Enter a valid recovery contact email address".to_string());
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct RecoveryInvite {
+        id: String,
+        email: String,
+        created_at: chrono::DateTime<chrono::Utc>,
+        status: String,
+    }
+
+    let invites_path = state.store.store_path().join("recovery_invites.json");
+    let mut invites: Vec<RecoveryInvite> = if invites_path.exists() {
+        std::fs::read_to_string(&invites_path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    invites.push(RecoveryInvite {
+        id: uuid::Uuid::new_v4().to_string(),
+        email: email.clone(),
+        created_at: chrono::Utc::now(),
+        status: "pending".to_string(),
+    });
+
+    let json = serde_json::to_string_pretty(&invites).map_err(|e| e.to_string())?;
+    std::fs::write(invites_path, json).map_err(|e| e.to_string())?;
+
+    crate::audit::record_audit_event(state, crate::audit::AuditAction::SettingsChanged);
+    tracing::info!("Recovery invite queued for: {}", email);
+    Ok(())
+}
+
+/// Begin a browser-style WebAuthn registration for the recovery credential,
+/// returning the `publicKey` options for the caller's ceremony.
+///
+/// This is the half a *renderer* drives through `navigator.credentials`. The
+/// gpui build has no browser, so it runs the whole ceremony natively through
+/// [`crate::webauthn::register_security_key`] instead — both paths end at the
+/// same server routes and the same [`deliver_security_key_share`].
+pub async fn start_recovery_webauthn_registration(
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+
+    let (response, new_token) = client
+        .start_recovery_webauthn_registration(&token, None, Some("VELA recovery key"))
+        .await
+        .map_err(|e| format!("Failed to start WebAuthn recovery setup: {e}"))?;
+    if let Some(t) = new_token {
+        state.session.write().set_server_token(t);
+    }
+
+    Ok(response.public_key)
+}
+
+/// Finish the browser-driven registration and, on success, immediately hand
+/// the credential the share it exists to gate.
+///
+/// Registering without storing a share would leave "security key recovery"
+/// enabled in the UI and functionally inert — a recovery method that cannot
+/// recover anything.
+pub async fn finish_recovery_webauthn_registration(
+    state: &AppState,
+    credential: serde_json::Value,
+) -> Result<bool, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+
+    let (response, new_token) = client
+        .finish_recovery_webauthn_registration(&token, credential)
+        .await
+        .map_err(|e| format!("Failed to finish WebAuthn recovery setup: {e}"))?;
+    if let Some(t) = new_token {
+        state.session.write().set_server_token(t);
+    }
+
+    if response.registered {
+        let current_token = state
+            .get_session_token()
+            .ok_or_else(|| "No session token available".to_string())?;
+        deliver_security_key_share(state, &current_token).await?;
+    }
+
+    Ok(response.registered)
+}
+
+/// Open a recovery attempt for an account, from hardware that has no session
+/// — so this is deliberately unauthenticated, like the enrollment claim.
+pub async fn initiate_account_recovery(
+    state: &AppState,
+    user_id: &str,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let response = client
+        .initiate_recovery(user_id)
+        .await
+        .map_err(|e| format!("Failed to initiate account recovery: {e}"))?;
+    Ok(serde_json::json!({
+        "recovery_id": response.recovery_id,
+        "public_key": response.public_key,
+    }))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Account recovery (the "every device lost" path, SPEC.md §4.3): reconstruct
 // the RMS from Share 1 (cloud backup) + Share 2 (released by the server only
@@ -206,6 +382,36 @@ pub async fn fetch_cloud_recovery_share(remote: String) -> Result<CloudRecoveryS
 /// Split this way (rather than taking a browser-produced `credential` JSON
 /// like the Tauri command does) because the native build performs the
 /// ceremony itself; everything from "combine the shares" onward is identical.
+/// Recovery driven by a *renderer-produced* WebAuthn assertion: exchange the
+/// credential for Share 2 at `/recovery/recover`, then run the shared
+/// [`complete_account_recovery`].
+///
+/// The native path does the same thing from the other side —
+/// [`crate::webauthn::recover_account_with_security_key`] runs a real CTAP2
+/// ceremony itself and calls `complete_account_recovery` with the response it
+/// gets back. Splitting at the response is what lets a browser ceremony and a
+/// hardware ceremony share everything after it.
+#[allow(clippy::too_many_arguments)]
+pub async fn complete_account_recovery_with_credential(
+    state: &AppState,
+    user_id: String,
+    share1_b64: String,
+    credential: serde_json::Value,
+    recovery_id: Option<String>,
+    password: String,
+    device_name: Option<String>,
+) -> Result<(), String> {
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+
+    let recover_resp = client
+        .recover_account(&RecoveryRecoverRequest { user_id: user_id.clone(), recovery_id, credential })
+        .await
+        .map_err(|e| format!("Account recovery failed: {e}"))?;
+
+    complete_account_recovery(state, user_id, share1_b64, recover_resp, password, device_name).await
+}
+
 pub async fn complete_account_recovery(
     state: &AppState,
     user_id: String,

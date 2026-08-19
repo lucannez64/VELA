@@ -181,6 +181,45 @@ fn parse_pwned_range(body: &str, suffix: &str) -> Option<u32> {
     None
 }
 
+/// Checks one password against Pwned Passwords via k-anonymity — only the
+/// first five hash characters leave the device, and the suffix match happens
+/// here. Unlike [`check_all_vault_passwords`], which skips a failing lookup
+/// and moves on, a single explicit check reports the failure: the caller
+/// asked about one password and "no result" must not read as "not breached".
+pub async fn check_password_breach(password: &str) -> Result<PasswordBreachResult, String> {
+    let (prefix, suffix) = pwned_hash_parts(password);
+    let url = format!("https://api.pwnedpasswords.com/range/{prefix}");
+
+    let response = reqwest::Client::new()
+        .get(&url)
+        .header("User-Agent", "VELA-Desktop-App")
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if response.status().as_u16() != 200 {
+        return Err(format!("Pwned Passwords API error: HTTP {}", response.status().as_u16()));
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    Ok(match parse_pwned_range(&body, &suffix) {
+        Some(count) => PasswordBreachResult {
+            breached: true,
+            count,
+            description: format!(
+                "This password has been exposed in {} data breaches. It appears {} times in breached password databases.",
+                if count == 1 { "a" } else { "" },
+                count
+            ),
+        },
+        None => PasswordBreachResult {
+            breached: false,
+            count: 0,
+            description: "This password has not been found in any known data breaches.".to_string(),
+        },
+    })
+}
+
 /// Checks every distinct vault password against Pwned Passwords via
 /// k-anonymity (only the first 5 hash chars ever leave the device). Real
 /// network calls, no vault writes.

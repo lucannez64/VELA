@@ -25,6 +25,5 @@ pub async fn get_audit_log(state: State<'_, Arc<AppState>>) -> Result<Vec<AuditE
 /// hardened (audit, desktop hardening).
 #[tauri::command]
 pub async fn clear_audit_log(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    let log = AuditLog::default();
-    save_audit_log(&state, &log)
+    vela_desktop_core::audit::clear_audit_log(&state)
 }

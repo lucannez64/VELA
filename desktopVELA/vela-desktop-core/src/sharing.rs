@@ -517,16 +517,26 @@ pub async fn delete_share(state: &AppState, share_id: &str) -> Result<(), String
         let server_url = state.server_url.read().clone();
         let client = ApiClient::with_url(server_url);
         if let Some(token) = state.get_session_token() {
-            if let Err(e) = client.delete_inbox_item(&token, share_id).await {
-                tracing::warn!("Failed to delete inbox item on server: {}", e);
+            match client.delete_inbox_item(&token, share_id).await {
+                Ok(new_tok) => {
+                    if let Some(t) = new_tok {
+                        state.session.write().set_server_token(t);
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to delete inbox item on server: {}", e),
             }
         }
     } else if let Some(sent) = store.sent_shares.iter().find(|s| s.id == share_id).cloned() {
         let server_url = state.server_url.read().clone();
         let client = ApiClient::with_url(server_url);
         if let Some(token) = state.get_session_token() {
-            if let Err(e) = client.delete_linked_share(&token, share_id).await {
-                tracing::warn!("Failed to delete linked share on server: {}", e);
+            match client.delete_linked_share(&token, share_id).await {
+                Ok(new_tok) => {
+                    if let Some(t) = new_tok {
+                        state.session.write().set_server_token(t);
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to delete linked share on server: {}", e),
             }
         }
 
