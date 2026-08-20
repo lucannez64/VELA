@@ -34,6 +34,8 @@ h3-quinn          = "0.0.10"
 
 # ── Embedded SQL database ──────────────────────────────────────────────────────
 stoolap = "0.4"
+# Target backend for the stoolap -> Turso migration (SQLite-compatible).
+turso = "0.7"
 
 # ── Embedded KV store ─────────────────────────────────────────────────────────
 sled = "0.34"
