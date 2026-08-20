@@ -211,19 +211,22 @@ monkeytype** — the end-to-end success.
 - **Mitigation — Tier 2/3: keep the password out of the browser's address
   space.** For a real form-password login the credential must be in the memory
   of whatever process sends it, so the browser cannot both send it and never
-  hold it. The achievable form is `VELA_BROWSER_CORE_PERFORM=1`: the core sends
-  the substituted credential over **its own TLS** and fulfils the browser's
-  paused request with the response, so the password never enters the browser
-  (single-hop only; sites whose POST is itself bot-walled, or that redirect the
-  login POST, are refused rather than re-exposed). Implemented in
-  `intercept.rs`, opt-in and off by default; the credential transport is
+  hold it. The achievable form is Tier-3 **core-perform** (default **on**; the
+  only opt-out is `VELA_BROWSER_CORE_PERFORM=0`): the core sends the substituted
+  credential over **its own TLS** and fulfils the browser's paused request with
+  the response, so the password never enters the browser (single-hop only). If a
+  site refuses a core client (a bot-walled POST, or one that redirects the
+  login), the interceptor logs and falls back to handing *that* request to the
+  browser — the documented residual, which the RT-10 debugging-pipe migration
+  exists to close. Implemented in `intercept.rs`; the credential transport is
   unit-tested against a wiremock (see `tier3_*` in `browser::tests`), and the
   live browser-driven path needs a real browser/site (see the `#[ignore]`d e2e
   test).
   Root / CAP_SYS_PTRACE / `ptrace_scope=0` machines remain out of scope.
-- **Cross-site discipline:** same-site by default, plus the short identity-
-  provider allowlist. The core will never fill a credential into a request to
-  an arbitrary host.
+- **Cross-site discipline:** same-site (same registrable host *and* same scheme
+  — an http:// target is not the same site as an https:// one, RT-12) by
+  default, plus the short identity-provider allowlist. The core will never fill
+  a credential into a request to an arbitrary host.
 - **One browser login at a time** is not yet enforced (see §7).
 - **Formal model M9e** ("browser mints a session, core substitutes at
   interception") is proposed but **not written** — open, cheap, and the paper
