@@ -1553,7 +1553,10 @@ pub(crate) fn site_key(url: &Url) -> String {
 
 fn same_site(a: &Url, b: &Url) -> bool {
     let (ka, kb) = (site_key(a), site_key(b));
-    !ka.is_empty() && ka == kb
+    // Same registrable host *and* same scheme. Comparing only the host would
+    // treat `https://bank` and `http://bank` as the same site, which lets a
+    // credential POST be downgraded to plaintext on the same host (RT-12).
+    !ka.is_empty() && ka == kb && a.scheme() == b.scheme()
 }
 
 fn is_ip(host: &str) -> bool {

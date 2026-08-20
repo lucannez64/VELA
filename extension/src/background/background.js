@@ -40,7 +40,7 @@ async function generateTOTP(secret, algorithm = "SHA-1", digits = 6, period = 30
       false,
       ["sign"]
     );
-    const time = Math.floor(Date.now() / 1000 / period);
+    let time = Math.floor(Date.now() / 1000 / period);
     const timeBytes = new Uint8Array(8);
     for (let i = 7; i >= 0; i--) {
       timeBytes[i] = time & 0xff;
@@ -1172,3 +1172,10 @@ runtime.onStartup.addListener(() => {
 });
 
 init();
+
+// Test seam: expose the pure TOTP generator so a Node harness can check it
+// against the RFC 6238 test vectors. Harmless in the extension — a service
+// worker has no CommonJS `module`, so this branch never runs there.
+if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
+  module.exports = { generateTOTP, base32ToBytes };
+}

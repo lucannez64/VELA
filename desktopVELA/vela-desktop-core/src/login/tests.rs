@@ -378,6 +378,21 @@ async fn successful_login(hardened: bool) -> (LoginOutcome, tempfile::TempDir) {
 // ── Redirects ─────────────────────────────────────────────────────────────────
 
 /// Same-site redirects are followed, and cookies set along the way are kept —
+/// An `http://` target is not the "same site" as an `https://` one: comparing
+/// only the host would let a credential POST be downgraded to plaintext on the
+/// same registrable domain (RT-12).
+#[test]
+fn an_http_target_is_not_same_site_as_an_https_page() {
+    let https = Url::parse("https://bank.example/login").unwrap();
+    assert!(!same_site(&https, &Url::parse("http://bank.example/login").unwrap()));
+    assert!(!same_site(
+        &Url::parse("http://bank.example/login").unwrap(),
+        &https
+    ));
+    // Same scheme is still same site.
+    assert!(same_site(&https, &Url::parse("https://bank.example/session").unwrap()));
+}
+
 /// plenty of sites set the real session cookie on the hop after the POST.
 #[tokio::test]
 async fn a_same_site_redirect_is_followed_and_its_cookies_kept() {
