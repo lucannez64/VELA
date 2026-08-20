@@ -12,6 +12,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+use crate::sqldb::Db as _;
 use crate::state::AppState;
 
 static IF_MATCH: HeaderName = HeaderName::from_static("if-match");
@@ -336,9 +337,9 @@ async fn health(
     let mut db_ok = true;
     let mut sled_ok = true;
 
-    if let Err(e) = state.db.query("SELECT 1", ()) {
+    if let Err(e) = state.sqldb.query("SELECT 1", vec![]).await {
         db_ok = false;
-        tracing::error!(error = %e, "health check: stoolap failed");
+        tracing::error!(error = %e, "health check: turso failed");
     }
 
     if let Err(e) = state.store.inner().size_on_disk() {

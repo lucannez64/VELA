@@ -13,7 +13,7 @@ use vela_server::{
     migration::{ExportOptions, ImportOptions, InspectOptions, PassphraseSource},
     routes,
     routes::NativeHttps,
-    share, state, store,
+    share, sqldb, state, store,
     transport::{
         http3, tcp_tls,
         tls::{load_rustls_server_config, TlsConfigPaths},
@@ -213,7 +213,25 @@ async fn serve() -> anyhow::Result<()> {
     let kv = store::Store::open(&config.sled_path)?;
     tracing::info!(path = %config.sled_path, "sled embedded store opened");
 
-    let state = Arc::new(state::AppStateInner::new(db_pool, kv, config.clone())?);
+    // Turso (SQLite-compatible) backend: target of the stoolap -> turso
+    // migration. Opened alongside stoolap during the incremental port; the
+    // health endpoint and migrated handlers read it.
+    let turso_pool = std::env::var("TURSO_DB_POOL_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
+    let turso_path = std::path::Path::new(&config.db_path)
+        .parent()
+        .map(|p| p.join("vela-turso.db"))
+        .unwrap_or_else(|| std::path::PathBuf::from("vela-turso.db"));
+    let sqldb = std::sync::Arc::new(
+        sqldb::TursoDb::open(&turso_path.to_string_lossy(), turso_pool).await?,
+    );
+    tracing::info!(path = %turso_path.display(), "turso database opened");
+
+    let state = Arc::new(
+        state::AppStateInner::new(db_pool, sqldb, kv, config.clone())?,
+    );
 
     {
         let bg_db = state.db().clone();

@@ -82,6 +82,7 @@ impl Deref for DbPool {
 
 pub struct AppStateInner {
     pub db: DbPool,
+    pub sqldb: std::sync::Arc<crate::sqldb::TursoDb>,
     pub store: Store,
     pub webauthn: Webauthn,
     pub paseto_sk: AsymmetricSecretKey<V4>,
@@ -99,7 +100,12 @@ impl AppStateInner {
 pub type AppState = Arc<AppStateInner>;
 
 impl AppStateInner {
-    pub fn new(db: DbPool, store: Store, config: Config) -> anyhow::Result<Self> {
+    pub fn new(
+        db: DbPool,
+        sqldb: std::sync::Arc<crate::sqldb::TursoDb>,
+        store: Store,
+        config: Config,
+    ) -> anyhow::Result<Self> {
         let paseto_sk = AsymmetricSecretKey::<V4>::from(&config.paseto_secret_key)
             .map_err(|e| anyhow::anyhow!("invalid PASETO secret key: {e:?}"))?;
         let paseto_pk = AsymmetricPublicKey::<V4>::from(&config.paseto_public_key)
@@ -127,6 +133,7 @@ impl AppStateInner {
 
         Ok(Self {
             db,
+            sqldb,
             store,
             webauthn,
             paseto_sk,
