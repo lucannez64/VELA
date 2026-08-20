@@ -157,6 +157,17 @@ pub fn save_audit_log(state: &AppState, log: &AuditLog) -> Result<(), String> {
     Ok(())
 }
 
+/// Wipe the local audit log.
+///
+/// There is deliberately no "append one entry" counterpart: entries are
+/// written by the backend at the moment the audited thing happens. A command
+/// letting a caller append arbitrary `details` would let anything that
+/// reaches the IPC write plausible history into the one record a user
+/// consults after a compromise — or bury a real entry under noise.
+pub fn clear_audit_log(state: &AppState) -> Result<(), String> {
+    save_audit_log(state, &AuditLog::default())
+}
+
 pub fn serialize_audit_plaintext(state: &AppState) -> Option<Vec<u8>> {
     let log = load_audit_log(state).unwrap_or_default();
     serde_json::to_vec(&log).ok()

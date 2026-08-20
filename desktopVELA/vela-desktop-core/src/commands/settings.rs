@@ -44,6 +44,47 @@ pub fn update_settings(state: &Arc<AppState>, mut settings: Settings) -> Result<
     Ok(())
 }
 
+/// The auto-lock timeout, read straight off disk.
+///
+/// A separate read from [`get_settings`] because the watchdog re-reads it on
+/// every tick and has no business paying for the session/user-id overlays.
+pub fn get_auto_lock_minutes(state: &Arc<AppState>) -> Result<u32, String> {
+    let settings = state.store.load_settings().map_err(|e| e.to_string())?;
+    Ok(settings.auto_lock_minutes)
+}
+
+/// Set the auto-lock timeout, in minutes. Bounded to 1..=1440: zero would
+/// mean "lock instantly" and anything past a day is indistinguishable from
+/// never, and neither is a setting the UI can express.
+pub fn set_auto_lock_minutes(state: &Arc<AppState>, minutes: u32) -> Result<(), String> {
+    if !(1..=24 * 60).contains(&minutes) {
+        return Err("auto_lock_minutes must be between 1 and 1440".to_string());
+    }
+    let mut settings = state.store.load_settings().unwrap_or_default();
+    settings.auto_lock_minutes = minutes;
+    state.store.save_settings(&settings).map_err(|e| e.to_string())?;
+    record_audit_event(state, AuditAction::SettingsChanged);
+    Ok(())
+}
+
+/// How the quick-search shortcut is delivered on this system: `"portal"`
+/// (Wayland, where the XDG GlobalShortcuts portal means the compositor owns
+/// the keybind and the app cannot show it as "pressed here") or `"plugin"`
+/// (an X11/Windows/macOS key grab the app registers itself).
+///
+/// The gpui build only implements the portal path, so this also tells its
+/// Settings screen when to say the shortcut is unavailable rather than
+/// offering an editor for a binding nothing will ever deliver.
+pub fn shortcut_backend() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        if crate::wayland_shortcut::is_wayland_session() {
+            return "portal";
+        }
+    }
+    "plugin"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

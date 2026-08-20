@@ -1,13 +1,9 @@
 //! Port of `desktopVELA/src/views/ItemDetail.tsx` — reveal/copy fields, live
-//! TOTP countdown. Real clipboard writes via `arboard` (no vault mutation —
-//! safe to wire fully, unlike edit/delete/favorite/share below).
+//! TOTP countdown, edit/delete, and opening the item's URL in the browser.
 //!
-//! Deliberately read-only for now, consistent with the "be careful with
-//! write paths" agreement: favorite toggle, edit, share, and delete all just
-//! log rather than calling `update_item`/`delete_item`. Also not ported:
-//! clipboard auto-clear-after-N-seconds (arboard write is immediate/
-//! permanent-until-next-copy for now), and open-URL (needs a native
-//! `open`/xdg-open call, not yet wired).
+//! Edit and delete call the real `update_item`/`delete_item`; clipboard
+//! writes go through `crate::clipboard`, which marks them as secrets and
+//! runs the auto-clear timer.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -343,7 +339,31 @@ impl Render for ItemDetail {
         }
 
         if let Some(url) = item.url() {
-            fields = fields.child(field_card(&palette, "WEBSITE", url, url, false, window, cx));
+            let open_target = url.to_string();
+            fields = fields.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().child(field_card(&palette, "WEBSITE", url, url, false, window, cx)))
+                    .when(!open_target.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .id("open-item-url")
+                                .p_2()
+                                .rounded_lg()
+                                .cursor_pointer()
+                                .child(icon("open_in_new", px(18.), palette.on_surface_variant))
+                                .on_mouse_down(MouseButton::Left, move |_, _, _cx| {
+                                    // Hand off to the OS handler, same as the
+                                    // vault list's row action.
+                                    if let Err(e) = open::that(&open_target) {
+                                        tracing::warn!("Failed to open {open_target}: {e}");
+                                    }
+                                }),
+                        )
+                    }),
+            );
         }
 
         if let VaultItem::SecureNote { content, .. } = &item {

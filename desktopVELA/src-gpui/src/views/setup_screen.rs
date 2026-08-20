@@ -7,13 +7,16 @@
 //! existing vault without asking and there is no undo, both paths refuse
 //! outright when `check_vault_exists` says one is already there.
 //!
-//! Of the recovery step's three methods, cloud backup (rclone) and security
-//! key (WebAuthn) call the real backend; trusted contact isn't ported, so
-//! it's marked unavailable rather than offering an "Enable" that only logs.
-//! That leaves the original's 2-of-3 Continue gate unreachable for anyone
-//! without both an rclone remote and a FIDO2 key, so this build adds a
-//! "Skip for now" the original doesn't have — recovery stays configurable
-//! from Settings.
+//! All three recovery methods call the real backend: cloud backup (rclone),
+//! security key (WebAuthn/CTAP2), and trusted contact (Share 3, handed to
+//! the user to deliver out of band). Leaving the step also runs
+//! `finalize_recovery_setup`, which drops the locally cached shares — the
+//! split is pointless while all three still sit on this device.
+//!
+//! The "Skip for now" button is a deliberate addition the original lacks:
+//! the 2-of-3 Continue gate can still be unreachable (no rclone remote, no
+//! FIDO2 key), and nobody should be stuck in the wizard unable to finish
+//! creating a vault. Recovery stays configurable from Settings.
 
 use std::sync::Arc;
 
@@ -72,6 +75,14 @@ pub struct SetupScreen {
     loading_cloud_remotes: bool,
     uploading_cloud_backup: bool,
     cloud_backup_error: Option<SharedString>,
+    /// Share 3 has no VELA-operated channel — it is shown to the user to
+    /// deliver however they like — so the modal holds it in memory only,
+    /// for as long as it is on screen.
+    show_trusted_contact_modal: bool,
+    trusted_contact_share: Option<SharedString>,
+    loading_trusted_contact: bool,
+    acknowledging_trusted_contact: bool,
+    trusted_contact_error: Option<SharedString>,
 }
 
 impl SetupScreen {
@@ -118,6 +129,11 @@ impl SetupScreen {
             loading_cloud_remotes: false,
             uploading_cloud_backup: false,
             cloud_backup_error: None,
+            show_trusted_contact_modal: false,
+            trusted_contact_share: None,
+            loading_trusted_contact: false,
+            acknowledging_trusted_contact: false,
+            trusted_contact_error: None,
         }
     }
 
@@ -251,6 +267,101 @@ impl SetupScreen {
                 cx.notify();
             })
             .ok();
+        })
+        .detach();
+    }
+
+    fn open_trusted_contact_modal(&mut self, cx: &mut Context<Self>) {
+        self.trusted_contact_error = None;
+        self.trusted_contact_share = None;
+        self.loading_trusted_contact = true;
+        self.show_trusted_contact_modal = true;
+        cx.notify();
+
+        let app_state = self._app_state.clone();
+        cx.spawn(async move |this, cx| {
+            // Splitting the RMS touches the vault and writes the pending-share
+            // file, so it goes off the main thread like the other two methods.
+            let result = cx
+                .background_spawn_guarded("read trusted contact share", async move {
+                    vela_desktop_core::recovery::get_trusted_contact_share(&app_state).await
+                })
+                .await
+                .unwrap_or_else(|| Err("Generating the recovery share failed unexpectedly".to_string()));
+            this.update(cx, |this, cx| {
+                this.loading_trusted_contact = false;
+                match result {
+                    Ok(share) => this.trusted_contact_share = Some(share.into()),
+                    Err(e) => this.trusted_contact_error = Some(e.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn close_trusted_contact_modal(&mut self, cx: &mut Context<Self>) {
+        self.show_trusted_contact_modal = false;
+        // Don't leave a recovery share sitting in the view after it closes.
+        self.trusted_contact_share = None;
+        cx.notify();
+    }
+
+    fn copy_trusted_contact_share(&mut self, cx: &mut Context<Self>) {
+        let Some(share) = self.trusted_contact_share.clone() else { return };
+        // A share is key material: copy it as a secret so it stays out of
+        // clipboard history, exactly like the enrollment code.
+        crate::clipboard::copy(cx, "Recovery share", share.as_ref());
+    }
+
+    fn acknowledge_trusted_contact(&mut self, cx: &mut Context<Self>) {
+        self.acknowledging_trusted_contact = true;
+        cx.notify();
+
+        let app_state = self._app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn_guarded("acknowledge trusted contact share", async move {
+                    vela_desktop_core::recovery::acknowledge_trusted_contact_share(&app_state).await
+                })
+                .await
+                .unwrap_or_else(|| Err("Recording the handover failed unexpectedly".to_string()));
+            this.update(cx, |this, cx| {
+                this.acknowledging_trusted_contact = false;
+                // Best-effort bookkeeping: the share was generated and shown
+                // either way, so a failure here must not strand the user.
+                if let Err(e) = result {
+                    tracing::warn!("Could not record trusted-contact handover: {e}");
+                }
+                this.trusted_contact_done = true;
+                this.show_trusted_contact_modal = false;
+                this.trusted_contact_share = None;
+                crate::toast::show(cx, "Trusted contact share delivered", crate::toast::ToastKind::Success);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Drop the locally cached shares as the user leaves the recovery step.
+    ///
+    /// Until this runs all three shares are still in `recovery_setup.enc` on
+    /// this device, which would make the 2-of-3 split decorative. Best-effort:
+    /// the shares that were actually delivered are unaffected either way, so a
+    /// failure here must not block finishing setup.
+    fn finalize_recovery(&mut self, cx: &mut Context<Self>) {
+        let app_state = self._app_state.clone();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_spawn_guarded("finalize recovery setup", async move {
+                    vela_desktop_core::recovery::finalize_recovery_setup(&app_state).await
+                })
+                .await;
+            if let Some(Err(e)) = result {
+                tracing::warn!("Could not clear cached recovery shares: {e}");
+            }
         })
         .detach();
     }
@@ -443,6 +554,9 @@ impl Render for SetupScreen {
             .when(self.show_security_key_modal, |el| {
                 el.child(security_key_modal(&palette, self, window, cx))
             })
+            .when(self.show_trusted_contact_modal, |el| {
+                el.child(trusted_contact_modal(&palette, self, window, cx))
+            })
             .when(self.show_cloud_backup_modal, |el| {
                 el.child(cloud_backup_modal(&palette, self, window, cx))
             })
@@ -453,6 +567,87 @@ impl Render for SetupScreen {
 /// backend call as Settings' Recovery section — the SetupScreen wizard and
 /// Settings are two entry points to one flow, so a key registered here counts
 /// toward the same 2-of-3 gate.
+/// Share 3 of the 2-of-3 split, shown for the user to deliver themselves.
+///
+/// A lone share below the threshold is information-theoretically
+/// indistinguishable from random bytes, so displaying it here reveals nothing
+/// about the vault — it only becomes meaningful next to a second share.
+fn trusted_contact_modal(
+    palette: &Palette,
+    screen: &SetupScreen,
+    window: &mut Window,
+    cx: &mut Context<SetupScreen>,
+) -> impl IntoElement {
+    let has_share = screen.trusted_contact_share.is_some();
+    let acknowledging = screen.acknowledging_trusted_contact;
+
+    let body = modal_body(palette, "setup-trusted-contact")
+        .child(modal_header(palette, "person_add", "Trusted contact"))
+        .child(
+            div().text_sm().text_color(palette.on_surface_variant).child(
+                "One of three recovery pieces. Send it to someone you trust — they only need \
+                 to hand it back if you lose every device.",
+            ),
+        )
+        .map(|el| {
+            if screen.loading_trusted_contact {
+                return el.child(
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child("Generating recovery share…"),
+                );
+            }
+            match screen.trusted_contact_share.as_ref() {
+                Some(share) => el.child(
+                    div()
+                        .id("setup-trusted-contact-share")
+                        .max_h(px(160.))
+                        .overflow_y_scroll()
+                        .p_3()
+                        .rounded_xl()
+                        .border_1()
+                        .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                        .bg(palette.surface_bright)
+                        .font_family(fonts::MONO)
+                        .text_xs()
+                        .text_color(palette.on_surface)
+                        .child(share.clone()),
+                ),
+                None => el,
+            }
+        })
+        .when_some(screen.trusted_contact_error.clone(), |el, error| {
+            el.child(div().text_sm().text_color(palette.error).child(error))
+        })
+        .when(has_share, |el| {
+            el.child(modal_primary_button(
+                palette,
+                "setup-trusted-contact-copy",
+                "Copy share",
+                !acknowledging,
+                cx.listener(|this, _, _, cx| this.copy_trusted_contact_share(cx)),
+            ))
+        })
+        .child(modal_primary_button(
+            palette,
+            "setup-trusted-contact-done",
+            if acknowledging { "Saving…" } else { "I've sent it" },
+            has_share && !acknowledging,
+            cx.listener(|this, _, _, cx| this.acknowledge_trusted_contact(cx)),
+        ))
+        .child(modal_cancel_button(
+            palette,
+            "setup-trusted-contact-cancel",
+            window,
+            cx,
+            cx.listener(|this, _, _, cx| this.close_trusted_contact_modal(cx)),
+        ));
+
+    modal_backdrop("setup-trusted-contact", cx, |this, cx| this.close_trusted_contact_modal(cx))
+        .child(body)
+}
+
 fn security_key_modal(
     palette: &Palette,
     screen: &SetupScreen,
@@ -1025,13 +1220,11 @@ fn recovery_step(
             palette,
             "3",
             "Trusted contact",
-            "Not ported to this build yet",
+            "Hand a recovery share to someone you trust",
             screen.trusted_contact_done,
-            false,
+            true,
             cx,
-            |_this, _cx| {
-                tracing::info!("Trusted contact recovery — TrustedContactRecovery not yet ported");
-            },
+            |this, cx| this.open_trusted_contact_modal(cx),
         ))
         .child(
             div()
@@ -1063,14 +1256,16 @@ fn recovery_step(
                 ),
         )
         .child(primary_button("continue", "Continue", can_continue, window, cx, |this, cx| {
+            // Leaving the step is what ends setup, so the cached shares go now.
+            this.finalize_recovery(cx);
             this.step = Step::Complete;
             cx.notify();
         }))
         // Deliberate divergence from the original, which hard-gates Continue
-        // on 2 of 3 methods: trusted contact isn't ported to this build, so
-        // only two are reachable — anyone without both an rclone remote and a
-        // FIDO2 key would be stuck in the wizard with no way to finish
-        // creating their vault. Recovery stays configurable from Settings.
+        // on 2 of 3 methods: the gate can still be unreachable here (no
+        // rclone remote, no FIDO2 key, no willing contact), and nobody should
+        // be stuck in the wizard unable to finish creating their vault.
+        // Recovery stays configurable from Settings.
         .child(skip_recovery_button(palette, cx))
         .into_any_element()
 }
@@ -1101,6 +1296,9 @@ fn skip_recovery_button(palette: &Palette, cx: &mut Context<SetupScreen>) -> imp
         )
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
             tracing::info!("Recovery setup skipped during vault creation");
+            // Skipping still ends setup: anything already split has to stop
+            // being cached here, same as pressing Continue.
+            this.finalize_recovery(cx);
             this.step = Step::Complete;
             cx.notify();
         }))
