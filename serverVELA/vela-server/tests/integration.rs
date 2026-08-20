@@ -189,27 +189,30 @@ async fn auth_signature_succeeds_once_and_replay_fails() {
         .join()
         .unwrap();
 
+    use vela_server::sqldb::{Db as _, TursoValue};
     state
-        .db
+        .sqldb
         .execute(
-            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
-            stoolap::params![user_id.to_string(), now.clone()],
+            "INSERT INTO users (id, created_at) VALUES (?, ?)",
+            vec![TursoValue::Text(user_id.to_string()), TursoValue::Text(now.clone())],
         )
+        .await
         .unwrap();
     state
-        .db
+        .sqldb
         .execute(
             "INSERT INTO devices
              (id, user_id, hybrid_ek, hybrid_vk, created_at)
-             VALUES ($1, $2, $3, $4, $5)",
-            stoolap::params![
-                device_id.to_string(),
-                user_id.to_string(),
-                B64.encode(vec![0u8; 1600]),
-                B64.encode(hybrid_vk),
-                now,
+             VALUES (?, ?, ?, ?, ?)",
+            vec![
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(hybrid_vk)),
+                TursoValue::Text(now),
             ],
         )
+        .await
         .unwrap();
 
     let challenge_resp = app
@@ -343,33 +346,31 @@ async fn two_users_can_store_same_chunk_id() {
     let device_b = Uuid::new_v4();
     let now = chrono::Utc::now();
 
+    use vela_server::sqldb::{Db as _, TursoValue};
     for user_id in [user_a, user_b] {
         state
-            .db
+            .sqldb
             .execute(
-                "INSERT INTO users (id, created_at) VALUES ($1, $2)",
-                stoolap::params![user_id.to_string(), now.to_rfc3339()],
+                "INSERT INTO users (id, created_at) VALUES (?, ?)",
+                vec![TursoValue::Text(user_id.to_string()), TursoValue::Text(now.to_rfc3339())],
             )
+            .await
             .unwrap();
     }
 
     for (device_id, user_id) in [(device_a, user_a), (device_b, user_b)] {
-        state.db.execute(
+        state.sqldb.execute(
             "INSERT INTO devices
              (id, user_id, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8, $9)",
-            stoolap::params![
-                device_id.to_string(),
-                user_id.to_string(),
-                B64.encode(vec![0u8; 1600]),
-                B64.encode(vec![0u8; 2624]),
-                Option::<String>::None,
-                Option::<String>::None,
-                Option::<String>::None,
-                Option::<String>::None,
-                now.to_rfc3339(),
+             VALUES (?, ?, ?, ?, NULL, NULL, 0, NULL, NULL, ?)",
+            vec![
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(vec![0u8; 2624])),
+                TursoValue::Text(now.to_rfc3339()),
             ],
-        ).unwrap();
+        ).await.unwrap();
     }
 
     let token_a = issue_token(&state, user_a, device_a);
@@ -719,33 +720,31 @@ async fn web_session_grant_requires_auth() {
 }
 
 /// Create a user + one enrolled device and return `(user_id, bearer token)`.
-fn seed_user_with_device(state: &vela_server::state::AppState) -> (Uuid, String) {
+async fn seed_user_with_device(state: &vela_server::state::AppState) -> (Uuid, String) {
+    use vela_server::sqldb::{Db as _, TursoValue};
     let user_id = Uuid::new_v4();
     let device_id = Uuid::new_v4();
     let now = chrono::Utc::now();
     state
-        .db
+        .sqldb
         .execute(
-            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
-            stoolap::params![user_id.to_string(), now.to_rfc3339()],
+            "INSERT INTO users (id, created_at) VALUES (?, ?)",
+            vec![TursoValue::Text(user_id.to_string()), TursoValue::Text(now.to_rfc3339())],
         )
+        .await
         .unwrap();
-    state.db.execute(
+    state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8, $9)",
-        stoolap::params![
-            device_id.to_string(),
-            user_id.to_string(),
-            B64.encode(vec![0u8; 1600]),
-            B64.encode(vec![0u8; 2624]),
-            Option::<String>::None,
-            Option::<String>::None,
-            Option::<String>::None,
-            Option::<String>::None,
-            now.to_rfc3339(),
+         VALUES (?, ?, ?, ?, NULL, NULL, 0, NULL, NULL, ?)",
+        vec![
+            TursoValue::Text(device_id.to_string()),
+            TursoValue::Text(user_id.to_string()),
+            TursoValue::Text(B64.encode(vec![0u8; 1600])),
+            TursoValue::Text(B64.encode(vec![0u8; 2624])),
+            TursoValue::Text(now.to_rfc3339()),
         ],
-    ).unwrap();
+    ).await.unwrap();
     let token = issue_token(state, user_id, device_id);
     (user_id, token)
 }
@@ -792,7 +791,7 @@ async fn web_session_grant_rejects_wrong_link_nonce() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
 
-    let (user_id, token) = seed_user_with_device(&state);
+    let (user_id, token) = seed_user_with_device(&state).await;
 
     let link_nonce = B64.encode(vec![7u8; 32]);
     let resp = app
@@ -853,8 +852,8 @@ async fn web_session_is_bound_to_the_committed_approver() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
 
-    let (victim_id, victim_token) = seed_user_with_device(&state);
-    let (_attacker_id, attacker_token) = seed_user_with_device(&state);
+    let (victim_id, victim_token) = seed_user_with_device(&state).await;
+    let (_attacker_id, attacker_token) = seed_user_with_device(&state).await;
 
     let link_nonce = B64.encode(vec![7u8; 32]);
     let resp = app
@@ -965,7 +964,7 @@ async fn web_session_poll_requires_the_browsers_secret() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
 
-    let (user_id, token) = seed_user_with_device(&state);
+    let (user_id, token) = seed_user_with_device(&state).await;
     let link_nonce = B64.encode(vec![7u8; 32]);
     let resp = app
         .clone()
@@ -1049,8 +1048,8 @@ async fn committed_approver_can_decline_a_pending_session() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
 
-    let (victim_id, victim_token) = seed_user_with_device(&state);
-    let (_attacker_id, attacker_token) = seed_user_with_device(&state);
+    let (victim_id, victim_token) = seed_user_with_device(&state).await;
+    let (_attacker_id, attacker_token) = seed_user_with_device(&state).await;
 
     let link_nonce = B64.encode(vec![7u8; 32]);
     let resp = app
@@ -1180,14 +1179,16 @@ fn token_for(
 }
 
 /// Insert a user so the auth middleware's existence check passes.
-fn insert_user(state: &vela_server::state::AppState, user_id: Uuid) {
+async fn insert_user(state: &vela_server::state::AppState, user_id: Uuid) {
+    use vela_server::sqldb::{Db as _, TursoValue};
     let now = chrono::Utc::now().to_rfc3339();
     state
-        .db
+        .sqldb
         .execute(
-            "INSERT INTO users (id, created_at) VALUES ($1, $2)",
-            stoolap::params![user_id.to_string(), now],
+            "INSERT INTO users (id, created_at) VALUES (?, ?)",
+            vec![TursoValue::Text(user_id.to_string()), TursoValue::Text(now)],
         )
+        .await
         .unwrap();
 }
 
@@ -1206,7 +1207,7 @@ async fn web_session_token_is_refused_on_permanent_power_routes() {
     let app = vela_server::routes::build(state.clone());
     let user_id = Uuid::new_v4();
     let session_id = Uuid::new_v4();
-    insert_user(&state, user_id);
+    insert_user(&state, user_id).await;
 
     let web = token_for(&state, user_id, session_id, TokenScope::WebSession);
 
@@ -1273,7 +1274,7 @@ async fn device_token_still_reaches_permanent_power_routes() {
     let app = vela_server::routes::build(state.clone());
     let user_id = Uuid::new_v4();
     let device_id = Uuid::new_v4();
-    insert_user(&state, user_id);
+    insert_user(&state, user_id).await;
 
     let device = token_for(&state, user_id, device_id, TokenScope::Device);
     let resp = app
@@ -1534,7 +1535,7 @@ async fn web_session_token_still_reaches_the_vault() {
     let app = vela_server::routes::build(state.clone());
     let user_id = Uuid::new_v4();
     let session_id = Uuid::new_v4();
-    insert_user(&state, user_id);
+    insert_user(&state, user_id).await;
 
     // Vault endpoints only. `/devices` used to be in this list and is not any
     // more: it is account metadata rather than vault content, the web vault
@@ -1581,7 +1582,7 @@ async fn the_capsule_is_delivered_once_even_under_concurrent_polls() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
 
-    let (user_id, token) = seed_user_with_device(&state);
+    let (user_id, token) = seed_user_with_device(&state).await;
     let link_nonce = B64.encode(vec![7u8; 32]);
     let resp = app
         .clone()
@@ -1658,18 +1659,14 @@ async fn the_capsule_is_delivered_once_even_under_concurrent_polls() {
 async fn device_existence_is_not_revealed_by_auth_failures() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
-    let (_user_id, _token) = seed_user_with_device(&state);
+    let (_user_id, _token) = seed_user_with_device(&state).await;
 
     // The seeded device really exists; this id does not.
     let real = {
-        let rows = state
-            .db
-            .query("SELECT id FROM devices", stoolap::params![])
-            .unwrap();
-        let row = rows.into_iter().next().unwrap().unwrap();
-        vela_server::db::row_val(&row, 0)
-            .unwrap()
-            .as_str()
+        use vela_server::sqldb::{Db as _, TursoValue};
+        let rows = state.sqldb.query("SELECT id FROM devices", vec![]).await.unwrap();
+        rows.first()
+            .and_then(|r| r.text(0))
             .unwrap()
             .to_string()
     };

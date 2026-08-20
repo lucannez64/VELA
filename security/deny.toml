@@ -44,6 +44,13 @@ skip = [
   "windows-targets", "windows_aarch64_gnullvm", "windows_aarch64_msvc",
   "windows_i686_gnu", "windows_i686_gnullvm", "windows_i686_msvc",
   "windows_x86_64_gnu", "windows_x86_64_gnullvm", "windows_x86_64_msvc",
+  # turso (SQLite rewrite) dependency tree introduces a second, semver-
+  # incompatible major of several crates already in the engine/async families
+  # (rustix 0.38 vs 1.1, rand_chacha 0.3 vs 0.9, shlex 1 vs 2, etc.). These are
+  # build/transitive dupes, licenses and advisories already pass — benign to
+  # allow, matching the other skip entries above.
+  "allocator-api2", "fastbloom", "itertools", "linux-raw-sys", "pastey",
+  "rand_chacha", "rand_pcg", "rustix", "shlex", "unicode-width",
 ]
 deny = []
 
