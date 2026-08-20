@@ -94,7 +94,7 @@ jobs:
             gh release create "$TAG" \
               --title "VELA Extension v$VER" \
               --notes "Built from \`$SHA\`.
-- \`vela-firefox.xpi\` — the Firefox/Gecko build. Install in a dev/nightly or unsigned-allowed profile (not AMO-signed by this automated release).
-- \`vela-chrome.zip\` — unzip and **Load unpacked** in any Chromium browser." \
+              - \`vela-firefox.xpi\` — the Firefox/Gecko build. Install in a dev/nightly or unsigned-allowed profile (not AMO-signed by this automated release).
+              - \`vela-chrome.zip\` — unzip and **Load unpacked** in any Chromium browser." \
               dist/vela-firefox.xpi ../vela-chrome.zip
           fi
