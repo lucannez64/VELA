@@ -194,28 +194,15 @@ async fn serve() -> anyhow::Result<()> {
     )?;
     tracing::info!(addr = %config.listen_addr, "VELA server starting");
 
-    let database = db::open_and_init(&config.db_path)?;
-    tracing::info!(path = %config.db_path, "stoolap database opened");
-
-    // Shard stoolap's single global executor lock across one cloned handle per
-    // CPU. Each clone owns an independent `Mutex<Executor>` over the shared
-    // engine, so concurrent SQL (e.g. /auth/verify) stops serializing on one
-    // lock. See `DbPool` in state.rs. Override with VELA_DB_POOL_SIZE.
-    let pool_size = std::env::var("VELA_DB_POOL_SIZE")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|n| *n > 0)
-        .or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
-        .unwrap_or(4);
-    let db_pool = state::DbPool::new(database, pool_size);
-    tracing::warn!(pool_size = pool_size, "stoolap executor pool created");
+    // The legacy stoolap database is opened only to bootstrap an existing
+    // database into turso (and by `migrate import`); handlers never touch it.
+    let stoolap_db = db::open_and_init(&config.db_path)?;
+    tracing::info!(path = %config.db_path, "stoolap database opened (legacy read)");
 
     let kv = store::Store::open(&config.sled_path)?;
     tracing::info!(path = %config.sled_path, "sled embedded store opened");
 
-    // Turso (SQLite-compatible) backend: target of the stoolap -> turso
-    // migration. Opened alongside stoolap during the incremental port; the
-    // health endpoint and migrated handlers read it.
+    // Turso (SQLite-compatible) backend: the server's SQL store.
     let turso_pool = std::env::var("TURSO_DB_POOL_SIZE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -232,13 +219,14 @@ async fn serve() -> anyhow::Result<()> {
     // One-time migration: copy an existing stoolap database into the (empty)
     // turso database so an upgraded server serves its pre-existing data. Safe
     // on restart: a turso table that already has rows is left untouched.
-    let copied = db::bootstrap_stoolap_into_turso(&db_pool.any(), &sqldb).await?;
+    let copied = db::bootstrap_stoolap_into_turso(&stoolap_db, &sqldb).await?;
     if copied > 0 {
         tracing::warn!(rows = copied, "bootstrap: copied stoolap data into turso");
     }
+    drop(stoolap_db);
 
     let state = Arc::new(
-        state::AppStateInner::new(db_pool, sqldb, kv, config.clone()).await?,
+        state::AppStateInner::new(sqldb, kv, config.clone()).await?,
     );
 
     {
