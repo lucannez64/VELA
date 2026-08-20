@@ -38,6 +38,12 @@ skip = [
   "digest", "fiat-crypto", "getrandom", "hashbrown", "keccak", "rand",
   "rand_core", "r-efi", "rustc-hash", "sha3", "thiserror", "thiserror-impl",
   "windows-sys", "wit-bindgen",
+  # windows-rs per-arch/targets crates: duplicated whenever two windows-sys
+  # minors coexist in the tree (currently 0.52/0.59/0.60/0.61). Same family as
+  # the windows-sys skip above — empty platform crates, benign to allow.
+  "windows-targets", "windows_aarch64_gnullvm", "windows_aarch64_msvc",
+  "windows_i686_gnu", "windows_i686_gnullvm", "windows_i686_msvc",
+  "windows_x86_64_gnu", "windows_x86_64_gnullvm", "windows_x86_64_msvc",
 ]
 deny = []
 
