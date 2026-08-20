@@ -73,6 +73,9 @@ struct SourceManifest {
 struct StorageManifest {
     db_relative_path: String,
     sled_relative_path: String,
+    /// Path of the turso (SQLite) database file inside the payload, when a
+    /// turso-backed server produced the bundle.
+    turso_db_relative_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,9 +101,18 @@ pub fn export_bundle(options: ExportOptions) -> Result<()> {
 
     let db_path = options.data_dir.join("vela.db");
     let sled_path = options.data_dir.join("sled");
-    // stoolap stores `vela.db` as a directory; older/embedded modes may use a
-    // single file. Accept either.
-    ensure_exists(&db_path, "database")?;
+    let turso_db_path = options.data_dir.join("vela-turso.db");
+    // A server may hold either the legacy stoolap `vela.db` (a directory), or
+    // the turso `vela-turso.db` (a single file), or both during the migration
+    // window. Require at least one database to back up.
+    let has_turso = turso_db_path.is_file();
+    let has_stoolap = db_path.exists();
+    if !has_turso && !has_stoolap {
+        bail!(
+            "no database found under {} (looked for vela.db and vela-turso.db)",
+            options.data_dir.display()
+        );
+    }
     ensure_dir(&sled_path, "sled store")?;
 
     let root = TempDir::new().context("failed to create migration staging dir")?;
@@ -109,8 +121,28 @@ pub fn export_bundle(options: ExportOptions) -> Result<()> {
     let data_root = payload_root.join("data");
     fs::create_dir(&data_root)?;
 
-    copy_path(&db_path, &data_root.join("vela.db"))
-        .with_context(|| format!("failed to copy {}", db_path.display()))?;
+    if has_stoolap {
+        copy_path(&db_path, &data_root.join("vela.db"))
+            .with_context(|| format!("failed to copy {}", db_path.display()))?;
+    }
+    if has_turso {
+        // SQLite-family DBs (turso) may hold committed-but-uncheckpointed data
+        // in a `-wal` (and `-shm`) sidecar. Export is offline under the
+        // DataDirLock, so it's safe to carry all three together — copying only
+        // the bare `.db` would silently drop whatever is still in the WAL.
+        copy_path(&turso_db_path, &data_root.join("vela-turso.db"))
+            .with_context(|| format!("failed to copy {}", turso_db_path.display()))?;
+        for ext in ["-wal", "-shm"] {
+            let side = PathBuf::from(format!("{}{}", turso_db_path.display(), ext));
+            if side.is_file() {
+                fs::copy(
+                    &side,
+                    &data_root.join(format!("vela-turso.db{ext}")),
+                )
+                .with_context(|| format!("failed to copy {}", side.display()))?;
+            }
+        }
+    }
     copy_dir_all(&sled_path, &data_root.join("sled"))?;
 
     let identity_env = build_identity_env(&env, options.include_secrets)?;
@@ -149,6 +181,7 @@ pub fn export_bundle(options: ExportOptions) -> Result<()> {
         storage: StorageManifest {
             db_relative_path: "data/vela.db".to_string(),
             sled_relative_path: "data/sled".to_string(),
+            turso_db_relative_path: has_turso.then(|| "data/vela-turso.db".to_string()),
         },
         identity: IdentityManifest {
             webauthn_rp_id: env.get("WEBAUTHN_RP_ID").cloned(),
@@ -203,16 +236,32 @@ pub fn import_bundle(options: ImportOptions) -> Result<()> {
         }
         remove_if_exists(&options.target_data_dir.join("vela.db"))?;
         remove_if_exists(&options.target_data_dir.join("sled"))?;
+        remove_if_exists(&options.target_data_dir.join("vela-turso.db"))?;
     }
 
     let payload_root = decrypt_bundle_to_temp(&options.bundle, &passphrase)?;
     verify_payload(payload_root.path())?;
 
     fs::create_dir_all(&options.target_data_dir)?;
-    copy_path(
-        &payload_root.path().join("data/vela.db"),
-        &options.target_data_dir.join("vela.db"),
-    )?;
+    let src_db = payload_root.path().join("data/vela.db");
+    if src_db.exists() {
+        copy_path(
+            &src_db,
+            &options.target_data_dir.join("vela.db"),
+        )?;
+    }
+    let src_turso = payload_root.path().join("data/vela-turso.db");
+    if src_turso.is_file() {
+        fs::copy(&src_turso, options.target_data_dir.join("vela-turso.db"))?;
+        // Restore WAL/shm sidecars so committed-but-uncheckpointed writes
+        // survive the backup/restore.
+        for ext in ["-wal", "-shm"] {
+            let side = payload_root.path().join(format!("data/vela-turso.db{ext}"));
+            if side.is_file() {
+                fs::copy(&side, options.target_data_dir.join(format!("vela-turso.db{ext}")))?;
+            }
+        }
+    }
     copy_dir_all(
         &payload_root.path().join("data/sled"),
         &options.target_data_dir.join("sled"),
@@ -298,7 +347,10 @@ fn verify_payload(root: &Path) -> Result<()> {
     ensure_file(&root.join("manifest.json"), "manifest")?;
     ensure_file(&root.join("checksums.json"), "checksums")?;
     ensure_file(&root.join("identity.env"), "identity env")?;
-    ensure_exists(&root.join("data/vela.db"), "database")?;
+    // Either the legacy stoolap DB or the turso DB may be in the bundle.
+    if !root.join("data/vela.db").exists() && !root.join("data/vela-turso.db").is_file() {
+        bail!("no database (vela.db or vela-turso.db) found in bundle");
+    }
     ensure_dir(&root.join("data/sled"), "sled store")?;
     let checksums: Checksums = serde_json::from_slice(&fs::read(root.join("checksums.json"))?)?;
     let actual = checksums_for_tree(root)?;
@@ -494,7 +546,9 @@ fn copy_path(src: &Path, dst: &Path) -> Result<()> {
 }
 
 fn dir_has_payload(path: &Path) -> Result<bool> {
-    Ok(path.join("vela.db").exists() || path.join("sled").exists())
+    Ok(path.join("vela.db").exists()
+        || path.join("sled").exists()
+        || path.join("vela-turso.db").is_file())
 }
 
 fn remove_if_exists(path: &Path) -> Result<()> {
