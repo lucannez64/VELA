@@ -35,6 +35,11 @@ permissions:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    # AMO credentials, mapped to job env so step `if:` can test their presence
+    # (the `secrets` context is not available inside `if:` conditions).
+    env:
+      WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+      WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +82,7 @@ jobs:
       # into the built Firefox manifest before signing — each main release gets
       # a unique version. Only runs when the AMO secrets are configured.
       - name: Stamp version into the Firefox build (for signing)
-        if: ${{ secrets.WEB_EXT_API_KEY != '' && secrets.WEB_EXT_API_SECRET != '' }}
+        if: env.WEB_EXT_API_KEY != '' && env.WEB_EXT_API_SECRET != ''
         working-directory: extension
         run: |
           jq --arg v "${{ steps.version.outputs.version }}" \
@@ -85,11 +90,8 @@ jobs:
             && mv tmp.json dist/firefox/manifest.json
 
       - name: Submit to AMO for signing
-        if: ${{ secrets.WEB_EXT_API_KEY != '' && secrets.WEB_EXT_API_SECRET != '' }}
+        if: env.WEB_EXT_API_KEY != '' && env.WEB_EXT_API_SECRET != ''
         working-directory: extension
-        env:
-          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
-          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
         run: |
           set -euo pipefail
           npx web-ext sign --source-dir dist/firefox \
