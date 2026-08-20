@@ -197,7 +197,12 @@ monkeytype** — the end-to-end success.
   stronger than "a compromised browser process can read it": memory is
   reachable without compromising the browser at all. The core process itself is
   *not* exposed to this vector (a plain process is gated against unrelated
-  same-UID reads); it is the browser's process tree that leaks.
+  same-UID reads); it is the browser's process tree that leaks. **This is
+  browser-agnostic**: measured on both Chromium and Firefox-family browsers
+  (`security/exploits/test_browser_tier_memleak.py` and
+  `test_firefox_tier_memleak.py`) — an unrelated same-UID process can recover an
+  in-flight secret from either. So the mitigations below are the right ones for
+  whichever browser the tier drives.
 - **Mitigation — Tier 1: run the disposable browser under a distinct UID.**
   Cross-UID `process_vm_readv` / `/proc/<pid>/mem` reads are refused by the
   kernel (same UID or root required). `host.rs` + the setuid launcher
