@@ -70,7 +70,8 @@ non-goal that held is not automating the challenge.
    `browser::login` instead of failing. The gpui app's `Host::confirm_presence`
    shows the approval modal (this was built; it had been `None`).
 3. The core discovers a system Chrome/Chromium/Edge (`browser::host`), spawns it
-   with a fresh temp profile and a debug port, and attaches over CDP.
+   with a fresh temp profile and the CDP debugging pipe (fds 3/4, no TCP
+   port), and attaches over CDP.
 4. The browser navigates to the login page and passes the bot check.
 5. The core seeds the tab with the user's pre-session cookies, arms
    `Fetch.enable`, and **fills the login form** — with the *placeholder*
@@ -111,8 +112,8 @@ closes that, and the `host.rs`/`vela-browser-sandbox` support wires it up.
 
 | File | What it does |
 |---|---|
-| `cdp.rs` | Hand-rolled CDP client: JSON-RPC over a WebSocket (`tokio-tungstenite`) — reader/writer tasks, pending-call map, event broadcast, and the small set of domains needed (`Target`, `Page`, `Runtime`, `Network`, `Fetch`). |
-| `host.rs` | Discover + spawn Chrome/Chromium/Edge with a temp profile + debug port; wait for the endpoint; kill + wipe on drop. Test seam `VELA_BROWSER_LOGIN_DISABLED` so wiring tests never open a window. |
+| `cdp.rs` | Hand-rolled CDP client: JSON-RPC over the **debugging pipe** (`--remote-debugging-pipe`, fds 3/4, u32-len+JSON framing) — reader/writer tasks, pending-call map, event broadcast, and the small set of domains needed (`Target`, `Page`, `Runtime`, `Network`, `Fetch`). Driving by pipe (no TCP listener) is what closes RT-10. |
+| `host.rs` | Discover + spawn Chrome/Chromium/Edge with a temp profile, wiring the CDP pipe onto fds 3/4 (no `--remote-debugging-port` at all); kill + wipe on drop. Test seam `VELA_BROWSER_LOGIN_DISABLED` so wiring tests never open a window. |
 | `intercept.rs` | The substitution handler: pauses requests, passes non-login requests through, substitutes the real password into the one carrying the placeholder. Pure decision function, unit-tested. |
 | `fill.rs` | Shadow-root-piercing field fill (React-compatible value setter), a **scored choice of the login form** (vs a register form on the same page), cookie-consent dismissal, and a keep-filled loop that re-fills if a bot-check reload wipes the form. |
 | `harvest.rs` | Cookies out (`Network.getCookies`) + `localStorage`/`sessionStorage` + the auth SDK's **IndexedDB** records. |

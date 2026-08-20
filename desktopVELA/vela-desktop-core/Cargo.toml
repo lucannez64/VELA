@@ -17,10 +17,11 @@ default = []
 # src/js_login.rs for the two design choices that make this variant defensible.
 js-login = ["dep:boa_engine"]
 # The browser-driven login tier: a disposable real browser (Chrome/Chromium/
-# Edge) driven by the core over CDP, so bot-walled sites can be logged into
-# while the password never enters the page's JavaScript. See
-# `security/browser-driven-login-design.md`. Off by default, deliberately.
-browser-login = ["dep:tokio-tungstenite"]
+# Edge) driven by the core over CDP (via the debugging pipe, not a TCP port),
+# so bot-walled sites can be logged into while the password never enters the
+# page's JavaScript. See `security/browser-driven-login-design.md`. Off by
+# default, deliberately.
+browser-login = []
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -63,10 +64,11 @@ ciborium = "0.2"
 # src/login/recipe.rs and security/in-core-login-future-work.md (§3, Tier B).
 rsa = "0.9"
 rand_core = { version = "0.6", features = ["getrandom"] }
-# The browser-driven login tier's CDP client talks to a real Chrome over a
-# WebSocket. Only compiled behind the `browser-login` feature.
-tokio-tungstenite = { version = "0.24", optional = true }
-# Stream/Sink helpers for the CDP WebSocket reader and writer.
+# The browser-driven login tier's CDP client drives the browser over the
+# debugging pipe (fds 3/4, JSON-RPC framed as u32-len + payload in both
+# directions); it needs no WebSocket dependency.
+# Stream/Sink helpers (used by the Wayland short-cut client; the CDP pipe
+# transport is plain tokio IO).
 futures-util = "0.3.33"
 # Pinned to match serverVELA/Cargo.lock's webauthn-rs (which depends on this
 # exact version of its own wire-format companion crate) — using the same

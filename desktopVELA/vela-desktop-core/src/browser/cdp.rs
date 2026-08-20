@@ -1,11 +1,16 @@
 //! A minimal Chrome DevTools Protocol client, just enough for the
 //! browser-driven login tier.
 //!
-//! Two layers. The transport is JSON-RPC over a WebSocket to a real browser
-//! (`tokio-tungstenite`): a reader task resolves pending `call`s by `id` and
-//! broadcasts events. On top of that, the handful of CDP domains the login
-//! flow needs are wrapped with typed helpers — `Target`, `Page`, `Runtime`,
-//! `Network`, `Fetch`.
+//! The transport is JSON-RPC over the browser's **debugging pipe** (fds 3/4,
+//! `--remote-debugging-pipe`): each message is a 4-byte big-endian length
+//! followed by that many bytes of JSON, in both directions. A reader task
+//! resolves pending `call`s by `id` and broadcasts events. On top of that, the
+//! handful of CDP domains the login flow needs are wrapped with typed helpers —
+//! `Target`, `Page`, `Runtime`, `Network`, `Fetch`.
+//!
+//! Driving the browser over the pipe (rather than a WebSocket to a 127.0.0.1
+//! debug port) is what closes RT-10: there is no TCP listener for a
+//! co-resident process to attach to.
 //!
 //! Deliberately hand-rolled rather than pulling in a full CDP crate: the
 //! subset is small, the wire format is plain JSON, and a ~400-line auditable
@@ -16,10 +21,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
-use tokio_tungstenite::tungstenite::Message;
 
 /// How long a CDP command may go unanswered before it is treated as a broken
 /// connection. The login flow runs these against a real browser a human is
@@ -54,69 +58,62 @@ struct Outbound {
 }
 
 impl Cdp {
-    /// Connect to a browser debugging WebSocket URL.
-    pub async fn connect(ws_url: &str) -> Result<Self, String> {
-        let (stream, _) = tokio_tungstenite::connect_async(ws_url)
-            .await
-            .map_err(|e| format!("could not connect to the browser's debug port: {e}"))?;
-        let (mut write, mut read) = stream.split();
+    /// Connect to a browser's CDP debugging pipe.
+    ///
+    /// `command` is where we write commands (the parent's write end of the
+    /// child's fd 3); `message` is where we read responses/events (the
+    /// parent's read end of the child's fd 4). Both are length-prefixed JSON.
+    pub async fn connect_pipe<C, M>(
+        command: C,
+        message: M,
+    ) -> Result<Self, String>
+    where
+        C: AsyncWrite + Unpin + Send + 'static,
+        M: AsyncRead + Unpin + Send + 'static,
+    {
         let (outbound_tx, mut outbound_rx) = mpsc::channel::<Outbound>(64);
         let (events_tx, _) = broadcast::channel::<Event>(256);
         let next_id = Arc::new(AtomicU64::new(1));
         let pending: Arc<RwLock<HashMap<u64, oneshot::Sender<Result<Value, String>>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
-        // Reader: responses resolve their pending call; events broadcast.
+        // Reader: framed messages resolve their pending call; events broadcast.
         let reader_pending = pending.clone();
         let reader_events = events_tx.clone();
         let reader = tokio::spawn(async move {
-            while let Some(message) = read.next().await {
-                let message = match message {
-                    Ok(message) => message,
-                    Err(error) => {
-                        tracing::warn!(
-                            "browser login: the CDP connection errored: {error}"
-                        );
-                        break;
+            let mut message = message;
+            loop {
+                match read_frame(&mut message).await {
+                    Some(Ok(value)) => {
+                        if let Some(id) = value.get("id").and_then(Value::as_u64) {
+                            if let Some(reply) = reader_pending.write().await.remove(&id) {
+                                let result = if let Some(error) = value.get("error") {
+                                    Err(error
+                                        .get("message")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("CDP error")
+                                        .to_string())
+                                } else {
+                                    Ok(value.get("result").cloned().unwrap_or(Value::Null))
+                                };
+                                let _ = reply.send(result);
+                            }
+                        } else if let Some(method) = value.get("method").and_then(Value::as_str) {
+                            let _ = reader_events.send(Event {
+                                method: method.to_string(),
+                                params: value.get("params").cloned().unwrap_or(Value::Null),
+                                session_id: value
+                                    .get("sessionId")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string),
+                            });
+                        }
                     }
-                };
-                // A Close frame ends the connection — the browser dropped us.
-                // Other non-text frames (the browser's own pings) are noise.
-                if let Message::Close(_) = message {
-                    tracing::warn!("browser login: the login browser closed the CDP connection");
-                    break;
-                }
-                let Message::Text(text) = message else {
-                    continue;
-                };
-                let Ok(value) = serde_json::from_str::<Value>(&text) else {
-                    continue;
-                };
-                if let Some(id) = value.get("id").and_then(Value::as_u64) {
-                    if let Some(reply) = reader_pending.write().await.remove(&id) {
-                        let result = if let Some(error) = value.get("error") {
-                            Err(error
-                                .get("message")
-                                .and_then(Value::as_str)
-                                .unwrap_or("CDP error")
-                                .to_string())
-                        } else {
-                            Ok(value.get("result").cloned().unwrap_or(Value::Null))
-                        };
-                        let _ = reply.send(result);
-                    }
-                } else if let Some(method) = value.get("method").and_then(Value::as_str) {
-                    let _ = reader_events.send(Event {
-                        method: method.to_string(),
-                        params: value.get("params").cloned().unwrap_or(Value::Null),
-                        session_id: value
-                            .get("sessionId")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                    });
+                    // EOF, a truncated frame, or bad JSON: the connection is over.
+                    _ => break,
                 }
             }
-            tracing::warn!("browser login: the CDP connection to the login browser ended");
+            tracing::warn!("browser login: the CDP pipe to the login browser ended");
         });
 
         // Writer: send outbound calls, hold the oneshot by id for the reader.
@@ -124,6 +121,7 @@ impl Cdp {
         // response cannot arrive and be dropped as an unknown id.
         let writer_pending = pending;
         let writer = tokio::spawn(async move {
+            let mut command = command;
             while let Some(outbound) = outbound_rx.recv().await {
                 let mut message = json!({
                     "id": outbound.id,
@@ -138,7 +136,7 @@ impl Cdp {
                     .write()
                     .await
                     .insert(outbound.id, outbound.reply);
-                if write.send(Message::Text(text.into())).await.is_err() {
+                if write_frame(&mut command, text.as_bytes()).await.is_err() {
                     break;
                 }
             }
@@ -204,6 +202,49 @@ impl Cdp {
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
     }
+}
+
+/// Read until `buf` is full, returning `Ok(false)` on a clean EOF before it is
+/// filled (the peer closed the pipe).
+async fn read_full<R: AsyncRead + Unpin>(r: &mut R, buf: &mut [u8]) -> std::io::Result<bool> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match r.read(&mut buf[filled..]).await {
+            Ok(0) => return Ok(false),
+            Ok(n) => filled += n,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(true)
+}
+
+/// Read one length-prefixed CDP frame: `[u32 big-endian len][json]`.
+///
+/// `None` is a clean EOF — the browser closed the pipe. `Some(Err)` is a
+/// truncated/corrupt frame (also terminal for the connection).
+async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> Option<Result<Value, String>> {
+    let mut header = [0u8; 4];
+    match read_full(r, &mut header).await {
+        Ok(false) => return None, // clean EOF
+        Ok(true) => {}
+        Err(e) => return Some(Err(format!("CDP pipe read failed: {e}"))),
+    }
+    let len = u32::from_be_bytes(header) as usize;
+    let mut body = vec![0u8; len];
+    match read_full(r, &mut body).await {
+        Ok(false) => Some(Err("the browser closed the CDP pipe mid-frame".into())),
+        Ok(true) => {
+            Some(serde_json::from_slice(&body).map_err(|e| format!("bad CDP JSON: {e}")))
+        }
+        Err(e) => Some(Err(format!("CDP pipe read failed: {e}"))),
+    }
+}
+
+/// Write one length-prefixed CDP frame: `[u32 big-endian len][payload]`.
+async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, payload: &[u8]) -> std::io::Result<()> {
+    w.write_all(&(payload.len() as u32).to_be_bytes()).await?;
+    w.write_all(payload).await?;
+    w.flush().await
 }
 
 /// Navigate a page target to `url` and wait for it to finish loading.
@@ -276,4 +317,56 @@ pub async fn create_page_session(cdp: &Cdp) -> Result<(String, String), String> 
 /// Close a page target.
 pub async fn close_page_session(cdp: &Cdp, target_id: &str) {
     let _ = cdp.call("Target.closeTarget", json!({ "targetId": target_id })).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The core CDP framing (u32 big-endian length + payload) and a full
+    /// `call` -> framed response -> `call` resolution round-trip over an
+    /// in-memory duplex standing in for the browser's two pipes.
+    #[tokio::test]
+    async fn a_pipe_call_round_trips_through_the_framing() {
+        // Two independent pipes, mirroring the real setup: one for commands
+        // (parent writes, "browser" reads), one for messages (browser writes,
+        // parent reads).
+        let (parent_cmd, browser_cmd) = tokio::io::duplex(4096);
+        let (browser_msg, parent_msg) = tokio::io::duplex(4096);
+        let cdp = Cdp::connect_pipe(parent_cmd, parent_msg)
+            .await
+            .expect("connect_pipe");
+
+        let expected: Value = json!({ "ok": true, "n": 7 });
+        let response_expected = expected.clone();
+        let browser = tokio::spawn(async move {
+            let mut bc = browser_cmd;
+            let mut bm = browser_msg;
+            let request = read_frame(&mut bc)
+                .await
+                .expect("a request frame")
+                .expect("request parse");
+            assert_eq!(request.get("method").and_then(Value::as_str), Some("Test.probe"));
+            let id = request.get("id").and_then(Value::as_u64).unwrap();
+            let response = json!({ "id": id, "result": response_expected });
+            write_frame(&mut bm, &serde_json::to_vec(&response).unwrap())
+                .await
+                .unwrap();
+        });
+
+        let got = cdp.call("Test.probe", json!({ "x": 1 })).await.expect("call");
+        assert_eq!(got, expected);
+        browser.await.unwrap();
+    }
+
+    /// The length prefix is 4-byte big-endian, exactly as Chromium's pipe
+    /// protocol specifies.
+    #[test]
+    fn frames_are_prefixed_with_a_big_endian_length() {
+        let payload: &[u8] = b"{\"id\":1}";
+        let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
+        frame.extend_from_slice(payload);
+        assert_eq!(&frame[0..4], &[0, 0, 0, payload.len() as u8]);
+        assert_eq!(&frame[4..], payload);
+    }
 }

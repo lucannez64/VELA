@@ -59,15 +59,24 @@ pub async fn login(
     site_mode: SiteMode,
     user_verified: bool,
 ) -> Result<LoginOutcome, LoginError> {
-    let browser = host::spawn()
+    let (browser, pipe) = host::spawn()
         .await
         .map_err(|e| LoginError::Http(e.to_string()))?;
-    let ws_url = host::websocket_url(browser.debug_port())
-        .await
-        .map_err(|e| LoginError::Http(e.to_string()))?;
-    let cdp = cdp::Cdp::connect(&ws_url)
-        .await
-        .map_err(|e| LoginError::Http(e.to_string()))?;
+    #[cfg(unix)]
+    let cdp = {
+        // OwnedFd ends of the CDP pipe -> tokio AsyncRead/AsyncWrite.
+        let command = tokio::fs::File::from_std(std::fs::File::from(pipe.command));
+        let message = tokio::fs::File::from_std(std::fs::File::from(pipe.message));
+        cdp::Cdp::connect_pipe(command, message)
+            .await
+            .map_err(|e| LoginError::Http(e.to_string()))?
+    };
+    #[cfg(not(unix))]
+    let cdp = {
+        return Err(LoginError::Http(
+            "the browser-driven login tier is unix-only".to_string(),
+        ));
+    };
 
     let (session, target_id) = cdp::create_page_session(&cdp)
         .await
