@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -85,24 +86,24 @@ pub async fn post_enroll(
     }
 
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT id, user_id, device_name, device_type, last_active,
                 hybrid_ek, hybrid_vk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
          FROM devices
-         WHERE id = $1 AND revoked = FALSE",
-            stoolap::params![enrolling_device_id_str.clone()],
+         WHERE id = ? AND revoked = 0",
+            vec![TursoValue::Text(enrolling_device_id_str.clone())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Unauthorized(DEVICE_AUTH_FAILED.into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let device_a = crate::db::parse_device_row(&row)?;
+    let device_a = rows
+        .first()
+        .map(|r| crate::db::parse_device_row_turso(r))
+        .transpose()?
+        .ok_or_else(|| AppError::Unauthorized(DEVICE_AUTH_FAILED.into()))?;
 
     let challenge_bytes = B64
         .decode(&body.challenge)
@@ -175,22 +176,22 @@ pub async fn post_enroll(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "desktop".to_string());
 
-    state.db.execute(
+    state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
-         VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9)",
-        stoolap::params![
-            new_device_id.to_string(),
-            device_a.user_id.to_string(),
-            device_name,
-            device_type,
-            crate::db::encode_b64(&new_hybrid_ek),
-            crate::db::encode_b64(&new_hybrid_vk_bytes),
-            enrolling_device_id_str,
-            crate::db::encode_b64(&rms_capsule),
-            now,
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+        vec![
+            TursoValue::Text(new_device_id.to_string()),
+            TursoValue::Text(device_a.user_id.to_string()),
+            TursoValue::Text(device_name),
+            TursoValue::Text(device_type),
+            TursoValue::Text(crate::db::encode_b64(&new_hybrid_ek)),
+            TursoValue::Text(crate::db::encode_b64(&new_hybrid_vk_bytes)),
+            TursoValue::Text(enrolling_device_id_str),
+            TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
+            TursoValue::Text(now),
         ],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    ).await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(
         new_device_id = %new_device_id,

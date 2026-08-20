@@ -7,6 +7,7 @@ use crate::{
     error::{AppError, Result},
     middleware::DeviceSession,
     rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -26,24 +27,24 @@ pub async fn post_revoke(
     Json(body): Json<RevokeRequest>,
 ) -> Result<Json<RevokeResponse>> {
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT id, user_id, device_name, device_type, last_active,
                 hybrid_ek, hybrid_vk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
          FROM devices
-         WHERE id = $1",
-            stoolap::params![body.target_device_id.to_string()],
+         WHERE id = ?",
+            vec![TursoValue::Text(body.target_device_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound("device not found".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let target = crate::db::parse_device_row(&row)?;
+    let target = rows
+        .first()
+        .map(|r| crate::db::parse_device_row_turso(r))
+        .transpose()?
+        .ok_or_else(|| AppError::NotFound("device not found".into()))?;
 
     if target.user_id != session.user_id {
         return Err(AppError::Forbidden(
@@ -75,15 +76,16 @@ pub async fn post_revoke(
 
     let now = Utc::now().to_rfc3339();
     state
-        .db
+        .sqldb
         .execute(
-            "UPDATE devices SET revoked = TRUE, revoked_at = $1, revoked_by = $2 WHERE id = $3",
-            stoolap::params![
-                now,
-                session.device_id.to_string(),
-                body.target_device_id.to_string()
+            "UPDATE devices SET revoked = 1, revoked_at = ?, revoked_by = ? WHERE id = ?",
+            vec![
+                TursoValue::Text(now),
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(body.target_device_id.to_string()),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(

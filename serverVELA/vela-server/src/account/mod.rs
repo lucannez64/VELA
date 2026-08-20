@@ -15,6 +15,7 @@ use crate::{
     auth::token::TokenService,
     error::{AppError, Result},
     net, rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -53,17 +54,13 @@ pub async fn post_register(
     // addresses. An operator who set MAX_ACCOUNTS gets a hard ceiling too.
     if let Some(max_accounts) = state.config.max_accounts {
         let rows = state
-            .db
-            .query("SELECT COUNT(*) FROM users", ())
+            .sqldb
+            .query("SELECT COUNT(*) FROM users", vec![])
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let count = rows
-            .into_iter()
-            .next()
-            .transpose()
-            .map_err(|e| AppError::Internal(e.to_string()))?
-            .as_ref()
-            .and_then(|row| crate::db::row_val(row, 0).ok())
-            .and_then(|v| v.as_int64())
+            .first()
+            .and_then(|r| r.i64(0))
             .unwrap_or(0);
         if count as u64 >= max_accounts {
             // Deliberately not "the server is full with N accounts": how many
@@ -98,32 +95,33 @@ pub async fn post_register(
         .unwrap_or_else(|| "desktop".to_string());
 
     state
-        .db
+        .sqldb
         .execute(
-            "INSERT INTO users (id, created_at, share_ek) VALUES ($1, $2, $3)",
-            stoolap::params![
-                user_id.to_string(),
-                now.clone(),
-                share_ek_b64.as_deref().unwrap_or(""),
+            "INSERT INTO users (id, created_at, share_ek) VALUES (?, ?, ?)",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(now.clone()),
+                TursoValue::Text(share_ek_b64.as_deref().unwrap_or("").to_string()),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state.db.execute(
+    state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8)",
-        stoolap::params![
-            device_id.to_string(),
-            user_id.to_string(),
-            device_name,
-            device_type,
-            now.clone(),
-            crate::db::encode_b64(&hybrid_ek),
-            crate::db::encode_b64(&hybrid_vk),
-            now,
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+        vec![
+            TursoValue::Text(device_id.to_string()),
+            TursoValue::Text(user_id.to_string()),
+            TursoValue::Text(device_name),
+            TursoValue::Text(device_type),
+            TursoValue::Text(now.clone()),
+            TursoValue::Text(crate::db::encode_b64(&hybrid_ek)),
+            TursoValue::Text(crate::db::encode_b64(&hybrid_vk)),
+            TursoValue::Text(now),
         ],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    ).await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(user_id = %user_id, device_id = %device_id, "account registered");
 

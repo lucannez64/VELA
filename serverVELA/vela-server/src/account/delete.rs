@@ -4,6 +4,7 @@ use crate::{
     error::{AppError, Result},
     middleware::DeviceSession,
     rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -12,17 +13,16 @@ pub async fn delete_account(
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT id FROM devices WHERE user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "SELECT id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    for row_result in rows {
-        let row = row_result.map_err(|e| AppError::Internal(e.to_string()))?;
-        let v = crate::db::row_val(&row, 0)?;
-        if let Some(id_str) = v.as_str() {
+    for row in &rows {
+        if let Some(id_str) = row.text(0) {
             let _ = rate_limit::revoke_all_device_jtis(&state.store, id_str);
         }
     }
@@ -31,16 +31,15 @@ pub async fn delete_account(
     // for the maximum possible remaining lifetime, drop tracked JTIs, then
     // delete the rows.
     let ws_rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT id FROM web_sessions WHERE user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "SELECT id FROM web_sessions WHERE user_id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    for row_result in ws_rows {
-        let row = row_result.map_err(|e| AppError::Internal(e.to_string()))?;
-        let v = crate::db::row_val(&row, 0)?;
-        if let Some(id_str) = v.as_str() {
+    for row in &ws_rows {
+        if let Some(id_str) = row.text(0) {
             let _ = state.store.set_ex(
                 &format!("device:revoked:{id_str}"),
                 &[1u8],
@@ -51,51 +50,63 @@ pub async fn delete_account(
     }
 
     state
-        .db
+        .sqldb
         .execute(
-            "DELETE FROM web_sessions WHERE user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "DELETE FROM web_sessions WHERE user_id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     state
-        .db
+        .sqldb
         .execute(
-            "DELETE FROM share_inbox WHERE recipient_user_id = $1 OR sender_user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "DELETE FROM share_inbox WHERE recipient_user_id = ? OR sender_user_id = ?",
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     state
-        .db
+        .sqldb
         .execute(
-            "DELETE FROM shared_items WHERE recipient_user_id = $1 OR sender_user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "DELETE FROM shared_items WHERE recipient_user_id = ? OR sender_user_id = ?",
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     state
-        .db
+        .sqldb
         .execute(
-            "DELETE FROM vault_chunks WHERE user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "DELETE FROM vault_chunks WHERE user_id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     state
-        .db
+        .sqldb
         .execute(
-            "DELETE FROM oram_buckets WHERE user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "DELETE FROM oram_buckets WHERE user_id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     state
-        .db
+        .sqldb
         .execute(
-            "DELETE FROM devices WHERE user_id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "DELETE FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Web-session-only accounts legitimately have zero rows in `devices`
@@ -106,12 +117,13 @@ pub async fn delete_account(
     // deleted them. Check the `users` delete's own affected-row count
     // instead, and check it before treating the operation as done — that
     // row is the actual account record.
-    let users_n: i64 = state
-        .db
+    let users_n = state
+        .sqldb
         .execute(
-            "DELETE FROM users WHERE id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "DELETE FROM users WHERE id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     if users_n == 0 {

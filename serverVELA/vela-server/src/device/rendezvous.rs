@@ -52,6 +52,7 @@ use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     net, rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -288,7 +289,7 @@ pub async fn post_complete(
     let rms_capsule = decode_any(&body.rms_capsule, "rms_capsule")?;
     let signature = decode_exact(&body.signature, HYBRID_SIG_LEN, "signature")?;
 
-    let primary_vk = load_primary_vk(&state, &grant)?;
+    let primary_vk = load_primary_vk(&state, &grant).await?;
     super::enroll::verify_enrollment_signature(
         &primary_vk,
         &hybrid_ek,
@@ -308,22 +309,22 @@ pub async fn post_complete(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-    state.db.execute(
+    state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
-         VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9)",
-        stoolap::params![
-            new_device_id.to_string(),
-            grant.user_id.clone(),
-            device_name,
-            device_type,
-            crate::db::encode_b64(&hybrid_ek),
-            crate::db::encode_b64(&hybrid_vk),
-            grant.device_id.clone(),
-            crate::db::encode_b64(&rms_capsule),
-            now,
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+        vec![
+            TursoValue::Text(new_device_id.to_string()),
+            TursoValue::Text(grant.user_id.clone()),
+            TursoValue::Text(device_name),
+            TursoValue::Text(device_type),
+            TursoValue::Text(crate::db::encode_b64(&hybrid_ek)),
+            TursoValue::Text(crate::db::encode_b64(&hybrid_vk)),
+            TursoValue::Text(grant.device_id.clone()),
+            TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
+            TursoValue::Text(now),
         ],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    ).await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Only now that the row exists: the joining device is holding a keypair and
     // waiting to be told which device it became. Written after the insert so a
@@ -471,23 +472,22 @@ fn load_claim(state: &AppState, grant_id: &str) -> Result<Option<Claim>> {
     }
 }
 
-fn load_primary_vk(state: &AppState, grant: &Grant) -> Result<Vec<u8>> {
+async fn load_primary_vk(state: &AppState, grant: &Grant) -> Result<Vec<u8>> {
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT hybrid_vk FROM devices WHERE id = $1 AND user_id = $2 AND revoked = FALSE",
-            stoolap::params![grant.device_id.clone(), grant.user_id.clone()],
+            "SELECT hybrid_vk FROM devices WHERE id = ? AND user_id = ? AND revoked = 0",
+            vec![
+                TursoValue::Text(grant.device_id.clone()),
+                TursoValue::Text(grant.user_id.clone()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let value = crate::db::row_val(&row, 0)?;
-    let vk_b64 = value
-        .as_str()
-        .ok_or_else(|| AppError::Internal("device has no verifying key".into()))?;
+    let vk_b64 = rows
+        .first()
+        .and_then(|r| r.text(0))
+        .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?;
     crate::db::decode_b64(vk_b64)
 }
 
