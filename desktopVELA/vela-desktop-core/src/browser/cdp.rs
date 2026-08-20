@@ -2,9 +2,9 @@
 //! browser-driven login tier.
 //!
 //! The transport is JSON-RPC over the browser's **debugging pipe** (fds 3/4,
-//! `--remote-debugging-pipe`): each message is a 4-byte big-endian length
-//! followed by that many bytes of JSON, in both directions. A reader task
-//! resolves pending `call`s by `id` and broadcasts events. On top of that, the
+//! `--remote-debugging-pipe`): messages are **NUL-byte (`\0`) delimited JSON**,
+//! variable length, in both directions. A reader task buffers incoming bytes,
+//! resolves pending `call`s by `id`, and broadcasts events. On top of that, the
 //! handful of CDP domains the login flow needs are wrapped with typed helpers —
 //! `Target`, `Page`, `Runtime`, `Network`, `Fetch`.
 //!
@@ -77,40 +77,55 @@ impl Cdp {
         let pending: Arc<RwLock<HashMap<u64, oneshot::Sender<Result<Value, String>>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
-        // Reader: framed messages resolve their pending call; events broadcast.
+        // Reader: NUL-delimited JSON frames resolve their pending call; events
+        // broadcast. Chromium's `--remote-debugging-pipe` separates messages
+        // with `\0`, variable length, so we buffer until a NUL is seen.
         let reader_pending = pending.clone();
         let reader_events = events_tx.clone();
         let reader = tokio::spawn(async move {
             let mut message = message;
+            let mut buf: Vec<u8> = Vec::with_capacity(4096);
+            let mut chunk = vec![0u8; 8192];
             loop {
-                match read_frame(&mut message).await {
-                    Some(Ok(value)) => {
-                        if let Some(id) = value.get("id").and_then(Value::as_u64) {
-                            if let Some(reply) = reader_pending.write().await.remove(&id) {
-                                let result = if let Some(error) = value.get("error") {
-                                    Err(error
-                                        .get("message")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("CDP error")
-                                        .to_string())
-                                } else {
-                                    Ok(value.get("result").cloned().unwrap_or(Value::Null))
-                                };
-                                let _ = reply.send(result);
-                            }
-                        } else if let Some(method) = value.get("method").and_then(Value::as_str) {
-                            let _ = reader_events.send(Event {
-                                method: method.to_string(),
-                                params: value.get("params").cloned().unwrap_or(Value::Null),
-                                session_id: value
-                                    .get("sessionId")
+                // Emit any complete (NUL-terminated) frames already buffered.
+                while let Some(pos) = buf.iter().position(|&b| b == 0) {
+                    let payload: Vec<u8> = buf.drain(..=pos).collect();
+                    // `payload` includes the trailing NUL; drop it for JSON.
+                    let json_bytes = &payload[..payload.len() - 1];
+                    let Ok(value) = serde_json::from_slice::<Value>(json_bytes) else {
+                        continue;
+                    };
+                    if let Some(id) = value.get("id").and_then(Value::as_u64) {
+                        if let Some(reply) = reader_pending.write().await.remove(&id) {
+                            let result = if let Some(error) = value.get("error") {
+                                Err(error
+                                    .get("message")
                                     .and_then(Value::as_str)
-                                    .map(str::to_string),
-                            });
+                                    .unwrap_or("CDP error")
+                                    .to_string())
+                            } else {
+                                Ok(value.get("result").cloned().unwrap_or(Value::Null))
+                            };
+                            let _ = reply.send(result);
                         }
+                    } else if let Some(method) = value.get("method").and_then(Value::as_str) {
+                        let _ = reader_events.send(Event {
+                            method: method.to_string(),
+                            params: value.get("params").cloned().unwrap_or(Value::Null),
+                            session_id: value
+                                .get("sessionId")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
+                        });
                     }
-                    // EOF, a truncated frame, or bad JSON: the connection is over.
-                    _ => break,
+                    if buf.is_empty() {
+                        break;
+                    }
+                }
+                match message.read(&mut chunk).await {
+                    Ok(0) => break, // EOF: the browser closed the pipe
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Err(_) => break,
                 }
             }
             tracing::warn!("browser login: the CDP pipe to the login browser ended");
@@ -204,46 +219,36 @@ impl Cdp {
     }
 }
 
-/// Read until `buf` is full, returning `Ok(false)` on a clean EOF before it is
-/// filled (the peer closed the pipe).
-async fn read_full<R: AsyncRead + Unpin>(r: &mut R, buf: &mut [u8]) -> std::io::Result<bool> {
-    let mut filled = 0;
-    while filled < buf.len() {
-        match r.read(&mut buf[filled..]).await {
-            Ok(0) => return Ok(false),
-            Ok(n) => filled += n,
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(true)
-}
-
-/// Read one length-prefixed CDP frame: `[u32 big-endian len][json]`.
-///
-/// `None` is a clean EOF — the browser closed the pipe. `Some(Err)` is a
-/// truncated/corrupt frame (also terminal for the connection).
+/// Read one NUL-delimited CDP frame (a JSON value up to `\0`), or `None` on a
+/// clean EOF. Used by tests to simulate the browser end; the live reader loop
+/// buffers across reads instead.
 async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> Option<Result<Value, String>> {
-    let mut header = [0u8; 4];
-    match read_full(r, &mut header).await {
-        Ok(false) => return None, // clean EOF
-        Ok(true) => {}
-        Err(e) => return Some(Err(format!("CDP pipe read failed: {e}"))),
-    }
-    let len = u32::from_be_bytes(header) as usize;
-    let mut body = vec![0u8; len];
-    match read_full(r, &mut body).await {
-        Ok(false) => Some(Err("the browser closed the CDP pipe mid-frame".into())),
-        Ok(true) => {
-            Some(serde_json::from_slice(&body).map_err(|e| format!("bad CDP JSON: {e}")))
+    let mut buf: Vec<u8> = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match r.read(&mut byte).await {
+            Ok(0) => {
+                return if buf.is_empty() { None } else { Some(Err("the browser closed the CDP pipe mid-frame".into())) };
+            }
+            Ok(_) => {
+                if byte[0] == 0 {
+                    let Ok(value) = serde_json::from_slice::<Value>(&buf) else {
+                        return Some(Err("bad CDP JSON".into()));
+                    };
+                    return Some(Ok(value));
+                }
+                buf.push(byte[0]);
+            }
+            Err(e) => return Some(Err(format!("CDP pipe read failed: {e}"))),
         }
-        Err(e) => Some(Err(format!("CDP pipe read failed: {e}"))),
     }
 }
 
-/// Write one length-prefixed CDP frame: `[u32 big-endian len][payload]`.
+/// Write one NUL-delimited CDP frame: the JSON payload followed by `\0`.
+/// Chromium's `--remote-debugging-pipe` uses `\0`-delimited messages.
 async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, payload: &[u8]) -> std::io::Result<()> {
-    w.write_all(&(payload.len() as u32).to_be_bytes()).await?;
     w.write_all(payload).await?;
+    w.write_all(&[0u8]).await?;
     w.flush().await
 }
 
@@ -359,14 +364,14 @@ mod tests {
         browser.await.unwrap();
     }
 
-    /// The length prefix is 4-byte big-endian, exactly as Chromium's pipe
-    /// protocol specifies.
+    /// The framing is NUL-delimited JSON (`payload` then `\0`), exactly as
+    /// Chromium's `--remote-debugging-pipe` separates messages.
     #[test]
-    fn frames_are_prefixed_with_a_big_endian_length() {
+    fn frames_are_nul_delimited_json() {
         let payload: &[u8] = b"{\"id\":1}";
-        let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
-        frame.extend_from_slice(payload);
-        assert_eq!(&frame[0..4], &[0, 0, 0, payload.len() as u8]);
-        assert_eq!(&frame[4..], payload);
+        // The helper appends the delimiter; what goes on the wire is `payload\0`.
+        let wire = [payload, &[0u8]].concat();
+        assert_eq!(wire[..payload.len()], *payload);
+        assert_eq!(wire[payload.len()], 0u8);
     }
 }

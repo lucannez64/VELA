@@ -26,8 +26,8 @@ use std::os::unix::io::AsRawFd;
 ///
 /// Chromium's `--remote-debugging-pipe` reads commands from **fd 3** and writes
 /// messages to **fd 4**; the parent holds the write end of the command pipe and
-/// the read end of the message pipe. Both are length-prefixed (u32 big-endian +
-/// JSON) in each direction; see the CDP client in `cdp.rs`.
+/// the read end of the message pipe. Both directions carry **NUL-delimited
+/// JSON** (a JSON value followed by `\0`); see the CDP client in `cdp.rs`.
 #[cfg(unix)]
 #[derive(Debug)]
 pub struct PipeIo {
