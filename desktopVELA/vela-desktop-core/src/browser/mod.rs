@@ -13,6 +13,7 @@
 
 pub mod cdp;
 pub mod fill;
+pub mod firefox;
 pub mod harvest;
 pub mod host;
 pub mod intercept;

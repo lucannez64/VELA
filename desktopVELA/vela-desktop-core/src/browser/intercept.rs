@@ -229,6 +229,11 @@ const CREDENTIAL_ALLOWLIST: &[&str] = &[
     "securetoken.googleapis.com",
 ];
 
+/// Wire-format allowlist the Firefox driver shares: a credential request aimed
+/// at a well-known identity provider may proceed (the page legitimately
+/// authenticates through it).
+pub(crate) const CREDENTIAL_ALLOWLIST_PUB: &[&str] = CREDENTIAL_ALLOWLIST;
+
 /// What to do with one paused request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PausedAction {
