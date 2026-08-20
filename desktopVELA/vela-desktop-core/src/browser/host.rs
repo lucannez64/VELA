@@ -60,10 +60,21 @@ fn candidates() -> Vec<PathBuf> {
         for name in [
             "google-chrome",
             "google-chrome-stable",
+            "google-chrome-beta",
+            "google-chrome-unstable",
             "chromium",
             "chromium-browser",
             "microsoft-edge",
             "microsoft-edge-stable",
+            "microsoft-edge-beta",
+            "microsoft-edge-dev",
+            "brave-browser",
+            "brave",
+            "thorium-browser",
+            "helium",
+            "vivaldi-stable",
+            "opera",
+            "ungoogled-chromium",
         ] {
             if let Some(path) = which(name) {
                 out.push(path);
@@ -76,6 +87,9 @@ fn candidates() -> Vec<PathBuf> {
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+            "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
+            "/Applications/Opera.app/Contents/MacOS/Opera",
         ] {
             let path = PathBuf::from(name);
             if path.exists() {
