@@ -25,6 +25,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
@@ -33,6 +34,7 @@ use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     net, rate_limit,
+    sqldb::{Db as _, TursoDb, TursoValue},
     state::AppState,
 };
 
@@ -132,21 +134,22 @@ pub async fn post_start(
     let id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     state
-        .db
+        .sqldb
         .execute(
             "INSERT INTO web_sessions
                 (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
-             VALUES ($1, NULL, $2, $3, $4, $5, $6, NULL, 'pending', NULL, NULL, $7, NULL)",
-            stoolap::params![
-                id.to_string(),
-                body.approver_user_id.to_string(),
-                body.poll_secret_hash,
-                body.ephemeral_pk,
-                body.web_vk.as_deref().unwrap_or(""), // empty = no RW signing key
-                body.link_nonce,
-                now,
+             VALUES (?, NULL, ?, ?, ?, ?, ?, NULL, 'pending', NULL, NULL, ?, NULL)",
+            vec![
+                TursoValue::Text(id.to_string()),
+                TursoValue::Text(body.approver_user_id.to_string()),
+                TursoValue::Text(body.poll_secret_hash),
+                TursoValue::Text(body.ephemeral_pk),
+                TursoValue::Text(body.web_vk.as_deref().unwrap_or("").to_string()), // empty = no RW signing key
+                TursoValue::Text(body.link_nonce),
+                TursoValue::Text(now),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(session_id = %id, "web session started (pending)");
@@ -183,47 +186,34 @@ struct SessionRow {
     expires_at: Option<DateTime<Utc>>,
 }
 
-fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
+async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at,
                     approver_user_id, poll_secret_hash
-             FROM web_sessions WHERE id = $1",
-            stoolap::params![id.to_string()],
+             FROM web_sessions WHERE id = ?",
+            vec![TursoValue::Text(id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound("web session not found".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .first()
+        .ok_or_else(|| AppError::NotFound("web session not found".into()))?;
 
-    let user_id = crate::db::row_val(&row, 0)?
-        .as_str()
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let web_vk = crate::db::row_val(&row, 1)?
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    let link_nonce = crate::db::row_val(&row, 2)?
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    let mode = crate::db::row_val(&row, 3)?.as_str().map(|s| s.to_string());
-    let status = crate::db::row_val(&row, 4)?
-        .as_str()
-        .map(|s| s.to_string())
+    let text = |i: usize| row.text(i).filter(|s| !s.is_empty());
+    let user_id = row.uuid(0);
+    let web_vk = text(1).map(String::from);
+    let link_nonce = text(2).map(String::from);
+    let mode = row.text(3).map(String::from);
+    let status = row
+        .text(4)
+        .map(String::from)
         .ok_or_else(|| AppError::Internal("status missing".into()))?;
-    let capsule = crate::db::row_val(&row, 5)?.as_str().map(|s| s.to_string());
-    let expires_at = crate::db::row_val(&row, 6)?.as_timestamp();
-    let approver_user_id = crate::db::row_val(&row, 7)?
-        .as_str()
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let poll_secret_hash = crate::db::row_val(&row, 8)?
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+    let capsule = row.text(5).map(String::from);
+    let expires_at = row.timestamp(6);
+    let approver_user_id = row.uuid(7);
+    let poll_secret_hash = text(8).map(String::from);
 
     Ok(SessionRow {
         user_id,
@@ -282,7 +272,7 @@ pub async fn get_session(
 
     // A missing session and a wrong secret must be indistinguishable, or the
     // 404 itself confirms that a `session_id` is live.
-    let session = match load_session(&state, id) {
+    let session = match load_session(&state, id).await {
         Ok(session) => session,
         Err(AppError::NotFound(_)) => {
             return Err(AppError::Unauthorized("web session not found".into()))
@@ -331,11 +321,12 @@ pub async fn get_session(
         None => None,
         Some(capsule) => {
             let cleared = state
-                .db
+                .sqldb
                 .execute(
-                    "UPDATE web_sessions SET capsule = NULL WHERE id = $1 AND capsule IS NOT NULL",
-                    stoolap::params![id.to_string()],
+                    "UPDATE web_sessions SET capsule = NULL WHERE id = ? AND capsule IS NOT NULL",
+                    vec![TursoValue::Text(id.to_string())],
                 )
+                .await
                 .map_err(|e| AppError::Internal(format!("capsule clear failed: {e}")))?;
             if cleared < 1 {
                 // Someone else took it in the meantime. Report the session as
@@ -382,32 +373,27 @@ pub async fn get_keys(
     rate_limit::web_session_keys_by_user(&state.store, &session.user_id.to_string())?;
 
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT ephemeral_pk, web_vk, status FROM web_sessions
-             WHERE id = $1 AND approver_user_id = $2",
-            stoolap::params![id.to_string(), session.user_id.to_string()],
+             WHERE id = ? AND approver_user_id = ?",
+            vec![
+                TursoValue::Text(id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound("web session not found".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .first()
+        .ok_or_else(|| AppError::NotFound("web session not found".into()))?;
 
-    let ephemeral_pk = crate::db::row_val(&row, 0)?
-        .as_str()
-        .map(|s| s.to_string())
+    let ephemeral_pk = row
+        .text(0)
+        .map(String::from)
         .ok_or_else(|| AppError::Internal("ephemeral_pk missing".into()))?;
-    let web_vk = crate::db::row_val(&row, 1)?
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-    let status = crate::db::row_val(&row, 2)?
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let web_vk = row.text(1).unwrap_or_default().to_string();
+    let status = row.text(2).unwrap_or_default().to_string();
     if status != "pending" {
         return Err(AppError::Conflict(
             "web session is no longer pending".into(),
@@ -462,7 +448,7 @@ pub async fn post_grant(
         )));
     }
 
-    let existing = load_session(&state, id)?;
+    let existing = load_session(&state, id).await?;
     if existing.status != "pending" {
         return Err(AppError::Conflict(
             "web session is not pending (already granted or revoked)".into(),
@@ -510,25 +496,26 @@ pub async fn post_grant(
     let ttl = clamp_ttl(body.ttl_secs);
     let expires_at = Utc::now() + chrono::Duration::seconds(ttl);
 
-    let n: i64 = state
-        .db
+    let n = state
+        .sqldb
         .execute(
             // `approver_user_id` is re-checked here so the binding also holds
             // against a concurrent grant, not just the read above.
             "UPDATE web_sessions
-             SET user_id = $1, mode = $2, status = 'granted', capsule = $3,
-                 approved_by = $4, expires_at = $5
-             WHERE id = $6 AND status = 'pending' AND approver_user_id = $7",
-            stoolap::params![
-                session.user_id.to_string(),
-                mode,
-                body.capsule,
-                session.device_id.to_string(),
-                expires_at.to_rfc3339(),
-                id.to_string(),
-                session.user_id.to_string(),
+             SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
+                 approved_by = ?, expires_at = ?
+             WHERE id = ? AND status = 'pending' AND approver_user_id = ?",
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(mode.to_string()),
+                TursoValue::Text(body.capsule),
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(expires_at.to_rfc3339()),
+                TursoValue::Text(id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     if n == 0 {
         return Err(AppError::Conflict("web session was not pending".into()));
@@ -579,7 +566,7 @@ pub async fn post_token(
     let backoff_scope = format!("websession:token:{ip}:{id}");
     rate_limit::check_backoff(&state.store, &backoff_scope)?;
 
-    let session = load_session(&state, id)?;
+    let session = load_session(&state, id).await?;
     if session.status != "granted" {
         return Err(AppError::Unauthorized("web session is not active".into()));
     }
@@ -651,7 +638,7 @@ pub async fn delete_session(
     Path(id): Path<Uuid>,
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let existing = load_session(&state, id)?;
+    let existing = load_session(&state, id).await?;
     // Only the owner may revoke: the granting user for a granted session, or the
     // committed approver for one still pending (declining the request).
     let owner = existing.user_id.or(existing.approver_user_id);
@@ -660,11 +647,12 @@ pub async fn delete_session(
     }
 
     state
-        .db
+        .sqldb
         .execute(
-            "UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = $1",
-            stoolap::params![id.to_string()],
+            "UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?",
+            vec![TursoValue::Text(id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Reject any already-issued RW token (device_id == session_id) for up to the
@@ -703,38 +691,26 @@ pub async fn get_sessions_list(
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<SessionsListResponse>)> {
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT id, mode, status, created_at, expires_at
              FROM web_sessions
-             WHERE user_id = $1 AND status = 'granted'
+             WHERE user_id = ? AND status = 'granted'
              ORDER BY created_at DESC
              LIMIT 1000",
-            stoolap::params![session.user_id.to_string()],
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let now = Utc::now();
     let mut sessions = Vec::new();
-    for row in rows {
-        let row = row.map_err(|e| AppError::Internal(e.to_string()))?;
-        let id = crate::db::row_val(&row, 0)?
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let mode = crate::db::row_val(&row, 1)?
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let status = crate::db::row_val(&row, 2)?
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let created_at = crate::db::row_val(&row, 3)?
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let expires_at = crate::db::row_val(&row, 4)?.as_timestamp();
+    for row in &rows {
+        let id = row.text(0).map(String::from).unwrap_or_default();
+        let mode = row.text(1).map(String::from).unwrap_or_default();
+        let status = row.text(2).map(String::from).unwrap_or_default();
+        let created_at = row.text(3).map(String::from).unwrap_or_default();
+        let expires_at = row.timestamp(4);
 
         // Skip expired sessions (cleanup task handles deletion asynchronously).
         if expires_at.map(|e| now > e).unwrap_or(false) {
@@ -759,7 +735,7 @@ pub async fn get_sessions_list(
 
 /// Periodically prune revoked sessions, granted sessions past their expiry, and
 /// pending sessions that were never granted.
-pub async fn cleanup_task(db: stoolap::Database) {
+pub async fn cleanup_task(db: Arc<TursoDb>) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10 * 60));
     loop {
         interval.tick().await;
@@ -767,20 +743,26 @@ pub async fn cleanup_task(db: stoolap::Database) {
         let pending_cutoff = (now - chrono::Duration::seconds(PENDING_TTL_SECS)).to_rfc3339();
         let now_str = now.to_rfc3339();
 
-        let revoked = db.execute("DELETE FROM web_sessions WHERE status = 'revoked'", ());
-        let expired = db.execute(
-            "DELETE FROM web_sessions WHERE expires_at IS NOT NULL AND expires_at < $1",
-            stoolap::params![now_str],
-        );
-        let stale_pending = db.execute(
-            "DELETE FROM web_sessions WHERE status = 'pending' AND created_at < $1",
-            stoolap::params![pending_cutoff],
-        );
+        let revoked = db
+            .execute("DELETE FROM web_sessions WHERE status = 'revoked'", vec![])
+            .await;
+        let expired = db
+            .execute(
+                "DELETE FROM web_sessions WHERE expires_at IS NOT NULL AND expires_at < ?",
+                vec![TursoValue::Text(now_str)],
+            )
+            .await;
+        let stale_pending = db
+            .execute(
+                "DELETE FROM web_sessions WHERE status = 'pending' AND created_at < ?",
+                vec![TursoValue::Text(pending_cutoff)],
+            )
+            .await;
 
         let n = [revoked, expired, stale_pending]
             .into_iter()
             .filter_map(|r| r.ok())
-            .sum::<i64>();
+            .sum::<u64>();
         if n > 0 {
             tracing::info!(purged = n, "web session cleanup");
         }

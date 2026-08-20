@@ -240,9 +240,9 @@ async fn serve() -> anyhow::Result<()> {
         });
     }
     {
-        let bg_db = state.db().clone();
+        let bg_sqldb = state.sqldb.clone();
         tokio::spawn(async move {
-            vela_server::web_session::cleanup_task(bg_db).await;
+            vela_server::web_session::cleanup_task(bg_sqldb).await;
         });
     }
     {

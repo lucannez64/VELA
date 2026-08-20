@@ -21,6 +21,7 @@ use crate::{
     auth::token::{TokenScope, TokenService},
     error::AppError,
     rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -88,14 +89,14 @@ impl FromRequestParts<AppState> for AuthSession {
         // devices row, so device-revocation alone cannot kill them when the
         // account is deleted. One indexed lookup per request closes that gap.
         let user_exists = state
-            .db
+            .sqldb
             .query(
-                "SELECT 1 FROM users WHERE id = $1",
-                stoolap::params![claims.user_id.to_string()],
+                "SELECT 1 FROM users WHERE id = ?",
+                vec![TursoValue::Text(claims.user_id.to_string())],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?
-            .into_iter()
-            .next()
+            .first()
             .is_some();
         if !user_exists {
             return Err(AppError::Unauthorized("account no longer exists".into()));
