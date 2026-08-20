@@ -4,6 +4,7 @@ pub mod sync;
 
 use crate::{
     error::{AppError, Result},
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -25,22 +26,21 @@ pub fn max_user_storage_bytes() -> u64 {
 
 /// Current on-disk payload usage for `user_id` across vault chunks and ORAM
 /// buckets (base64-encoded ciphertext length, as stored).
-fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
+async fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
     let mut total: u64 = 0;
     for table in ["vault_chunks", "oram_buckets"] {
         let rows = state
-            .db
+            .sqldb
             .query(
                 &format!(
-                    "SELECT COALESCE(SUM(LENGTH(ciphertext)), 0) FROM {table} WHERE user_id = $1"
+                    "SELECT COALESCE(SUM(LENGTH(ciphertext)), 0) FROM {table} WHERE user_id = ?"
                 ),
-                stoolap::params![user_id],
+                vec![TursoValue::Text(user_id.to_string())],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        if let Some(row) = rows.into_iter().next() {
-            let row = row.map_err(|e| AppError::Internal(e.to_string()))?;
-            let v = crate::db::row_val(&row, 0)?;
-            total = total.saturating_add(v.as_int64().unwrap_or(0).max(0) as u64);
+        if let Some(row) = rows.first() {
+            total = total.saturating_add(row.i64(0).unwrap_or(0).max(0) as u64);
         }
     }
     Ok(total)
@@ -48,9 +48,9 @@ fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
 
 /// Reject with 413 when `incoming` additional bytes would push the user past
 /// their storage quota.
-pub fn enforce_storage_quota(state: &AppState, user_id: &str, incoming: u64) -> Result<()> {
+pub async fn enforce_storage_quota(state: &AppState, user_id: &str, incoming: u64) -> Result<()> {
     let quota = max_user_storage_bytes();
-    let usage = current_usage_bytes(state, user_id)?;
+    let usage = current_usage_bytes(state, user_id).await?;
     if usage.saturating_add(incoming) > quota {
         return Err(AppError::PayloadTooLarge(format!(
             "storage quota of {quota} bytes exceeded (used {usage}, requested {incoming})"

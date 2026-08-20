@@ -585,6 +585,50 @@ pub fn parse_device_row_turso(row: &crate::sqldb::VelaRow) -> Result<DeviceRow, 
 }
 
 
+/// Parse a `vault_chunks` row buffered from turso (migration target).
+pub fn parse_chunk_row_turso(row: &crate::sqldb::VelaRow) -> Result<ChunkRow, AppError> {
+    let text = |i: usize| {
+        row.text(i)
+            .map(String::from)
+            .ok_or_else(|| AppError::Internal("missing cell".into()))
+    };
+    let uuid = |i: usize| {
+        row.uuid(i)
+            .ok_or_else(|| AppError::Internal("missing/malformed uuid".into()))
+    };
+    Ok(ChunkRow {
+        chunk_id: text(0)?,
+        user_id: uuid(1)?,
+        version: row
+            .i64(2)
+            .ok_or_else(|| AppError::Internal("missing version".into()))?,
+        lamport_clock: row
+            .i64(3)
+            .ok_or_else(|| AppError::Internal("missing lamport_clock".into()))?,
+        last_writer: row.uuid(4),
+        ciphertext: B64
+            .decode(text(5)?)
+            .map_err(|e| AppError::Internal(format!("ciphertext decode: {e}")))?,
+    })
+}
+
+/// Parse a `vault_chunks` manifest row buffered from turso (migration target).
+pub fn parse_chunk_manifest_row_turso(row: &crate::sqldb::VelaRow) -> Result<ChunkManifestRow, AppError> {
+    Ok(ChunkManifestRow {
+        chunk_id: row
+            .text(0)
+            .map(String::from)
+            .ok_or_else(|| AppError::Internal("missing chunk_id".into()))?,
+        version: row
+            .i64(1)
+            .ok_or_else(|| AppError::Internal("missing version".into()))?,
+        lamport_clock: row
+            .i64(2)
+            .ok_or_else(|| AppError::Internal("missing lamport_clock".into()))?,
+        last_writer: row.uuid(3),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

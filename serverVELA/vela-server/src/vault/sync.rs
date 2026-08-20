@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -26,20 +27,21 @@ pub async fn get_sync(
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<SyncManifest>)> {
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT chunk_id, version, lamport_clock, last_writer
          FROM vault_chunks
-         WHERE user_id = $1
+         WHERE user_id = ?
          ORDER BY chunk_id",
-            stoolap::params![session.user_id.to_string()],
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let chunks: Vec<ChunkMeta> = rows
-        .map(|r| {
-            let row = r.map_err(|e| AppError::Internal(e.to_string()))?;
-            let m = crate::db::parse_chunk_manifest_row(&row)?;
+        .iter()
+        .map(|row| {
+            let m = crate::db::parse_chunk_manifest_row_turso(row)?;
             Ok(ChunkMeta {
                 chunk_id: m.chunk_id,
                 version: m.version,

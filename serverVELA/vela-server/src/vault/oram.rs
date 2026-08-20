@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -75,44 +76,31 @@ pub async fn get_path(
 
     for bucket_index in indices {
         let rows = state
-            .db
+            .sqldb
             .query(
                 "SELECT version, lamport_clock, last_writer, ciphertext
              FROM oram_buckets
-             WHERE user_id = $1 AND tree_id = $2 AND bucket_index = $3",
-                stoolap::params![
-                    session.user_id.to_string(),
-                    tree_id.clone(),
-                    bucket_index as i64,
+             WHERE user_id = ? AND tree_id = ? AND bucket_index = ?",
+                vec![
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Text(tree_id.clone()),
+                    TursoValue::Integer(bucket_index as i64),
                 ],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        if let Some(row) = rows.into_iter().next() {
-            let row = row.map_err(|e| AppError::Internal(e.to_string()))?;
-            let version = crate::db::row_val(&row, 0)?
-                .as_int64()
+        if let Some(row) = rows.first() {
+            let version = row
+                .i64(0)
                 .ok_or_else(|| AppError::Internal("expected integer".into()))?;
-            let lamport_clock = crate::db::row_val(&row, 1)?
-                .as_int64()
+            let lamport_clock = row
+                .i64(1)
                 .ok_or_else(|| AppError::Internal("expected integer".into()))?;
-            let last_writer = {
-                let v = crate::db::row_val(&row, 2)?;
-                if v.is_null() {
-                    None
-                } else {
-                    Some(
-                        Uuid::parse_str(
-                            v.as_str()
-                                .ok_or_else(|| AppError::Internal("expected text uuid".into()))?,
-                        )
-                        .map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?,
-                    )
-                }
-            };
-            let ciphertext = crate::db::row_val(&row, 3)?
-                .as_str()
-                .map(|s| s.to_string())
+            let last_writer = row.uuid(2);
+            let ciphertext = row
+                .text(3)
+                .map(String::from)
                 .ok_or_else(|| AppError::Internal("expected ciphertext".into()))?;
             buckets.push(OramBucket {
                 bucket_index,
@@ -179,7 +167,7 @@ pub async fn put_path(
         .iter()
         .map(|b| b.ciphertext.len() as u64)
         .sum();
-    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), incoming)?;
+    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), incoming).await?;
 
     for bucket in body.buckets {
         let ciphertext = B64
@@ -196,66 +184,68 @@ pub async fn put_path(
             .map_err(|_| AppError::BadRequest("bucket index too large".into()))?;
         let version = if bucket.if_match == 0 {
             let existing = state
-                .db
+                .sqldb
                 .query(
                     "SELECT 1 FROM oram_buckets
-                 WHERE user_id = $1 AND tree_id = $2 AND bucket_index = $3",
-                    stoolap::params![
-                        session.user_id.to_string(),
-                        tree_id.clone(),
-                        bucket_index_i64,
+                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ?",
+                    vec![
+                        TursoValue::Text(session.user_id.to_string()),
+                        TursoValue::Text(tree_id.clone()),
+                        TursoValue::Integer(bucket_index_i64),
                     ],
                 )
+                .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
 
-            if existing.into_iter().next().is_some() {
+            if existing.first().is_some() {
                 return Err(AppError::Conflict(format!(
                     "ORAM bucket {} already exists",
                     bucket.bucket_index
                 )));
             }
 
-            state.db.execute(
+            state.sqldb.execute(
                 "INSERT INTO oram_buckets
                  (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, created_at, updated_at)
-                 VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8)",
-                stoolap::params![
-                    session.user_id.to_string(),
-                    tree_id.clone(),
-                    bucket_index_i64,
-                    bucket.lamport_clock,
-                    session.device_id.to_string(),
-                    crate::db::encode_b64(&ciphertext),
-                    now.clone(),
-                    now.clone(),
+                 VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+                vec![
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Text(tree_id.clone()),
+                    TursoValue::Integer(bucket_index_i64),
+                    TursoValue::Integer(bucket.lamport_clock),
+                    TursoValue::Text(session.device_id.to_string()),
+                    TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                    TursoValue::Text(now.clone()),
+                    TursoValue::Text(now.clone()),
                 ],
-            ).map_err(|e| AppError::Internal(e.to_string()))?;
+            ).await.map_err(|e| AppError::Internal(e.to_string()))?;
             1
         } else {
-            let n: i64 = state
-                .db
+            let n = state
+                .sqldb
                 .execute(
                     "UPDATE oram_buckets
                  SET version = version + 1,
-                     lamport_clock = $1,
-                     last_writer = $2,
-                     ciphertext = $3,
-                     updated_at = $4
-                 WHERE user_id = $5
-                   AND tree_id = $6
-                   AND bucket_index = $7
-                   AND version = $8",
-                    stoolap::params![
-                        bucket.lamport_clock,
-                        session.device_id.to_string(),
-                        crate::db::encode_b64(&ciphertext),
-                        now.clone(),
-                        session.user_id.to_string(),
-                        tree_id.clone(),
-                        bucket_index_i64,
-                        bucket.if_match,
+                     lamport_clock = ?,
+                     last_writer = ?,
+                     ciphertext = ?,
+                     updated_at = ?
+                 WHERE user_id = ?
+                   AND tree_id = ?
+                   AND bucket_index = ?
+                   AND version = ?",
+                    vec![
+                        TursoValue::Integer(bucket.lamport_clock),
+                        TursoValue::Text(session.device_id.to_string()),
+                        TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                        TursoValue::Text(now.clone()),
+                        TursoValue::Text(session.user_id.to_string()),
+                        TursoValue::Text(tree_id.clone()),
+                        TursoValue::Integer(bucket_index_i64),
+                        TursoValue::Integer(bucket.if_match),
                     ],
                 )
+                .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
 
             if n == 0 {

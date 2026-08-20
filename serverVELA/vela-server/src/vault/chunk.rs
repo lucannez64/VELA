@@ -10,6 +10,7 @@ use chrono::Utc;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -20,21 +21,24 @@ pub async fn get_chunk(
 ) -> Result<impl IntoResponse> {
     let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT chunk_id, user_id, version, lamport_clock, last_writer, ciphertext
          FROM vault_chunks
-         WHERE chunk_id = $1 AND user_id = $2",
-            stoolap::params![id.to_string(), session.user_id.to_string()],
+         WHERE chunk_id = ? AND user_id = ?",
+            vec![
+                TursoValue::Text(id.clone()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound(format!("chunk {id} not found")))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let chunk = crate::db::parse_chunk_row(&row)?;
+    let chunk = rows
+        .first()
+        .map(|r| crate::db::parse_chunk_row_turso(r))
+        .transpose()?
+        .ok_or_else(|| AppError::NotFound(format!("chunk {id} not found")))?;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -87,46 +91,50 @@ pub async fn put_chunk(
         .ok_or_else(|| AppError::BadRequest("X-Lamport-Clock header is required".into()))?;
 
     let ciphertext = body.to_vec();
-    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), body.len() as u64)?;
+    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), body.len() as u64).await?;
     let now = Utc::now().to_rfc3339();
 
     if if_match == 0 {
         let existing = state
-            .db
+            .sqldb
             .query(
-                "SELECT 1 FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
-                stoolap::params![id.to_string(), session.user_id.to_string()],
+                "SELECT 1 FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+                vec![
+                    TursoValue::Text(id.clone()),
+                    TursoValue::Text(session.user_id.to_string()),
+                ],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        if existing.into_iter().next().is_some() {
+        if existing.first().is_some() {
             return Err(AppError::Conflict(
                 "chunk already exists; use If-Match with current version to update".into(),
             ));
         }
 
-        state.db.execute(
+        state.sqldb.execute(
             "INSERT INTO vault_chunks
              (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, created_at, updated_at)
-             VALUES ($1, $2, 1, $3, $4, $5, $6, $7)",
-            stoolap::params![
-                id.to_string(),
-                session.user_id.to_string(),
-                lamport_clock,
-                session.device_id.to_string(),
-                crate::db::encode_b64(&ciphertext),
-                now.clone(),
-                now,
+             VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
+            vec![
+                TursoValue::Text(id.clone()),
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(lamport_clock),
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                TursoValue::Text(now.clone()),
+                TursoValue::Text(now),
             ],
-        ).map_err(|e| {
+        ).await.map_err(|e| {
             // A concurrent If-Match:0 request can win the race between the
             // "does it exist" check above and this INSERT; the unique index
             // then reports it as a constraint violation instead of a plain
             // error. Surface that as the same 409 the pre-check gives, not 500.
-            if matches!(
-                e,
-                stoolap::Error::UniqueConstraint { .. } | stoolap::Error::PrimaryKeyConstraint { .. }
-            ) {
+            if e.to_string().to_lowercase().contains("constraint")
+                || e.to_string().to_lowercase().contains("unique")
+                || e.to_string().to_lowercase().contains("duplicate")
+            {
                 AppError::Conflict(
                     "chunk already exists; use If-Match with current version to update".into(),
                 )
@@ -135,28 +143,29 @@ pub async fn put_chunk(
             }
         })?;
     } else {
-        let n: i64 = state
-            .db
+        let n = state
+            .sqldb
             .execute(
                 "UPDATE vault_chunks
              SET version       = version + 1,
-                 lamport_clock = $1,
-                 last_writer   = $2,
-                 ciphertext    = $3,
-                 updated_at    = $4
-             WHERE chunk_id = $5
-               AND user_id  = $6
-               AND version  = $7",
-                stoolap::params![
-                    lamport_clock,
-                    session.device_id.to_string(),
-                    crate::db::encode_b64(&ciphertext),
-                    now,
-                    id.to_string(),
-                    session.user_id.to_string(),
-                    if_match,
+                 lamport_clock = ?,
+                 last_writer   = ?,
+                 ciphertext    = ?,
+                 updated_at    = ?
+             WHERE chunk_id = ?
+               AND user_id  = ?
+               AND version  = ?",
+                vec![
+                    TursoValue::Integer(lamport_clock),
+                    TursoValue::Text(session.device_id.to_string()),
+                    TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                    TursoValue::Text(now),
+                    TursoValue::Text(id.clone()),
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Integer(if_match),
                 ],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
         if n == 0 {
@@ -167,22 +176,21 @@ pub async fn put_chunk(
     }
 
     let ver_rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT version FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
-            stoolap::params![id.to_string(), session.user_id.to_string()],
+            "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+            vec![
+                TursoValue::Text(id.clone()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let ver_row = ver_rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Internal("failed to read new version".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let v = crate::db::row_val(&ver_row, 0)?;
-    let new_version: i64 = v
-        .as_int64()
-        .ok_or_else(|| AppError::Internal("expected integer".into()))?;
+    let new_version: i64 = ver_rows
+        .first()
+        .and_then(|r| r.i64(0))
+        .ok_or_else(|| AppError::Internal("failed to read new version".into()))?;
 
     let mut resp_headers = HeaderMap::new();
     maybe_append_new_token(&mut resp_headers, &session);
@@ -210,22 +218,21 @@ pub async fn delete_chunk(
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT version FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
-            stoolap::params![id.to_string(), session.user_id.to_string()],
+            "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+            vec![
+                TursoValue::Text(id.clone()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = match rows.into_iter().next() {
-        Some(r) => r.map_err(|e| AppError::Internal(e.to_string()))?,
-        None => return Err(AppError::NotFound(format!("chunk {id} not found"))),
-    };
-
-    let v = crate::db::row_val(&row, 0)?;
-    let current_version: i64 = v
-        .as_int64()
-        .ok_or_else(|| AppError::Internal("expected integer".into()))?;
+    let current_version: i64 = rows
+        .first()
+        .and_then(|r| r.i64(0))
+        .ok_or_else(|| AppError::NotFound(format!("chunk {id} not found")))?;
 
     if current_version != if_match {
         return Err(AppError::Conflict(
@@ -234,11 +241,15 @@ pub async fn delete_chunk(
     }
 
     state
-        .db
+        .sqldb
         .execute(
-            "DELETE FROM vault_chunks WHERE chunk_id = $1 AND user_id = $2",
-            stoolap::params![id.to_string(), session.user_id.to_string()],
+            "DELETE FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+            vec![
+                TursoValue::Text(id.clone()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(
