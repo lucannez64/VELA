@@ -369,6 +369,15 @@ impl Render for AppShell {
             .size_full()
             .flex()
             .bg(palette.surface)
+            // Auto-lock is idle-based: any pointer/key interaction resets the
+            // idle deadline, so `auto_lock_minutes` means "minutes of
+            // inactivity", not "minutes since unlock".
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, _| {
+                vela_desktop_core::commands::session::notify_user_activity(&this.app_state);
+            }))
+            .on_key_down(cx.listener(|this, _, _, _| {
+                vela_desktop_core::commands::session::notify_user_activity(&this.app_state);
+            }))
             .child(self.sidebar.clone())
             .child(
                 div()
