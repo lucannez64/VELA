@@ -6,8 +6,9 @@
 
 use std::sync::Arc;
 
-use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, IntoElement, Render, Subscription, Window};
+use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, IntoElement, MouseButton, Render, Subscription, Window};
 
+use vela_desktop_core::recovery::RecoveryStatus;
 use vela_desktop_core::AppState;
 
 use crate::background::GuardedSpawn;
@@ -61,6 +62,13 @@ pub struct AppShell {
     /// Auto-sync (startup + periodic) — cancelled when this shell is dropped
     /// on lock, so syncing stops exactly when the session does.
     _sync_scheduler: gpui::Task<()>,
+    /// How many recovery methods are set up, polled periodically — the
+    /// "keep asking" half of the recovery-deferral bargain. `None` while the
+    /// vault is locked (the shell only exists unlocked anyway) or unknown.
+    recovery_status: Option<RecoveryStatus>,
+    /// The periodic recovery-reminder poll — cancelled on drop like the sync
+    /// scheduler.
+    _recovery_reminder: gpui::Task<()>,
 }
 
 impl AppShell {
@@ -68,6 +76,7 @@ impl AppShell {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
         let sidebar = cx.new(Sidebar::new);
         let sync_scheduler = crate::sync_scheduler::start(app_state.clone(), cx);
+        let recovery_reminder = Self::start_recovery_reminder(app_state.clone(), cx);
         let mut this = Self {
             app_state,
             sidebar,
@@ -77,6 +86,8 @@ impl AppShell {
             _edit_subscription: None,
             _subscriptions: Vec::new(),
             _sync_scheduler: sync_scheduler,
+            recovery_status: None,
+            _recovery_reminder: recovery_reminder,
         };
         this.subscribe_sidebar(cx);
         this.show_vault(cx);
@@ -117,6 +128,39 @@ impl AppShell {
         self.edit_modal = Some(modal);
         self._edit_subscription = Some(subscription);
         cx.notify();
+    }
+
+    /// Poll recovery setup status every few seconds, so the standing banner
+    /// appears once recovery is due and disappears as soon as it is set up —
+    /// no restart, no settings-change subscription.
+    ///
+    /// The "keep asking" half of the deferral: skipping is allowed, forgetting
+    /// is not. See `desktopVELA/src/components/RecoveryReminder.tsx`.
+    fn start_recovery_reminder(
+        app_state: Arc<AppState>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<()> {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(15))
+                    .await;
+                let result = cx
+                    .background_spawn_guarded("recovery reminder", {
+                        let app_state = app_state.clone();
+                        async move {
+                            vela_desktop_core::recovery::get_recovery_setup_status(&app_state)
+                        }
+                    })
+                    .await
+                    .unwrap_or_else(|| Err("Recovery reminder check failed".to_string()));
+                this.update(cx, |this, cx| {
+                    this.recovery_status = result.ok();
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
     }
 
     /// Pause or resume the live TOTP refresh on the currently showing item
@@ -326,8 +370,88 @@ impl Render for AppShell {
             .flex()
             .bg(palette.surface)
             .child(self.sidebar.clone())
-            .child(div().flex_1().h_full().overflow_hidden().child(content))
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(self.recovery_reminder_banner(&palette, cx))
+                    .child(div().flex_1().overflow_hidden().child(content)),
+            )
             .when_some(self.edit_modal.clone(), |el, modal| el.child(modal))
+    }
+}
+
+impl AppShell {
+    /// The standing "no way back" banner, port of
+    /// `RecoveryReminder.tsx`. Deliberately not dismissable: a banner you can
+    /// close is one you close, and the failure it warns about is
+    /// unrecoverable. It goes away by being fixed.
+    fn recovery_reminder_banner(&self, palette: &Palette, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(status) = &self.recovery_status else {
+            return div().into_any_element();
+        };
+        let methods = [
+            status.cloud_backup_delivered,
+            status.security_key_delivered,
+            status.trusted_contact_acknowledged,
+        ]
+        .into_iter()
+        .filter(|done| *done)
+        .count();
+        if methods >= 2 {
+            return div().into_any_element();
+        }
+
+        let subtitle = if methods == 0 {
+            "No recovery methods are set up. Nobody can restore it for you — not support, not us."
+        } else {
+            "1 of the 2 recovery methods is set up. Nobody can restore it for you — not support, not us."
+        };
+
+        div()
+            .w_full()
+            .px_4()
+            .py_3()
+            .bg(palette.surface_container)
+            .border_b_1()
+            .border_color(palette.outline_variant)
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(icon("shield_question", px(20.), palette.error))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_color(palette.on_surface)
+                            .child("This vault has no way back if you forget your master password"),
+                    )
+                    .child(
+                        div()
+                            .text_color(palette.on_surface_variant)
+                            .text_size(px(12.))
+                            .child(subtitle),
+                    ),
+            )
+            .child(
+                div()
+                    .px_4()
+                    .py_2()
+                    .rounded_lg()
+                    .bg(palette.error)
+                    .text_color(palette.surface)
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.navigate(NavView::Settings, cx);
+                        cx.notify();
+                    }))
+                    .child("Set up recovery"),
+            )
+            .into_any_element()
     }
 }
 

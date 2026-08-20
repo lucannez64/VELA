@@ -20,6 +20,32 @@ if [ -z "${VELA_CHROME_EXTENSION_ID:-}" ]; then
 	exit 1
 fi
 
+# A Chromium extension ID is exactly 32 characters from a-p — it is a base16
+# encoding of a hash digit-shifted into that alphabet, so nothing else is even
+# representable. Checking it here costs one line and saves a bad afternoon:
+# without it, a Firefox add-on UUID pasted in by mistake is written to every
+# Chromium browser's manifest, and the only symptom is the browser saying
+# "Access to the specified native messaging host is forbidden" at runtime, in a
+# place that gives no hint the registration is what's wrong. That happened on a
+# real machine — four browsers registered with a UUID that can never match.
+if ! printf '%s' "$VELA_CHROME_EXTENSION_ID" | grep -Eq '^[a-p]{32}$'; then
+	echo "ERROR: '$VELA_CHROME_EXTENSION_ID' is not a Chromium extension ID."
+	echo ""
+	echo "  A Chromium extension ID is 32 characters, a-p only, e.g."
+	echo "    jphblihlihkilmjccigaikljencgofkl"
+	echo "  Find it at chrome://extensions (or brave://extensions) with"
+	echo "  Developer mode turned on."
+	echo ""
+	case "$VELA_CHROME_EXTENSION_ID" in
+	*-*-*-*-*)
+		echo "  That looks like a Firefox add-on UUID. Firefox does not use this"
+		echo "  script — run ./register-firefox-host.sh instead, which registers"
+		echo "  the add-on by its gecko id (vela@vela.app) and needs no UUID."
+		;;
+	esac
+	exit 1
+fi
+
 chmod +x "$HOST_SCRIPT"
 
 echo "VELA Native Messaging Host Registration for Chromium Browsers"

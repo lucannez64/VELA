@@ -1,0 +1,186 @@
+theory M9c_InProcessSandbox
+/*
+  Model 9c - desktop-mediated login through a JS runtime embedded IN the core's
+  own address space (QuickJS/Boa as a library, or a JS engine compiled to WASM
+  under an in-process sandbox), rather than through a separate browser engine.
+
+  This exists because M9b does not answer the question people actually ask.
+  M9b's falsification turns on one step: the credential is handed to the engine
+  over an adversary-observable channel (`Out(cred)`) because the engine is a
+  separate process with a DevTools port, a /proc entry and an X11 surface. An
+  in-process interpreter is not that object. There is no channel: the credential
+  moves by function call inside the address space that already holds it. So
+  M9b's proof does not transfer, and the honest thing is to model the design
+  rather than to argue by analogy with a different one.
+
+  The in-process design does win the thing it claims. What it buys is priced in
+  a currency M9b never had to name.
+
+  THE EDGE. To log in to a JavaScript site you must run the site's JavaScript,
+  which is code the adversary chose. M9b ran it in a separate process, so an
+  escape yielded whatever that process held - the credential in flight, bounded
+  by the working set, which is the M6 floor the ladder already lives with. Here
+  the interpreter shares an address space with the vault and the key that
+  unseals it. An escape does not yield the item being used; it yields the store.
+  Items never logged into, items for sites the user has not visited in years,
+  and the master key itself.
+
+  So the two designs get the same top-level verdict for opposite reasons, and
+  the comparison that matters is not "does the credential leak" but "what is
+  reachable when it does". `unused_credentials_stay_secret` is the lemma that
+  separates them: it holds in M9b and falsifies here.
+
+  A note on the obvious repair. Putting the interpreter back in its own process
+  to contain an escape reintroduces the observable channel - that is M9b, by
+  construction. The isolation that makes the runtime safe is the same isolation
+  that makes it a domain member. This model does not prove that tension; it is
+  visible from the two theories side by side.
+
+  Expected:
+    credential_never_leaks              FALSIFIED (all-traces) - same verdict as
+        M9b, different mechanism: not a channel, an escape.
+    credential_never_leaks_without_escape VERIFIED - the design's real claim,
+        and one M9b cannot make at all: absent an escape, no credential reaches
+        the domain. This is what an in-process runtime buys.
+    unused_credentials_stay_secret      FALSIFIED (all-traces) - THE EDGE. In
+        M9b an item the engine never handled stays secret. Here it does not.
+    escape_takes_credentials_never_used (exists-trace) VERIFIED - witness for
+        the above: the adversary derives an item that was never logged into.
+    escape_takes_the_master_key         (exists-trace) VERIFIED - the second
+        half of the address-space edge. M9b's engine never held this.
+    login_succeeds                      (exists-trace) VERIFIED - sanity: the
+        design does work when nobody attacks it.
+*/
+begin
+
+// ---- The core, its key, and a vault of several items -------------------------
+
+// One core process, holding the key that unseals the store.
+rule Setup_Core:
+    [ Fr(~master) ]
+  --[ CoreStarted(~master), MasterKey(~master) ]->
+    [ !Core(~master) ]
+
+restriction OneCore:
+  "All m1 m2 #i #j. CoreStarted(m1) @ i & CoreStarted(m2) @ j ==> #i = #j"
+
+// Items in that one vault. Fires repeatedly: the point of this model is what
+// happens to the items the login never touched, so there have to be some.
+rule Add_Credential:
+    [ !Core(master), Fr(~cred) ]
+  --[ Secret(~cred, $O) ]->
+    [ !Vault(~cred, $O), !SiteStore(~cred, $O) ]
+
+// ---- The login ---------------------------------------------------------------
+
+// The page's script. Adversary-chosen, because that is what "run the site's
+// JavaScript" means: the code is supplied by whoever controls the page, and a
+// site that has been compromised (or an origin the user was steered to) is
+// exactly the case the sandbox is supposed to survive.
+rule Load_Script:
+    [ In(script) ]
+  --[ ScriptLoaded(script) ]->
+    [ !Script(script) ]
+
+rule Human_Approve_Login:
+    [ !Vault(cred, $O), Fr(~g) ]
+  --[ LoginApproved(cred, $O) ]->
+    [ LoginGrant(cred, $O) ]
+
+// The credential enters the interpreter. Note what is NOT here: no `Out(cred)`.
+// That single absence is the whole difference from `Engine_Login` in
+// m9b_engine_login.spthy, and it is why the secrecy claim below survives in the
+// no-escape case. Nothing is handed across a process boundary, so there is no
+// DevTools port to attach to and no /proc/PID/mem to read.
+rule Sandbox_Login:
+    [ !Vault(cred, $O), LoginGrant(cred, $O), !Script(script),
+      In(<'login', $O, tok>) ]
+  --[ SandboxSawCred(cred, $O), LoginPerformed(cred, $O, tok) ]->
+    [ CredToSite(cred, $O, tok), !Ran(script) ]
+
+rule Site_CheckAndIssue:
+    [ !SiteStore(cred, O), CredToSite(cred, O, tok), Fr(~sid) ]
+  --[ SessionIssued(O, ~sid, tok), LoginOk(cred, O) ]->
+    [ Out(<'session', O, ~sid>), StSite(O, ~sid, tok) ]
+
+rule Site_Use_Session:
+    [ StSite(O, sid, tok), In(<'use', O, sid>) ]
+  --[ SessionUsed(O, sid) ]->
+    [ ]
+
+// ---- The escape --------------------------------------------------------------
+
+// A sandbox escape, available once the hostile script has actually run.
+//
+// Modelled as reachable rather than as a possibility to be argued about: JS
+// engines ship escapes on a schedule, and this one is interpreting code chosen
+// by the adversary. The question a model can answer is not whether an escape
+// happens but what it is worth, and that is the next three rules.
+rule Sandbox_Escape:
+    [ !Ran(script), In(<'escape', script>) ]
+  --[ Escaped(script) ]->
+    [ !Escaped(script) ]
+
+// The edge, in one rule. The interpreter is inside the process that holds the
+// store, so an escape reads the store - not the item in flight, every item.
+rule Escape_Reads_Vault:
+    [ !Escaped(script), !Vault(cred, O) ]
+  --[ Exfiltrated(cred, O) ]->
+    [ Out(cred) ]
+
+// And the key, which no engine in M9b ever held.
+rule Escape_Reads_Master_Key:
+    [ !Escaped(script), !Core(master) ]
+  --[ ExfiltratedMaster(master) ]->
+    [ Out(master) ]
+
+// ---- What the design claims --------------------------------------------------
+
+// The headline, for comparability with M9a/M9b. Falsifies here, as in M9b, but
+// by a different route.
+lemma credential_never_leaks:
+  "All c O #i.
+     Secret(c, O) @ i ==> not(Ex #j. K(c) @ j)"
+
+// The claim the in-process design actually makes, and the one M9b cannot make
+// at all: absent an escape, nothing reaches the domain. There is no channel to
+// watch, so watching gains nothing.
+lemma credential_never_leaks_without_escape:
+  "All c O #i.
+     Secret(c, O) @ i
+     ==> (Ex s #e. Escaped(s) @ e) | not(Ex #j. K(c) @ j)"
+
+// ---- What it costs -----------------------------------------------------------
+
+// THE EDGE, stated as a property. In M9b this holds: the engine only ever saw
+// the credentials it was asked to submit, so an item never logged into is an
+// item the adversary never gets. Here it falsifies, because the blast radius is
+// the vault rather than the working set.
+lemma unused_credentials_stay_secret:
+  "All c O #i.
+     Secret(c, O) @ i & not(Ex O2 #u. SandboxSawCred(c, O2) @ u)
+     ==> not(Ex #j. K(c) @ j)"
+
+// The witness, so the falsification above is not an artefact of how the lemma
+// is phrased: a trace exists in which the adversary holds an item that was
+// never used for a login.
+lemma escape_takes_credentials_never_used:
+  exists-trace
+  "Ex c O #i #j.
+     Exfiltrated(c, O) @ i & K(c) @ j
+     & not(Ex O2 #u. SandboxSawCred(c, O2) @ u)"
+
+// The second half of the address-space edge. An engine in another process can
+// leak what it was given; it cannot leak the key that unseals everything else,
+// because it never had it.
+lemma escape_takes_the_master_key:
+  exists-trace
+  "Ex m #i #j. ExfiltratedMaster(m) @ i & K(m) @ j"
+
+// ---- Sanity ------------------------------------------------------------------
+
+lemma login_succeeds:
+  exists-trace
+  "Ex c O tok #i. LoginPerformed(c, O, tok) @ i"
+
+end

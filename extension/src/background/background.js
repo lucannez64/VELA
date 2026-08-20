@@ -103,7 +103,27 @@ async function computeLoginTOTP(item) {
   return "";
 }
 
+/// Guarded, because this is called three ways and they overlap.
+///
+/// A service worker runs its top-level code every time it wakes, and
+/// `onInstalled` / `onStartup` fire in that same instance — so at install and at
+/// browser start, `init()` ran twice and every listener was registered twice.
+/// Every message was then handled twice.
+///
+/// That was survivable while the handlers were idempotent: two identical
+/// `getLogins` calls return the same thing and the second `sendResponse` is
+/// dropped. It stopped being survivable with in-core login, which asks a human
+/// for permission — the desktop put up two approval dialogs for one click, and
+/// answering one left the other on screen. The same doubling applies to passkey
+/// ceremonies, which prompt for the same reason.
+let initialised = false;
+
 function init() {
+  if (initialised) {
+    return;
+  }
+  initialised = true;
+
   setupConnectionListeners();
   setupContextMenus();
   setupMessageListeners();
@@ -205,6 +225,27 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "saveCredentials":
       handleSaveCredentials(data, sender, sendResponse);
       break;
+    case "passkeyList":
+      handlePasskeyList(data, sender, sendResponse);
+      return true;
+    case "passkeyGet":
+      handlePasskeyCeremony("passkeyGet", data, sender, sendResponse);
+      return true;
+    case "passkeyCreate":
+      handlePasskeyCeremony("passkeyCreate", data, sender, sendResponse);
+      return true;
+    case "inCoreLoginCandidates":
+      handleInCoreLoginCandidates(sendResponse);
+      return true;
+    case "inCoreLogin":
+      handleInCoreLogin(data, sendResponse);
+      return true;
+    case "loginArtifactsReady":
+      // The content script lifted a captcha token out of the page (or gave up
+      // waiting). Finish the pending recipe login.
+      handleLoginArtifactsReady(data, sender);
+      sendResponse({ success: true });
+      return true;
     case "openVault":
     case "openSettings":
       handleOpenDesktop(command, sendResponse);
@@ -350,6 +391,506 @@ function getHttpDomain(url) {
     return parsed.hostname.replace(/^www\./, "");
   } catch (_) {
     return null;
+  }
+}
+
+// ── Passkeys ─────────────────────────────────────────────────────────────────
+//
+// A ceremony waits for the desktop to put a confirmation in front of a person,
+// so it gets a far longer budget than an ordinary request.
+const PASSKEY_CEREMONY_TIMEOUT_MS = 121000;
+
+/**
+ * Is this sender allowed to ask about this relying party?
+ *
+ * The shim checks the RP ID against the page's own location, but the shim runs
+ * in the page's world and anything there is under the page's control. This is
+ * the check that counts, because `sender.url` and `sender.frameId` come from
+ * the browser rather than from the content it is rendering.
+ *
+ * Top frame only. Cross-origin iframe WebAuthn exists and is gated on a
+ * permissions policy the extension cannot read from here; refusing is the
+ * conservative answer, and it matches how `authorizeCredentialRequest` already
+ * treats credential requests from subframes.
+ */
+async function authorizePasskeyRequest(rpId, sender) {
+  if (typeof rpId !== "string" || !rpId) {
+    return { ok: false, error: "Missing relying party" };
+  }
+  if (!sender?.tab) {
+    return { ok: false, error: "Passkey requests must come from a page" };
+  }
+  if (sender.frameId !== undefined && sender.frameId !== 0) {
+    return { ok: false, error: "Passkey requests must come from the top frame" };
+  }
+
+  const senderDomain = getHttpDomain(sender.url || "");
+  if (!senderDomain) {
+    return { ok: false, error: "Unsupported URL" };
+  }
+
+  const wanted = rpId.replace(/^www\./, "").toLowerCase();
+  const host = senderDomain.toLowerCase();
+  // The relying party ID must be the sender's own domain or a parent of it —
+  // the same rule the browser applies, restated where it cannot be spoofed.
+  if (host !== wanted && !host.endsWith(`.${wanted}`)) {
+    return { ok: false, error: "Relying party does not match the requesting page" };
+  }
+
+  const active = await getActiveTab();
+  if (!active || active.id !== sender.tab.id) {
+    return { ok: false, error: "Sender tab is not active" };
+  }
+
+  return { ok: true };
+}
+
+async function handlePasskeyList(data, sender, sendResponse) {
+  try {
+    const auth = await authorizePasskeyRequest(data?.rp_id, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, credentials: [], error: auth.error });
+      return;
+    }
+    const response = await sendNativeMessage({ action: "passkeyList", rp_id: data.rp_id });
+    sendResponse(response || { success: false, credentials: [] });
+  } catch (error) {
+    sendResponse({ success: false, credentials: [], error: error.message });
+  }
+}
+
+async function handlePasskeyCeremony(action, data, sender, sendResponse) {
+  try {
+    const auth = await authorizePasskeyRequest(data?.rp_id, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, error: auth.error });
+      return;
+    }
+    const response = await sendNativeMessage(
+      { action, ...data },
+      PASSKEY_CEREMONY_TIMEOUT_MS
+    );
+    sendResponse(response || { success: false, error: "No response from VELA Desktop" });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+// ── In-core login (M9a) ──────────────────────────────────────────────────────
+//
+// The autofill path puts a password into the page. This one never has the
+// password at all: the desktop signs in over its own connection and sends back
+// the cookies the site issued, which get installed here.
+//
+// Two consequences worth being explicit about. The extension needs the
+// `cookies` permission and host access to write them, which is a real increase
+// in what it can do — so both are *optional* permissions, requested at the
+// moment of use and for one origin, rather than held over every site forever.
+// And the session that lands in the browser is a genuine credential for that
+// site: better than a password because it expires and can be revoked, but not
+// nothing. `residualNote` from the desktop says which of those two cases the
+// site is in, and the popup shows it.
+
+/// Only ever act on the tab the user is looking at.
+async function resolveActiveHttpTab() {
+  const active = await getActiveTab();
+  if (!active?.id) {
+    return { ok: false, error: "No active tab" };
+  }
+  const domain = getHttpDomain(active.url || "");
+  if (!domain) {
+    return { ok: false, error: "This page is not a website VELA can sign in to" };
+  }
+  return { ok: true, tab: active, domain };
+}
+
+async function handleInCoreLoginCandidates(sendResponse) {
+  try {
+    const active = await resolveActiveHttpTab();
+    if (!active.ok) {
+      sendResponse({ success: false, candidates: [], error: active.error });
+      return;
+    }
+    const response = await sendNativeMessage({
+      action: "inCoreLoginCandidates",
+      url: active.tab.url
+    });
+    sendResponse(response || { success: false, candidates: [] });
+  } catch (error) {
+    sendResponse({ success: false, candidates: [], error: error.message });
+  }
+}
+
+async function handleInCoreLogin(data, sendResponse) {
+  try {
+    const active = await resolveActiveHttpTab();
+    if (!active.ok) {
+      sendResponse({ success: false, error: active.error });
+      return;
+    }
+    if (!data?.itemId) {
+      sendResponse({ success: false, error: "No login chosen" });
+      return;
+    }
+
+    const origin = new URL(active.tab.url).origin + "/*";
+    const granted = await browser.permissions.contains({
+      permissions: ["cookies"],
+      origins: [origin]
+    });
+    if (!granted) {
+      // Requesting from here would fail anyway: `permissions.request` needs a
+      // user gesture, and a service worker has none. The popup asks.
+      sendResponse({
+        success: false,
+        needsPermission: true,
+        origin,
+        error: "VELA needs permission to set cookies for this site"
+      });
+      return;
+    }
+
+    // The popup tells us how this site signs in (it learned it from the
+    // candidates, which carry the core's `login_mode`). "recipe_captcha"
+    // means a human has to solve the site's captcha in the tab first; that
+    // flow survives the popup closing, because the solve happens on the page.
+    const mode = data.mode === "recipe" || data.mode === "recipe_captcha" ? data.mode : "form";
+
+    if (mode === "recipe_captcha") {
+      await beginCaptchaWatch(data.itemId, active);
+      sendResponse({ success: true, waitingForCaptcha: true });
+      return;
+    }
+
+    // A recipe without a captcha (Steam) carries the browser's pre-session
+    // cookie jar along. The tab's cookies are gathered for every login: a
+    // plain-form site ignores them, but a site that falls back to the
+    // disposable browser (bot wall, or a JS-only page like Riot's) needs them
+    // seeded into the window before it loads — many login pages only render
+    // for an established session.
+    const artifacts = await gatherBrowserCookies(active.tab.url);
+    const result = await finishInCoreLogin(active.tab, data.itemId, artifacts);
+    sendResponse(result);
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Park a captcha-gated recipe login and ask the content script to watch for
+ * the token. The pending request lives in session storage so it survives a
+ * service-worker restart; the popup closes and the solve happens on the page.
+ */
+async function beginCaptchaWatch(itemId, active) {
+  await savePendingInCoreLogin({ itemId, tabId: active.tab.id, url: active.tab.url });
+  try {
+    // The content script reports the token via `loginArtifactsReady` whether
+    // it was already there or the human has to solve the widget first. Sent to
+    // the top frame only: the captcha's response textarea lives there, and a
+    // message to every frame would start one watch per frame.
+    await tabs.sendMessage(active.tab.id, { command: "watchLoginArtifacts" }, { frameId: 0 });
+  } catch (error) {
+    // The content script was not reachable (a page about to navigate, say).
+    // Drop the park rather than let it fire later against the wrong page.
+    console.warn("VELA: could not start the captcha watch:", error.message);
+    await clearPendingInCoreLogin();
+  }
+}
+
+/**
+ * Finish a captcha-gated recipe login once the token is in hand: lift the
+ * browser's cookie jar, ask the core to submit, install the session it brings
+ * back, and navigate the tab.
+ */
+async function continueCaptchaLogin(tab, captchaToken) {
+  const saved = await loadPendingInCoreLogin();
+  await clearPendingInCoreLogin();
+  if (!saved || saved.tabId !== tab.id || !captchaToken) {
+    return;
+  }
+
+  const cookies = await gatherBrowserCookies(tab.url);
+  const result = await finishInCoreLogin(tab, saved.itemId, { captchaToken, ...cookies });
+  if (!result?.success) {
+    notifyUser(result?.error || "VELA could not finish the sign-in.");
+    return;
+  }
+  if (result.awaitingSecondFactor) {
+    notifyUser(`Password accepted. Finish with ${result.awaitingSecondFactor}.`);
+  } else if (result.looksAuthenticated) {
+    notifyUser(result.residualNote || "Signed in.");
+  } else {
+    notifyUser("VELA sent the sign-in, but the site did not clearly accept it.");
+  }
+}
+
+/**
+ * The content script reported a captcha token (or gave up waiting, in which
+ * case the token is null and the parked login lapses).
+ */
+async function handleLoginArtifactsReady(data, sender) {
+  if (!data?.captchaToken) {
+    await clearPendingInCoreLogin();
+    notifyUser("The captcha was not completed in time. Try again.");
+    return;
+  }
+  const tab = sender?.tab || (await getActiveTab());
+  if (!tab?.id) {
+    return;
+  }
+  await continueCaptchaLogin(tab, data.captchaToken);
+}
+
+// The pending captcha login. Session storage when the browser has it (so the
+// park survives a service-worker restart); a module-level slot otherwise, which
+// is all an older Firefox can give us.
+let pendingInCoreLoginFallback = null;
+
+async function savePendingInCoreLogin(pending) {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.set({ pendingInCoreLogin: pending });
+      return;
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, parking in memory:", error.message);
+    }
+  }
+  pendingInCoreLoginFallback = pending;
+}
+
+async function loadPendingInCoreLogin() {
+  if (browser.storage?.session) {
+    try {
+      const saved = await browser.storage.session.get("pendingInCoreLogin");
+      if (saved.pendingInCoreLogin) {
+        return saved.pendingInCoreLogin;
+      }
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, reading memory:", error.message);
+    }
+  }
+  return pendingInCoreLoginFallback;
+}
+
+async function clearPendingInCoreLogin() {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.remove("pendingInCoreLogin");
+    } catch (error) {
+      // Nothing to do: the module-level fallback is cleared below either way.
+    }
+  }
+  pendingInCoreLoginFallback = null;
+}
+
+/**
+ * Ask the browser for the tab's cookie jar, shaped for the core.
+ *
+ * Only cookies whose scope covers the tab's origin come back from
+ * `getAll({url})`, so this cannot hand the core a cookie for a sibling domain
+ * the page is not under.
+ */
+async function gatherBrowserCookies(url) {
+  try {
+    const cookies = await browser.cookies.getAll({ url });
+    return {
+      browserCookies: cookies.map((cookie) => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path || "/",
+        secure: Boolean(cookie.secure),
+        http_only: Boolean(cookie.httpOnly),
+        same_site: mapSameSite(cookie.sameSite),
+        expires_at: typeof cookie.expirationDate === "number" ? cookie.expirationDate : null,
+        host_only: Boolean(cookie.hostOnly)
+      }))
+    };
+  } catch (error) {
+    console.warn("VELA: could not gather the browser cookie jar:", error.message);
+    return {};
+  }
+}
+
+/**
+ * Send the in-core login, install the session the core brought back, and
+ * navigate the tab to where the site landed.
+ */
+async function finishInCoreLogin(tab, itemId, browserArtifacts) {
+  const response = await sendNativeMessage(
+    { action: "inCoreLogin", itemId, url: tab.url, ...browserArtifacts },
+    PASSKEY_CEREMONY_TIMEOUT_MS
+  );
+  if (!response?.success) {
+    return response || { success: false, error: "No response from VELA Desktop" };
+  }
+
+  const installed = await installSessionCookies(response.cookies || [], tab.url);
+  const wroteLocal = await replicateLocalSession(tab.id, response.localSession);
+  const wroteDb = await replicateStoredDb(tab.id, response.cachedDb);
+  if (installed === 0 && !wroteLocal && !wroteDb) {
+    return {
+      success: false,
+      error: "The site did not issue a session VELA could install"
+    };
+  }
+
+  // Navigate only within the site we just signed in to. The desktop already
+  // refuses to follow a redirect off the site, so a landing URL elsewhere
+  // means something is wrong, not that the user should be sent there.
+  let target = tab.url;
+  if (response.landingUrl && getHttpDomain(response.landingUrl) === getHttpDomain(tab.url)) {
+    target = response.landingUrl;
+  }
+  await tabs.update(tab.id, { url: target });
+
+  return {
+    success: true,
+    cookiesInstalled: installed,
+    looksAuthenticated: Boolean(response.looksAuthenticated),
+    siteMode: response.siteMode,
+    residualNote: response.residualNote,
+    usedSecondFactor: Boolean(response.usedSecondFactor),
+    awaitingSecondFactor: response.awaitingSecondFactor || null,
+    secondFactorDowngraded: Boolean(response.secondFactorDowngraded),
+    usedBrowser: Boolean(response.usedBrowser)
+  };
+}
+
+function notifyUser(message) {
+  try {
+    browser.notifications.create({
+      type: "basic",
+      iconUrl: browser.runtime.getURL("icons/icon128.png"),
+      title: "VELA",
+      message: String(message || "").slice(0, 250)
+    });
+  } catch (error) {
+    console.warn("VELA: could not show a notification:", error.message);
+  }
+}
+
+/**
+ * Install the session the desktop brought back.
+ *
+ * Every cookie is written relative to the *tab's* origin rather than to
+ * whatever domain the response named. That matters: it means the browser's own
+ * rules — a cookie cannot be set for a domain the URL is not under, and never
+ * for a public suffix — are applied to the origin the user is actually on. A
+ * response asking us to plant a cookie on another site fails the domain check
+ * below and never reaches `cookies.set`.
+ */
+async function installSessionCookies(cookies, tabUrl) {
+  const tab = new URL(tabUrl);
+  const host = tab.hostname.toLowerCase();
+  let installed = 0;
+
+  for (const cookie of cookies) {
+    if (!cookie?.name) {
+      continue;
+    }
+    // A leading dot on a cookie domain means "any subdomain of" — the browser
+    // reports domain-scoped cookies that way. Strip it for the scope check,
+    // or a `.lolesports.com` session cookie is refused against the
+    // `lolesports.com` tab it belongs to.
+    const domain = String(cookie.domain || "").toLowerCase();
+    const bareDomain = domain.startsWith(".") ? domain.slice(1) : domain;
+    const scoped = cookie.host_only
+      ? host === bareDomain
+      : host === bareDomain || host.endsWith(`.${bareDomain}`);
+    if (!scoped) {
+      console.warn(`VELA: refused a session cookie scoped to ${domain}`);
+      continue;
+    }
+
+    const details = {
+      url: `${tab.protocol}//${host}${cookie.path || "/"}`,
+      name: cookie.name,
+      value: cookie.value ?? "",
+      path: cookie.path || "/",
+      secure: Boolean(cookie.secure),
+      httpOnly: Boolean(cookie.http_only),
+      sameSite: mapSameSite(cookie.same_site)
+    };
+    // Omitting `domain` is what makes a cookie host-only; sending the host
+    // explicitly would widen it to every subdomain.
+    if (!cookie.host_only) {
+      details.domain = bareDomain;
+    }
+    if (typeof cookie.expires_at === "number") {
+      details.expirationDate = cookie.expires_at;
+    }
+
+    try {
+      await browser.cookies.set(details);
+      installed += 1;
+    } catch (error) {
+      console.warn(`VELA: could not install cookie ${cookie.name}: ${error.message}`);
+    }
+  }
+
+  return installed;
+}
+
+/**
+ * Replicate an auth SDK's IndexedDB records (Firebase's indexedDB persistence
+ * — monkeytype with "remember me") from the disposable browser into the
+ * user's own tab. The content script writes them into the tab's own IndexedDB
+ * for the same database/object store, so only that site's storage is touched.
+ */
+async function replicateStoredDb(tabId, cachedDb) {
+  if (!cachedDb || typeof cachedDb !== "object") {
+    return false;
+  }
+  const keys = Object.keys(cachedDb);
+  if (keys.length === 0) {
+    return false;
+  }
+  console.log(`[VELA] Replicating ${keys.length} IndexedDB records into tab ${tabId}`);
+  try {
+    await tabs.sendMessage(tabId, { command: "writeStoredDb", records: cachedDb });
+    return true;
+  } catch (error) {
+    console.warn("VELA: could not replicate the site's IndexedDB session:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Replicate a token-session site's localStorage (Firebase Auth keeps the
+ * session token there, not in a cookie) from the disposable browser into the
+ * user's own tab. The content script writes the keys scoped to the tab's own
+ * origin, so only that site's storage is touched.
+ */
+async function replicateLocalSession(tabId, localSession) {
+  if (!localSession || typeof localSession !== "object") {
+    return false;
+  }
+  const keys = Object.keys(localSession);
+  if (keys.length === 0) {
+    return false;
+  }
+  console.log(`[VELA] Replicating ${keys.length} localStorage keys into tab ${tabId}`);
+  try {
+    await tabs.sendMessage(tabId, { command: "writeLocalSession", entries: localSession });
+    return true;
+  } catch (error) {
+    console.warn("VELA: could not replicate the site's local session:", error.message);
+    return false;
+  }
+}
+
+function mapSameSite(value) {
+  switch (String(value || "").toLowerCase()) {
+    case "strict":
+      return "strict";
+    case "lax":
+      return "lax";
+    // The site said `SameSite=None`, which Chrome spells differently.
+    case "none":
+      return "no_restriction";
+    default:
+      return "unspecified";
   }
 }
 
@@ -553,13 +1094,13 @@ function isConnectedResponse(response) {
   return false;
 }
 
-function sendNativeMessage(message) {
+function sendNativeMessage(message, timeoutMs = 10000) {
   console.log("[VELA] Trying native messaging...");
   return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
       console.log("[VELA] Native messaging timeout");
       resolve({ success: false, error: "Native messaging timeout" });
-    }, 10000);
+    }, timeoutMs);
 
     runtime.sendNativeMessage(NATIVEMessaging_PORT, message)
       .then((response) => {

@@ -63,6 +63,8 @@ pub async fn add_item(
     state: State<'_, Arc<AppState>>,
     item: VaultItem,
 ) -> Result<VaultItem, String> {
+    // Delegates to the core (the thin-layer refactor on main), which applies
+    // the same M9a unlock guard, typing, audit and persist internally.
     let added = vela_desktop_core::commands::vault::add_item(&state, item).await?;
     emit_vault_items_changed(&app);
     Ok(added)
@@ -144,6 +146,7 @@ pub async fn import_vault_bitwarden_json(
     state: State<'_, Arc<AppState>>,
     data: String,
 ) -> Result<ImportResult, String> {
+    // Delegates to the core, which sets the M9a fields and the unlock guard.
     let result = vela_desktop_core::commands::vault::import_vault_bitwarden_json(&state, &data)?;
     emit_vault_items_changed(&app);
     Ok(result)

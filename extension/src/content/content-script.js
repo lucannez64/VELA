@@ -165,10 +165,141 @@
           velaShowSaveDialog(message.username || "", message.password || "");
           sendResponse({ success: true });
           break;
+        case "writeLocalSession":
+          // A token-session site (Firebase Auth — monkeytype): the login ran
+          // in VELA's disposable browser, which captured the site's storage.
+          // Replicate the keys into THIS page's own origin so the session
+          // carries over. Keys are written to BOTH storages: the auth SDK
+          // decides on load which one it reads (monkeytype uses sessionStorage
+          // when "remember me" is off, localStorage/IndexedDB when on), and the
+          // captured keys carry whichever the disposable session used.
+          if (message.entries && typeof message.entries === "object") {
+            let written = 0;
+            for (const [key, value] of Object.entries(message.entries)) {
+              try {
+                localStorage.setItem(key, String(value));
+                sessionStorage.setItem(key, String(value));
+                written += 1;
+              } catch (e) {}
+            }
+            console.log(`[VELA] Wrote ${written} keys to localStorage+sessionStorage at ${location.origin}`);
+          }
+          sendResponse({ success: true });
+          break;
+        case "writeStoredDb":
+          // Replicate an auth SDK's IndexedDB records (Firebase's
+          // indexedDBLocalPersistence — monkeytype with "remember me") into
+          // THIS page's own IndexedDB. Async: IndexedDB writes are async.
+          // The store must be created if the SDK hasn't initialised it yet in
+          // this tab — `indexedDB.open` on a missing database fires onsuccess
+          // with one that has no object store, and skipping the write would
+          // silently drop the session.
+          if (message.records && typeof message.records === "object") {
+            const records = message.records;
+            (async () => {
+              const write = () => new Promise((resolve) => {
+                const req = indexedDB.open("firebaseLocalStorageDb", 1);
+                req.onupgradeneeded = () => {
+                  const db = req.result;
+                  if (!db.objectStoreNames.contains("firebaseLocalStorage")) {
+                    db.createObjectStore("firebaseLocalStorage", { keyPath: "fbase_key" });
+                  }
+                };
+                req.onerror = () => resolve();
+                req.onsuccess = () => {
+                  const db = req.result;
+                  try {
+                    const tx = db.transaction("firebaseLocalStorage", "readwrite");
+                    const store = tx.objectStore("firebaseLocalStorage");
+                    for (const [key, value] of Object.entries(records)) {
+                      store.put({ fbase_key: key, value });
+                    }
+                    tx.oncomplete = () => { db.close(); resolve(); };
+                    tx.onerror = () => { db.close(); resolve(); };
+                  } catch (e) {
+                    db.close();
+                    resolve();
+                  }
+                };
+              });
+              try {
+                await write();
+                console.log(`[VELA] Wrote ${Object.keys(records).length} IndexedDB records at ${location.origin}`);
+              } catch (e) {}
+            })();
+          }
+          sendResponse({ success: true });
+          break;
+        case "watchLoginArtifacts":
+          // Tier A recipe login: the human solves the site's captcha in this
+          // tab, and we lift the resulting token out of the DOM. If it is
+          // already there, report it now; otherwise poll for it to appear
+          // (the solve writes it into the response textarea), then tell the
+          // background to finish the sign-in.
+          startCaptchaWatch();
+          sendResponse({ success: true });
+          break;
       }
     };
 
     api.runtime.onMessage.addListener(handleMessage);
+  }
+
+  // ── Tier A captcha harvest ──────────────────────────────────────────────
+  //
+  // A recipe login asks the browser to mint the one thing only a browser can:
+  // a solved captcha. The token is written into a response textarea when the
+  // widget completes. We read it out and hand it to the background, which
+  // carries it to the core. It is single-use and short-lived, so the watch
+  // gives up after the token's typical lifetime.
+
+  const CAPTCHA_WATCH_TIMEOUT_MS = 180000;
+
+  function readCaptchaToken() {
+    const selectors = [
+      '[name="h-captcha-response"]',
+      '[name="g-recaptcha-response"]',
+      '[name="cf-turnstile-response"]',
+      'textarea.h-captcha-response',
+      'textarea.g-recaptcha-response'
+    ];
+    for (const selector of selectors) {
+      try {
+        const element = document.querySelector(selector);
+        if (element && element.value && element.value.trim()) {
+          return element.value.trim();
+        }
+      } catch (e) {}
+    }
+    // Some sites keep it in an input whose name merely suggests what it is.
+    try {
+      const element = document.querySelector(
+        'input[name*="captcha" i], textarea[name*="captcha" i]'
+      );
+      if (element && element.value && element.value.trim()) {
+        return element.value.trim();
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function startCaptchaWatch() {
+    const token = readCaptchaToken();
+    if (token) {
+      sendExtensionMessage("loginArtifactsReady", { captchaToken: token });
+      return;
+    }
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const current = readCaptchaToken();
+      if (current) {
+        clearInterval(timer);
+        sendExtensionMessage("loginArtifactsReady", { captchaToken: current });
+      } else if (Date.now() - started > CAPTCHA_WATCH_TIMEOUT_MS) {
+        clearInterval(timer);
+        sendExtensionMessage("loginArtifactsReady", { captchaToken: null });
+      }
+    }, 300);
   }
 
   function setupDisconnectAction() {

@@ -1,0 +1,141 @@
+theory M9a_InCoreLogin
+/*
+  Model 9a - desktop-mediated login WITHOUT an engine. The desktop core itself
+  submits the credential to the site over its own TLS connection; only the
+  site's SESSION artifact reaches the domain. This is M7's structure applied to
+  a legacy password site: the vault password never enters the domain, so
+  K(cred) never holds - even for sites the user logs into daily.
+
+  The one modelling decision that carries the whole claim: the desktop->site
+  leg is a PRIVATE channel (`CredToSite`), encoding the desktop's own TLS
+  connection inside the trusted core - a same-UID process sees only ciphertext
+  on that leg, exactly the boundary the models already draw around hardware
+  keys. What the adversary DOES get is the session artifact: it is in the
+  domain (`Out`) and it is origin-bound.
+
+  WHAT THE SESSION IS WORTH is modelled explicitly, because "the residual dies
+  on eviction" is only true for sites where a session cannot mint a new
+  credential. At most real sites a live session can change the account password
+  or e-mail. That is modelled here as `Site_Session_Escalate`, gated on a
+  per-site mode:
+
+    * 'hardened'  - a session cannot change the credential (step-up auth,
+                    re-entry of the old password, or a second factor). The
+                    residual really is bounded by session lifetime.
+    * 'selfserve' - a session can rotate the credential unilaterally. The
+                    adversary picks the new credential, so the takeover
+                    OUTLIVES eviction of the session, and the tier's
+                    "nothing persists" claim does not hold for that site.
+
+  The vault credential still never leaks in either mode - the tier's secrecy
+  claim survives - but the persistence claim is a site property, and the model
+  now says which property is needed instead of assuming it.
+
+  Expected:
+    credential_never_leaks      VERIFIED - K(cred) never holds, either mode.
+    used_item_still_secret      VERIFIED - even an item the site has accepted a
+        login for (LoginOk) never reaches the adversary.
+    session_expiry_is_effective VERIFIED - a dead session cannot be used.
+    no_takeover_at_hardened_sites VERIFIED - where a session cannot rotate the
+        credential, the residual is bounded by session lifetime.
+    session_in_domain (exists-trace) VERIFIED - the session artifact is
+        observable: the residual is sessions, not credentials.
+    presence_residual (exists-trace) VERIFIED - a live session can be used
+        while present.
+    session_enables_persistent_takeover (exists-trace) VERIFIED - at a
+        'selfserve' site the residual does NOT die on eviction: the adversary
+        rotates the credential to a value it chose and keeps the account.
+*/
+begin
+
+// The vault, the site's record of the SAME credential (the user's password is
+// registered at the site), and the site's credential-reset policy.
+rule Setup:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O), SiteMode($O, $P) ]->
+    [ !Vault(~cred, $O), !SiteStore(~cred, $O), !SiteMode($O, $P) ]
+
+// Human approves this login (DE gate, M6-consistent): one grant per login.
+rule Human_Approve_Login:
+    [ !Vault(cred, $O), Fr(~g) ]
+  --[ LoginApproved(cred, $O) ]->
+    [ LoginGrant(cred, $O) ]
+
+// In-core login: the desktop submits the credential to the site over its OWN
+// channel (TLS, inside the trusted core). Encoded as a fact the adversary
+// cannot read - the same boundary as a hardware key. The credential is never
+// output to the domain.
+rule Desktop_Login:
+    [ !Vault(cred, $O), LoginGrant(cred, $O), In(<'login', $O, tok>) ]
+  --[ LoginPerformed(cred, $O, tok) ]->
+    [ CredToSite(cred, $O, tok) ]
+
+// The site verifies the credential against its record and issues a session
+// artifact, which it hands to the domain (the browser).
+rule Site_CheckAndIssue:
+    [ !SiteStore(cred, O), CredToSite(cred, O, tok), Fr(~sid) ]
+  --[ SessionIssued(O, ~sid, tok), LoginOk(cred, O) ]->
+    [ Out(<'session', O, ~sid>), StSite(O, ~sid, tok) ]
+
+// A live session can be used to authenticate at its origin (presence residual).
+rule Site_Use_Session:
+    [ StSite(O, sid, tok), In(<'use', O, sid>) ]
+  --[ SessionUsed(O, sid) ]->
+    [ ]
+
+// The session dies: expiry / logout / eviction. A dead session is unusable.
+rule Site_Expire_Session:
+    [ StSite(O, sid, tok) ]
+  --[ SessionExpired(O, sid) ]->
+    [ ]
+
+// ESCALATION: at a 'selfserve' site, whoever holds a live session can set a new
+// account credential without re-proving the old one. The new credential is
+// whatever the caller supplies - so a session that leaked into the domain
+// converts into a persistent account takeover that survives eviction. This is
+// the residual the tier's "nothing persists" claim depends on being absent.
+rule Site_Session_Escalate:
+    [ StSite(O, sid, tok), !SiteMode(O, 'selfserve'), In(<'setcred', O, sid, new>) ]
+  --[ CredentialRotated(O, new), AccountTakenOver(O) ]->
+    [ !SiteStore(new, O) ]
+
+// ---- Secrecy: the vault credential never enters the domain -------------------
+
+lemma credential_never_leaks:
+  "All c O #i.
+     Secret(c, O) @ i ==> not(Ex #j. K(c) @ j)"
+
+lemma used_item_still_secret:
+  "All c O #i.
+     LoginOk(c, O) @ i ==> not(Ex #j. K(c) @ j)"
+
+// ---- What the session residual is bounded by ---------------------------------
+
+lemma session_expiry_is_effective:
+  "All O sid #i.
+     SessionExpired(O, sid) @ i
+     ==> not(Ex #j. SessionUsed(O, sid) @ j & #i < #j)"
+
+lemma no_takeover_at_hardened_sites:
+  "All O #i.
+     AccountTakenOver(O) @ i
+     ==> Ex #j. SiteMode(O, 'selfserve') @ j"
+
+// ---- Existence ----------------------------------------------------------------
+
+lemma session_in_domain:
+  exists-trace
+  "Ex O sid #i. K(<'session', O, sid>) @ i"
+
+lemma presence_residual:
+  exists-trace
+  "Ex O sid #i. SessionUsed(O, sid) @ i"
+
+// The honest bad news: at a self-service site the adversary turns the session
+// into a credential IT chose, which outlives the session.
+lemma session_enables_persistent_takeover:
+  exists-trace
+  "Ex O new #i #j.
+     AccountTakenOver(O) @ i & CredentialRotated(O, new) @ i & K(new) @ j"
+
+end

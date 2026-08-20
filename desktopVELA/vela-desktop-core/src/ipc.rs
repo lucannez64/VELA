@@ -38,6 +38,36 @@ pub enum IpcMessageType {
     SaveResponse,
     BiometricChallenge,
     BiometricResponse,
+    #[serde(alias = "PasskeyCreate")]
+    #[serde(alias = "passkeyCreate")]
+    PasskeyCreate,
+    #[serde(alias = "PasskeyCreateResponse")]
+    #[serde(alias = "passkeyCreateResponse")]
+    PasskeyCreateResponse,
+    #[serde(alias = "PasskeyGet")]
+    #[serde(alias = "passkeyGet")]
+    PasskeyGet,
+    #[serde(alias = "PasskeyGetResponse")]
+    #[serde(alias = "passkeyGetResponse")]
+    PasskeyGetResponse,
+    #[serde(alias = "PasskeyList")]
+    #[serde(alias = "passkeyList")]
+    PasskeyList,
+    #[serde(alias = "PasskeyListResponse")]
+    #[serde(alias = "passkeyListResponse")]
+    PasskeyListResponse,
+    #[serde(alias = "InCoreLogin")]
+    #[serde(alias = "inCoreLogin")]
+    InCoreLogin,
+    #[serde(alias = "InCoreLoginResponse")]
+    #[serde(alias = "inCoreLoginResponse")]
+    InCoreLoginResponse,
+    #[serde(alias = "InCoreLoginCandidates")]
+    #[serde(alias = "inCoreLoginCandidates")]
+    InCoreLoginCandidates,
+    #[serde(alias = "InCoreLoginCandidatesResponse")]
+    #[serde(alias = "inCoreLoginCandidatesResponse")]
+    InCoreLoginCandidatesResponse,
     SessionStatus,
     SyncStatus,
     OpenVault,
@@ -322,8 +352,504 @@ pub mod server {
             }
             IpcMessageType::AutofillRequest => handle_autofill_request(&message, host, peer).await,
             IpcMessageType::SaveCredentials => handle_save_credentials(&message, host).await,
+            IpcMessageType::PasskeyCreate => handle_passkey_create(&message, host, peer).await,
+            IpcMessageType::PasskeyGet => handle_passkey_get(&message, host, peer).await,
+            IpcMessageType::PasskeyList => handle_passkey_list(&message, host, peer),
+            IpcMessageType::InCoreLogin => handle_in_core_login(&message, host, peer).await,
+            IpcMessageType::InCoreLoginCandidates => {
+                handle_in_core_login_candidates(&message, host, peer)
+            }
             _ => IpcMessage::error("Unknown message type".to_string()),
         }
+    }
+
+    // ── Passkeys (M7) ────────────────────────────────────────────────────────
+    //
+    // The autofill path above hands over a reusable password and is bounded by
+    // the working set as a result. These three hand over a signature and a
+    // little public metadata, and nothing else: no code path below can emit a
+    // credential key, which is what makes the model's `credential_never_leaks`
+    // hold even for the credential in active use.
+    //
+    // Both ceremonies run inside `spawn_blocking` because the presence gate
+    // puts a modal on screen and waits for a person.
+
+    fn b64url_decode(value: Option<&str>) -> Option<Vec<u8>> {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
+        B64URL.decode(value?).ok()
+    }
+
+    fn b64url_encode(bytes: &[u8]) -> String {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
+        B64URL.encode(bytes)
+    }
+
+    fn client_data_hash_from(payload: &serde_json::Value) -> Option<[u8; 32]> {
+        let raw = b64url_decode(payload.get("client_data_hash").and_then(|v| v.as_str()))?;
+        <[u8; 32]>::try_from(raw.as_slice()).ok()
+    }
+
+    fn string_list(payload: &serde_json::Value, key: &str) -> Vec<String> {
+        payload
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Ask the human, then run `ceremony`. One token, one ceremony.
+    async fn with_presence<T, F>(
+        host: &Arc<dyn Host>,
+        request: crate::presence::PresenceRequest,
+        ceremony: F,
+    ) -> Result<T, String>
+    where
+        F: FnOnce(&Arc<dyn Host>, crate::passkey::PresenceToken) -> Result<T, String>
+            + Send
+            + 'static,
+        T: Send + 'static,
+    {
+        let host = host.clone();
+        tokio::task::spawn_blocking(move || {
+            let token = crate::presence::confirm(&host, &request).map_err(|e| e.to_string())?;
+            ceremony(&host, token)
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("Passkey ceremony did not complete: {e}")))
+    }
+
+    /// The peer check, restated for passkeys.
+    ///
+    /// The capability token is already checked in `process_message` and is not
+    /// worth anything here for the same reason it is not worth anything for a
+    /// plaintext release: anything running as this user can read it out of
+    /// `ipc_auth.json`. What the token cannot forge is the kernel's answer to
+    /// "who is on the other end of this socket".
+    fn passkey_peer_is_ours(peer: &PeerIdentity) -> Result<(), String> {
+        if !peer.is_same_user() {
+            return Err("This request did not come from your own session.".to_string());
+        }
+        Ok(())
+    }
+
+    async fn handle_passkey_create(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        if let Err(reason) = passkey_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+
+        let payload = &message.payload;
+        let Some(client_data_hash) = client_data_hash_from(payload) else {
+            return IpcMessage::error("Missing or malformed client_data_hash".to_string());
+        };
+        let rp_id = payload.get("rp_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if rp_id.is_empty() {
+            return IpcMessage::error("Missing rp_id".to_string());
+        }
+
+        let request = crate::passkey::MakeCredentialRequest {
+            rp_id: rp_id.clone(),
+            rp_name: payload.get("rp_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            user_handle: b64url_decode(payload.get("user_handle").and_then(|v| v.as_str()))
+                .unwrap_or_default(),
+            user_name: payload.get("user_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            user_display_name: payload
+                .get("user_display_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            client_data_hash,
+            algorithms: payload
+                .get("algorithms")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect())
+                .unwrap_or_default(),
+            excluded_credential_ids: string_list(payload, "exclude_credentials"),
+            require_user_verification: payload
+                .get("require_user_verification")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        };
+
+        let presence = crate::presence::PresenceRequest {
+            rp_id,
+            requester: peer.describe(),
+            kind: crate::presence::CeremonyKind::Register,
+        };
+
+        let outcome = with_presence(host, presence, move |host, token| {
+            crate::passkey::make_credential(host.state(), &request, token)
+                .map_err(|e| e.to_string())
+        })
+        .await;
+
+        match outcome {
+            Ok(response) => {
+                host.notify_vault_items_changed();
+                IpcMessage {
+                    msg_type: IpcMessageType::PasskeyCreateResponse,
+                    payload: serde_json::json!({
+                        "success": true,
+                        "credential_id": response.credential_id,
+                        "attestation_object": b64url_encode(&response.attestation_object),
+                        "authenticator_data": b64url_encode(&response.authenticator_data),
+                    }),
+                    capability: None,
+                }
+            }
+            Err(reason) => {
+                warn!("Refused passkey registration for {}: {}", peer.describe(), reason);
+                IpcMessage::error(reason)
+            }
+        }
+    }
+
+    async fn handle_passkey_get(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        if let Err(reason) = passkey_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+
+        let payload = &message.payload;
+        let Some(client_data_hash) = client_data_hash_from(payload) else {
+            return IpcMessage::error("Missing or malformed client_data_hash".to_string());
+        };
+        let rp_id = payload.get("rp_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if rp_id.is_empty() {
+            return IpcMessage::error("Missing rp_id".to_string());
+        }
+
+        // Refuse before prompting when there is nothing to sign with, so a page
+        // cannot make the vault nag its owner about sites they have no passkey
+        // for. A user trained to dismiss prompts is a user who will dismiss the
+        // one that mattered.
+        {
+            let state = host.state();
+            let session_ok = {
+                let session = state.session.read();
+                session.active && !session.is_expired()
+            };
+            if !session_ok {
+                return IpcMessage::error("Vault is locked".to_string());
+            }
+            if state.vault.read().passkeys_for_rp(&rp_id).is_empty() {
+                return IpcMessage::error("No passkey for this site".to_string());
+            }
+        }
+
+        let request = crate::passkey::GetAssertionRequest {
+            rp_id: rp_id.clone(),
+            client_data_hash,
+            allow_credential_ids: string_list(payload, "allow_credentials"),
+            require_user_verification: payload
+                .get("require_user_verification")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        };
+
+        let presence = crate::presence::PresenceRequest {
+            rp_id,
+            requester: peer.describe(),
+            kind: crate::presence::CeremonyKind::Authenticate,
+        };
+
+        let outcome = with_presence(host, presence, move |host, token| {
+            crate::passkey::get_assertion(host.state(), &request, token).map_err(|e| e.to_string())
+        })
+        .await;
+
+        match outcome {
+            Ok(response) => IpcMessage {
+                msg_type: IpcMessageType::PasskeyGetResponse,
+                payload: serde_json::json!({
+                    "success": true,
+                    "credential_id": response.credential_id,
+                    "authenticator_data": b64url_encode(&response.authenticator_data),
+                    "signature": b64url_encode(&response.signature),
+                    "user_handle": b64url_encode(&response.user_handle),
+                }),
+                capability: None,
+            },
+            Err(reason) => {
+                warn!("Refused passkey assertion for {}: {}", peer.describe(), reason);
+                IpcMessage::error(reason)
+            }
+        }
+    }
+
+    /// Which passkeys exist for a relying party — public metadata only.
+    ///
+    /// The shim uses this to decide whether to offer a passkey at all, without
+    /// putting a prompt on screen. Nothing here is secret: the relying party
+    /// already knows every field, having issued them.
+    fn handle_passkey_list(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        if let Err(reason) = passkey_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+
+        let rp_id = message
+            .payload
+            .get("rp_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let state = host.state();
+        {
+            let session = state.session.read();
+            if !session.active || session.is_expired() {
+                return IpcMessage {
+                    msg_type: IpcMessageType::PasskeyListResponse,
+                    payload: serde_json::json!({ "credentials": [], "locked": true }),
+                    capability: None,
+                };
+            }
+        }
+
+        let vault = state.vault.read();
+        let credentials: Vec<_> = vault
+            .passkeys_for_rp(rp_id)
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "credential_id": item.credential_id(),
+                    "user_name": item.username(),
+                    "rp_id": item.rp_id(),
+                })
+            })
+            .collect();
+
+        IpcMessage {
+            msg_type: IpcMessageType::PasskeyListResponse,
+            payload: serde_json::json!({ "credentials": credentials, "locked": false }),
+            capability: None,
+        }
+    }
+
+    // ── In-core login (M9a) ──────────────────────────────────────────────────
+    //
+    // The middle rung of the ladder, for sites that have no passkey to offer.
+    // `AutofillRequest` below answers "give me the password"; this answers
+    // "sign me in", and the difference is that the password stays here. What
+    // goes back is the session the site issued — which the model
+    // (`m9a_in_core_login.spthy`) is explicit about being in the domain, and
+    // which the response therefore annotates with what it is worth.
+
+    /// Which saved logins could sign in to this page — no secrets.
+    ///
+    /// The same shape as `handle_passkey_list`, and for the same reason: the
+    /// caller has to be able to decide whether to offer in-core login at all
+    /// without a prompt appearing, and it must be able to do that without the
+    /// password. Usernames and item names are already on the user's screen.
+    fn handle_in_core_login_candidates(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        if let Err(reason) = passkey_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+
+        let url = message.payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        let state = host.state();
+        {
+            let session = state.session.read();
+            if !session.active || session.is_expired() {
+                return IpcMessage {
+                    msg_type: IpcMessageType::InCoreLoginCandidatesResponse,
+                    payload: serde_json::json!({ "candidates": [], "locked": true }),
+                    capability: None,
+                };
+            }
+        }
+
+        let vault = state.vault.read();
+        let candidates: Vec<_> = vault
+            .search_by_domain(url)
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "item_id": item.id(),
+                    "name": item.name(),
+                    "username": item.username().unwrap_or_default(),
+                    "credential_change_needs_reauth": item.credential_change_needs_reauth(),
+                    // So the caller can warn *before* the click. Being told
+                    // afterwards that a security key was bypassed is being told
+                    // too late to decide anything.
+                    "allow_second_factor_downgrade": item.allow_second_factor_downgrade(),
+                    // How this site signs in, so the caller can render the
+                    // right button and orchestrate the right flow: "form" for
+                    // the ordinary page-fetch path, "recipe" for a recipe with
+                    // no human gate, "recipe_captcha" for one the browser must
+                    // sit through a CAPTCHA for first.
+                    "login_mode": crate::login::recipe::mode_for_site(
+                        crate::login::site_for_item(item),
+                    ),
+                })
+            })
+            .collect();
+
+        IpcMessage {
+            msg_type: IpcMessageType::InCoreLoginCandidatesResponse,
+            payload: serde_json::json!({ "candidates": candidates, "locked": false }),
+            capability: None,
+        }
+    }
+
+    async fn handle_in_core_login(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        if let Err(reason) = passkey_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+
+        let payload = &message.payload;
+        let item_id = payload
+            .get("item_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if item_id.is_empty() {
+            // Resolving "the login for this page" here would mean guessing when
+            // a user has several accounts on a site, and guessing wrong means
+            // signing them in as the wrong person. The caller asks for
+            // candidates and picks one.
+            return IpcMessage::error("Missing item_id".to_string());
+        }
+        let login_url = payload
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        // Browser-minted artifacts for a recipe login: the CAPTCHA token the
+        // human solved on the page, and the browser's cookie jar for the tab.
+        // Both are short-lived and single-use — they are parsed here, used for
+        // one submission inside `perform_login`, and never persisted.
+        let browser_artifacts = {
+            let captcha_token = payload
+                .get("captcha_token")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string);
+            let cookies: Vec<crate::login::BrowserCookie> = serde_json::from_value(
+                payload
+                    .get("browser_cookies")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            )
+            .unwrap_or_default();
+            if captcha_token.is_none() && cookies.is_empty() {
+                None
+            } else {
+                Some(crate::login::BrowserArtifacts {
+                    captcha_token,
+                    cookies,
+                })
+            }
+        };
+
+        // Work out the site *before* prompting, and prompt about that site. A
+        // prompt naming the item but not the destination would be answerable
+        // without knowing where the password is going.
+        let (site, item_name) = {
+            let state = host.state();
+            {
+                let session = state.session.read();
+                if !session.active || session.is_expired() {
+                    return IpcMessage::error("Vault is locked".to_string());
+                }
+            }
+            let vault = state.vault.read();
+            let Some(item) = vault.get_item(&item_id) else {
+                return IpcMessage::error("No such vault item".to_string());
+            };
+            match crate::login::site_for_item(item) {
+                Some(site) => (site, item.name().to_string()),
+                None => {
+                    return IpcMessage::error(
+                        "That login has no website address saved".to_string(),
+                    )
+                }
+            }
+        };
+
+        let presence = crate::presence::PresenceRequest {
+            rp_id: site,
+            requester: peer.describe(),
+            kind: crate::presence::CeremonyKind::SubmitPassword,
+        };
+
+        let grant = match with_login_grant(host, presence, item_id.clone()).await {
+            Ok(grant) => grant,
+            Err(reason) => {
+                warn!("Refused in-core login for {}: {}", peer.describe(), reason);
+                return IpcMessage::error(reason);
+            }
+        };
+
+        let request = crate::login::LoginRequest {
+            item_id,
+            login_url,
+            browser: browser_artifacts,
+        };
+        match crate::login::perform_login(host.state(), &request, grant).await {
+            Ok(outcome) => {
+                info!("In-core login to {} completed", item_name);
+                // Serialising the outcome wholesale is deliberate: the type has
+                // no field that can hold a credential, so there is nothing here
+                // to filter, and hand-copying fields is how a future field
+                // quietly stops being filtered.
+                let mut payload = serde_json::to_value(&outcome)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("success".to_string(), serde_json::json!(true));
+                }
+                IpcMessage {
+                    msg_type: IpcMessageType::InCoreLoginResponse,
+                    payload,
+                    capability: None,
+                }
+            }
+            Err(reason) => {
+                warn!("In-core login failed for {}: {}", peer.describe(), reason);
+                IpcMessage::error(reason.to_string())
+            }
+        }
+    }
+
+    /// Ask the human, then hand back the grant. One approval, one login.
+    ///
+    /// Separate from [`with_presence`] because the work that spends this token
+    /// is `async` — it talks to a website — while the prompt itself blocks a
+    /// thread waiting for a person. So the prompt runs in `spawn_blocking` and
+    /// the grant is carried out of it, rather than the ceremony running inside.
+    async fn with_login_grant(
+        host: &Arc<dyn Host>,
+        request: crate::presence::PresenceRequest,
+        item_id: String,
+    ) -> Result<crate::login::LoginGrant, String> {
+        let host = host.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::presence::confirm_login(&host, &request, &item_id).map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("Sign-in approval did not complete: {e}")))
     }
 
     async fn handle_autofill_request(
@@ -453,6 +979,8 @@ pub mod server {
             pass: password,
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         };
 
         {
@@ -662,7 +1190,7 @@ pub mod server {
         use crate::crypto::Crypto;
         use crate::vault::{VaultItem, VaultMeta};
         use crate::AppState;
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::{AtomicI8, AtomicUsize, Ordering};
 
         /// A peer identical to what the kernel reports for a genuine local
         /// connection: this process, running as this user.
@@ -679,6 +1207,12 @@ pub mod server {
             focus_calls: AtomicUsize,
             quick_search_calls: AtomicUsize,
             notify_calls: AtomicUsize,
+            /// What this host answers when asked to confirm presence:
+            /// -1 = cannot ask at all, 0 = the user declined, 1 = approved.
+            /// Defaults to "cannot ask", so a test that wants a ceremony to
+            /// succeed has to say so.
+            presence_answer: AtomicI8,
+            presence_prompts: AtomicUsize,
         }
 
         impl MockHost {
@@ -693,6 +1227,8 @@ pub mod server {
                     focus_calls: AtomicUsize::new(0),
                     quick_search_calls: AtomicUsize::new(0),
                     notify_calls: AtomicUsize::new(0),
+                    presence_answer: AtomicI8::new(-1),
+                    presence_prompts: AtomicUsize::new(0),
                 });
                 (dir, host)
             }
@@ -703,6 +1239,22 @@ pub mod server {
 
             fn notifies(&self) -> usize {
                 self.notify_calls.load(Ordering::SeqCst)
+            }
+
+            fn set_presence_answer(&self, answer: Option<bool>) {
+                self.presence_answer.store(
+                    match answer {
+                        None => -1,
+                        Some(false) => 0,
+                        Some(true) => 1,
+                    },
+                    Ordering::SeqCst,
+                );
+            }
+
+            /// How many times the user was actually asked.
+            fn presence_prompts(&self) -> usize {
+                self.presence_prompts.load(Ordering::SeqCst)
             }
         }
 
@@ -721,6 +1273,14 @@ pub mod server {
             }
             fn notify_vault_items_changed(&self) {
                 self.notify_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
+                self.presence_prompts.fetch_add(1, Ordering::SeqCst);
+                match self.presence_answer.load(Ordering::SeqCst) {
+                    1 => Some(true),
+                    0 => Some(false),
+                    _ => None,
+                }
             }
         }
 
@@ -851,6 +1411,294 @@ pub mod server {
             assert_eq!(resp.msg_type, IpcMessageType::Error, "unknown peer must not read as ours");
         }
 
+        /// The wire names are the contract with `vela-native-messaging-host.py`,
+        /// which matches on these strings. A rename here that is not mirrored
+        /// there breaks passkeys silently — the host just stops recognising the
+        /// reply — so pin them.
+        #[test]
+        fn passkey_message_types_have_the_wire_names_the_native_host_expects() {
+            let name = |t: IpcMessageType| serde_json::to_string(&t).unwrap();
+
+            assert_eq!(name(IpcMessageType::PasskeyCreate), "\"passkey_create\"");
+            assert_eq!(
+                name(IpcMessageType::PasskeyCreateResponse),
+                "\"passkey_create_response\""
+            );
+            assert_eq!(name(IpcMessageType::PasskeyGet), "\"passkey_get\"");
+            assert_eq!(name(IpcMessageType::PasskeyGetResponse), "\"passkey_get_response\"");
+            assert_eq!(name(IpcMessageType::PasskeyList), "\"passkey_list\"");
+            assert_eq!(
+                name(IpcMessageType::PasskeyListResponse),
+                "\"passkey_list_response\""
+            );
+
+            for alias in ["\"passkey_get\"", "\"PasskeyGet\"", "\"passkeyGet\""] {
+                let parsed: IpcMessageType = serde_json::from_str(alias).unwrap();
+                assert_eq!(parsed, IpcMessageType::PasskeyGet, "alias {alias}");
+            }
+        }
+
+        // ── M7: the passkey tier ─────────────────────────────────────────────
+        //
+        // These mirror the lemmas in
+        // `security/formal/m7_oneshot_assertion.spthy`. The model's `Out()` is
+        // this IPC boundary, so testing here is testing the same claim the
+        // prover checks: what can a co-resident process obtain by asking?
+
+        /// The vault the model calls `!Vault(cred, $O)`.
+        fn seed_passkey(mock: &Arc<MockHost>, rp_id: &str) -> String {
+            let request = crate::passkey::MakeCredentialRequest {
+                rp_id: rp_id.to_string(),
+                rp_name: rp_id.to_string(),
+                user_handle: b"handle".to_vec(),
+                user_name: "alice".to_string(),
+                user_display_name: "Alice".to_string(),
+                client_data_hash: [7u8; 32],
+                algorithms: vec![-7],
+                excluded_credential_ids: Vec::new(),
+                require_user_verification: false,
+            };
+            let response = crate::passkey::make_credential(
+                &mock.state,
+                &request,
+                crate::passkey::PresenceToken::mint(true),
+            )
+            .expect("seeding a credential should succeed");
+            response.credential_id
+        }
+
+        fn passkey_get(rp_id: &str) -> IpcMessage {
+            message(
+                IpcMessageType::PasskeyGet,
+                serde_json::json!({
+                    "rp_id": rp_id,
+                    "client_data_hash": b64url_encode(&[9u8; 32]),
+                }),
+                "cap",
+            )
+        }
+
+        /// `credential_never_leaks`: the key is never in anything that crosses
+        /// this boundary, even for the credential in active use.
+        #[tokio::test]
+        async fn an_assertion_response_never_carries_the_credential_key() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::PasskeyGetResponse);
+            // The stored secret, in the form it is stored in.
+            let stored = {
+                let vault = mock.state.vault.read();
+                match vault.passkeys_for_rp("github.com")[0] {
+                    crate::vault::VaultItem::Passkey { private_key, .. } => private_key.clone(),
+                    _ => unreachable!(),
+                }
+            };
+            let rendered = serde_json::to_string(&resp).unwrap();
+            assert!(!rendered.contains(&stored), "credential key crossed the IPC boundary");
+        }
+
+        /// `assertion_requires_user_presence`: no human, no signature. This is
+        /// the lemma that bounds the entire M7 residual — without it the
+        /// assertion path is an oracle a resident process can call at will.
+        #[tokio::test]
+        async fn no_assertion_without_a_presence_confirmation() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(false));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error, "{:?}", resp.payload);
+            assert_eq!(mock.presence_prompts(), 1, "the user must actually have been asked");
+        }
+
+        /// Where nothing can ask a human, the ceremony is refused rather than
+        /// assumed — the deliberate difference from `authorize_plaintext_release`.
+        #[tokio::test]
+        async fn no_assertion_where_there_is_no_way_to_ask() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(None);
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+        }
+
+        /// `assertions_bounded_by_presence`: n logins cost n human actions.
+        #[tokio::test]
+        async fn every_assertion_costs_its_own_confirmation() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            for _ in 0..3 {
+                let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+                assert_eq!(resp.msg_type, IpcMessageType::PasskeyGetResponse);
+            }
+
+            assert_eq!(mock.presence_prompts(), 3, "one prompt per assertion, not one per burst");
+        }
+
+        /// `assertion_is_origin_bound`: the signature covers the RP ID hash, so
+        /// a credential for one site cannot answer for another.
+        #[tokio::test]
+        async fn an_assertion_is_bound_to_the_relying_party_that_asked() {
+            use sha2::{Digest, Sha256};
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+
+            let auth_data = b64url_decode(resp.payload["authenticator_data"].as_str()).unwrap();
+            assert_eq!(&auth_data[..32], Sha256::digest(b"github.com").as_slice());
+            assert_ne!(&auth_data[..32], Sha256::digest(b"evil-github.com").as_slice());
+        }
+
+        /// A lookalike origin gets nothing — and is refused before any prompt,
+        /// so it cannot even be used to nag the user.
+        #[tokio::test]
+        async fn a_lookalike_relying_party_gets_no_assertion_and_no_prompt() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let resp =
+                process_message(passkey_get("evil-github.com"), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(mock.presence_prompts(), 0, "a site with no passkey must not prompt");
+        }
+
+        /// The capability token is not enough here either — same reasoning as
+        /// the plaintext path, since anything running as this user can read it.
+        #[tokio::test]
+        async fn an_assertion_is_refused_to_a_peer_the_kernel_says_is_someone_else() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+            let stranger = PeerIdentity {
+                pid: Some(1),
+                uid: Some(crate::ipc_peer::current_uid() + 1),
+                exe: None,
+            };
+
+            let resp = process_message(passkey_get("github.com"), &host, "cap", &stranger).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(mock.presence_prompts(), 0);
+        }
+
+        /// A relying party that demands user *verification* must not be told a
+        /// dialog click was a biometric.
+        #[tokio::test]
+        async fn user_verification_is_not_satisfied_by_a_dialog_click() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::PasskeyGet,
+                    serde_json::json!({
+                        "rp_id": "github.com",
+                        "client_data_hash": b64url_encode(&[9u8; 32]),
+                        "require_user_verification": true,
+                    }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &test_peer(),
+            )
+            .await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+        }
+
+        /// The signature counter moves, so a relying party can still detect a
+        /// cloned authenticator.
+        #[tokio::test]
+        async fn the_signature_counter_advances_per_assertion() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let first = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+            let second = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+
+            let count = |resp: &IpcMessage| {
+                let d = b64url_decode(resp.payload["authenticator_data"].as_str()).unwrap();
+                u32::from_be_bytes([d[33], d[34], d[35], d[36]])
+            };
+            assert!(count(&second) > count(&first), "counter did not advance");
+        }
+
+        /// A locked vault signs nothing, and does not ask.
+        #[tokio::test]
+        async fn a_locked_vault_produces_no_assertion() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(false);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+
+            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(mock.presence_prompts(), 0);
+        }
+
+        /// The list endpoint is metadata only — it must never become a way to
+        /// read a credential without a prompt.
+        #[tokio::test]
+        async fn listing_passkeys_returns_metadata_and_no_key() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+            seed_passkey(&mock, "github.com");
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::PasskeyList,
+                    serde_json::json!({ "rp_id": "github.com" }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &test_peer(),
+            )
+            .await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::PasskeyListResponse);
+            assert_eq!(resp.payload["credentials"].as_array().unwrap().len(), 1);
+            let rendered = serde_json::to_string(&resp).unwrap();
+            assert!(!rendered.contains("private_key"), "{rendered}");
+            assert_eq!(mock.presence_prompts(), 0, "listing must not prompt");
+        }
+
         #[tokio::test]
         async fn metadata_does_not_need_a_presence_confirmation() {
             // Names and usernames are not the secret; only the plaintext path is
@@ -963,6 +1811,8 @@ pub mod server {
                     pass: "s3cret".into(),
                     totp: None,
                     app_ids: Vec::new(),
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
                 });
             }
             let host: Arc<dyn Host> = mock.clone();
@@ -1045,6 +1895,285 @@ pub mod server {
             assert_eq!(resp.payload["success"], false);
             assert_eq!(resp.payload["error"], "Vault is locked");
             assert_eq!(mock.focuses(), 1);
+        }
+
+        // ── M9a: the in-core login tier ──────────────────────────────────────
+        //
+        // `security/formal/m9a_in_core_login.spthy` puts the session artifact
+        // in the domain and keeps the credential out of it. The IPC boundary is
+        // that `Out()`, so the question these ask is the model's question: what
+        // does a co-resident process get by asking for a login?
+
+        /// A site with a login form, plus a vault item pointing at it.
+        async fn seed_site_and_login(
+            mock: &Arc<MockHost>,
+        ) -> (wiremock::MockServer, String) {
+            use wiremock::matchers::{method as http_method, path as http_path};
+            use wiremock::{Mock, MockServer, ResponseTemplate};
+
+            let server = MockServer::start().await;
+            Mock::given(http_method("GET"))
+                .and(http_path("/login"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(
+                    r#"<form method="POST" action="/session">
+                       <input type="text" name="user"><input type="password" name="pw"></form>"#,
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(http_method("POST"))
+                .and(http_path("/session"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .append_header("set-cookie", "sid=granted; Path=/; HttpOnly")
+                        .set_body_string("<html>Welcome</html>"),
+                )
+                .mount(&server)
+                .await;
+
+            let now = chrono::Utc::now();
+            let item = VaultItem::Login {
+                meta: crate::vault::VaultMeta {
+                    id: "login-1".to_string(),
+                    name: "Test site".to_string(),
+                    notes: None,
+                    created_at: now,
+                    updated_at: now,
+                    last_modified_device: None,
+                    favorite: false,
+                    shared: false,
+                    share_recipient: None,
+                },
+                url: format!("{}/login", server.uri()),
+                username: "alice".to_string(),
+                pass: "hunter2-not-in-any-response".to_string(),
+                totp: None,
+                app_ids: Vec::new(),
+                credential_change_needs_reauth: None,
+                allow_second_factor_downgrade: None,
+            };
+            mock.state.vault.write().add_item(item);
+            (server, "login-1".to_string())
+        }
+
+        fn in_core_login(item_id: &str) -> IpcMessage {
+            message(
+                IpcMessageType::InCoreLogin,
+                serde_json::json!({ "item_id": item_id }),
+                "cap",
+            )
+        }
+
+        /// `credential_never_leaks`, at the boundary the model draws it at. The
+        /// caller gets a session; the password is not in the reply in any form.
+        #[tokio::test]
+        async fn an_in_core_login_returns_a_session_and_never_the_password() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            let (_server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::InCoreLoginResponse);
+            let rendered = serde_json::to_string(&resp).unwrap();
+            assert!(
+                !rendered.contains("hunter2-not-in-any-response"),
+                "the password crossed the IPC boundary: {rendered}"
+            );
+            assert_eq!(resp.payload["cookies"][0]["name"], "sid");
+            assert_eq!(resp.payload["cookies"][0]["http_only"], true);
+            assert_eq!(resp.payload["looks_authenticated"], true);
+        }
+
+        /// `Human_Approve_Login`: no approval, no login. Checked by asking the
+        /// site whether it heard from us at all — an error reply would also be
+        /// produced by a login that happened and then failed.
+        #[tokio::test]
+        async fn a_declined_in_core_login_never_contacts_the_site() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(false));
+            let host: Arc<dyn Host> = mock.clone();
+            let (server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(mock.presence_prompts(), 1, "the user should have been asked");
+            assert!(
+                server.received_requests().await.unwrap().is_empty(),
+                "a declined login still sent the password"
+            );
+        }
+
+        /// A machine with no way to ask refuses rather than proceeding. This is
+        /// the opposite of what `authorize_plaintext_release` does, and
+        /// deliberately: a fill is bounded by the working set, a login that
+        /// signs an attacker in as the user is not.
+        #[tokio::test]
+        async fn a_machine_that_cannot_ask_refuses_the_login() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(None);
+            let host: Arc<dyn Host> = mock.clone();
+            let (server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert!(server.received_requests().await.unwrap().is_empty());
+        }
+
+        /// A locked vault refuses before prompting, so a page cannot make the
+        /// vault nag its owner.
+        #[tokio::test]
+        async fn a_locked_vault_refuses_an_in_core_login_without_asking() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(false);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+
+            let resp = process_message(in_core_login("login-1"), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(resp.payload["message"], "Vault is locked");
+            assert_eq!(mock.presence_prompts(), 0);
+        }
+
+        /// The response says what the session is worth. `Site_Session_Escalate`
+        /// is the reason: at a site where a session can rotate the credential,
+        /// the takeover outlives the session, and the user is the only one who
+        /// can be told that.
+        #[tokio::test]
+        async fn the_response_says_what_the_session_residual_is_worth() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            let (_server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            assert_eq!(resp.payload["site_mode"], "self_serve");
+            assert!(
+                resp.payload["residual_note"]
+                    .as_str()
+                    .unwrap()
+                    .contains("change the account password"),
+                "{}",
+                resp.payload["residual_note"]
+            );
+        }
+
+        /// Candidates are metadata. It must never become a way to read a
+        /// password without a prompt.
+        #[tokio::test]
+        async fn listing_login_candidates_returns_no_password_and_does_not_prompt() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+            let (server, _item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(
+                message(
+                    IpcMessageType::InCoreLoginCandidates,
+                    serde_json::json!({ "url": format!("{}/login", server.uri()) }),
+                    "cap",
+                ),
+                &host,
+                "cap",
+                &test_peer(),
+            )
+            .await;
+
+            assert_eq!(resp.msg_type, IpcMessageType::InCoreLoginCandidatesResponse);
+            assert_eq!(resp.payload["candidates"].as_array().unwrap().len(), 1);
+            assert_eq!(resp.payload["candidates"][0]["username"], "alice");
+            // This mock site has no recipe, so it must come back as the plain
+            // form path. Pinning the key so the popup's flow decision cannot
+            // silently change shape.
+            assert_eq!(resp.payload["candidates"][0]["login_mode"], "form");
+            let rendered = serde_json::to_string(&resp).unwrap();
+            assert!(!rendered.contains("hunter2"), "{rendered}");
+            assert_eq!(mock.presence_prompts(), 0, "listing must not prompt");
+        }
+
+        /// The payload keys are a contract too, and a quieter one than the
+        /// message names: `vela-native-messaging-host.py` reads these strings
+        /// out of the reply, and a rename here produces a login that "succeeds"
+        /// with no cookies rather than an error anyone would notice. Pinning
+        /// the exact key set means a field added, removed or renamed in
+        /// `LoginOutcome` fails here, pointing at the Python that has to change
+        /// with it. Also the last line of defence on secrecy: a key set that
+        /// cannot grow without this failing cannot grow a password field.
+        #[tokio::test]
+        async fn the_login_response_payload_keys_are_the_ones_the_native_host_reads() {
+            crate::presence::force_platform_presence_unavailable();
+            let (_dir, mock) = MockHost::new(true);
+            mock.set_presence_answer(Some(true));
+            let host: Arc<dyn Host> = mock.clone();
+            let (_server, item_id) = seed_site_and_login(&mock).await;
+
+            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+
+            let mut keys: Vec<&str> = resp
+                .payload
+                .as_object()
+                .expect("the payload is an object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys,
+                [
+                    "cookies",
+                    "landing_url",
+                    "looks_authenticated",
+                    "residual_note",
+                    "second_factor_downgraded",
+                    "site_mode",
+                    "success",
+                    "used_second_factor",
+                    "user_verified",
+                ]
+            );
+
+            let mut cookie_keys: Vec<&str> = resp.payload["cookies"][0]
+                .as_object()
+                .expect("a cookie is an object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            cookie_keys.sort_unstable();
+            // `same_site` and `expires_at` are skipped when absent, which this
+            // site's cookie exercises: it sets neither.
+            assert_eq!(
+                cookie_keys,
+                ["domain", "host_only", "http_only", "name", "path", "secure", "value"]
+            );
+        }
+
+        /// Same contract as the passkey names: `vela-native-messaging-host.py`
+        /// matches on these strings, so a silent rename breaks the feature.
+        #[test]
+        fn in_core_login_message_types_have_the_wire_names_the_native_host_expects() {
+            let name = |t: IpcMessageType| serde_json::to_string(&t).unwrap();
+
+            assert_eq!(name(IpcMessageType::InCoreLogin), "\"in_core_login\"");
+            assert_eq!(
+                name(IpcMessageType::InCoreLoginResponse),
+                "\"in_core_login_response\""
+            );
+            assert_eq!(
+                name(IpcMessageType::InCoreLoginCandidates),
+                "\"in_core_login_candidates\""
+            );
+            assert_eq!(
+                name(IpcMessageType::InCoreLoginCandidatesResponse),
+                "\"in_core_login_candidates_response\""
+            );
         }
     }
 }

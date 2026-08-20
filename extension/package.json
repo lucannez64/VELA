@@ -8,6 +8,7 @@
     "build:chrome": "bun run build.js --chrome",
     "build:firefox": "bun run build.js --firefox",
     "build:xpi": "bun run build.js --firefox",
+    "test:shim": "node scripts/shim-instanceof-test.cjs src/content/webauthn-shim.js",
     "version:bump": "bun run bump-version.js",
     "sign:firefox": "bun run version:bump && bun run build:firefox && web-ext sign --source-dir dist/firefox --artifacts-dir dist/signed --channel unlisted",
     "clean": "rm -rf dist"

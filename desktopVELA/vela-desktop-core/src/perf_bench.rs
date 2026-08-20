@@ -35,6 +35,10 @@ fn login(i: usize, device: Option<&str>) -> VaultItem {
         pass: format!("Correct-Horse-Battery-Staple-{i}!"),
         totp: if i % 5 == 0 { Some("JBSWY3DPEHPK3PXP".to_string()) } else { None },
         app_ids: Vec::new(),
+        // Fields added by the M9a in-core login work; the perf benchmark does
+        // not exercise them, so their defaults are fine.
+        credential_change_needs_reauth: None,
+        allow_second_factor_downgrade: None,
     }
 }
 

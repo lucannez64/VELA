@@ -37,13 +37,12 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
   useEffect(() => {
     if (!item.totp || paused) return;
 
-    // The countdown is driven by the local clock, not by a per-second backend
-    // round trip: the backend is consulted once per code, and every tick only
-    // re-derives the seconds-remaining from `expiresAt`. This keeps the timer
-    // correct even when the renderer throttles timers while the window is
-    // hidden or busy, and it stops the edit modal from being drowned in IPC
-    // + HMAC churn every second (a real source of selection lag on the
-    // software-rendered WebKitGTK path).
+    // main's fix: drive the countdown from the local clock, not a per-second
+    // backend round trip — the backend is consulted once per code, and every
+    // tick re-derives the seconds-remaining from `expiresAt`. Keeps the timer
+    // correct when renderer timers are throttled (hidden/busy window) and
+    // stops the edit modal from being drowned in IPC+HMAC churn (the source
+    // of the selection lag this fixed).
     let busy = false;
     let stopped = false;
     let period = 30;
@@ -79,7 +78,6 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
       }
       const remainingMs = expiresAt - Date.now();
       if (remainingMs <= 0) {
-        // The current code just rolled over; fetch the next one.
         fetchCode();
         return;
       }
@@ -93,9 +91,6 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
     fetchCode();
     const interval = setInterval(tick, 500);
 
-    // Renderer timers are throttled while the window is unfocused or hidden,
-    // which used to make the countdown stall. Re-deriving from the clock on
-    // focus/visibility (or rolling the code over) heals the countdown.
     document.addEventListener('visibilitychange', onActive);
     window.addEventListener('focus', onActive);
 
@@ -287,6 +282,31 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
                 >
                   <span className="material-symbols-outlined text-xl">content_copy</span>
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/*
+            Shown only when it is on, and worded as what it does rather than
+            what it is called. This is the one setting in VELA that weakens a
+            site's own choice of factor, and somebody who turned it on weeks ago
+            should be able to see that from the item without going looking.
+          */}
+          {item.allow_second_factor_downgrade && (
+            <div className="p-6 rounded-2xl bg-error-container/20 border border-error/30 min-w-0">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-3">
+                Sign-in behaviour
+              </label>
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-error text-xl shrink-0">key_off</span>
+                <div className="text-sm text-on-surface min-w-0">
+                  VELA may answer this site's security-key prompt with your
+                  authenticator code
+                  <span className="block text-xs text-on-surface-variant mt-1">
+                    It signs in without you, using the weaker of the two factors
+                    this site offered. Edit the item to turn this off.
+                  </span>
+                </div>
               </div>
             </div>
           )}

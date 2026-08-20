@@ -85,7 +85,8 @@ fn item_updated_at(item: &VaultItem) -> DateTime<Utc> {
         | VaultItem::SecureNote { meta, .. }
         | VaultItem::Identity { meta, .. }
         | VaultItem::FileBlob { meta, .. }
-        | VaultItem::BreachMonitor { meta, .. } => meta.updated_at,
+        | VaultItem::BreachMonitor { meta, .. }
+        | VaultItem::Passkey { meta, .. } => meta.updated_at,
     }
 }
 
@@ -669,6 +670,8 @@ impl AndroidClient {
             pass: password.to_string(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         });
     }
 
@@ -694,7 +697,8 @@ impl AndroidClient {
             | VaultItem::SecureNote { meta, .. }
             | VaultItem::Identity { meta, .. }
             | VaultItem::FileBlob { meta, .. }
-            | VaultItem::BreachMonitor { meta, .. } => meta.updated_at = ts,
+            | VaultItem::BreachMonitor { meta, .. }
+            | VaultItem::Passkey { meta, .. } => meta.updated_at = ts,
         }
     }
 

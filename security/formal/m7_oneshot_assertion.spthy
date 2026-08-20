@@ -1,0 +1,145 @@
+theory M7_OneShotAssertion
+/*
+  Model 7 - one-shot assertion release (passkey / WebAuthn-style). M5's
+  target-redefinition applied to the released THING rather than to a release
+  gate: the broker never releases a reusable secret. On request it returns a
+  single-use signature over <origin, challenge>, produced with the credential's
+  own private key, which is sealed on the desktop and never leaves it.
+
+  This is the structural escape from the M3/M6 working-set floor: M1's theorem
+  says any solution that puts a REUSABLE CREDENTIAL into the domain lets the
+  in-domain adversary read it. M7 simply never does that - only assertions
+  (signatures) reach the domain, so even the item in active use never reaches
+  the adversary.
+
+  Two modelling points that the first version of this theory got wrong, and
+  that this one fixes:
+
+    * The credential must be LOAD-BEARING. In v1 the vault item appeared only
+      as an unused premise of Sign_Assertion and the assertion was signed with
+      an unrelated device key, so `credential_never_leaks` was a tautology: the
+      whole vault could be deleted from the theory and every lemma still
+      verified in 2 steps. Here the vault item IS the credential private key
+      (WebAuthn: one credential = one keypair, scoped to one origin), the
+      assertion is signed WITH it, and its public half is published. Secrecy is
+      now a real symbolic result about a term the adversary actually sees used.
+
+    * The assertion path must be GATED. In v1 Sign_Assertion fired straight off
+      In(<'auth',O,chal>) with no human in the loop, which made it a free
+      oracle: a resident adversary could complete unbounded logins at every
+      origin (exists-trace for three distinct accepts verified in 16 steps).
+      That is not "one assertion while present" - it is full standing
+      authentication as the user. Here a deliberate human action mints one
+      consumable presence token (WebAuthn's UP/UV, and the passkey tier's
+      analogue of M6's Human_Approve), so the residual is bounded: one
+      assertion per human action, exactly like M6's one release per grant.
+
+  The honest residual is therefore the same shape as M5's and M6's: while the
+  adversary is resident it can consume the tokens the human mints, and nothing
+  persists after eviction. What M7 buys over M6 is that the thing consumed is
+  worth one login at one origin instead of a reusable credential.
+
+  Expected verdicts (all-traces unless marked):
+    credential_never_leaks          VERIFIED - K(cred) never holds, even for an
+        item in active use (AuthUsed), and even though the adversary sees
+        pk(cred) and signatures produced under cred.
+    used_passkey_item_still_secret  VERIFIED - explicit: an item that is
+        actually authenticated against still never reaches the adversary.
+    assertion_requires_user_presence VERIFIED - no assertion without a
+        preceding human presence action: the path is not an oracle.
+    assertions_bounded_by_presence  VERIFIED - injective: one assertion per
+        presence token, so n logins cost the adversary n human actions.
+    assertion_is_origin_bound       VERIFIED - Accept(O) requires a signature
+        produced for O under O's own registered key (M5 no_cross_origin,
+        carried over). With credential_never_leaks this is also the statement
+        that a compromised browser cannot mint assertions.
+    assertion_one_shot              VERIFIED - one accept per fresh challenge;
+        a stolen assertion cannot be replayed.
+    transient_residual (exists-trace) VERIFIED - a resident adversary can drive
+        an assertion while present; nothing persists.
+*/
+begin
+
+builtins: signing
+
+// The vault: at a passkey origin the stored item IS the credential's private
+// key, scoped to exactly one origin. The private half never leaves `!Vault`
+// (no rule outputs it); the public half is registered at the relying party.
+rule Vault_Setup:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O), Registered($O, pk(~cred)) ]->
+    [ !Vault(~cred, $O), !RpKey($O, pk(~cred)), Out( pk(~cred) ) ]
+
+// USER PRESENCE / VERIFICATION: WebAuthn's UP/UV, the passkey tier's analogue
+// of M6's Human_Approve. One deliberate human action mints one consumable
+// token. The adversary cannot forge it (no adversary rule produces it), which
+// is what keeps the assertion path from being a free oracle.
+rule Human_User_Presence:
+    [ Fr(~up) ]
+  --[ UserPresent($O, ~up) ]->
+    [ UserPresence($O, ~up) ]
+
+// The one-shot assertion: the desktop signs <origin, challenge> with the
+// credential key itself, consuming one presence token. Only the signature
+// leaves; the credential never does.
+rule Sign_Assertion:
+    [ !Vault(cred, $O), UserPresence($O, up), In(<'auth', $O, chal>) ]
+  --[ Asserted($O, chal), AssertedWith($O, chal, up), AuthUsed(cred, $O) ]->
+    [ Out( sign(<$O, chal>, cred) ) ]
+
+// Relying party issues a fresh challenge for its origin.
+rule RP_Challenge:
+    [ Fr(~chal) ]
+  --[ Challenge($O, ~chal) ]->
+    [ Out(<$O, ~chal>), StRP($O, ~chal) ]
+
+// Relying party accepts iff the signature verifies for ITS origin, ITS
+// challenge, and the key registered for ITS OWN origin; the challenge is
+// consumed, so there is one accept per challenge.
+rule RP_Accept:
+    [ StRP(O, chal), !RpKey(O, pkey), In(sig) ]
+  --[ Accept(O, chal), Verified( verify(sig, <O, chal>, pkey) ) ]->
+    [ ]
+
+restriction VerifyTrue:
+  "All x #i. Verified(x) @ i ==> x = true"
+
+// ---- Secrecy ----------------------------------------------------------------
+
+lemma credential_never_leaks:
+  "All c O #i.
+     Secret(c, O) @ i ==> not(Ex #j. K(c) @ j)"
+
+lemma used_passkey_item_still_secret:
+  "All c O #i.
+     AuthUsed(c, O) @ i ==> not(Ex #k. K(c) @ k)"
+
+// ---- The gate: the assertion path is not an oracle ---------------------------
+
+lemma assertion_requires_user_presence:
+  "All O chal #i.
+     Asserted(O, chal) @ i
+     ==> Ex up #j. UserPresent(O, up) @ j & #j < #i"
+
+lemma assertions_bounded_by_presence:
+  "All O c1 c2 up #i #j.
+     AssertedWith(O, c1, up) @ i & AssertedWith(O, c2, up) @ j
+     ==> #i = #j"
+
+// ---- Agreement ---------------------------------------------------------------
+
+lemma assertion_is_origin_bound:
+  "All O chal #i.
+     Accept(O, chal) @ i ==> Ex #j. Asserted(O, chal) @ j & #j < #i"
+
+lemma assertion_one_shot:
+  "All O chal #i #j.
+     Accept(O, chal) @ i & Accept(O, chal) @ j ==> #i = #j"
+
+// ---- Existence ---------------------------------------------------------------
+
+lemma transient_residual:
+  exists-trace
+  "Ex O chal #i. Accept(O, chal) @ i"
+
+end

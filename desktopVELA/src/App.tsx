@@ -7,6 +7,7 @@ import TitleBar from './components/TitleBar';
 import Sidebar from './components/Sidebar';
 import WelcomeScreen from './views/WelcomeScreen';
 import SetupScreen from './views/SetupScreen';
+import RecoveryReminder from './components/RecoveryReminder';
 import BiometricGate from './views/BiometricGate';
 import VaultBrowser from './views/VaultBrowser';
 import ItemDetail from './views/ItemDetail';
@@ -45,12 +46,10 @@ function AppContent() {
   sessionActiveRef.current = !!session?.active;
   const lastActivityRef = useRef(Date.now());
 
-  // Coalesces overlapping `loadItems` calls into one shared run. The sync
-  // path is the main culprit: `trigger_sync` is awaited and *then* `loadItems`
-  // runs, but the sync also emits `vault-items-changed`, so a single sync used
-  // to serialize + ship the whole ~1 MB vault over IPC twice back-to-back (and
-  // re-render the list twice). A call that lands while a load is in flight now
-  // queues a single follow-up run instead of spawning a second full fetch.
+  // main's perf improvement: coalesce overlapping `loadItems` calls into one
+  // shared run. The sync path is the main culprit — `trigger_sync` is awaited
+  // and then `loadItems` runs, but the sync also emits `vault-items-changed`,
+  // so one sync used to ship the vault over IPC twice and re-render twice.
   const loadInFlightRef = useRef<Promise<void> | null>(null);
   const loadQueuedRef = useRef(false);
 
@@ -265,12 +264,6 @@ function AppContent() {
         if (!prev || !prev.active) return prev;
         const idleSecs = Math.floor((Date.now() - lastActivityRef.current) / 1000);
         const remaining = Math.max(0, autoLockSecs - idleSecs);
-        // `setSession` with a fresh object re-renders the whole tree through
-        // the context value. Skip it when the countdown didn't move — which
-        // is every tick while the user is actively using the app, since their
-        // activity keeps resetting `lastActivity` (so `remaining` stays pinned
-        // at `autoLockSecs` and this returns `prev`, a no-op for React).
-        if (remaining === prev.session_time_remaining_secs) return prev;
         return { ...prev, session_time_remaining_secs: remaining };
       });
     }, 1000);
@@ -359,6 +352,13 @@ function AppContent() {
   return (
     <div className="h-screen flex flex-col bg-surface">
       <TitleBar />
+      {/*
+        Above the whole app, not tucked inside a view: setup can now be left
+        without recovery configured, and this is what keeps that a deferral
+        rather than a silent omission. It removes itself once two methods are
+        set up.
+      */}
+      <RecoveryReminder onOpenSettings={() => setCurrentView('settings')} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar 
           onAddItem={() => setShowAddModal(true)} 
@@ -368,7 +368,6 @@ function AppContent() {
             selectedItem ? (
               <ItemDetail 
                 item={selectedItem} 
-                paused={showAddModal}
                 onEdit={() => {
                   setShowAddModal(true);
                 }}

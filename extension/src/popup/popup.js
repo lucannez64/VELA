@@ -9,10 +9,12 @@ const settingsBtn = document.getElementById("settingsBtn");
 
 let currentTabUrl = null;
 let availableLogins = [];
+let inCoreLoginCandidates = [];
 
 async function init() {
   await checkDesktopConnection();
   await getCurrentTab();
+  await loadInCoreLoginCandidates();
   await loadLogins();
   setupEventListeners();
 }
@@ -100,8 +102,15 @@ async function loadLogins() {
   }
 }
 
+/// Shown when the desktop would not release a plaintext password.
+///
+/// The in-core login section is rendered here too, and this is the case it was
+/// built for: a machine that will not hand over the password can still sign the
+/// user in, because that path never needed the password released in the first
+/// place.
 function showApprovalRequiredState() {
   mainContent.innerHTML = `
+    ${renderInCoreLoginSection()}
     <div class="empty-state">
       <svg class="empty-state-icon" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 1a4 4 0 00-4 4v2H5a2 2 0 00-2 2v7a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a4 4 0 00-4-4zm2 6V5a2 2 0 10-4 0v2h4z" clip-rule="evenodd" />
@@ -129,6 +138,8 @@ function showApprovalRequiredState() {
       </button>
     </div>
   `;
+
+  wireInCoreLoginSection();
 
   const openBtn = mainContent.querySelector("#openDesktopBtn");
   if (openBtn) {
@@ -187,11 +198,14 @@ function renderLogins() {
   }).join("");
 
   mainContent.innerHTML = `
+    ${renderInCoreLoginSection()}
     <div class="section-title">Logins for this page</div>
     <ul class="login-list">
       ${loginsHtml}
     </ul>
   `;
+
+  wireInCoreLoginSection();
 
   const loginItems = mainContent.querySelectorAll(".login-item");
   loginItems.forEach((item) => {
@@ -203,6 +217,170 @@ function renderLogins() {
       }
     });
   });
+}
+
+// ── In-core login (M9a) ──────────────────────────────────────────────────────
+//
+// The button below does something different from "Auto-fill": the password is
+// never sent to the page. VELA Desktop signs in over its own connection and the
+// browser receives only the session cookies. What that is worth depends on the
+// site — a session expires and can be revoked where a password does neither,
+// but at a site that lets a session change the account password it is not much
+// weaker than the password itself. The desktop says which case applies and the
+// toast repeats it, because the user is the only one who can act on it.
+
+async function loadInCoreLoginCandidates() {
+  if (!currentTabUrl) {
+    return;
+  }
+  try {
+    const response = await sendMessage({ command: "inCoreLoginCandidates" });
+    inCoreLoginCandidates = response?.candidates || [];
+  } catch (e) {
+    inCoreLoginCandidates = [];
+  }
+}
+
+function renderInCoreLoginSection() {
+  if (inCoreLoginCandidates.length === 0) {
+    return "";
+  }
+
+  const buttons = inCoreLoginCandidates
+    .map((candidate) => {
+      const who = candidate.username || candidate.name || "this account";
+      // Said before the click, not after. This item permits answering a
+      // security-key prompt with a TOTP code, and somebody about to press the
+      // button is the person who should know that.
+      const downgrades = candidate.allow_second_factor_downgrade
+        ? `<span style="display:block;margin-top:4px;font-size:11px;opacity:0.85;">
+             ⚠ May answer a security-key prompt with your authenticator code
+           </span>`
+        : "";
+      // A site whose login is a recipe gated by a captcha: the human has to
+      // solve it on the page, and VELA picks the token up from there. Named
+      // as such, so the click is not a surprise and the flow is understood.
+      const captchaMode = candidate.login_mode === "recipe_captcha";
+      const label = captchaMode
+        ? `Solve the captcha, then sign in as ${escapeHtml(who)}`
+        : `Sign in as ${escapeHtml(who)} without filling the password`;
+      return `
+        <button class="in-core-login-btn" data-item-id="${escapeHtml(candidate.item_id || "")}"
+                data-login-mode="${escapeHtml(candidate.login_mode || "form")}"
+                style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 12px;
+                       background:#2a2d2e;color:#e2e2e5;border:1px solid #444748;border-radius:10px;
+                       font-size:12px;cursor:pointer;">
+          ${label}
+          ${downgrades}
+        </button>`;
+    })
+    .join("");
+
+  return `
+    <div class="section-title">Sign in from VELA</div>
+    <div style="padding:0 12px 10px;">
+      ${buttons}
+      <div style="font-size:11px;opacity:0.7;line-height:1.4;">
+        VELA Desktop signs in over its own connection. The page receives a
+        session, never your password.
+        ${inCoreLoginCandidates.some((c) => c.login_mode === "recipe_captcha")
+          ? " For captcha-protected sites, solve the captcha in the tab and VELA finishes the sign-in."
+          : ""}
+        Some sites are signed in through a disposable browser window VELA opens
+        and closes on its own.
+      </div>
+    </div>
+  `;
+}
+
+function wireInCoreLoginSection() {
+  mainContent.querySelectorAll(".in-core-login-btn").forEach((button) => {
+    button.addEventListener("click", () => startInCoreLogin(button));
+  });
+}
+
+async function startInCoreLogin(button) {
+  const itemId = button.dataset.itemId;
+  const mode = button.dataset.loginMode || "form";
+  if (!itemId) {
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Waiting for your approval in VELA Desktop…";
+
+  try {
+    // The cookie permission is optional and asked for here, on a click, for one
+    // origin: `permissions.request` needs a user gesture, and the popup is the
+    // only place in this flow that has one. Being able to write cookies for
+    // every site the user visits is not something the extension should hold
+    // just in case.
+    if (!(await ensureCookiePermission())) {
+      showNotification("VELA needs permission to set cookies for this site");
+      button.disabled = false;
+      button.textContent = "Sign in without filling the password";
+      return;
+    }
+
+    const response = await sendMessage({ command: "inCoreLogin", itemId, mode });
+    if (!response?.success) {
+      showNotification(response?.error || "Sign-in failed");
+      button.disabled = false;
+      button.textContent = "Sign in without filling the password";
+      return;
+    }
+
+    // A captcha-gated recipe: the token can only be minted by a human solving
+    // the widget on the page, which means the popup has to get out of the way.
+    // Tell them what to do and close; the background finishes the sign-in.
+    if (response.waitingForCaptcha) {
+      showNotification(
+        "Complete the captcha on the page — VELA will finish the sign-in automatically."
+      );
+      setTimeout(() => window.close(), 2800);
+      return;
+    }
+
+    // Three outcomes, and they must not be blurred together. The site can
+    // still be holding a gate no vault can open — a security key, a push —
+    // in which case the password was accepted, the tab has been taken to the
+    // challenge, and the user finishes by hand. Calling that "signed in" is
+    // the bug the first real GitHub run exposed.
+    if (response.awaitingSecondFactor) {
+      showNotification(
+        `Password accepted. Finish with ${response.awaitingSecondFactor}.`
+      );
+    } else if (response.looksAuthenticated) {
+      // A disposable browser window was used for this login (bot-walled
+      // sites). Say so, and that a second factor may have needed finishing
+      // there.
+      const browserNote = response.usedBrowser
+        ? " (a VELA browser window opened to complete it)"
+        : "";
+      showNotification(
+        (response.secondFactorDowngraded
+          ? "Signed in using your authenticator code instead of the security key this site asked for."
+          : response.residualNote || "Signed in.") + browserNote
+      );
+    } else {
+      showNotification("VELA sent the sign-in, but the site did not clearly accept it.");
+    }
+    setTimeout(() => window.close(), 3200);
+  } catch (e) {
+    showNotification(e.message || "Sign-in failed");
+    button.disabled = false;
+    button.textContent = "Sign in without filling the password";
+  }
+}
+
+function ensureCookiePermission() {
+  const origin = new URL(currentTabUrl).origin + "/*";
+  const request = { permissions: ["cookies"], origins: [origin] };
+  // `permissions.request` must run inside the click's user gesture. Awaiting
+  // `contains` first can drop that gesture on some Chromium builds (the error
+  // "permissions.request may only be called from a user input handler").
+  // Calling `request` directly is safe: it resolves immediately when the
+  // permission is already held, and only prompts when it is not.
+  return browser.permissions.request(request);
 }
 
 function handleLoginAction(action, loginId) {

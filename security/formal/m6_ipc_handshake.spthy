@@ -1,0 +1,272 @@
+theory M6_IpcHandshake
+/*
+  Model 6 - the real IPC handshake. Where M1-M5 isolate the decide/unwrap/consume
+  skeleton, this model encodes the actual VELA browser<->desktop channel and the
+  grant lifecycle it should carry:
+
+    * native-messaging channel setup  - the desktop writes a per-session
+      capability to ipc_auth.json (0600). A co-resident same-UID process can
+      read that file, so the capability is modelled as adversary-visible and
+      grants nothing on its own (the code's own docstring says exactly this:
+      "the attacker worth worrying about is another process running as the same
+      user: it can read that file"). The honest native-messaging host is a
+      transparent relay and is subsumed by the Dolev-Yao adversary, so no rule
+      for it.
+
+    * first-use pairing              - the joining client generates its own
+      keypair, computes the fingerprint phrase h(pk) locally, and displays it
+      on its own screen. The human compares that phrase out of band and
+      confirms; the desktop enrolls a public key only after that human action
+      (mirrors enrollment v3: "the joining device computes and displays the
+      fingerprint of its own key ... never a value that arrived over the wire").
+
+    * per-client key exchange        - after pairing, each client holds the
+      private half of its enrolled key and signs every fill request with it. The
+      desktop releases only against a signature verifying under the enrolled
+      public key, so request content is bound to a specific client.
+
+    * Approved-grant lifecycle       - issue (human approves exactly one
+      (client, origin, item), bound, not a boolean); use (a release consumes the
+      grant AND a client-signed request); anomaly-reconfirm (grants are single
+      use and bound to the triple, so any use outside it needs a fresh human
+      issue - encoded as the linear Grant consumed by Release); expire and
+      revoke (linear grant removed by an explicit rule, so a later use is
+      impossible).
+
+    * request replay cache          - the desktop honours each request nonce at
+      most once (`RequestNonceIsFresh`). Without it the agreement below is only
+      NON-injective: an earlier version of this theory elided the counter, and
+      one captured client-signed request could then be replayed to back several
+      different releases (falsified in 13 steps, WITHOUT any client compromise).
+      The grant lifecycle still bounded the damage - each release needs its own
+      human grant - but the per-client signature was contributing no freshness,
+      so calling the result "injective agreement" was wrong. The cache is what
+      makes the injective claim below actually hold.
+
+  The adversary is the SDC adversary of M1-M5: a co-resident same-UID process
+  with full control of In/Out and the capability. Model 6 adds the two things a
+  real handshake adds beyond M3: (1) release requires a per-client signature, so
+  the grant alone leaks nothing; (2) the compromise of a client is an explicit
+  event, so we can prove what a compromised browser can and cannot do.
+
+  Expected verdicts (all-traces unless marked):
+    client_key_secret_unless_compromised   VERIFIED  - a client key is secret
+        until that client is explicitly compromised.
+    unused_item_secret                     VERIFIED  - never-released items stay
+        secret even under full client compromise (bulk bound survives).
+    release_requires_client_request        VERIFIED  - injective agreement: a
+        release needs a human-issued grant for the same (client, origin, item)
+        AND the client's own signed request CARRYING THE SAME NONCE (or that
+        client's compromise).
+    request_is_single_use                  VERIFIED  - the other half of
+        injectivity: one release per client request, no replay.
+    grant_is_single_use                    VERIFIED  - one release per grant.
+    no_release_without_issue               VERIFIED  - every release traces to a
+        grant issue.
+    enrollment_agrees_with_human_confirmation  VERIFIED - enrollment only ever
+        binds a key the joining device displayed and the human confirmed.
+    no_cross_origin_release                VERIFIED  - an item stored for O is
+        never released for O' != O.
+    revoke_prevents_use / expire_prevents_use VERIFIED - the lifecycle states
+        are real: a revoked or expired grant cannot be used later.
+    compromised_client_cannot_act_as_others   VERIFIED - a compromised browser
+        gains nothing beyond its own grants: releases for an uncompromised
+        client only happen through that client's own signed request.
+    used_item_leaks / release_reachable /
+    compromised_browser_residual          (exists-trace) VERIFIED - the consume
+        residual and the presence residual both exist.
+*/
+begin
+
+builtins: signing, hashing
+
+// Native-messaging channel setup: the desktop writes a per-session capability
+// to the auth file. Same-UID readable, so modelled as public; it is NOT what
+// protects the release (the SDC assumption, restated for the real channel).
+rule Desktop_Channel:
+    [ Fr(~cap) ]
+  --[ Capability(~cap) ]->
+    [ Out(~cap) ]
+
+// The vault: each credential is minted under exactly one origin.
+rule Vault_Setup:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O) ]->
+    [ !Vault(~cred, $O) ]
+
+// First-use pairing, joining side: the client generates its own keypair and
+// displays the fingerprint phrase h(pk) on its own screen (never read from a
+// response - the v3 property). The private half never leaves this fact.
+rule Client_Join:
+    [ Fr(~sk) ]
+  --[ Joined($C, pk(~sk)), SecretClientKey($C, ~sk) ]->
+    [ !MyKey($C, pk(~sk), ~sk), !OnScreen($C, pk(~sk)),
+      Out(<'join', $C, pk(~sk)>) ]
+
+// First-use pairing, human side: the human reads the phrase h(pk) off the
+// joining device's screen and confirms it. The adversary cannot forge this
+// out-of-band action.
+rule Human_Confirm_Pairing:
+    [ !OnScreen($C, pkey) ]
+  --[ HumanPairConfirmed($C, h(pkey)) ]->
+    [ Confirmed($C, pkey) ]
+
+// First-use pairing, desktop side: enroll a public key only after the human
+// confirmed it.
+rule Desktop_Enroll:
+    [ In(<'join', $C, pkey>), Confirmed($C, pkey) ]
+  --[ Enrolled($C, pkey) ]->
+    [ !ClientKey($C, pkey) ]
+
+// Per-client key exchange in use: the client signs its fill request with its
+// own private key. Only the enrolled key verifies at the desktop.
+rule Client_Request:
+    [ !MyKey($C, pkey, sk), Fr(~r) ]
+  --[ ClientRequests($C, $O, ~r) ]->
+    [ Out(<'fill', $C, $O, ~r, sign(<'fill', $C, $O, ~r>, sk)>) ]
+
+// ISSUE: the human approves exactly one (client, origin, item). Bound, not a
+// boolean: the grant names the item it may release.
+rule Human_Approve:
+    [ !Vault(cred, $O), Fr(~g) ]
+  --[ Issue($C, $O, cred, ~g) ]->
+    [ Grant($C, $O, cred, ~g) ]
+
+// USE: a release consumes the grant AND a request signed by the enrolled
+// client. The signature binds client and origin; the grant binds client, origin
+// and item; the item is stored under the same origin. The plaintext still
+// reaches the domain (Out) - the consume-stage residual of M3, carried over.
+rule Desktop_Release:
+    [ Grant($C, $O, cred, g), !ClientKey($C, pkey), !Vault(cred, $O),
+      In(<'fill', $C, $O, r, sig>) ]
+  --[ Released($C, $O, cred, g, r), RequestUsed(r),
+      Verified(verify(sig, <'fill', $C, $O, r>, pkey)) ]->
+    [ Out(cred) ]
+
+// EXPIRE: the grant is removed; nothing can consume it afterwards.
+rule Grant_Expire:
+    [ Grant($C, $O, cred, g) ]
+  --[ Expired($C, $O, cred, g) ]->
+    [ ]
+
+// REVOKE: as above (vault lock / user revoke / device revoke).
+rule Grant_Revoke:
+    [ Grant($C, $O, cred, g) ]
+  --[ Revoked($C, $O, cred, g) ]->
+    [ ]
+
+// Compromised-browser case: the client's private key leaks to the adversary.
+// This is the ONLY way the adversary comes by a client key (proved by
+// client_key_secret_unless_compromised).
+rule Corrupt_Client:
+    [ !MyKey($C, pkey, sk) ]
+  --[ Compromised($C) ]->
+    [ Out(sk) ]
+
+restriction VerifyTrue:
+  "All x #i. Verified(x) @ i ==> x = true"
+
+// The desktop's replay cache: a given request nonce is honoured at most once.
+// This is the replay counter the earlier version of this theory abstracted
+// away, made explicit - it is what upgrades the agreement below from
+// non-injective to injective.
+restriction RequestNonceIsFresh:
+  "All r #i #j. RequestUsed(r) @ i & RequestUsed(r) @ j ==> #i = #j"
+
+// ---- Secrecy --------------------------------------------------------------
+
+lemma client_key_secret_unless_compromised:
+  "All C sk #i #j.
+     SecretClientKey(C, sk) @ i & K(sk) @ j
+     ==> Ex #h. Compromised(C) @ h & #h < #j"
+
+lemma unused_item_secret:
+  "All c O #i.
+     Secret(c, O) @ i
+     & not(Ex C g r #j. Released(C, O, c, g, r) @ j)
+     ==> not(Ex #k. K(c) @ k)"
+
+// ---- Injective agreement ---------------------------------------------------
+
+// Agreement: every release is backed by a human grant for that exact
+// (client, origin, item) AND by the client's own signed request carrying the
+// SAME nonce r - or, in the only escape, that client having been compromised.
+lemma release_requires_client_request:
+  "All C O c g r #i.
+     Released(C, O, c, g, r) @ i
+     ==> ( Ex #j. Issue(C, O, c, g) @ j & #j < #i )
+       & ( (Ex #h. ClientRequests(C, O, r) @ h & #h < #i)
+           | (Ex #h. Compromised(C) @ h & #h < #i) )"
+
+// Injectivity, request side: one release per client request. Together with the
+// lemma above this is injective agreement in Lowe's sense - the signature is
+// carrying freshness, not just authenticity.
+lemma request_is_single_use:
+  "All C1 O1 c1 g1 C2 O2 c2 g2 r #i #j.
+     Released(C1, O1, c1, g1, r) @ i & Released(C2, O2, c2, g2, r) @ j
+     ==> #i = #j"
+
+// Injectivity, grant side: one release per human grant.
+lemma grant_is_single_use:
+  "All C O c g r1 r2 #i #j.
+     Released(C, O, c, g, r1) @ i & Released(C, O, c, g, r2) @ j
+     ==> #i = #j"
+
+lemma no_release_without_issue:
+  "All C O c g r #i.
+     Released(C, O, c, g, r) @ i
+     ==> Ex #j. Issue(C, O, c, g) @ j & #j < #i"
+
+lemma enrollment_agrees_with_human_confirmation:
+  "All C pk #i.
+     Enrolled(C, pk) @ i
+     ==> Ex #j #h.
+            Joined(C, pk) @ j & HumanPairConfirmed(C, h(pk)) @ h
+            & #j < #i & #h < #i"
+
+lemma no_cross_origin_release:
+  "All c O O2 C g r #i #j.
+     Secret(c, O) @ i & Released(C, O2, c, g, r) @ j
+     ==> O = O2"
+
+// ---- Grant lifecycle --------------------------------------------------------
+
+lemma revoke_prevents_use:
+  "All C O c g #i.
+     Revoked(C, O, c, g) @ i
+     ==> not(Ex r #j. Released(C, O, c, g, r) @ j & #i < #j)"
+
+lemma expire_prevents_use:
+  "All C O c g #i.
+     Expired(C, O, c, g) @ i
+     ==> not(Ex r #j. Released(C, O, c, g, r) @ j & #i < #j)"
+
+// ---- Compromised browser -----------------------------------------------------
+
+// A compromised C2 buys nothing outside its own grants: a release for a
+// different, uncompromised C still requires C's OWN signed request, with the
+// same nonce the release consumed.
+lemma compromised_client_cannot_act_as_others:
+  "All C C2 O c g r #i #k.
+     Compromised(C2) @ i
+     & Released(C, O, c, g, r) @ k
+     & not(C = C2)
+     & not(Ex #h. Compromised(C) @ h & #h < #k)
+     ==> Ex #j. ClientRequests(C, O, r) @ j & #j < #k"
+
+// ---- Existence ---------------------------------------------------------------
+
+lemma release_reachable:
+  exists-trace
+  "Ex C O c g r #i. Released(C, O, c, g, r) @ i"
+
+lemma used_item_leaks:
+  exists-trace
+  "Ex C O c g r #i #j. Released(C, O, c, g, r) @ i & K(c) @ j"
+
+lemma compromised_browser_residual:
+  exists-trace
+  "Ex C O c g r #i #j #k.
+     Compromised(C) @ i & Released(C, O, c, g, r) @ j & K(c) @ k"
+
+end

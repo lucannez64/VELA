@@ -1,0 +1,76 @@
+theory M9b_EngineLogin
+/*
+  Model 9b - desktop-mediated login THROUGH an embedded browser engine
+  (Selenium-like). The engine is a new member of the domain: the desktop
+  decrypts the credential and hands it to the engine (`Out(cred)`), which
+  submits it to the site. A same-UID adversary can watch the engine - ptrace,
+  /proc/PID/mem, the DevTools debugging port, X11 capture, keyhooks - so
+  K(cred) holds for every item the user logs into.
+
+  This is the collapse the design review predicted: the M7 promise (vault
+  password never in the domain) is gone, because the engine IS a domain member
+  that happens to live inside the desktop's process tree. M9b falls back to the
+  working-set floor of M3/M6, plus a richer, debug-attachable surface.
+
+  Expected:
+    credential_never_leaks      FALSIFIED (all-traces) - the collapse: as soon
+        as one login runs through the engine, there is a trace where the
+        credential is in the adversary's hands.
+    credential_leaks_via_engine (exists-trace) VERIFIED - the engine leak is
+        real, not hypothetical: a trace exists where the adversary derives the
+        credential the engine handled. (The engine is a domain member, so
+        K(cred) is reachable - unlike M9a.)
+    presence_residual (exists-trace) VERIFIED - sessions still work; the point
+        is they no longer matter: the password itself leaked.
+*/
+begin
+
+// The vault and the site's record of the same credential.
+rule Setup:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O) ]->
+    [ !Vault(~cred, $O), !SiteStore(~cred, $O) ]
+
+// Human approves this login.
+rule Human_Approve_Login:
+    [ !Vault(cred, $O), Fr(~g) ]
+  --[ LoginApproved(cred, $O) ]->
+    [ LoginGrant(cred, $O) ]
+
+// Engine-based login: the credential is handed to the engine over the domain
+// channel (Out) - an adversary-observable process. It also reaches the site.
+rule Engine_Login:
+    [ !Vault(cred, $O), LoginGrant(cred, $O), In(<'login', $O, tok>) ]
+  --[ EngineSawCred(cred, $O), LoginPerformed(cred, $O, tok) ]->
+    [ Out(cred), CredToSite(cred, $O, tok) ]
+
+// The site verifies and issues a session artifact to the domain.
+rule Site_CheckAndIssue:
+    [ !SiteStore(cred, O), CredToSite(cred, O, tok), Fr(~sid) ]
+  --[ SessionIssued(O, ~sid, tok), LoginOk(cred, O) ]->
+    [ Out(<'session', O, ~sid>), StSite(O, ~sid, tok) ]
+
+rule Site_Use_Session:
+    [ StSite(O, sid, tok), In(<'use', O, sid>) ]
+  --[ SessionUsed(O, sid) ]->
+    [ ]
+
+rule Site_Expire_Session:
+    [ StSite(O, sid, tok) ]
+  --[ SessionExpired(O, sid) ]->
+    [ ]
+
+lemma credential_leaks_via_engine:
+  exists-trace
+  "Ex c O #i #j.
+     EngineSawCred(c, O) @ i & K(c) @ j"
+
+lemma credential_never_leaks:
+  "All c O #i.
+     Secret(c, O) @ i ==> not(Ex #j. K(c) @ j)"
+
+lemma presence_residual:
+  exists-trace
+  "Ex O sid #i. SessionUsed(O, sid) @ i"
+
+end

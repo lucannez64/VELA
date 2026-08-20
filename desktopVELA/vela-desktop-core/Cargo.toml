@@ -9,8 +9,25 @@ edition = "2021"
 # dependency — both `src-tauri` and the future `src-gpui` binary link this.
 # See /home/hirew/.claude/plans/mighty-wibbling-wave.md Step 1.
 
+[features]
+default = []
+# The M9c experiment: a JS runtime inside the core, for logins on sites that
+# submit by `fetch` rather than by form. Off by default and likely to stay that
+# way — see `security/formal/m9c_inprocess_sandbox.spthy` for what it costs, and
+# src/js_login.rs for the two design choices that make this variant defensible.
+js-login = ["dep:boa_engine"]
+# The browser-driven login tier: a disposable real browser (Chrome/Chromium/
+# Edge) driven by the core over CDP, so bot-walled sites can be logged into
+# while the password never enters the page's JavaScript. See
+# `security/browser-driven-login-design.md`. Off by default, deliberately.
+browser-login = ["dep:tokio-tungstenite"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+# Pure Rust on purpose. M9c's escape rule assumes a C interpreter where a JS
+# bug becomes memory corruption in the process holding the vault; a memory-safe
+# engine is a different threat model, and the one worth prototyping against.
+boa_engine = { version = "0.21", optional = true }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
@@ -24,6 +41,10 @@ sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
+# WebAuthn credential keys (ES256). Kept out of vela-crypto on purpose so the
+# server, which depends on that crate and has no passkeys, does not carry an
+# ECDSA stack. See src/credential_key.rs.
+p256 = { version = "0.13", features = ["ecdsa"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
 directories = "5"
 data-encoding = "2"
@@ -37,6 +58,16 @@ once_cell = "1.19"
 urlencoding = "2"
 ctap-hid-fido2 = "3.5"
 ciborium = "0.2"
+# Client-side RSA for the Steam login recipe, done in the core in Rust so the
+# password never has to enter a JavaScript runtime to be encrypted — see
+# src/login/recipe.rs and security/in-core-login-future-work.md (§3, Tier B).
+rsa = "0.9"
+rand_core = { version = "0.6", features = ["getrandom"] }
+# The browser-driven login tier's CDP client talks to a real Chrome over a
+# WebSocket. Only compiled behind the `browser-login` feature.
+tokio-tungstenite = { version = "0.24", optional = true }
+# Stream/Sink helpers for the CDP WebSocket reader and writer.
+futures-util = "0.3.33"
 # Pinned to match serverVELA/Cargo.lock's webauthn-rs (which depends on this
 # exact version of its own wire-format companion crate) — using the same
 # crate for both sides means the JSON shapes match by construction instead
@@ -77,7 +108,6 @@ arboard = { version = "3", features = ["wayland-data-control"] }
 wl-clipboard-rs = "0.9"
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 async-io = "2"
-futures-util = "0.3.33"
 secret-service = { version = "5", features = ["rt-async-io-crypto-rust"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -96,3 +126,8 @@ block2 = "0.6"
 [dev-dependencies]
 tempfile = "3"
 wiremock = "0.6"
+# A real WebAuthn relying party, used to verify our ceremony output rather than
+# trusting our own encoder to agree with itself. Same crate and version the
+# server uses. See src/passkey_rp_test.rs.
+webauthn-rs = "0.5.4"
+uuid = { version = "1.0", features = ["v4"] }

@@ -1,0 +1,55 @@
+theory M5_TargetRedefinition
+/*
+  Model 5 - target-redefinition (TR): the broker never releases a reusable
+  secret. On request it returns a signature over <origin, challenge> using a
+  device key held in hardware. A relying party accepts only a signature over
+  its own origin and its own fresh challenge.
+
+  Expected:
+    `no_cross_origin` VERIFIED - an accept at origin O requires a signature
+        produced FOR that same origin; a signature obtained for O1 cannot make
+        O2 accept. (TR removes persistent/cross-origin value: zero.)
+    `transient_residual` (exists-trace) SATISFIED - because signing can be
+        driven by an in-domain request, a resident adversary can still complete
+        an authentication at an origin while present (presence residual, not a
+        stolen reusable secret; self-healing once evicted).
+*/
+begin
+
+builtins: signing
+
+rule Setup_DeviceKey:
+    [ Fr(~sk) ]
+  --[ ]->
+    [ !DevKey(~sk), !Pk( pk(~sk) ), Out( pk(~sk) ) ]
+
+// Broker signs an origin-bound challenge on request (request may be adversarial).
+rule Sign_OriginBound:
+    [ !DevKey(sk), In(<'auth', origin, chal>) ]
+  --[ Signed(origin, chal) ]->
+    [ Out( sign(<origin, chal>, sk) ) ]
+
+// Relying party issues a fresh challenge for its origin.
+rule RP_Challenge:
+    [ Fr(~chal) ]
+  --[ Challenge($O, ~chal) ]->
+    [ Out(<$O, ~chal>), StRP($O, ~chal) ]
+
+// Relying party accepts iff the signature verifies for ITS origin + challenge.
+rule RP_Accept:
+    [ StRP(O, chal), !Pk(pkey), In(sig) ]
+  --[ Accept(O, chal), Verified( verify(sig, <O, chal>, pkey) ) ]->
+    [ ]
+
+restriction VerifyTrue:
+  "All x #i. Verified(x) @ i ==> x = true"
+
+lemma no_cross_origin:
+  "All O chal #i.
+     Accept(O, chal) @ i ==> (Ex #j. Signed(O, chal) @ j & #j < #i)"
+
+lemma transient_residual:
+  exists-trace
+  "Ex O chal #i. Accept(O, chal) @ i"
+
+end

@@ -30,6 +30,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
     cardPin: editItem?.card_pin || '',
     cardholderName: editItem?.cardholder_name || '',
     secureNote: editItem?.secure_note_content || '',
+    credentialChangeNeedsReauth: editItem?.credential_change_needs_reauth ?? false,
+    allowSecondFactorDowngrade: editItem?.allow_second_factor_downgrade ?? false,
   });
 
   const handleSubmit = async () => {
@@ -55,6 +57,13 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
         card_pin: form.cardPin || undefined,
         cardholder_name: form.cardholderName || undefined,
         secure_note_content: itemType === 'secureNote' ? form.secureNote : undefined,
+        // Sent explicitly, because the form showed both controls and a submit
+        // is therefore a decision. A frontend without these controls sends
+        // neither key and the backend keeps whatever was there.
+        credential_change_needs_reauth:
+          itemType === 'login' ? form.credentialChangeNeedsReauth : undefined,
+        allow_second_factor_downgrade:
+          itemType === 'login' ? form.allowSecondFactorDowngrade : undefined,
         created_at: editItem?.created_at || now,
         updated_at: now,
         last_modified_device: editItem?.last_modified_device,
@@ -206,6 +215,64 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                     className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 resize-none"
                     placeholder="Additional notes..."
                   />
+                </div>
+
+                {/*
+                  Sign-in behaviour: two settings that change what VELA does when
+                  it signs in to this site for you. Both are described by their
+                  consequence rather than their mechanism, because the mechanism
+                  is not what anybody is deciding about.
+                */}
+                <div className="pt-2 border-t border-outline-variant/40">
+                  <div className="text-xs font-label uppercase tracking-widest text-outline mb-3">
+                    Sign-in behaviour
+                  </div>
+
+                  <label className="flex gap-3 items-start cursor-pointer mb-4">
+                    <input
+                      type="checkbox"
+                      checked={form.credentialChangeNeedsReauth}
+                      onChange={e =>
+                        setForm(prev => ({ ...prev, credentialChangeNeedsReauth: e.target.checked }))
+                      }
+                      className="mt-1 accent-primary w-4 h-4 shrink-0"
+                    />
+                    <span className="text-sm text-on-surface">
+                      This site asks for my current password before changing it
+                      <span className="block text-xs text-on-surface-variant mt-0.5">
+                        If it does, signing out ends a stolen session's power. If it
+                        does not, whoever holds a session can change the password and
+                        keep the account.
+                      </span>
+                    </span>
+                  </label>
+
+                  {/*
+                    Only meaningful once there is a code to answer with, and
+                    showing an unusable switch invites ticking it "just in case".
+                  */}
+                  {form.totp.trim() !== '' && (
+                    <label className="flex gap-3 items-start cursor-pointer rounded-xl p-3 bg-error-container/20 border border-error/30">
+                      <input
+                        type="checkbox"
+                        checked={form.allowSecondFactorDowngrade}
+                        onChange={e =>
+                          setForm(prev => ({ ...prev, allowSecondFactorDowngrade: e.target.checked }))
+                        }
+                        className="mt-1 accent-error w-4 h-4 shrink-0"
+                      />
+                      <span className="text-sm text-on-surface">
+                        Use my authenticator code even when this site asks for a
+                        security key
+                        <span className="block text-xs text-on-surface-variant mt-0.5">
+                          Lets VELA finish signing in on its own, by deliberately
+                          taking the weaker of the two factors the site offered. A
+                          security key cannot be phished; a code can. Leave this off
+                          unless you would rather finish those sign-ins yourself.
+                        </span>
+                      </span>
+                    </label>
+                  )}
                 </div>
               </>
             )}

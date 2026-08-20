@@ -38,6 +38,14 @@ from pathlib import Path
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 
+# How long to wait on the desktop socket. Most requests are answered from
+# memory, so five seconds is generous. A passkey ceremony is different: it puts
+# a confirmation in front of a person and waits for them to read it and decide,
+# which is not something to hurry. Timing that out at five seconds would make
+# every passkey login fail for anyone who did not click instantly.
+DEFAULT_TIMEOUT_SECONDS = 5
+PASSKEY_TIMEOUT_SECONDS = 120
+
 # VELA Desktop's endpoint naming convention (see desktopVELA/src-tauri/src/ipc.rs
 # platform_endpoint()). Used to confine which endpoints this host will connect
 # to, so a rewritten ipc_auth.json can't redirect credential requests to an
@@ -91,11 +99,21 @@ def candidate_auth_paths():
     elif system == "darwin":
         yield home / "Library" / "Application Support" / "com.vela.VELA" / "vela" / "ipc_auth.json"
     else:
+        # The desktop resolves this with `directories::ProjectDirs`, which on
+        # Linux gives `$XDG_DATA_HOME/vela` — the application name alone, not
+        # the reverse-DNS triple. The `com.vela.VELA` spellings below are kept
+        # only because older builds used them.
+        #
+        # Getting this wrong is invisible until someone sets XDG_DATA_HOME:
+        # with it unset the last candidate happens to be correct, so the
+        # extension works. With it set, every candidate missed and the only
+        # symptom was "Could not reach VELA Desktop".
         xdg_data_home = os.environ.get("XDG_DATA_HOME")
         if xdg_data_home:
+            yield Path(xdg_data_home) / "vela" / "vela" / "ipc_auth.json"
             yield Path(xdg_data_home) / "com.vela.VELA" / "vela" / "ipc_auth.json"
-        yield home / ".local" / "share" / "com.vela.VELA" / "vela" / "ipc_auth.json"
         yield home / ".local" / "share" / "vela" / "vela" / "ipc_auth.json"
+        yield home / ".local" / "share" / "com.vela.VELA" / "vela" / "ipc_auth.json"
 
 
 # FILE_ATTRIBUTE_REPARSE_POINT — a junction or symlink, i.e. a path that does
@@ -217,7 +235,7 @@ def framed_exchange(stream, message):
     return json.loads(response.decode("utf-8"))
 
 
-def send_to_desktop(message):
+def send_to_desktop(message, timeout=DEFAULT_TIMEOUT_SECONDS):
     auth = load_ipc_auth()
     if not auth:
         return {"success": False, "error": "VELA Desktop IPC is not available"}
@@ -235,7 +253,7 @@ def send_to_desktop(message):
 
         if protocol == "unix_socket":
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(5)
+                sock.settimeout(timeout)
                 sock.connect(endpoint)
                 with sock.makefile("rwb", buffering=0) as stream:
                     return framed_exchange(stream, message)
@@ -256,6 +274,11 @@ def handle_message(message):
         "getLogins": handle_get_logins,
         "getAvailableLogins": handle_get_logins,
         "saveCredentials": handle_save_credentials,
+        "passkeyCreate": handle_passkey_create,
+        "passkeyGet": handle_passkey_get,
+        "passkeyList": handle_passkey_list,
+        "inCoreLogin": handle_in_core_login,
+        "inCoreLoginCandidates": handle_in_core_login_candidates,
         "getMasterKey": handle_not_implemented,
         "unlockVault": handle_not_implemented,
         "lockVault": handle_not_implemented,
@@ -339,6 +362,211 @@ def handle_save_credentials(message):
     if payload.get("success"):
         return {"success": True, "id": payload.get("id")}
     return {"success": False, "error": payload.get("error") or "Save failed"}
+
+
+def _passkey_payload(message, keys):
+    return {key: message.get(key) for key in keys if message.get(key) is not None}
+
+
+def handle_passkey_create(message):
+    response = send_to_desktop(
+        {
+            "msg_type": "passkey_create",
+            "payload": _passkey_payload(
+                message,
+                (
+                    "rp_id",
+                    "rp_name",
+                    "user_handle",
+                    "user_name",
+                    "user_display_name",
+                    "client_data_hash",
+                    "algorithms",
+                    "exclude_credentials",
+                    "require_user_verification",
+                ),
+            ),
+        },
+        timeout=PASSKEY_TIMEOUT_SECONDS,
+    )
+
+    if not response:
+        return {"success": False, "error": "Could not reach VELA Desktop"}
+    if response.get("msg_type") not in ("PasskeyCreateResponse", "passkey_create_response"):
+        return {"success": False, "error": _error_of(response)}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "credential_id": payload.get("credential_id"),
+        "attestation_object": payload.get("attestation_object"),
+        "authenticator_data": payload.get("authenticator_data"),
+    }
+
+
+def handle_passkey_get(message):
+    response = send_to_desktop(
+        {
+            "msg_type": "passkey_get",
+            "payload": _passkey_payload(
+                message,
+                (
+                    "rp_id",
+                    "client_data_hash",
+                    "allow_credentials",
+                    "require_user_verification",
+                ),
+            ),
+        },
+        timeout=PASSKEY_TIMEOUT_SECONDS,
+    )
+
+    if not response:
+        return {"success": False, "error": "Could not reach VELA Desktop"}
+    if response.get("msg_type") not in ("PasskeyGetResponse", "passkey_get_response"):
+        return {"success": False, "error": _error_of(response)}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "credential_id": payload.get("credential_id"),
+        "authenticator_data": payload.get("authenticator_data"),
+        "signature": payload.get("signature"),
+        "user_handle": payload.get("user_handle"),
+    }
+
+
+def handle_passkey_list(message):
+    """Public metadata only, and never prompts — the shim calls this on every
+    WebAuthn request to decide whether it has anything to offer, so it must be
+    cheap and silent."""
+    response = send_to_desktop(
+        {"msg_type": "passkey_list", "payload": {"rp_id": message.get("rp_id", "")}}
+    )
+
+    if not response or response.get("msg_type") not in (
+        "PasskeyListResponse",
+        "passkey_list_response",
+    ):
+        return {"success": False, "credentials": []}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "credentials": payload.get("credentials", []),
+        "locked": bool(payload.get("locked")),
+    }
+
+
+def handle_in_core_login_candidates(message):
+    """Which saved logins could sign in to this page. Metadata only, no prompt —
+    the popup calls it to decide whether to offer the button at all."""
+    response = send_to_desktop(
+        {
+            "msg_type": "in_core_login_candidates",
+            "payload": {"url": message.get("url", "")},
+        }
+    )
+
+    if not response or response.get("msg_type") not in (
+        "InCoreLoginCandidatesResponse",
+        "in_core_login_candidates_response",
+    ):
+        return {"success": False, "candidates": []}
+
+    payload = response.get("payload", {})
+    return {
+        "success": True,
+        "candidates": payload.get("candidates", []),
+        "locked": bool(payload.get("locked")),
+    }
+
+
+def handle_in_core_login(message):
+    """The M9a login itself.
+
+    Two things make this slow: the desktop puts a confirmation in front of a
+    human, and then it talks to a website over its own connection. So it gets
+    the passkey timeout rather than the default one — five seconds would fail
+    every login by someone who did not click instantly.
+
+    What comes back is cookies. Nothing in this reply carries the password;
+    that is a property of the desktop's response type, not of this function,
+    but it is why the payload can be passed through rather than filtered.
+    """
+    response = send_to_desktop(
+        {
+            "msg_type": "in_core_login",
+            "payload": {
+                "item_id": message.get("itemId") or message.get("item_id", ""),
+                "url": message.get("url", ""),
+                # Browser-minted artifacts for a recipe login: a CAPTCHA token
+                # the human solved on the page, and the browser's cookie jar for
+                # the tab. Passed through to the desktop, used once, never
+                # persisted. Absent for the plain-form path.
+                "captcha_token": message.get("captchaToken")
+                or message.get("captcha_token")
+                or "",
+                "browser_cookies": message.get("browserCookies")
+                or message.get("browser_cookies")
+                or [],
+            },
+        },
+        timeout=PASSKEY_TIMEOUT_SECONDS,
+    )
+
+    if not response or response.get("msg_type") not in (
+        "InCoreLoginResponse",
+        "in_core_login_response",
+    ):
+        return {"success": False, "error": _error_of(response)}
+
+    payload = response.get("payload", {})
+    local = payload.get("local_session") or {}
+    cached = payload.get("cached_db") or {}
+    print(
+        f"[VELA-HOST] in_core_login payload: cookies={len(payload.get('cookies') or [])} "
+        f"local_session_keys={len(local) if isinstance(local, dict) else '?'} "
+        f"cached_db_records={len(cached) if isinstance(cached, dict) else '?'}",
+        file=sys.stderr,
+    )
+    return {
+        "success": True,
+        "cookies": payload.get("cookies", []),
+        "landingUrl": payload.get("landing_url", ""),
+        "looksAuthenticated": bool(payload.get("looks_authenticated")),
+        "siteMode": payload.get("site_mode", "self_serve"),
+        "residualNote": payload.get("residual_note", ""),
+        "userVerified": bool(payload.get("user_verified")),
+        "usedSecondFactor": bool(payload.get("used_second_factor")),
+        # Set when the site still wants something a vault cannot produce — a
+        # security key, a push, an SMS. The password was accepted; the login
+        # was not completed. Passing it through is what stops the popup
+        # reporting a half-finished sign-in as a finished one.
+        "awaitingSecondFactor": payload.get("awaiting_second_factor"),
+        # The site wanted a stronger factor and the item's opt-in let a TOTP
+        # code stand in. The user turned that on once; they are still told
+        # every time it is used.
+        "secondFactorDowngraded": bool(payload.get("second_factor_downgraded")),
+        # The login was completed in a disposable real browser window rather
+        # than by the desktop submitting over its own TLS. Surfaced so the
+        # popup can say a window appeared.
+        "usedBrowser": bool(payload.get("used_browser")),
+        # The site's localStorage/sessionStorage from the disposable browser,
+        # for token-session sites (Firebase Auth — monkeytype). Passed through
+        # so the extension can write the keys into the user's own tab.
+        # Empty/absent otherwise.
+        "localSession": payload.get("local_session") or {},
+        # The auth SDK's IndexedDB records (Firebase's indexedDB local
+        # persistence). Passed through for the extension to replicate into the
+        # user's own tab's IndexedDB. Empty/absent otherwise.
+        "cachedDb": payload.get("cached_db") or {},
+    }
+
+
+def _error_of(response):
+    payload = response.get("payload", {}) if response else {}
+    return payload.get("message") or payload.get("error") or "VELA Desktop refused the request"
 
 
 def handle_not_implemented(_message):

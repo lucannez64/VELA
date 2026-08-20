@@ -21,6 +21,7 @@ pub enum ItemType {
     Identity,
     FileBlob,
     BreachMonitor,
+    Passkey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,6 +65,30 @@ pub enum VaultItem {
         /// from every one of the user's devices (audit A-2).
         #[serde(default, alias = "appIds")]
         app_ids: Vec<String>,
+        /// Does this site make you re-prove the old password before changing
+        /// it? The model's `SiteMode` (`security/formal/m9a_in_core_login.spthy`).
+        ///
+        /// It decides what an in-core login session is worth if it leaks. Where
+        /// this is true the site is 'hardened': the residual dies when the
+        /// session does. Where it is false a session can rotate the credential
+        /// to one the holder picked, and the takeover outlives eviction — so
+        /// `false` is the default, because a site has to be shown to be careful
+        /// rather than assumed to be. See [`crate::login::SiteMode`].
+        #[serde(default, skip_serializing_if = "Option::is_none",
+                alias = "credentialChangeNeedsReauth")]
+        credential_change_needs_reauth: Option<bool>,
+        /// May VELA answer a second-factor prompt with this item's TOTP code
+        /// when the site asked for something stronger?
+        ///
+        /// A site that demands a security key has chosen a phishing-resistant
+        /// factor. Where it also offers "use your authenticator app instead",
+        /// taking that route completes the login — by deliberately using the
+        /// weaker of the two factors the site offered. That is a real security
+        /// decision and it is the account owner's to make, so it is off unless
+        /// they turn it on, per item. See `crate::login::perform_login`.
+        #[serde(default, skip_serializing_if = "Option::is_none",
+                alias = "allowSecondFactorDowngrade")]
+        allow_second_factor_downgrade: Option<bool>,
     },
     CreditCard {
         #[serde(flatten)]
@@ -112,6 +137,45 @@ pub enum VaultItem {
         #[serde(default)]
         breaches: Vec<BreachEntry>,
     },
+    /// A WebAuthn credential: one ES256 keypair scoped to one relying party.
+    ///
+    /// Unlike a [`VaultItem::Login`], the secret here is never released to
+    /// anything — not to the browser, not to the page, not over IPC. It is used
+    /// where it is stored, to sign one assertion at a time, and only the
+    /// signature leaves. That is the whole point of the item type; see
+    /// `security/formal/m7_oneshot_assertion.spthy` for the property it is
+    /// meant to deliver (`credential_never_leaks`, which holds even for the
+    /// credential in active use).
+    Passkey {
+        #[serde(flatten)]
+        meta: VaultMeta,
+        /// The relying party ID this credential is scoped to, e.g.
+        /// `example.com`. An assertion is only ever produced for a request
+        /// whose RP ID matches this exactly.
+        #[serde(alias = "rpId")]
+        rp_id: String,
+        #[serde(default, alias = "rpName")]
+        rp_name: String,
+        /// Opaque credential ID, base64url. The relying party stores this and
+        /// echoes it back in `allowCredentials`.
+        #[serde(alias = "credentialId")]
+        credential_id: String,
+        /// The user handle the relying party knows this credential by,
+        /// base64url.
+        #[serde(default, alias = "userHandle")]
+        user_handle: String,
+        #[serde(default, alias = "userName")]
+        user_name: String,
+        #[serde(default, alias = "userDisplayName")]
+        user_display_name: String,
+        /// The ES256 private scalar, base64url. **The secret.**
+        #[serde(alias = "privateKey")]
+        private_key: String,
+        /// WebAuthn signature counter. Incremented on every assertion so a
+        /// relying party can spot a cloned authenticator.
+        #[serde(default, alias = "signCount")]
+        sign_count: u32,
+    },
 }
 
 /// Redacted `Debug`, because the derived one printed the secrets.
@@ -155,6 +219,7 @@ impl VaultItem {
             }
             VaultItem::SecureNote { content, .. } => content.zeroize(),
             VaultItem::Identity { ssn, .. } => ssn.zeroize(),
+            VaultItem::Passkey { private_key, .. } => private_key.zeroize(),
             // Nothing secret: a file blob's bytes live in chunks, and a breach
             // monitor holds an address the user already published.
             VaultItem::FileBlob { .. } | VaultItem::BreachMonitor { .. } => {}
@@ -203,6 +268,12 @@ impl std::fmt::Debug for VaultItem {
             }
             VaultItem::BreachMonitor { email, breach_count, .. } => {
                 out.field("email", email).field("breach_count", breach_count);
+            }
+            VaultItem::Passkey { rp_id, user_name, sign_count, .. } => {
+                out.field("rp_id", rp_id)
+                    .field("user_name", user_name)
+                    .field("sign_count", sign_count)
+                    .field("private_key", &REDACTED);
             }
         }
         out.finish()
@@ -255,7 +326,8 @@ impl VaultItem {
             | VaultItem::SecureNote { meta, .. }
             | VaultItem::Identity { meta, .. }
             | VaultItem::FileBlob { meta, .. }
-            | VaultItem::BreachMonitor { meta, .. } => meta,
+            | VaultItem::BreachMonitor { meta, .. }
+            | VaultItem::Passkey { meta, .. } => meta,
         }
     }
 
@@ -266,7 +338,8 @@ impl VaultItem {
             | VaultItem::SecureNote { meta, .. }
             | VaultItem::Identity { meta, .. }
             | VaultItem::FileBlob { meta, .. }
-            | VaultItem::BreachMonitor { meta, .. } => meta,
+            | VaultItem::BreachMonitor { meta, .. }
+            | VaultItem::Passkey { meta, .. } => meta,
         }
     }
 
@@ -286,6 +359,7 @@ impl VaultItem {
             VaultItem::Identity { .. } => ItemType::Identity,
             VaultItem::FileBlob { .. } => ItemType::FileBlob,
             VaultItem::BreachMonitor { .. } => ItemType::BreachMonitor,
+            VaultItem::Passkey { .. } => ItemType::Passkey,
         }
     }
 
@@ -332,6 +406,27 @@ impl VaultItem {
         match self {
             VaultItem::Login { username, .. } => Some(username),
             VaultItem::Identity { first_name, .. } => Some(first_name),
+            VaultItem::Passkey { user_name, .. } => Some(user_name),
+            _ => None,
+        }
+    }
+
+    /// The relying party this item is scoped to, for passkeys only.
+    ///
+    /// Passkeys deliberately do not answer [`VaultItem::url`], so they never
+    /// surface as password-autofill candidates; this is how they are looked up
+    /// instead.
+    pub fn rp_id(&self) -> Option<&str> {
+        match self {
+            VaultItem::Passkey { rp_id, .. } => Some(rp_id),
+            _ => None,
+        }
+    }
+
+    /// This passkey's credential ID, base64url.
+    pub fn credential_id(&self) -> Option<&str> {
+        match self {
+            VaultItem::Passkey { credential_id, .. } => Some(credential_id),
             _ => None,
         }
     }
@@ -343,6 +438,31 @@ impl VaultItem {
         }
     }
 
+    /// Whether this site is 'hardened' in the M9a sense: a live session cannot
+    /// change the account password without re-proving the old one. Everything
+    /// that is not a login answers `false`, which is the safe answer.
+    pub fn credential_change_needs_reauth(&self) -> bool {
+        match self {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                ..
+            } => credential_change_needs_reauth.unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// Whether this item permits answering a stronger factor with its TOTP
+    /// code. Anything that is not a login answers `false`, the safe answer.
+    pub fn allow_second_factor_downgrade(&self) -> bool {
+        match self {
+            VaultItem::Login {
+                allow_second_factor_downgrade,
+                ..
+            } => allow_second_factor_downgrade.unwrap_or(false),
+            _ => false,
+        }
+    }
+
     pub fn display_value(&self) -> String {
         match self {
             VaultItem::Login { pass, .. } => pass.clone(),
@@ -351,6 +471,11 @@ impl VaultItem {
             VaultItem::Identity { first_name, .. } => first_name.clone(),
             VaultItem::FileBlob { filename, .. } => filename.clone(),
             VaultItem::BreachMonitor { email, .. } => email.clone(),
+            // Deliberately the account name and not the key. Every other arm
+            // here returns the item's secret because every other item type has
+            // one that is meant to be copied; a passkey's is meant to be used
+            // where it sits and never displayed, copied or released.
+            VaultItem::Passkey { user_name, .. } => user_name.clone(),
         }
     }
 
@@ -368,6 +493,7 @@ impl VaultItem {
             VaultItem::Identity { .. } => "••••••••".to_string(),
             VaultItem::FileBlob { filename, .. } => filename.clone(),
             VaultItem::BreachMonitor { email, .. } => email.clone(),
+            VaultItem::Passkey { user_name, .. } => user_name.clone(),
         }
     }
 
@@ -391,12 +517,36 @@ impl VaultItem {
     /// would quietly detach every phone app from it on the next sync.
     pub fn preserving_app_ids(mut self, existing: &VaultItem) -> Self {
         if let (
-            VaultItem::Login { app_ids, .. },
-            VaultItem::Login { app_ids: previous, .. },
+            VaultItem::Login {
+                app_ids,
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                ..
+            },
+            VaultItem::Login {
+                app_ids: previous_app_ids,
+                credential_change_needs_reauth: previous_reauth,
+                allow_second_factor_downgrade: previous_downgrade,
+                ..
+            },
         ) = (&mut self, existing)
         {
             if app_ids.is_empty() {
-                *app_ids = previous.clone();
+                *app_ids = previous_app_ids.clone();
+            }
+            // The M9a flags, for the same reason and with the same failure.
+            // They are `Option` precisely so that "the editor did not mention
+            // this" is a state distinct from "the user turned it off": a plain
+            // `bool` defaults to false on deserialise, and an edit form that
+            // has never heard of the field is indistinguishable from one where
+            // the user unticked it. Without this, changing a password would
+            // quietly clear the site's hardened annotation and re-arm a factor
+            // downgrade the owner had deliberately allowed.
+            if credential_change_needs_reauth.is_none() {
+                *credential_change_needs_reauth = *previous_reauth;
+            }
+            if allow_second_factor_downgrade.is_none() {
+                *allow_second_factor_downgrade = *previous_downgrade;
             }
         }
         self
@@ -563,6 +713,19 @@ impl VaultStore {
         self.items.iter().find(|item| item.id() == id)
     }
 
+    /// Mutable access to one item, for in-place field updates.
+    ///
+    /// Deliberately narrow: this exists for bookkeeping a caller must do
+    /// without rewriting the item — the passkey signature counter is the
+    /// motivating case. Use [`Self::update_item`] to replace an item wholesale,
+    /// which is what keeps `updated_at` and the sync index honest.
+    pub fn get_item_mut(&mut self, id: &str) -> Option<&mut VaultItem> {
+        if let Some(&idx) = self.item_index.get(id) {
+            return self.items.get_mut(idx);
+        }
+        self.items.iter_mut().find(|item| item.id() == id)
+    }
+
     pub fn search(&self, query: &str) -> Vec<&VaultItem> {
         let query_lower = query.to_lowercase();
         self.items
@@ -602,6 +765,31 @@ impl VaultStore {
             .collect()
     }
 
+    /// Passkeys scoped to exactly this relying party ID.
+    ///
+    /// Exact match, not the suffix matching [`Self::search_by_domain`] does for
+    /// logins. WebAuthn's RP ID is already the scoping decision — a credential
+    /// registered for `example.com` must not answer a request from
+    /// `evil-example.com`, and loosening the comparison here is precisely how
+    /// `assertion_is_origin_bound` would stop holding.
+    pub fn passkeys_for_rp(&self, rp_id: &str) -> Vec<&VaultItem> {
+        if rp_id.is_empty() {
+            return Vec::new();
+        }
+        let wanted = rp_id.to_lowercase();
+        self.items
+            .iter()
+            .filter(|item| item.rp_id().is_some_and(|id| id.to_lowercase() == wanted))
+            .collect()
+    }
+
+    /// The passkey with this credential ID, if the vault holds it.
+    pub fn passkey_by_credential_id(&self, credential_id: &str) -> Option<&VaultItem> {
+        self.items
+            .iter()
+            .find(|item| item.credential_id() == Some(credential_id))
+    }
+
     pub fn by_type(&self, item_type: &ItemType) -> Vec<&VaultItem> {
         self.items
             .iter()
@@ -619,7 +807,7 @@ impl VaultStore {
                 ItemType::SecureNote => notes += 1,
                 ItemType::Identity => identities += 1,
                 ItemType::FileBlob => files += 1,
-                ItemType::BreachMonitor => {}
+                ItemType::BreachMonitor | ItemType::Passkey => {}
             }
         }
         (logins, cards, notes, identities, files)
@@ -855,6 +1043,8 @@ mod tests {
             pass: pass.into(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         }
     }
 
@@ -895,6 +1085,8 @@ mod tests {
                 pass: "hunter2-SECRET".into(),
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
+                credential_change_needs_reauth: None,
+                allow_second_factor_downgrade: None,
             },
             VaultItem::CreditCard {
                 meta: meta("2", "Bank"),
@@ -1018,6 +1210,160 @@ mod tests {
         }
     }
 
+    /// The same failure as the app-links one, for the M9a flags.
+    ///
+    /// Found by asking why the flags had no UI, not by a test failing — which
+    /// is why it is written down. An edit form that has never heard of a field
+    /// sends the item without it; a `bool` would deserialise to `false` and the
+    /// user's decisions would be gone. Changing a password on a site would have
+    /// cleared its hardened annotation and re-armed a factor downgrade they had
+    /// deliberately allowed, with nothing on screen to say so.
+    #[test]
+    fn editing_a_login_here_keeps_the_second_factor_decisions() {
+        let mut configured = login("1", "GitHub", "https://github.com", "ada", "p");
+        if let VaultItem::Login {
+            credential_change_needs_reauth,
+            allow_second_factor_downgrade,
+            ..
+        } = &mut configured
+        {
+            *credential_change_needs_reauth = Some(true);
+            *allow_second_factor_downgrade = Some(true);
+        }
+
+        // What an edit form that predates these fields sends back.
+        let edited = login("1", "GitHub", "https://github.com", "ada", "p2")
+            .preserving_app_ids(&configured);
+
+        match &edited {
+            VaultItem::Login {
+                pass,
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                ..
+            } => {
+                assert_eq!(pass, "p2", "the actual edit still applies");
+                assert_eq!(*credential_change_needs_reauth, Some(true));
+                assert_eq!(*allow_second_factor_downgrade, Some(true));
+            }
+            _ => panic!("expected a login"),
+        }
+    }
+
+    /// And turning one off has to survive, which is the whole reason these are
+    /// `Option` rather than `bool`: `Some(false)` is a decision, `None` is
+    /// silence, and only silence inherits.
+    #[test]
+    fn turning_a_second_factor_flag_off_is_not_undone_by_the_old_value() {
+        let mut configured = login("1", "GitHub", "https://github.com", "ada", "p");
+        if let VaultItem::Login {
+            allow_second_factor_downgrade,
+            ..
+        } = &mut configured
+        {
+            *allow_second_factor_downgrade = Some(true);
+        }
+
+        let mut turned_off = login("1", "GitHub", "https://github.com", "ada", "p");
+        if let VaultItem::Login {
+            allow_second_factor_downgrade,
+            ..
+        } = &mut turned_off
+        {
+            *allow_second_factor_downgrade = Some(false);
+        }
+
+        match &turned_off.preserving_app_ids(&configured) {
+            VaultItem::Login {
+                allow_second_factor_downgrade,
+                ..
+            } => assert_eq!(
+                *allow_second_factor_downgrade,
+                Some(false),
+                "an explicit opt-out was overwritten by the previous opt-in"
+            ),
+            _ => panic!("expected a login"),
+        }
+    }
+
+    /// The exact JSON the desktop's item form sends, parsed by the type that
+    /// receives it.
+    ///
+    /// The two sides are written in different languages and nothing else checks
+    /// that they agree: `toBackendItem` in `src/context/AppContext.tsx` builds
+    /// this object, `update_item` deserialises it here, and a rename on either
+    /// side would show up as a setting that silently refuses to stick.
+    #[test]
+    fn the_item_form_can_set_both_second_factor_flags() {
+        let from_the_form = r#"{
+            "id": "1", "name": "GitHub",
+            "created_at": "2026-08-07T10:00:00Z", "updated_at": "2026-08-07T10:00:00Z",
+            "last_modified_device": null, "favorite": false, "shared": false,
+            "share_recipient": null,
+            "item_type": "login",
+            "url": "https://github.com", "username": "ada", "password": "p",
+            "totp": null, "notes": null,
+            "credential_change_needs_reauth": true,
+            "allow_second_factor_downgrade": true
+        }"#;
+
+        let item: VaultItem = serde_json::from_str(from_the_form).expect("the form's item");
+        match &item {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                pass,
+                ..
+            } => {
+                assert_eq!(*credential_change_needs_reauth, Some(true));
+                assert_eq!(*allow_second_factor_downgrade, Some(true));
+                assert_eq!(pass, "p", "the form spells the password field 'password'");
+            }
+            _ => panic!("expected a login"),
+        }
+        assert!(item.credential_change_needs_reauth());
+
+        // And turning them off is distinguishable from not mentioning them,
+        // which is what makes the preservation above correct.
+        let turned_off = from_the_form.replace("true,\n            \"allow", "false,\n            \"allow");
+        let item: VaultItem = serde_json::from_str(&turned_off).unwrap();
+        match &item {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                ..
+            } => assert_eq!(*credential_change_needs_reauth, Some(false)),
+            _ => panic!("expected a login"),
+        }
+    }
+
+    /// A vault written before these fields exist must load, and must not be
+    /// read as "the user turned both off".
+    #[test]
+    fn a_login_from_before_these_fields_reads_as_undecided() {
+        let json = r#"{
+            "item_type": "login", "id": "1", "name": "Old", "url": "https://x.example",
+            "username": "ada", "password": "p"
+        }"#;
+        let item: VaultItem = serde_json::from_str(json).expect("an older item should load");
+        match &item {
+            VaultItem::Login {
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                ..
+            } => {
+                assert_eq!(*credential_change_needs_reauth, None);
+                assert_eq!(*allow_second_factor_downgrade, None);
+            }
+            _ => panic!("expected a login"),
+        }
+        // Undecided still behaves as the safe answer everywhere it is read.
+        assert!(!item.credential_change_needs_reauth());
+        // And round-trips without inventing a decision the user never made.
+        let back = serde_json::to_string(&item).unwrap();
+        assert!(!back.contains("credential_change_needs_reauth"), "{back}");
+        assert!(!back.contains("allow_second_factor_downgrade"), "{back}");
+    }
+
     #[test]
     fn app_links_sent_by_the_caller_win() {
         let mut previous = login("1", "Uber", "https://uber.com", "ada", "p");
@@ -1062,6 +1408,8 @@ mod tests {
             pass: "p".into(),
             totp: None,
             app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
         });
 
         assert_eq!(vault.search("GIT").len(), 2);
@@ -1202,6 +1550,92 @@ mod tests {
         assert_eq!(back.tombstones.len(), 1);
         // Index is rebuilt lazily — lookup still works after deserialize.
         assert!(back.items.is_empty());
+    }
+
+    fn passkey(id: &str, rp_id: &str, user: &str) -> VaultItem {
+        let now = chrono::Utc::now();
+        VaultItem::Passkey {
+            meta: VaultMeta {
+                id: id.to_string(),
+                name: rp_id.to_string(),
+                notes: None,
+                created_at: now,
+                updated_at: now,
+                last_modified_device: Some("test".to_string()),
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
+            rp_id: rp_id.to_string(),
+            rp_name: rp_id.to_string(),
+            credential_id: format!("cred-{id}"),
+            user_handle: "aGFuZGxl".to_string(),
+            user_name: user.to_string(),
+            user_display_name: user.to_string(),
+            private_key: "c2VjcmV0LXNjYWxhcg".to_string(),
+            sign_count: 0,
+        }
+    }
+
+    #[test]
+    fn passkey_serde_roundtrip_keeps_the_scoping_fields() {
+        let item = passkey("1", "example.com", "alice");
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["item_type"], "passkey");
+        assert_eq!(json["rp_id"], "example.com");
+
+        let back: VaultItem = serde_json::from_value(json).unwrap();
+
+        assert_eq!(back.rp_id(), Some("example.com"));
+        assert_eq!(back.credential_id(), Some("cred-1"));
+        assert_eq!(back.username(), Some("alice"));
+    }
+
+    /// The redacted `Debug` has to cover the new secret too — the whole reason
+    /// that impl exists is that the derived one leaked passwords into logs, and
+    /// a credential key is worth strictly more than a password.
+    #[test]
+    fn debug_never_prints_a_credential_key() {
+        let item = passkey("1", "example.com", "alice");
+
+        let rendered = format!("{item:?}");
+
+        assert!(!rendered.contains("c2VjcmV0LXNjYWxhcg"), "{rendered}");
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+        assert!(rendered.contains("example.com"), "{rendered}");
+    }
+
+    /// A passkey is not a password, and must never be offered as one.
+    #[test]
+    fn a_passkey_is_not_an_autofill_candidate() {
+        let mut vault = VaultStore::new();
+        vault.add_item(passkey("1", "example.com", "alice"));
+
+        assert!(vault.search_by_domain("example.com").is_empty());
+        assert_eq!(vault.get_item("1").unwrap().url(), None);
+        assert_eq!(vault.get_item("1").unwrap().password(), None);
+    }
+
+    #[test]
+    fn passkeys_for_rp_matches_exactly_and_not_by_suffix() {
+        let mut vault = VaultStore::new();
+        vault.add_item(passkey("1", "example.com", "alice"));
+
+        assert_eq!(vault.passkeys_for_rp("example.com").len(), 1);
+        // The lookalike a login's PSL matching would happily accept.
+        assert!(vault.passkeys_for_rp("evil-example.com").is_empty());
+        assert!(vault.passkeys_for_rp("login.example.com").is_empty());
+        assert!(vault.passkeys_for_rp("").is_empty());
+    }
+
+    #[test]
+    fn passkey_lookup_by_credential_id() {
+        let mut vault = VaultStore::new();
+        vault.add_item(passkey("1", "example.com", "alice"));
+        vault.add_item(passkey("2", "other.test", "bob"));
+
+        assert_eq!(vault.passkey_by_credential_id("cred-2").unwrap().id(), "2");
+        assert!(vault.passkey_by_credential_id("cred-nope").is_none());
     }
 
     #[test]

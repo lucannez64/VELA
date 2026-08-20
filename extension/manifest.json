@@ -25,7 +25,8 @@
       ],
       "js": [
         "src/shared/autofill-utils.js",
-        "src/content/content-script.js"
+        "src/content/content-script.js",
+        "src/content/passkey-bridge.js"
       ],
       "css": [
         "src/content/content-styles.css"
@@ -55,7 +56,25 @@
     "contextMenus",
     "notifications"
   ],
+  "optional_permissions": [
+    "cookies"
+  ],
   "host_permissions": [],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/content/webauthn-shim.js"
+      ],
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ]
+    }
+  ],
   "commands": {
     "_execute_action": {
       "suggested_key": {

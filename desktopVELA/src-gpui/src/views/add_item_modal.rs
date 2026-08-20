@@ -210,6 +210,8 @@ impl AddItemModal {
                     (!t.trim().is_empty()).then_some(t)
                 },
                 app_ids: Vec::new(),
+                credential_change_needs_reauth: None,
+                allow_second_factor_downgrade: None,
             },
             ItemKind::CreditCard => VaultItem::CreditCard {
                 meta,
