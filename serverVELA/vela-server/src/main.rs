@@ -229,6 +229,14 @@ async fn serve() -> anyhow::Result<()> {
     );
     tracing::info!(path = %turso_path.display(), "turso database opened");
 
+    // One-time migration: copy an existing stoolap database into the (empty)
+    // turso database so an upgraded server serves its pre-existing data. Safe
+    // on restart: a turso table that already has rows is left untouched.
+    let copied = db::bootstrap_stoolap_into_turso(&db_pool.any(), &sqldb).await?;
+    if copied > 0 {
+        tracing::warn!(rows = copied, "bootstrap: copied stoolap data into turso");
+    }
+
     let state = Arc::new(
         state::AppStateInner::new(db_pool, sqldb, kv, config.clone()).await?,
     );

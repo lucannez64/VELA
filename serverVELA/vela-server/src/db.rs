@@ -612,6 +612,134 @@ pub fn parse_chunk_row_turso(row: &crate::sqldb::VelaRow) -> Result<ChunkRow, Ap
     })
 }
 
+// ── One-time bootstrap: stoolap -> turso ───────────────────────────────────────
+// Migrates an existing stoolap database into an (empty) turso database, so a
+// server upgraded to the turso backend serves its pre-existing users/devices/
+// vaults/shares/sessions. Idempotent and per-table: a table in turso that
+// already has rows is left untouched, so it is safe on restart and never
+// clobbers a partially-filled turso DB. Full-scan based (does not trust
+// stoolap's COUNT(*), which we measured returning 1 for 10000 rows).
+
+const BOOTSTRAP_TABLES: &[(&str, &[&str])] = &[
+    (
+        "users",
+        &[
+            "id", "recovery_share", "recovery_auth_hash", "created_at",
+            "recovery_webauthn_credential", "share_ek", "recovery_webauthn_cred_id",
+        ],
+    ),
+    (
+        "devices",
+        &[
+            "id", "user_id", "device_name", "device_type", "last_active",
+            "hybrid_ek", "hybrid_vk", "enrolled_by", "rms_capsule", "revoked",
+            "revoked_at", "revoked_by", "created_at",
+        ],
+    ),
+    (
+        "vault_chunks",
+        &[
+            "chunk_id", "user_id", "version", "lamport_clock", "last_writer",
+            "ciphertext", "created_at", "updated_at",
+        ],
+    ),
+    (
+        "oram_buckets",
+        &[
+            "user_id", "tree_id", "bucket_index", "version", "lamport_clock",
+            "last_writer", "ciphertext", "created_at", "updated_at",
+        ],
+    ),
+    (
+        "share_inbox",
+        &["id", "sender_user_id", "recipient_user_id", "capsule", "created_at"],
+    ),
+    (
+        "shared_items",
+        &[
+            "id", "sender_user_id", "recipient_user_id", "capsule", "created_at",
+            "updated_at", "revoked",
+        ],
+    ),
+    (
+        "web_sessions",
+        &[
+            "id", "user_id", "approver_user_id", "poll_secret_hash", "ephemeral_pk",
+            "web_vk", "link_nonce", "mode", "status", "capsule", "approved_by",
+            "created_at", "expires_at",
+        ],
+    ),
+];
+
+fn stoolap_to_turso_value(v: &stoolap::Value) -> crate::sqldb::TursoValue {
+    use crate::sqldb::TursoValue;
+    match v {
+        stoolap::Value::Null(_) => TursoValue::Null,
+        stoolap::Value::Integer(i) => TursoValue::Integer(*i),
+        stoolap::Value::Float(f) => TursoValue::Real(*f),
+        stoolap::Value::Text(s) => TursoValue::Text(s.to_string()),
+        stoolap::Value::Boolean(b) => TursoValue::Integer(if *b { 1 } else { 0 }),
+        stoolap::Value::Timestamp(ts) => TursoValue::Text(ts.to_rfc3339()),
+        stoolap::Value::Extension(bytes) => TursoValue::Text(format!("\\x{}", encode_b64(bytes))),
+    }
+}
+
+/// Copy every non-empty stoolap table into turso (per-table, only where turso
+/// is still empty). Returns the total number of rows copied.
+pub async fn bootstrap_stoolap_into_turso(
+    stoolap: &Database,
+    turso: &crate::sqldb::TursoDb,
+) -> anyhow::Result<u64> {
+    use crate::sqldb::Db as _;
+    let mut total = 0u64;
+    for (table, cols) in BOOTSTRAP_TABLES {
+        let existing = turso
+            .query(&format!("SELECT 1 FROM {table} LIMIT 1"), vec![])
+            .await?;
+        if !existing.is_empty() {
+            // turso already has rows for this table; never clobber.
+            continue;
+        }
+
+        let col_list = cols.join(", ");
+        let rows = stoolap
+            .query(&format!("SELECT {col_list} FROM {table}"), ())
+            .map_err(|e| anyhow::anyhow!("bootstrap read {table}: {e}"))?;
+
+        let placeholders = cols.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let table_turso = table.to_string();
+        let mut count = 0u64;
+
+        // Whole-table copy in one transaction so a partial failure rolls back
+        // and a restart re-attempts cleanly.
+        let tx = turso.tx().await?;
+        for r in rows {
+            let r = r.map_err(|e| anyhow::anyhow!("bootstrap row {table}: {e}"))?;
+            let mut params = Vec::with_capacity(cols.len());
+            for i in 0..cols.len() {
+                let cell = r
+                    .get::<stoolap::Value>(i)
+                    .map_err(|e| anyhow::anyhow!("bootstrap cell {table}:{i}: {e}"))?;
+                params.push(stoolap_to_turso_value(&cell));
+            }
+            tx.execute(
+                &format!("INSERT INTO {table_turso} ({col_list}) VALUES ({placeholders})"),
+                params,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("bootstrap insert {table}: {e}"))?;
+            count += 1;
+        }
+        tx.commit().await?;
+
+        if count > 0 {
+            tracing::info!(table = %table_turso, copied = count, "bootstrap: stoolap rows copied to turso");
+            total += count;
+        }
+    }
+    Ok(total)
+}
+
 /// Parse a `vault_chunks` manifest row buffered from turso (migration target).
 pub fn parse_chunk_manifest_row_turso(row: &crate::sqldb::VelaRow) -> Result<ChunkManifestRow, AppError> {
     Ok(ChunkManifestRow {
@@ -633,6 +761,60 @@ pub fn parse_chunk_manifest_row_turso(row: &crate::sqldb::VelaRow) -> Result<Chu
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn bootstrap_stoolap_into_turso_copies_once_and_is_idempotent() {
+        use crate::sqldb::{Db as _, TursoDb};
+
+        let stoolap = open_and_init(&format!("memory://{}", Uuid::new_v4())).unwrap();
+        let now = Utc::now().to_rfc3339();
+        let user_id = Uuid::new_v4().to_string();
+        let device_id = Uuid::new_v4().to_string();
+        stoolap
+            .execute(
+                "INSERT INTO users (id, created_at) VALUES ($1, $2)",
+                stoolap::params![user_id.clone(), now.clone()],
+            )
+            .unwrap();
+        stoolap
+            .execute(
+                "INSERT INTO devices (id, user_id, hybrid_ek, hybrid_vk, revoked, created_at) \
+                 VALUES ($1, $2, $3, $4, FALSE, $5)",
+                stoolap::params![device_id.clone(), user_id.clone(), "ek".to_string(), "vk".to_string(), now.clone()],
+            )
+            .unwrap();
+
+        let path = format!(
+            "{}/vela-bootstrap-test-{}.db",
+            std::env::temp_dir().display(),
+            Uuid::new_v4()
+        );
+        let _ = std::fs::remove_file(&path);
+        let turso = TursoDb::open(&path, 2).await.unwrap();
+
+        // First run copies.
+        let copied = bootstrap_stoolap_into_turso(&stoolap, &turso).await.unwrap();
+        assert!(copied >= 2, "expected >=2 rows copied, got {copied}");
+
+        let devs = turso
+            .query(
+                "SELECT id FROM devices WHERE id = ? AND revoked = 0",
+                vec![crate::sqldb::TursoValue::Text(device_id.clone())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(devs.len(), 1, "device should be visible in turso after bootstrap");
+        let users = turso
+            .query("SELECT id FROM users", vec![])
+            .await
+            .unwrap();
+        assert_eq!(users.len(), 1, "user should be visible in turso after bootstrap");
+
+        // Second run is a no-op (turso already populated).
+        let copied_again = bootstrap_stoolap_into_turso(&stoolap, &turso).await.unwrap();
+        assert_eq!(copied_again, 0, "bootstrap must be idempotent");
+
+        let _ = std::fs::remove_file(&path);
+    }
     #[test]
     fn webauthn_cred_id_unique_index_rejects_cross_account_duplicates() {
         let db = open_and_init("memory://").unwrap();
