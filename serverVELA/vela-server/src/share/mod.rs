@@ -6,12 +6,14 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
     db,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
+    sqldb::{Db as _, TursoDb, TursoValue},
     state::AppState,
 };
 
@@ -54,30 +56,19 @@ pub async fn post_send(
     crate::rate_limit::share_send_by_sender(&state.store, &session.user_id.to_string())?;
 
     // Gate on the share key, not on mere existence (red-team RT-3).
-    //
-    // Checking `SELECT 1 FROM users` made this endpoint leak strictly more than
-    // `get_recipient_ek` below: a user who exists but has never registered a
-    // share key answered 200 here and 404 there, so the pair distinguished
-    // "no such user" from "user without a share key" — the exact split the
-    // constant above exists to hide. Requiring the key collapses them, and
-    // stops depositing inbox items the recipient could never decrypt.
     let recipient_rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT share_ek FROM users WHERE id = $1",
-            stoolap::params![body.recipient_user_id.to_string()],
+            "SELECT share_ek FROM users WHERE id = ?",
+            vec![TursoValue::Text(body.recipient_user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let recipient_can_receive = match recipient_rows.into_iter().next() {
-        None => false,
-        Some(row) => {
-            let row = row.map_err(|e| AppError::Internal(e.to_string()))?;
-            crate::db::row_val(&row, 0)?
-                .as_str()
-                .is_some_and(|ek| !ek.is_empty())
-        }
-    };
+    let recipient_can_receive = recipient_rows
+        .first()
+        .and_then(|r| r.text(0))
+        .is_some_and(|ek| !ek.is_empty());
     if !recipient_can_receive {
         return Err(AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()));
     }
@@ -98,29 +89,20 @@ pub async fn post_send(
     // Quota checks and the two inserts (shared_items + share_inbox, which must
     // share the same id) run inside one transaction so a crash/error between
     // them can never leave an orphaned row in one table without the other.
-    // Note: this engine has no SELECT ... FOR UPDATE / serializable isolation,
-    // so two *concurrent* sends can still both pass the quota check against
-    // the same pre-insert totals and together slightly exceed the limits —
-    // snapshot isolation only guarantees no torn/partial writes, not
-    // serialized aggregate reads. That residual race only affects anti-abuse
-    // limits, not data integrity, and is an accepted engine limitation.
-    let mut tx = state
-        .db
-        .begin_with_isolation(stoolap::IsolationLevel::SnapshotIsolation)
+    let tx = state
+        .sqldb
+        .tx()
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let count_rows = tx
         .query(
-            "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = $1",
-            stoolap::params![body.recipient_user_id.to_string()],
+            "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = ?",
+            vec![TursoValue::Text(body.recipient_user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let count_row = count_rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Internal("count query failed".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let inbox_count: i64 = crate::db::row_val(&count_row, 0)?.as_int64().unwrap_or(0);
+    let inbox_count = count_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
     if inbox_count >= MAX_INBOX_ITEMS_PER_USER {
         return Err(AppError::Conflict(format!(
             "recipient inbox is full ({MAX_INBOX_ITEMS_PER_USER} items)"
@@ -132,19 +114,15 @@ pub async fn post_send(
     let pair_rows = tx
         .query(
             "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-             WHERE recipient_user_id = $1 AND sender_user_id = $2",
-            stoolap::params![
-                body.recipient_user_id.to_string(),
-                session.user_id.to_string()
+             WHERE recipient_user_id = ? AND sender_user_id = ?",
+            vec![
+                TursoValue::Text(body.recipient_user_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let pair_row = pair_rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Internal("sum query failed".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let pair_bytes: i64 = crate::db::row_val(&pair_row, 0)?.as_int64().unwrap_or(0);
+    let pair_bytes = pair_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
     if pair_bytes + capsule_bytes.len() as i64 > MAX_SENDER_TO_RECIPIENT_BYTES {
         return Err(AppError::PayloadTooLarge(format!(
             "pending shares to this recipient exceed {MAX_SENDER_TO_RECIPIENT_BYTES} bytes"
@@ -154,16 +132,12 @@ pub async fn post_send(
     let total_rows = tx
         .query(
             "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-             WHERE recipient_user_id = $1",
-            stoolap::params![body.recipient_user_id.to_string()],
+             WHERE recipient_user_id = ?",
+            vec![TursoValue::Text(body.recipient_user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let total_row = total_rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Internal("sum query failed".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let total_bytes: i64 = crate::db::row_val(&total_row, 0)?.as_int64().unwrap_or(0);
+    let total_bytes = total_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
     if total_bytes + capsule_bytes.len() as i64 > MAX_RECIPIENT_INBOX_BYTES {
         return Err(AppError::PayloadTooLarge(format!(
             "recipient inbox exceeds {MAX_RECIPIENT_INBOX_BYTES} bytes"
@@ -172,33 +146,36 @@ pub async fn post_send(
 
     tx.execute(
         "INSERT INTO shared_items (id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked)
-         VALUES ($1, $2, $3, $4, $5, $6, FALSE)",
-        stoolap::params![
-            inbox_id.to_string(),
-            session.user_id.to_string(),
-            body.recipient_user_id.to_string(),
-            db::encode_b64(&capsule_bytes),
-            now.clone(),
-            now.clone(),
+         VALUES (?, ?, ?, ?, ?, ?, 0)",
+        vec![
+            TursoValue::Text(inbox_id.to_string()),
+            TursoValue::Text(session.user_id.to_string()),
+            TursoValue::Text(body.recipient_user_id.to_string()),
+            TursoValue::Text(db::encode_b64(&capsule_bytes)),
+            TursoValue::Text(now.clone()),
+            TursoValue::Text(now.clone()),
         ],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tx.execute(
         "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
-         VALUES ($1, $2, $3, $4, $5)",
-        stoolap::params![
-            inbox_id.to_string(),
-            session.user_id.to_string(),
-            body.recipient_user_id.to_string(),
-            db::encode_b64(&capsule_bytes),
-            now,
+         VALUES (?, ?, ?, ?, ?)",
+        vec![
+            TursoValue::Text(inbox_id.to_string()),
+            TursoValue::Text(session.user_id.to_string()),
+            TursoValue::Text(body.recipient_user_id.to_string()),
+            TursoValue::Text(db::encode_b64(&capsule_bytes)),
+            TursoValue::Text(now),
         ],
     )
+    .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    tx.commit().map_err(|e| {
-        AppError::Conflict(format!("share send raced with a concurrent request: {e}"))
-    })?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Conflict(format!("share send raced with a concurrent request: {e}")))?;
 
     tracing::info!(
         inbox_id  = %inbox_id,
@@ -254,76 +231,74 @@ pub async fn get_inbox(
 
     let rows = if let Some(before_id) = query.before {
         let cursor_rows = state
-            .db
+            .sqldb
             .query(
                 "SELECT created_at FROM share_inbox
-             WHERE id = $1 AND recipient_user_id = $2",
-                stoolap::params![before_id.to_string(), session.user_id.to_string()],
+             WHERE id = ? AND recipient_user_id = ?",
+                vec![
+                    TursoValue::Text(before_id.to_string()),
+                    TursoValue::Text(session.user_id.to_string()),
+                ],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let cursor_row = cursor_rows
-            .into_iter()
-            .next()
-            .ok_or_else(|| AppError::NotFound("cursor inbox_id not found".into()))?
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let cv = crate::db::row_val(&cursor_row, 0)?;
-        let cursor_ts = cv
-            .as_timestamp()
+            .first()
+            .ok_or_else(|| AppError::NotFound("cursor inbox_id not found".into()))?;
+        let cursor_ts = cursor_row
+            .timestamp(0)
             .ok_or_else(|| AppError::Internal("expected timestamp".into()))?;
 
         state
-            .db
+            .sqldb
             .query(
                 "SELECT id, sender_user_id, capsule, created_at
              FROM share_inbox
-             WHERE recipient_user_id = $1
-               AND created_at < $2
+             WHERE recipient_user_id = ?
+               AND created_at < ?
              ORDER BY created_at DESC
-             LIMIT $3",
-                stoolap::params![
-                    session.user_id.to_string(),
-                    cursor_ts.to_rfc3339(),
-                    fetch_limit,
+             LIMIT ?",
+                vec![
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Text(cursor_ts.to_rfc3339()),
+                    TursoValue::Integer(fetch_limit),
                 ],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?
     } else {
         state
-            .db
+            .sqldb
             .query(
                 "SELECT id, sender_user_id, capsule, created_at
              FROM share_inbox
-             WHERE recipient_user_id = $1
+             WHERE recipient_user_id = ?
              ORDER BY created_at DESC
-             LIMIT $2",
-                stoolap::params![session.user_id.to_string(), fetch_limit],
+             LIMIT ?",
+                vec![
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Integer(fetch_limit),
+                ],
             )
+            .await
             .map_err(|e| AppError::Internal(e.to_string()))?
     };
 
     let mut all_items: Vec<InboxItem> = Vec::new();
-    for row_result in rows {
-        let row = row_result.map_err(|e| AppError::Internal(e.to_string()))?;
-        let id_v = crate::db::row_val(&row, 0)?;
-        let sender_v = crate::db::row_val(&row, 1)?;
-        let capsule_v = crate::db::row_val(&row, 2)?;
-        let ts_v = crate::db::row_val(&row, 3)?;
-
-        let id = id_v
-            .as_str()
-            .and_then(|s| Uuid::parse_str(s).ok())
+    for row in &rows {
+        let id = row
+            .uuid(0)
             .ok_or_else(|| AppError::Internal("uuid parse".into()))?;
-        let sender_user_id = sender_v
-            .as_str()
-            .and_then(|s| Uuid::parse_str(s).ok())
+        let sender_user_id = row
+            .uuid(1)
             .ok_or_else(|| AppError::Internal("uuid parse".into()))?;
-        let capsule_b64 = capsule_v
-            .as_str()
-            .map(|s| s.to_string())
+        let capsule_b64 = row
+            .text(2)
+            .map(String::from)
             .ok_or_else(|| AppError::Internal("expected text".into()))?;
-        let created_at = ts_v
-            .as_timestamp()
+        let created_at = row
+            .timestamp(3)
             .ok_or_else(|| AppError::Internal("expected timestamp".into()))?;
 
         let capsule_bytes = db::decode_b64(&capsule_b64)?;
@@ -356,12 +331,16 @@ pub async fn delete_inbox_item(
     Path(id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<(HeaderMap, StatusCode)> {
-    let n: i64 = state
-        .db
+    let n = state
+        .sqldb
         .execute(
-            "DELETE FROM share_inbox WHERE id = $1 AND recipient_user_id = $2",
-            stoolap::params![id.to_string(), session.user_id.to_string()],
+            "DELETE FROM share_inbox WHERE id = ? AND recipient_user_id = ?",
+            vec![
+                TursoValue::Text(id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     if n == 0 {
@@ -397,22 +376,25 @@ pub async fn get_linked_items(
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<LinkedSharesResponse>)> {
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked
          FROM shared_items
-         WHERE (sender_user_id = $1 OR recipient_user_id = $1)
-           AND revoked = FALSE
+         WHERE (sender_user_id = ? OR recipient_user_id = ?)
+           AND revoked = 0
          ORDER BY updated_at DESC
          LIMIT 1000",
-            stoolap::params![session.user_id.to_string()],
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let mut items = Vec::new();
-    for row_result in rows {
-        let row = row_result.map_err(|e| AppError::Internal(e.to_string()))?;
-        let shared = db::parse_shared_item_row(&row)?;
+    for row in &rows {
+        let shared = db::parse_shared_item_row_turso(row)?;
         let id = Uuid::parse_str(&shared.id)
             .map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?;
         items.push(LinkedShareItem {
@@ -452,19 +434,20 @@ pub async fn put_linked_item(
         )));
     }
 
-    let n: i64 = state
-        .db
+    let n = state
+        .sqldb
         .execute(
             "UPDATE shared_items
-         SET capsule = $1, updated_at = $2
-         WHERE id = $3 AND sender_user_id = $4 AND revoked = FALSE",
-            stoolap::params![
-                db::encode_b64(&capsule_bytes),
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-                session.user_id.to_string(),
+         SET capsule = ?, updated_at = ?
+         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
+            vec![
+                TursoValue::Text(db::encode_b64(&capsule_bytes)),
+                TursoValue::Text(Utc::now().to_rfc3339()),
+                TursoValue::Text(id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     if n == 0 {
@@ -481,28 +464,32 @@ pub async fn delete_linked_item(
     Path(id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let n: i64 = state
-        .db
+    let n = state
+        .sqldb
         .execute(
             "UPDATE shared_items
-         SET revoked = TRUE, updated_at = $1
-         WHERE id = $2 AND sender_user_id = $3 AND revoked = FALSE",
-            stoolap::params![
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-                session.user_id.to_string()
+         SET revoked = 1, updated_at = ?
+         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
+            vec![
+                TursoValue::Text(Utc::now().to_rfc3339()),
+                TursoValue::Text(id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     if n == 0 {
         return Err(AppError::NotFound(format!("linked share {id} not found")));
     }
 
-    let _ = state.db.execute(
-        "DELETE FROM share_inbox WHERE id = $1",
-        stoolap::params![id.to_string()],
-    );
+    let _ = state
+        .sqldb
+        .execute(
+            "DELETE FROM share_inbox WHERE id = ?",
+            vec![TursoValue::Text(id.to_string())],
+        )
+        .await;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -519,25 +506,20 @@ pub async fn get_recipient_ek(
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT share_ek FROM users WHERE id = $1",
-            stoolap::params![user_id.to_string()],
+            "SELECT share_ek FROM users WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let ek_v = crate::db::row_val(&row, 0)?;
-    let share_ek = ek_v
-        .as_str()
+    let share_ek = rows
+        .first()
+        .and_then(|r| r.text(0))
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?
-        .to_string();
+        .map(String::from)
+        .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -573,12 +555,16 @@ pub async fn put_my_ek(
         )));
     }
 
-    let n: i64 = state
-        .db
+    let n = state
+        .sqldb
         .execute(
-            "UPDATE users SET share_ek = $1 WHERE id = $2",
-            stoolap::params![body.share_ek, session.user_id.to_string()],
+            "UPDATE users SET share_ek = ? WHERE id = ?",
+            vec![
+                TursoValue::Text(body.share_ek),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     if n == 0 {
@@ -592,7 +578,7 @@ pub async fn put_my_ek(
     Ok((headers, Json(serde_json::json!({ "updated": true }))))
 }
 
-pub async fn inbox_cleanup_task(db: stoolap::Database) {
+pub async fn inbox_cleanup_task(db: Arc<TursoDb>) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(6 * 60 * 60));
 
     loop {
@@ -600,10 +586,13 @@ pub async fn inbox_cleanup_task(db: stoolap::Database) {
 
         let cutoff = Utc::now() - chrono::Duration::seconds(INBOX_TTL_SECS);
 
-        match db.execute(
-            "DELETE FROM share_inbox WHERE created_at < $1",
-            stoolap::params![cutoff.to_rfc3339()],
-        ) {
+        match db
+            .execute(
+                "DELETE FROM share_inbox WHERE created_at < ?",
+                vec![TursoValue::Text(cutoff.to_rfc3339())],
+            )
+            .await
+        {
             Ok(n) => {
                 if n > 0 {
                     tracing::info!(purged = n, "inbox cleanup: expired share items removed");

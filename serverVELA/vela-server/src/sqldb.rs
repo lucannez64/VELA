@@ -28,7 +28,7 @@ pub struct VelaRow {
 pub type TursoValue = turso::Value;
 
 impl VelaRow {
-    pub fn get(&self, idx: usize) -> Option<&turso::Value> {
+    pub fn get(&self, idx: usize) -> Option<&TursoValue> {
         self.values.get(idx)
     }
     pub fn len(&self) -> usize {
@@ -36,6 +36,36 @@ impl VelaRow {
     }
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
+    }
+
+    /// Text cell, if present and non-null.
+    pub fn text(&self, idx: usize) -> Option<&str> {
+        match self.get(idx)? {
+            TursoValue::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+    /// 64-bit integer cell (SQLite may return INTEGER or a numeric TEXT).
+    pub fn i64(&self, idx: usize) -> Option<i64> {
+        match self.get(idx)? {
+            TursoValue::Integer(i) => Some(*i),
+            TursoValue::Text(s) => s.parse().ok(),
+            _ => None,
+        }
+    }
+    /// UUID cell parsed from text.
+    pub fn uuid(&self, idx: usize) -> Option<uuid::Uuid> {
+        self.text(idx).and_then(|s| uuid::Uuid::parse_str(s).ok())
+    }
+    /// RFC3339 timestamp cell parsed from text.
+    pub fn timestamp(&self, idx: usize) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.text(idx)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+    }
+    /// Boolean-integer cell (0/1) as bool.
+    pub fn bool_int(&self, idx: usize) -> Option<bool> {
+        self.i64(idx).map(|i| i != 0)
     }
 }
 

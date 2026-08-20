@@ -529,6 +529,34 @@ fn cell<'a>(row: &'a crate::sqldb::VelaRow, idx: usize) -> Result<&'a crate::sql
     row.get(idx).ok_or_else(|| AppError::Internal(format!("row missing column {idx}")))
 }
 
+/// Parse a `shared_items` row buffered from turso (migration target).
+pub fn parse_shared_item_row_turso(row: &crate::sqldb::VelaRow) -> Result<SharedItemRow, AppError> {
+    let text = |i: usize| {
+        row.text(i)
+            .map(String::from)
+            .ok_or_else(|| AppError::Internal("missing cell".into()))
+    };
+    let uuid = |i: usize| {
+        row.uuid(i)
+            .ok_or_else(|| AppError::Internal("missing/malformed uuid".into()))
+    };
+    let ts = |i: usize| {
+        row.timestamp(i)
+            .ok_or_else(|| AppError::Internal("missing/malformed timestamp".into()))
+    };
+    Ok(SharedItemRow {
+        id: text(0)?,
+        sender_user_id: uuid(1)?,
+        recipient_user_id: uuid(2)?,
+        capsule: B64
+            .decode(text(3)?)
+            .map_err(|e| AppError::Internal(format!("capsule decode: {e}")))?,
+        created_at: ts(4)?,
+        updated_at: ts(5)?,
+        revoked: row.bool_int(6).unwrap_or(false),
+    })
+}
+
 /// Parse a `devices` row buffered from turso (migration target).
 pub fn parse_device_row_turso(row: &crate::sqldb::VelaRow) -> Result<DeviceRow, AppError> {
     Ok(DeviceRow {

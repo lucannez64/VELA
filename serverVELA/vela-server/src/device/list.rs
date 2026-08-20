@@ -76,7 +76,7 @@ pub async fn list_devices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqldb::{Db as _, TursoDb, TursoValue};
+    use crate::sqldb::{TursoDb, TursoValue};
 
     async fn temp_i64() -> i64 {
         use std::sync::atomic::{AtomicI64, Ordering};
