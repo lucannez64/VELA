@@ -2,19 +2,16 @@ name: extension-release
 
 # Build the browser extension (Chromium + Gecko variants) and publish a GitHub
 # release carrying the Firefox XPI and a Chromium zip on every push to main.
+# When AMO credentials are configured (repo secrets WEB_EXT_API_KEY /
+# WEB_EXT_API_SECRET), the Firefox build is additionally submitted to AMO for
+# signing and the *signed* add-on is what ships.
 #
 # Mirrors release-desktop/release-android: the version is derived from the
 # commit (patch = commit count, monotonic and unique), and the short SHA is
 # recorded in the release for traceability.
 #
 # PRs and arbitrary branches are a dry run: they build both variants and run
-# the WebAuthn shim regression test, but never publish — so a green PR proves
-# the extension compiles, and the publishing step only ever runs on main.
-#
-# The published XPI is the unsigned build (useful in dev/nightly or
-# unsigned-allowed profiles). It is not AMO-signed automatically: signing needs
-# AMO credentials, which are gate-kept behind the version:bump + sign:firefox
-# step and are deliberately not wired into this automated release.
+# the WebAuthn shim regression test, but never publish or sign.
 on:
   workflow_dispatch:
   pull_request:
@@ -76,9 +73,33 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "tag=extension-v$VERSION" >> "$GITHUB_OUTPUT"
 
-      # Publishing is main-only: the version is unique per commit, so re-runs
-      # that collide with an existing tag just re-upload the assets.
-      - name: Publish Firefox XPI + Chromium zip
+      # AMO rejects a re-submitted version, so stamp the commit-derived version
+      # into the built Firefox manifest before signing — each main release gets
+      # a unique version. Only runs when the AMO secrets are configured.
+      - name: Stamp version into the Firefox build (for signing)
+        if: ${{ secrets.WEB_EXT_API_KEY != '' && secrets.WEB_EXT_API_SECRET != '' }}
+        working-directory: extension
+        run: |
+          jq --arg v "${{ steps.version.outputs.version }}" \
+            '.version = $v' dist/firefox/manifest.json > tmp.json \
+            && mv tmp.json dist/firefox/manifest.json
+
+      - name: Submit to AMO for signing
+        if: ${{ secrets.WEB_EXT_API_KEY != '' && secrets.WEB_EXT_API_SECRET != '' }}
+        working-directory: extension
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+        run: |
+          set -euo pipefail
+          npx web-ext sign --source-dir dist/firefox \
+            --artifacts-dir dist/signed --channel unlisted --no-input
+
+      # Publishing is main-only. Ships the AMO-signed add-on when one was
+      # produced, otherwise the unsigned XPI (dev/nightly / unsigned-allowed
+      # profiles). The version is unique per commit, so re-runs that collide
+      # with an existing tag just re-upload the assets.
+      - name: Publish Firefox add-on + Chromium zip
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: extension
         env:
@@ -88,13 +109,25 @@ jobs:
           VER="${{ steps.version.outputs.version }}"
           SHA="${{ steps.version.outputs.sha }}"
           TAG="${{ steps.version.outputs.tag }}"
+          SIGNED=""
+          if ls dist/signed/* >/dev/null 2>&1; then
+            SIGNED="$(ls -t dist/signed/* | head -1)"
+          fi
+          if [ -n "$SIGNED" ]; then
+            cp "$SIGNED" dist/signed/vela-firefox-signed.xpi
+            FIREFOX_ASSET="dist/signed/vela-firefox-signed.xpi"
+            FIREFOX_LABEL="AMO-signed Firefox add-on"
+          else
+            FIREFOX_ASSET="dist/vela-firefox.xpi"
+            FIREFOX_LABEL="unsigned Firefox XPI (dev/nightly / unsigned-allowed profiles)"
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/vela-firefox.xpi vela-chrome.zip --clobber
+            gh release upload "$TAG" vela-chrome.zip "$FIREFOX_ASSET" --clobber
           else
             gh release create "$TAG" \
               --title "VELA Extension v$VER" \
               --notes "Built from \`$SHA\`.
-              - \`vela-firefox.xpi\` — the Firefox/Gecko build. Install in a dev/nightly or unsigned-allowed profile (not AMO-signed by this automated release).
-              - \`vela-chrome.zip\` — unzip and **Load unpacked** in any Chromium browser." \
-              dist/vela-firefox.xpi vela-chrome.zip
+              - \`vela-chrome.zip\` — unzip and **Load unpacked** in any Chromium browser.
+              - \`$FIREFOX_ASSET\` — $FIREFOX_LABEL." \
+              vela-chrome.zip "$FIREFOX_ASSET"
           fi
