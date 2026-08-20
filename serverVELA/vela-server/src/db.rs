@@ -485,6 +485,78 @@ pub fn row_val(row: &ResultRow, idx: usize) -> Result<Value, AppError> {
     val(row, idx)
 }
 
+// ── turso-backed parsing (migration): read from a buffered VelaRow ────────────
+// stoolap's row parsers above read `stoolap::ResultRow`; these read
+// `crate::sqldb::VelaRow` (Vec<turso::Value>). Kept separate while endpoints
+// are ported one at a time; the two families are ported together at the end.
+
+fn tv_as_str(v: &crate::sqldb::TursoValue) -> Option<&str> {
+    match v {
+        crate::sqldb::TursoValue::Text(s) => Some(s),
+        _ => None,
+    }
+}
+
+fn tv_as_i64(v: &crate::sqldb::TursoValue) -> Option<i64> {
+    match v {
+        crate::sqldb::TursoValue::Integer(i) => Some(*i),
+        crate::sqldb::TursoValue::Text(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn tv_as_bool(v: &crate::sqldb::TursoValue) -> Option<bool> {
+    tv_as_i64(v).map(|i| i != 0)
+}
+
+fn tv_is_null(v: &crate::sqldb::TursoValue) -> bool {
+    matches!(v, crate::sqldb::TursoValue::Null)
+}
+
+fn turso_uuid(v: &crate::sqldb::TursoValue) -> Option<Uuid> {
+    tv_as_str(v).and_then(|s| Uuid::parse_str(s).ok())
+}
+
+fn turso_text(v: &crate::sqldb::TursoValue) -> Option<String> {
+    tv_as_str(v).map(|s| s.to_string())
+}
+
+fn turso_ts(v: &crate::sqldb::TursoValue) -> Option<DateTime<Utc>> {
+    tv_as_str(v).and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map(|d| d.with_timezone(&Utc))
+}
+
+fn cell<'a>(row: &'a crate::sqldb::VelaRow, idx: usize) -> Result<&'a crate::sqldb::TursoValue, AppError> {
+    row.get(idx).ok_or_else(|| AppError::Internal(format!("row missing column {idx}")))
+}
+
+/// Parse a `devices` row buffered from turso (migration target).
+pub fn parse_device_row_turso(row: &crate::sqldb::VelaRow) -> Result<DeviceRow, AppError> {
+    Ok(DeviceRow {
+        id: turso_uuid(cell(row, 0)?)
+            .ok_or_else(|| AppError::Internal("device id missing/malformed".into()))?,
+        user_id: turso_uuid(cell(row, 1)?)
+            .ok_or_else(|| AppError::Internal("device user_id missing/malformed".into()))?,
+        device_name: turso_text(cell(row, 2)?).unwrap_or_default(),
+        device_type: turso_text(cell(row, 3)?).unwrap_or_default(),
+        last_active: turso_ts(cell(row, 4)?),
+        hybrid_ek: B64
+            .decode(turso_text(cell(row, 5)?).unwrap_or_default())
+            .map_err(|e| AppError::Internal(format!("hybrid_ek decode: {e}")))?,
+        hybrid_vk: B64
+            .decode(turso_text(cell(row, 6)?).unwrap_or_default())
+            .map_err(|e| AppError::Internal(format!("hybrid_vk decode: {e}")))?,
+        enrolled_by: turso_uuid(cell(row, 7)?),
+        rms_capsule: turso_text(cell(row, 8)?).map(|s| B64.decode(s)).transpose()
+            .map_err(|e| AppError::Internal(format!("rms_capsule decode: {e}")))?,
+        revoked: tv_as_bool(cell(row, 9)?).unwrap_or(false),
+        revoked_at: turso_ts(cell(row, 10)?),
+        revoked_by: turso_uuid(cell(row, 11)?),
+        created_at: turso_ts(cell(row, 12)?)
+            .ok_or_else(|| AppError::Internal("device created_at missing/malformed".into()))?,
+    })
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

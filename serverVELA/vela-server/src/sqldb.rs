@@ -23,6 +23,9 @@ pub struct VelaRow {
     pub values: Vec<turso::Value>,
 }
 
+/// Alias so consumers don't need to name the `turso` crate directly.
+pub type TursoValue = turso::Value;
+
 impl VelaRow {
     pub fn get(&self, idx: usize) -> Option<&turso::Value> {
         self.values.get(idx)
