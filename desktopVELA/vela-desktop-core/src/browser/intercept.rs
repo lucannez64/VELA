@@ -175,8 +175,17 @@ pub async fn wait_for_login_request(
                 .await
                 .map_err(|e| InterceptError::Transport(e.to_string()))?;
             }
-            PausedAction::ContinueWith { body } => {
-                continue_with_post_data(cdp, session, request_id, &body).await?;
+            PausedAction::ContinueWith { request, body } => {
+                // Tier-3 (VELA_BROWSER_CORE_PERFORM=1): the core sends the
+                // substituted credential over its own TLS and fulfils the
+                // browser's paused request — the password never crosses into
+                // the browser's address space. Default: hand it to the browser
+                // (the documented residual, one request-instant in its memory).
+                if core_perform_enabled() {
+                    core_send_and_fulfill(cdp, session, request_id, &request, &body).await?;
+                } else {
+                    continue_with_post_data(cdp, session, request_id, &body).await?;
+                }
                 last_login_request = Some(std::time::Instant::now());
             }
         }
@@ -212,8 +221,29 @@ const CREDENTIAL_ALLOWLIST: &[&str] = &[
 pub(crate) enum PausedAction {
     /// No placeholder in the body — pass through unchanged.
     Continue,
-    /// The login request, with the real password substituted in.
-    ContinueWith { body: String },
+    /// The login request, with the real password substituted in. Carries the
+    /// substituted [`CapturedRequest`] so the caller can choose to send it
+    /// from the core (Tier-3, password never enters the browser) instead of
+    /// handing it to the browser via `Fetch.continueRequest`.
+    ContinueWith {
+        request: CapturedRequest,
+        body: String,
+    },
+}
+
+/// Whether the substituted credential is sent by the *core* over its own TLS
+/// rather than pushed into the browser via `Fetch.continueRequest`.
+///
+/// This is the Tier-3 isolation (see `security/browser-driven-login-design.md`):
+/// when it is on, the real password never enters the browser's address space —
+/// the core performs the login POST itself and fulfils the browser's paused
+/// request with the response. It is opt-in (`VELA_BROWSER_CORE_PERFORM=1`) and
+/// off by default, because only sites whose *POST* is not itself bot-walled
+/// will accept a core-client submission; when the site refuses the core's
+/// client in this mode, the login is refused rather than silently falling back
+/// to exposing the password in the browser.
+fn core_perform_enabled() -> bool {
+    std::env::var("VELA_BROWSER_CORE_PERFORM").as_deref() == Ok("1")
 }
 
 /// Decide what to do with a paused request.
@@ -336,7 +366,8 @@ pub(crate) fn handle_paused_request(
         original_len,
         ready.body.len(),
     );
-    Ok(PausedAction::ContinueWith { body: ready.body })
+    let body = ready.body.clone();
+    Ok(PausedAction::ContinueWith { request: ready, body })
 }
 
 /// Continue a paused request with a replaced body.
@@ -351,6 +382,10 @@ async fn continue_with_post_data(
     request_id: &str,
     body: &str,
 ) -> Result<(), InterceptError> {
+    tracing::info!(
+        "browser login: browser-send: handing the substituted body to the browser (the \
+         password enters the browser's address space for this request)"
+    );
     let plain = json!({ "requestId": request_id, "postData": body });
     match cdp.call_scoped("Fetch.continueRequest", plain, session).await {
         Ok(_) => return Ok(()),
@@ -370,4 +405,203 @@ async fn continue_with_post_data(
             }
         }
     }
+}
+
+/// Tier-3: perform the login POST from the *core*, and fulfil the browser's
+/// paused request with the result.
+///
+/// Unlike [`continue_with_post_data`], this does **not** hand the substituted
+/// body to the browser via `Fetch.continueRequest`, so the real password never
+/// enters the browser's address space. [`core_send_credential`] sends the
+/// credential over the core's own TLS (reusing the browser's pre-session
+/// cookies/csrf from the paused request's headers); the session from the
+/// response's `Set-Cookie` is injected into the browser's cookie jar (so
+/// harvest and the page's own follow-up requests see it); and the browser's
+/// paused request is told it is already-answered via `Fetch.fulfillRequest`.
+///
+/// Single-hop only: a redirect-based login POST is not supported in this mode
+/// (the core refuses rather than guessing across hosts), and it only works
+/// where the site accepts a non-browser-client POST (its bot check was over
+/// the initial GET). When the site refuses the core's client, the caller
+/// surfaces a login refusal rather than silently re-exposing the password in
+/// the browser.
+async fn core_send_and_fulfill(
+    cdp: &Cdp,
+    session: &str,
+    request_id: &str,
+    request: &CapturedRequest,
+    body: &str,
+) -> Result<(), InterceptError> {
+    let login = core_send_credential(request, body).await?;
+
+    // The session the site issued belongs to this browser session: inject each
+    // Set-Cookie into the browser's jar (Network.setCookie) so harvest and the
+    // page's own follow-up requests see it, then fulfil the browser's paused
+    // request with the response body so the page continues seamlessly.
+    for cookie in &login.set_cookies {
+        inject_session_cookie(cdp, session, cookie, &login.url).await;
+    }
+
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(&login.body);
+    cdp.call_scoped(
+        "Fetch.fulfillRequest",
+        json!({
+            "requestId": request_id,
+            "responseCode": login.status,
+            "responseHeaders": login.headers,
+            "body": body_b64,
+        }),
+        session,
+    )
+    .await
+    .map_err(|e| InterceptError::Transport(format!("Fetch.fulfillRequest failed: {e}")))?;
+    Ok(())
+}
+
+/// The site's answer to the core-sent credential POST, plus what must be
+/// relayed to the browser.
+///
+/// Kept free of any CDP dependency so the Tier-3 credential transport is
+/// unit-testable against a plain HTTP mock (see `browser::tests`).
+#[derive(Debug)]
+pub(crate) struct CoreLoginResponse {
+    pub(crate) status: u16,
+    pub(crate) url: url::Url,
+    pub(crate) set_cookies: Vec<crate::login::SessionCookie>,
+    #[allow(dead_code)] // inspected via Debug in tests; serialised in the fulfill path
+    pub(crate) headers: Vec<serde_json::Value>,
+    pub(crate) body: Vec<u8>,
+}
+
+/// Send the substituted credential over the core's own TLS connection.
+///
+/// This is the whole point of Tier-3: the password travels the core's TLS
+/// client here, and is **never** handed to the browser. Returns the site's
+/// answer for the caller to relay; refuses (rather than fall back to exposing
+/// the password in the browser) if the site does not accept a core-client
+/// POST or tries to redirect it.
+pub(crate) async fn core_send_credential(
+    request: &CapturedRequest,
+    body: &str,
+) -> Result<CoreLoginResponse, InterceptError> {
+    let method = reqwest::Method::from_bytes(request.method.as_bytes())
+        .map_err(|e| InterceptError::Transport(format!("bad method: {e}")))?;
+    let url = url::Url::parse(&request.url)
+        .map_err(|e| InterceptError::Transport(format!("bad request URL: {e}")))?;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(super::LOGIN_TIMEOUT)
+        .user_agent(super::CORE_USER_AGENT)
+        .build()
+        .map_err(|e| InterceptError::Transport(e.to_string()))?;
+
+    let mut builder = client.request(method, url);
+    tracing::info!(
+        "browser login: TIER-3 core-perform: sending the credential over the core's own \
+         TLS to {} (the password is NOT pushed into the browser)",
+        request.url
+    );
+    // Replay the page's own pre-session cookies / csrf that the browser
+    // attached to the paused request, so the site sees the same session. We
+    // do not set the transport headers the client owns.
+    for (name, value) in &request.headers {
+        let lowered = name.to_lowercase();
+        if matches!(
+            lowered.as_str(),
+            "cookie" | "host" | "content-length" | "content-encoding" | "transfer-encoding"
+        ) {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    if !body.is_empty() {
+        builder = builder.body(body.to_string());
+    }
+
+    // The credential crosses the core's own TLS connection. If the site refuses
+    // this client (a bot-walled POST), or redirects it, that is a login refusal
+    // — we do not fall back to handing the password to the browser in this mode.
+    let response = builder
+        .send()
+        .await
+        .map_err(|e| InterceptError::Transport(format!("core login POST failed: {e}")))?;
+    let status = response.status();
+    if status.is_server_error() || status.is_client_error() || status.is_redirection() {
+        return Err(InterceptError::Transport(format!(
+            "the site did not accept the core's login POST (HTTP {}); for a site whose \
+             login POST must come from the browser, disable VELA_BROWSER_CORE_PERFORM",
+            status.as_u16()
+        )));
+    }
+
+    // The session the site issued, for injection into the browser's jar.
+    let mut set_cookies = Vec::new();
+    if let Some(host) = response.url().host_str() {
+        for header in response.headers().get_all(reqwest::header::SET_COOKIE) {
+            if let Ok(header) = header.to_str() {
+                if let Some(cookie) =
+                    crate::login::parse_set_cookie(header, &host.to_ascii_lowercase())
+                {
+                    set_cookies.push(cookie);
+                }
+            }
+        }
+    }
+    // The final URL, captured before `bytes()` consumes the response.
+    let final_url = response.url().clone();
+
+    // Response headers the page may rely on (content-type etc.), minus the
+    // ones the transport consumed. Captured before `bytes()`, which consumes
+    // the response.
+    let headers: Vec<serde_json::Value> = response
+        .headers()
+        .iter()
+        .filter(|(name, _)| {
+            !name.as_str().eq_ignore_ascii_case("set-cookie")
+                && !name.as_str().eq_ignore_ascii_case("transfer-encoding")
+        })
+        .map(|(name, value)| {
+            json!({ "name": name.as_str(), "value": value.to_str().unwrap_or_default() })
+        })
+        .collect();
+
+    let body_bytes = response
+        .bytes()
+        .await
+        .map_err(|e| InterceptError::Transport(e.to_string()))?;
+
+    Ok(CoreLoginResponse {
+        status: status.as_u16(),
+        url: final_url,
+        set_cookies,
+        headers,
+        body: body_bytes.to_vec(),
+    })
+}
+
+/// Inject one session cookie into the browser's jar, so the session the core
+/// negotiated is visible to the browser and to harvest.
+async fn inject_session_cookie(
+    cdp: &Cdp,
+    session: &str,
+    cookie: &crate::login::SessionCookie,
+    url: &url::Url,
+) {
+    let mut params = serde_json::json!({
+        "name": cookie.name,
+        "value": cookie.value,
+        "path": cookie.path,
+        "secure": cookie.secure,
+        "httpOnly": cookie.http_only,
+    });
+    if cookie.host_only {
+        params["url"] = serde_json::json!(url.as_str());
+    } else {
+        params["domain"] = serde_json::json!(cookie.domain);
+    }
+    if let Some(expires) = cookie.expires_at {
+        params["expires"] = serde_json::json!(expires);
+    }
+    let _ = cdp.call_scoped("Network.setCookie", params, session).await;
 }

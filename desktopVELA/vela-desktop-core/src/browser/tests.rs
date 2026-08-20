@@ -7,12 +7,12 @@
 
 use serde_json::json;
 use url::Url;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::intercept::{handle_paused_request, InterceptError, PausedAction};
+use super::intercept::{core_send_credential, handle_paused_request, InterceptError, PausedAction};
 use super::*;
-use crate::js_login::PLACEHOLDER_PASSWORD;
+use crate::js_login::{CapturedRequest, PLACEHOLDER_PASSWORD};
 
 const PASSWORD: &str = "correct-horse-battery-staple-9137";
 
@@ -32,7 +32,7 @@ fn a_request_carrying_the_placeholder_gets_the_real_password() {
         "postData": format!("csrf=tok&user=ada&pw={PLACEHOLDER_PASSWORD}"),
     });
     let action = handle_paused_request(&request, Some(&target), PASSWORD).unwrap();
-    let PausedAction::ContinueWith { body } = action else {
+    let PausedAction::ContinueWith { request, body, .. } = action else {
         panic!("expected substitution");
     };
     assert!(body.contains("pw=correct-horse-battery-staple-9137"), "{body}");
@@ -40,6 +40,11 @@ fn a_request_carrying_the_placeholder_gets_the_real_password() {
     // The page's other fields survive untouched.
     assert!(body.contains("csrf=tok"), "{body}");
     assert!(body.contains("user=ada"), "{body}");
+    // The substituted request payload is what the Tier-3 core-perform path
+    // would send over the core's own TLS (never into the browser).
+    assert_eq!(request.url, "https://bank.example/session");
+    assert!(request.body.contains("pw=correct-horse-battery-staple-9137"));
+    assert!(!request.body.contains(PLACEHOLDER_PASSWORD));
 }
 
 #[test]
@@ -52,7 +57,7 @@ fn a_json_login_body_is_substituted_too() {
         "postData": format!(r#"{{"email":"ada","password":"{PLACEHOLDER_PASSWORD}"}}"#),
     });
     let action = handle_paused_request(&request, Some(&target), PASSWORD).unwrap();
-    let PausedAction::ContinueWith { body } = action else {
+    let PausedAction::ContinueWith { body, .. } = action else {
         panic!("expected substitution");
     };
     assert!(body.contains(&format!("\"password\":\"{PASSWORD}\"")), "{body}");
@@ -86,7 +91,7 @@ fn a_credential_request_to_a_known_identity_provider_is_allowed() {
         "postData": format!(r#"{{"email":"ada","password":"{PLACEHOLDER_PASSWORD}","returnSecureToken":true}}"#),
     });
     let action = handle_paused_request(&request, Some(&page), PASSWORD).unwrap();
-    let PausedAction::ContinueWith { body } = action else {
+    let PausedAction::ContinueWith { body, .. } = action else {
         panic!("expected substitution");
     };
     assert!(body.contains(PASSWORD), "{body}");
@@ -126,6 +131,134 @@ fn a_page_that_transformed_the_password_cannot_be_substituted() {
         handle_paused_request(&request, Some(&target), PASSWORD).unwrap(),
         PausedAction::Continue
     );
+}
+
+// ── Tier-3 core-perform: the credential goes over the core's own TLS ──────────
+
+/// monkeytype (and many SPA sites) authenticate through Firebase Auth: the
+/// login POST goes to the allow-listed `identitytoolkit.googleapis.com`, off
+/// the page's own site, with a JSON body. The Tier-3 interception path lets it
+/// through (`handle_paused_request`), then sends that credential from the
+/// *core*. This pins what changes for those sites with `VELA_BROWSER_CORE_PERFORM`:
+/// the password to the identity provider travels the core's own TLS, never the
+/// browser.
+#[tokio::test]
+async fn tier3_sends_a_firebase_auth_credential_from_the_core() {
+    // Allow-listed IdP standing in for identitytoolkit.googleapis.com.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/accounts:signInWithPassword"))
+        .and(body_string_contains("\"password\":\"correct-horse-battery-staple-9137\""))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"idToken":"tok","refreshToken":"rt","localId":"ml","email":"ada"}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    // The page (monkeytype) fills a form whose JS posts to the IdP. Build the
+    // post-substitution request exactly as it reaches `core_send` in Tier-3:
+    // the placeholder has already been replaced with the real password in the
+    // core, so the body carries the actual credential.
+    let url = format!("{}/v1/accounts:signInWithPassword", server.uri());
+    let request = CapturedRequest {
+        url,
+        method: "POST".to_string(),
+        headers: std::collections::BTreeMap::from([(
+            "content-type".to_string(),
+            "application/json".to_string(),
+        )]),
+        body: format!(
+            r#"{{"email":"ada","password":"{PASSWORD}","returnSecureToken":true}}"#
+        ),
+    };
+
+    let login = core_send_credential(&request, &request.body)
+        .await
+        .expect("the core should send the Firebase Auth credential");
+
+    assert_eq!(login.status, 200);
+    // The identity provider really received the real password from the core.
+    let got = server.received_requests().await.unwrap();
+    let body = String::from_utf8_lossy(&got[0].body);
+    assert!(
+        body.contains("\"password\":\"correct-horse-battery-staple-9137\""),
+        "{body}"
+    );
+    // The token-session comes back to the core, for reinstatement in the tab.
+    let text = String::from_utf8_lossy(&login.body);
+    assert!(text.contains("idToken"), "{text}");
+}
+
+/// The heart of Tier-3: [`core_send_credential`] sends the *real* password
+/// over the core's own connection — it is never handed to the browser. So a
+/// wiremock standing in for the site must receive the real credential, and the
+/// answered session cookie must come back for reinstatement in the browser.
+#[tokio::test]
+async fn tier3_sends_the_credential_over_the_cores_own_tls() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .and(body_string_contains("pw=correct-horse-battery-staple-9137"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("set-cookie", "sid=core-session-1; Path=/; HttpOnly")
+                .set_body_string("<html>Welcome</html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/session", server.uri());
+    let request = CapturedRequest {
+        url,
+        method: "POST".to_string(),
+        headers: std::collections::BTreeMap::from([(
+            "content-type".to_string(),
+            "application/x-www-form-urlencoded".to_string(),
+        )]),
+        body: "user=ada&pw=correct-horse-battery-staple-9137".to_string(),
+    };
+
+    let login = core_send_credential(&request, &request.body)
+        .await
+        .expect("the core should be able to send the credential");
+
+    assert_eq!(login.status, 200);
+    assert!(
+        login.set_cookies.iter().any(|c| c.name == "sid"),
+        "the session cookie the site issued must be relayed back"
+    );
+
+    // The mock actually received the real password — proof the core carried it.
+    let got = server.received_requests().await.unwrap();
+    let body = String::from_utf8_lossy(&got[0].body);
+    assert!(body.contains("pw=correct-horse-battery-staple-9137"), "{body}");
+}
+
+/// Tier-3 must *refuse* when the site will not accept the core's client (a
+/// bot-walled POST, or a redirecting login) — it never silently falls back to
+/// handing the password to the browser.
+#[tokio::test]
+async fn tier3_refuses_instead_of_re_exposing_the_password() {
+    let server = MockServer::start().await;
+    // A bot wall over the POST replies with a challenge status.
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/session", server.uri());
+    let request = CapturedRequest {
+        url,
+        method: "POST".to_string(),
+        headers: std::collections::BTreeMap::new(),
+        body: "pw=correct-horse-battery-staple-9137".to_string(),
+    };
+
+    let error = core_send_credential(&request, &request.body)
+        .await
+        .expect_err("a bot-walled POST must refuse, not re-expose the password");
+    assert!(error.to_string().contains("did not accept"), "{error:?}");
 }
 
 // ── Cookie mapping ────────────────────────────────────────────────────────────

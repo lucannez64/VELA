@@ -98,7 +98,10 @@ A fully compromised page gets only the placeholder — it built the request and
 never sees the core's substituted body. The residual is the browser *process*
 memory during the interception instant, strictly less than autofill (which
 leaves the password in the page for the whole session and in the extension's
-memory).
+memory). Note that on a default Linux kernel a co-resident *same-user* process
+can read that residual out of the browser's child processes (measured — see
+§5); running the disposable browser under a distinct unprivileged UID is what
+closes that, and the `host.rs`/`vela-browser-sandbox` support wires it up.
 
 ---
 
@@ -184,8 +187,40 @@ monkeytype** — the end-to-end success.
   single-use, and the real password only transits the core-side interception
   handler.
 - **A compromised page cannot get the credential** (placeholder only).
-- **A compromised browser process can** read the substituted body during the
-  interception instant — the accepted residual.
+- **The residual is real and was measured.** On a default Linux kernel
+  (`kernel.yama.ptrace_scope=1`) the disposable browser's *child* processes
+  (the ones that move the login request, and the renderers) are left readable
+  by any **same-UID** process. `security/exploits/test_browser_tier_memleak.py`
+  demonstrates a co-resident same-user process recovering the substituted
+  password from the disposable browser's memory during a login. This is
+  stronger than "a compromised browser process can read it": memory is
+  reachable without compromising the browser at all. The core process itself is
+  *not* exposed to this vector (a plain process is gated against unrelated
+  same-UID reads); it is the browser's process tree that leaks.
+- **Mitigation — Tier 1: run the disposable browser under a distinct UID.**
+  Cross-UID `process_vm_readv` / `/proc/<pid>/mem` reads are refused by the
+  kernel (same UID or root required). `host.rs` + the setuid launcher
+  (`desktopVELA/vela-browser-sandbox/`), opt-in via `VELA_BROWSER_SANDBOX`,
+  drops the whole browser to a dedicated unprivileged UID; `host.rs` fails
+  closed if the browser is not actually running under a distinct UID, and warns
+  loudly when the tier runs without isolation. **Caveat found in testing:** the
+  tier's browser is *visible by design*, and a separate UID cannot open the
+  user's display by default — it needs an explicit grant, which is easy on X11
+  (`xhost +SI:localuser:vela-browser`) but genuinely hard on Wayland. So Tier 1
+  is practical X11 hardening, not a universal answer.
+- **Mitigation — Tier 2/3: keep the password out of the browser's address
+  space.** For a real form-password login the credential must be in the memory
+  of whatever process sends it, so the browser cannot both send it and never
+  hold it. The achievable form is `VELA_BROWSER_CORE_PERFORM=1`: the core sends
+  the substituted credential over **its own TLS** and fulfils the browser's
+  paused request with the response, so the password never enters the browser
+  (single-hop only; sites whose POST is itself bot-walled, or that redirect the
+  login POST, are refused rather than re-exposed). Implemented in
+  `intercept.rs`, opt-in and off by default; the credential transport is
+  unit-tested against a wiremock (see `tier3_*` in `browser::tests`), and the
+  live browser-driven path needs a real browser/site (see the `#[ignore]`d e2e
+  test).
+  Root / CAP_SYS_PTRACE / `ptrace_scope=0` machines remain out of scope.
 - **Cross-site discipline:** same-site by default, plus the short identity-
   provider allowlist. The core will never fill a credential into a request to
   an arbitrary host.

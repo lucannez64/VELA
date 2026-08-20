@@ -1163,8 +1163,7 @@ impl CookieJar {
 /// scope to a parent domain, but only one that is still a real registrable
 /// domain — `Domain=com` is refused, as is any domain the sending host is not
 /// itself under.
-fn parse_set_cookie(header: &str, host: &str) -> Option<SessionCookie> {
-    let mut parts = header.split(';');
+pub(crate) fn parse_set_cookie(header: &str, host: &str) -> Option<SessionCookie> {    let mut parts = header.split(';');
     let (name, value) = parts.next()?.split_once('=')?;
     let name = name.trim().to_string();
     if name.is_empty() {

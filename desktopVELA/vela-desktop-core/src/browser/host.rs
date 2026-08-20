@@ -4,6 +4,14 @@
 //! temp profile and a CDP debug port, attaches over WebSocket, and tears the
 //! whole thing down afterwards — profile deleted, process killed. See
 //! `security/browser-driven-login-design.md`.
+//!
+//! Process isolation: on Linux the browser's child processes are readable by
+//! any same-UID process, so a co-resident process can read the substituted
+//! password out of the browser during a login. `VELA_BROWSER_SANDBOX` routes
+//! the spawn through a setuid launcher that drops the whole browser to a
+//! dedicated unprivileged UID (see `vela-browser-sandbox/`), closing that.
+//! `spawn()` fails closed if the sandbox is requested but not effecting a
+//! distinct UID, and warns when the tier runs without it.
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -103,6 +111,56 @@ fn free_port() -> u16 {
         .unwrap_or(0)
 }
 
+/// Path to the setuid launcher that runs the disposable browser under a
+/// dedicated, unprivileged UID (Linux only).
+///
+/// Why this is needed: Chromium's child processes — the ones that move the
+/// login request, and the renderers — are left readable by any *same-UID*
+/// process on a default `kernel.yama.ptrace_scope=1` kernel. Verified
+/// empirically: a co-resident same-user process can recover the substituted
+/// password from the disposable browser's memory during a login (see
+/// `security/exploits/test_browser_tier_memleak.py`). The core process is not
+/// affected — a plain process is gated against unrelated same-UID reads — but
+/// the browser's process tree is open to them.
+///
+/// Running the whole disposable browser under a *different*, unprivileged UID
+/// closes that: cross-UID `process_vm_readv` and `/proc/<pid>/mem` reads are
+/// refused by the kernel unless the reader is root. Turning a user-spawned
+/// subprocess into a different UID needs a privileged bootstrap, so this is
+/// done with a small setuid helper (`desktopVELA/vela-browser-sandbox/`),
+/// which an operator installs `setuid root` (one-time, see its README).
+///
+/// Opt-in via `VELA_BROWSER_SANDBOX`: either a path to the launcher, or `1`
+/// to use the launcher installed next to the app's own binary. When it is
+/// configured we fail closed; when it is absent we keep the legacy same-UID
+/// behaviour but warn loudly that the documented residual is reachable.
+#[cfg(target_os = "linux")]
+fn sandbox_launcher() -> Option<PathBuf> {
+    let value = std::env::var_os("VELA_BROWSER_SANDBOX")?;
+    let empty = std::ffi::OsStr::new("");
+    if value == empty {
+        return None;
+    }
+    if value == "1" {
+        // The launcher installed alongside the running binary.
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("vela-browser-sandbox")))
+    } else {
+        Some(PathBuf::from(value))
+    }
+}
+
+/// A process's effective UID, from `/proc/<pid>/status` (Linux). `None` if the
+/// process is gone or the file is unreadable.
+#[cfg(target_os = "linux")]
+fn euid_of(pid: u32) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let line = status.lines().find(|l| l.starts_with("Uid:"))?;
+    // Uid:	real	effective	saved	fs  (effective is the 3rd token)
+    line.split_whitespace().nth(2)?.parse().ok()
+}
+
 /// Spawn a disposable browser and wait for its CDP endpoint to answer.
 pub async fn spawn() -> Result<Browser, String> {
     // Test seam: lets a unit test prove the fallback wiring without opening a
@@ -126,21 +184,86 @@ pub async fn spawn() -> Result<Browser, String> {
     std::fs::create_dir_all(&profile_dir).map_err(|e| format!("could not create the browser profile: {e}"))?;
 
     let debug_port = free_port();
-    let child = Command::new(&binary)
-        .arg(format!("--remote-debugging-port={debug_port}"))
-        .arg(format!("--user-data-dir={}", profile_dir.display()))
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg("--disable-background-networking")
-        .arg("--disable-component-update")
-        .arg("--disable-default-apps")
-        .arg("--window-size=1280,800")
-        // Visible by default: a real, human-visible window is both harder for
-        // bot checks to reject and lets the user finish a second factor.
+    let mut browser_args: Vec<String> = vec![
+        format!("--remote-debugging-port={debug_port}"),
+        format!("--user-data-dir={}", profile_dir.display()),
+        "--no-first-run".into(),
+        "--no-default-browser-check".into(),
+        "--disable-background-networking".into(),
+        "--disable-component-update".into(),
+        "--disable-default-apps".into(),
+        "--window-size=1280,800".into(),
+    ];
+
+    #[cfg(target_os = "linux")]
+    let sandbox = sandbox_launcher();
+    #[cfg(not(target_os = "linux"))]
+    let sandbox: Option<PathBuf> = None;
+
+    // When a setuid launcher is configured, the browser is spawned *through*
+    // it: `launcher <binary> <profile-dir> <browser-args…>`. The launcher drops
+    // the whole browser to a dedicated unprivileged UID and wraps its lifetime
+    // (chowning the profile back to us when it exits, so we can wipe it).
+    let mut command = match &sandbox {
+        Some(launcher) => {
+            let mut c = Command::new(launcher);
+            c.arg(&binary).arg(&profile_dir).args(&browser_args);
+            c
+        }
+        None => {
+            let mut c = Command::new(&binary);
+            c.args(&browser_args);
+            c
+        }
+    };
+    // Visible by default: a real, human-visible window is both harder for bot
+    // checks to reject and lets the user finish a second factor.
+    let mut child = command
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| format!("could not start {binary:?}: {e}"))?;
+
+    // Sandbox self-check. When isolation was explicitly requested, the browser
+    // *must* actually be running under a different UID than the app; otherwise
+    // the isolation is not effecting anything and we fail closed rather than
+    // proceed as if the residual were mitigated.
+    #[cfg(target_os = "linux")]
+    if let Some(_launcher) = &sandbox {
+        let isolated = match (euid_of(child.id()), euid_of(std::process::id())) {
+            (Some(browser_euid), Some(app_euid)) => browser_euid != app_euid,
+            _ => false,
+        };
+        if !isolated {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(
+                "the browser sandbox (VELA_BROWSER_SANDBOX) was requested but the \
+                 disposable browser is not running under a distinct UID — the \
+                 vela-browser-sandbox launcher may not be installed setuid-root, so \
+                 refusing to continue with an ineffective sandbox"
+                    .to_string(),
+            );
+        }
+    }
+
+    // Without a sandbox the disposable browser runs as the user's own UID, and
+    // the documented residual (a co-resident same-user process reading the
+    // substituted password from the browser's memory) is empirically reachable.
+    // Say so once, loudly, instead of letting it pass silently.
+    #[cfg(target_os = "linux")]
+    if sandbox.is_none() {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            tracing::warn!(
+                "the disposable login browser runs as your own UID: a co-resident \
+                 same-user process can read its memory during the login (the \
+                 substituted password). Enable process isolation with VELA_BROWSER_SANDBOX \
+                 and the vela-browser-sandbox setuid launcher (see \
+                 desktopVELA/vela-browser-sandbox/)."
+            );
+        });
+    }
 
     let browser = Browser {
         child: Some(child),
@@ -185,3 +308,39 @@ fn rand_hex(len: usize) -> String {
     getrandom::getrandom(&mut bytes).unwrap_or_default();
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_launcher_uses_the_configured_path() {
+        std::env::set_var("VELA_BROWSER_SANDBOX", "/opt/vela/libexec/vela-browser-sandbox");
+        assert_eq!(
+            sandbox_launcher(),
+            Some(PathBuf::from("/opt/vela/libexec/vela-browser-sandbox"))
+        );
+        std::env::remove_var("VELA_BROWSER_SANDBOX");
+    }
+
+    #[test]
+    fn sandbox_launcher_is_absent_when_not_configured() {
+        std::env::remove_var("VELA_BROWSER_SANDBOX");
+        assert_eq!(sandbox_launcher(), None);
+    }
+
+    #[test]
+    fn euid_of_self_reads_the_effective_uid() {
+        let uid = euid_of(std::process::id()).expect("self /proc status is readable");
+        // We must be running as some uid; cross-check against /proc/self.
+        let self_status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let expected = self_status
+            .lines()
+            .find(|l| l.starts_with("Uid:"))
+            .and_then(|l| l.split_whitespace().nth(2))
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap();
+        assert_eq!(uid, expected);
+    }
+}
+

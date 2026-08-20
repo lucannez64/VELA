@@ -24,6 +24,14 @@ use crate::login::{LoginError, LoginOutcome, SiteMode};
 
 /// The whole-ceremony budget for one browser-driven login.
 const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// What the core's own TLS client tells the site it is, for the Tier-3
+/// core-perform path. Truthful, like the login tier's UA — never a disguise.
+pub(crate) const CORE_USER_AGENT: &str = concat!(
+    "VELA/",
+    env!("CARGO_PKG_VERSION"),
+    " (password manager; browser-login tier core client)"
+);
 /// How long the interception loop waits for the human to click the site's own
 /// sign-in button after the credentials are filled.
 const HUMAN_CLICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);

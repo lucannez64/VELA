@@ -8,3 +8,6 @@ pnpm-lock.yaml
 yarn.lock
 
 node_modules/
+
+# Setuid launcher build artifact (built by `make`; only the source is tracked)
+vela-browser-sandbox/vela-browser-sandbox

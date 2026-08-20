@@ -186,6 +186,13 @@ async fn the_site_receives_the_credential_and_the_csrf_token() {
 /// A grant names an item and a site, and both are checked. Without this the
 /// prompt is decorative: a caller could get approval for one site and spend it
 /// posting the password at another.
+///
+/// This refusal is the *non-browser-tier* behaviour: when `browser-login` is
+/// compiled in, a site mismatch is deliberately deferred to the browser tier
+/// (which re-validates the credential against the page the human is actually
+/// submitting on), so the plain-path `TargetMismatch` below does not fire.
+/// The feature-on deferral is covered by `browser::tests`.
+#[cfg(not(feature = "browser-login"))]
 #[tokio::test]
 async fn a_grant_for_another_site_is_refused() {
     let server = MockServer::start().await;
@@ -214,6 +221,7 @@ async fn a_grant_for_another_site_is_refused() {
     );
 }
 
+#[cfg(not(feature = "browser-login"))]
 #[tokio::test]
 async fn a_grant_for_another_item_is_refused() {
     let server = MockServer::start().await;
@@ -240,6 +248,11 @@ async fn a_grant_for_another_item_is_refused() {
 
 /// Target redefinition: the caller asks for a login URL that is not the item's
 /// site at all. Refused before any request goes out.
+///
+/// Non-browser-tier behaviour (see `a_grant_for_another_site_is_refused`):
+/// with `browser-login` compiled, a wrong-site target is deferred to the
+/// browser tier rather than refused here.
+#[cfg(not(feature = "browser-login"))]
 #[tokio::test]
 async fn a_login_url_off_the_items_site_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -1178,6 +1191,11 @@ async fn a_login_page_that_merely_offers_passkeys_is_not_a_security_key_gate() {
 /// GitLab's Cloudflare interstitial (403) and Hacker News' 429 were both
 /// reported as "this site signs in with JavaScript", which is a message that
 /// sends the user looking for a problem that is not there.
+///
+/// Non-browser-tier behaviour: with `browser-login` compiled, a bot-wall page
+/// is handed to the disposable browser tier instead of being reported as
+/// `SiteRefused`, so this test is compiled only for the non-feature build.
+#[cfg(not(feature = "browser-login"))]
 #[tokio::test]
 async fn a_site_that_refuses_the_login_page_is_not_called_a_javascript_login() {
     for status in [403u16, 429, 503] {
@@ -1899,6 +1917,11 @@ async fn a_script_that_posts_off_site_is_refused() {
 /// must not touch. This test pins the recipe *routing* instead: an item whose
 /// site has a recipe must be refused for a wrong target before any recipe
 /// endpoint is reached.
+///
+/// Non-browser-tier behaviour (see `a_grant_for_another_site_is_refused`):
+/// with `browser-login` compiled, a wrong-site target is deferred to the
+/// browser tier rather than refused by recipe routing here.
+#[cfg(not(feature = "browser-login"))]
 #[tokio::test]
 async fn a_recipe_site_is_still_scoped_to_its_approved_domain() {
     let dir = tempfile::tempdir().unwrap();
