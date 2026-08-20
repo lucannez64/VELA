@@ -27,11 +27,15 @@
  *  * conditional mediation (the autofill-style UI) is always delegated: it
  *    needs browser UI this shim has no way to draw.
  *
- * Known limitation, stated plainly: the object returned is shaped like a
- * `PublicKeyCredential` but is not one, so a relying party that tests
- * `instanceof PublicKeyCredential` will reject it. Every shim-based passkey
- * provider has this property; the fix is the OS provider APIs, which is why the
- * desktop-side ceremony API is deliberately not coupled to this file.
+ * Compatibility: the returned object is built with
+ * `Object.create(PublicKeyCredential.prototype)` (and its `response` with the
+ * matching `Authenticator*Response` prototype), so `instanceof
+ * PublicKeyCredential` and the response-type checks that break a naive shim
+ * both hold. The remaining wrapper is unresolved by any shim: an extension
+ * cannot hand a binary `PublicKeyCredential` through the internal CDP event
+ * boundary the way a native OS provider can, and some anti-fraud checks look
+ * exactly there. The desktop-side ceremony API is transport-agnostic precisely
+ * so a native provider can take that last step without touching this file.
  */
 (() => {
   "use strict";
@@ -98,6 +102,37 @@
     if (value instanceof ArrayBuffer) return value;
     if (ArrayBuffer.isView(value)) return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
     return null;
+  }
+
+  // A shimmed credential has to pass `instanceof PublicKeyCredential` — a
+  // growing number of relying parties type-check before they will use the
+  // result. A real credential cannot be constructed from script, but an object
+  // whose prototype chain runs through `PublicKeyCredential.prototype` *is* an
+  // instance of it; the own properties assigned below shadow the interface's
+  // internal-slot accessors (rawId, response, id, …) with the real values, and
+  // `getClientExtensionResults` is supplied on the instance, so the shape a
+  // relying party reads is indistinguishable in the ways that matter.
+  function publicKeyCredential(properties) {
+    if (typeof PublicKeyCredential === "undefined") return properties;
+    return Object.assign(Object.create(PublicKeyCredential.prototype), properties);
+  }
+
+  // Same trick for the `response` members, so `response instanceof
+  // AuthenticatorAssertionResponse` (or `AuthenticatorAttestationResponse`)
+  // also holds — some sites check those too.
+  function assertionResponse(properties) {
+    const proto =
+      typeof AuthenticatorAssertionResponse !== "undefined"
+        ? AuthenticatorAssertionResponse.prototype
+        : Object.prototype;
+    return Object.assign(Object.create(proto), properties);
+  }
+  function attestationResponse(properties) {
+    const proto =
+      typeof AuthenticatorAttestationResponse !== "undefined"
+        ? AuthenticatorAttestationResponse.prototype
+        : Object.prototype;
+    return Object.assign(Object.create(proto), properties);
   }
 
   /**
@@ -190,19 +225,19 @@
 
     if (!result || !result.success) throw notAllowed(result && result.error);
 
-    return {
+    return publicKeyCredential({
       id: result.credential_id,
       rawId: fromBase64Url(result.credential_id),
       type: "public-key",
       authenticatorAttachment: "platform",
-      response: {
+      response: assertionResponse({
         clientDataJSON: bytes.buffer,
         authenticatorData: fromBase64Url(result.authenticator_data),
         signature: fromBase64Url(result.signature),
         userHandle: result.user_handle ? fromBase64Url(result.user_handle) : null,
-      },
+      }),
       getClientExtensionResults: () => ({}),
-    };
+    });
   };
 
   // ── navigator.credentials.create ────────────────────────────────────────────
@@ -247,21 +282,21 @@
       // done without VELA installed.
       if (!result || !result.success) return nativeCreate(options);
 
-      return {
+      return publicKeyCredential({
         id: result.credential_id,
         rawId: fromBase64Url(result.credential_id),
         type: "public-key",
         authenticatorAttachment: "platform",
-        response: {
+        response: attestationResponse({
           clientDataJSON: bytes.buffer,
           attestationObject: fromBase64Url(result.attestation_object),
           getAuthenticatorData: () => fromBase64Url(result.authenticator_data),
           getPublicKeyAlgorithm: () => -7,
           getTransports: () => ["internal"],
           getPublicKey: () => null,
-        },
+        }),
         getClientExtensionResults: () => ({}),
-      };
+      });
     };
   }
 })();
