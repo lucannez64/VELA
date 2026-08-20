@@ -230,7 +230,7 @@ async fn serve() -> anyhow::Result<()> {
     tracing::info!(path = %turso_path.display(), "turso database opened");
 
     let state = Arc::new(
-        state::AppStateInner::new(db_pool, sqldb, kv, config.clone())?,
+        state::AppStateInner::new(db_pool, sqldb, kv, config.clone()).await?,
     );
 
     {

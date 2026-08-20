@@ -11,6 +11,7 @@ use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
     rate_limit,
+    sqldb::{Db as _, TursoDb, TursoValue},
     state::AppState,
 };
 
@@ -65,7 +66,7 @@ pub async fn post_register_start(
     session: DeviceSession,
     Json(body): Json<RegisterStartRequest>,
 ) -> Result<(HeaderMap, Json<RegisterStartResponse>)> {
-    let existing = recovery_passkey_for_user(&state, session.user_id)?;
+    let existing = recovery_passkey_for_user(&state, session.user_id).await?;
     let exclude_credentials: Option<Vec<CredentialID>> =
         existing.map(|pk| vec![pk.cred_id().clone()]);
     let user_name = body
@@ -118,17 +119,22 @@ pub async fn post_register_finish(
         .finish_passkey_registration(&credential, &reg_state)
         .map_err(|e| AppError::Unauthorized(format!("WebAuthn registration failed: {e:?}")))?;
 
-    assert_credential_not_registered_elsewhere(&state, session.user_id, &passkey)?;
+    assert_credential_not_registered_elsewhere(&state, session.user_id, &passkey).await?;
 
     let passkey_json = serde_json::to_string(&passkey)
         .map_err(|e| AppError::Internal(format!("failed to serialize passkey: {e}")))?;
     let cred_id = cred_id_b64(&passkey);
     state
-        .db
+        .sqldb
         .execute(
-            "UPDATE users SET recovery_webauthn_credential = $1, recovery_webauthn_cred_id = $2 WHERE id = $3",
-            stoolap::params![passkey_json, cred_id, session.user_id.to_string()],
+            "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ? WHERE id = ?",
+            vec![
+                TursoValue::Text(passkey_json),
+                TursoValue::Text(cred_id),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let mut headers = HeaderMap::new();
@@ -136,37 +142,32 @@ pub async fn post_register_finish(
     Ok((headers, Json(RegisterFinishResponse { registered: true })))
 }
 
-pub(crate) fn recovery_passkey_for_user(
+pub(crate) async fn recovery_passkey_for_user(
     state: &AppState,
     user_id: Uuid,
 ) -> Result<Option<Passkey>> {
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT recovery_webauthn_credential FROM users WHERE id = $1",
-            stoolap::params![user_id.to_string()],
+            "SELECT recovery_webauthn_credential FROM users WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let v = crate::db::row_val(&row, 0)?;
-    if v.is_null() {
-        return Ok(None);
+        .first()
+        .ok_or_else(|| AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into()))?;
+    match row.get(0) {
+        Some(TursoValue::Null) | None => Ok(None),
+        Some(TursoValue::Text(passkey_json)) => serde_json::from_str(passkey_json)
+            .map(Some)
+            .map_err(|e| AppError::Internal(format!("invalid stored WebAuthn credential: {e}"))),
+        _ => Err(AppError::Internal("expected WebAuthn credential JSON".into())),
     }
-
-    let passkey_json = v
-        .as_str()
-        .ok_or_else(|| AppError::Internal("expected WebAuthn credential JSON".into()))?;
-    serde_json::from_str(passkey_json)
-        .map(Some)
-        .map_err(|e| AppError::Internal(format!("invalid stored WebAuthn credential: {e}")))
 }
 
-pub(crate) fn update_recovery_passkey(
+pub(crate) async fn update_recovery_passkey(
     state: &AppState,
     user_id: Uuid,
     passkey: &Passkey,
@@ -175,11 +176,16 @@ pub(crate) fn update_recovery_passkey(
         .map_err(|e| AppError::Internal(format!("failed to serialize passkey: {e}")))?;
     let cred_id = cred_id_b64(passkey);
     state
-        .db
+        .sqldb
         .execute(
-            "UPDATE users SET recovery_webauthn_credential = $1, recovery_webauthn_cred_id = $2 WHERE id = $3",
-            stoolap::params![passkey_json, cred_id, user_id.to_string()],
+            "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ? WHERE id = ?",
+            vec![
+                TursoValue::Text(passkey_json),
+                TursoValue::Text(cred_id),
+                TursoValue::Text(user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(())
 }
@@ -190,24 +196,24 @@ pub(crate) fn update_recovery_passkey(
 /// check below covers them too instead of silently skipping pre-migration
 /// passkeys. Cheap after the first run since the WHERE clause then matches
 /// nothing.
-pub(crate) fn backfill_webauthn_cred_ids(db: &stoolap::Database) -> anyhow::Result<()> {
-    let rows = db.query(
-        "SELECT id, recovery_webauthn_credential FROM users
-         WHERE recovery_webauthn_credential IS NOT NULL AND recovery_webauthn_cred_id IS NULL",
-        (),
-    )?;
+pub(crate) async fn backfill_webauthn_cred_ids(db: &TursoDb) -> anyhow::Result<()> {
+    let rows = db
+        .query(
+            "SELECT id, recovery_webauthn_credential FROM users
+             WHERE recovery_webauthn_credential IS NOT NULL AND recovery_webauthn_cred_id IS NULL",
+            vec![],
+        )
+        .await?;
 
-    for row in rows {
-        let row = row?;
-        let id = crate::db::row_val(&row, 0)?
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("expected user id"))?
-            .to_string();
-        let passkey_json = crate::db::row_val(&row, 1)?
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("expected passkey JSON"))?
-            .to_string();
-        let passkey: Passkey = match serde_json::from_str(&passkey_json) {
+    for row in &rows {
+        let Some(id) = row.text(0) else {
+            continue;
+        };
+        let Some(passkey_json) = row.text(1) else {
+            continue;
+        };
+        let id = id.to_string();
+        let passkey: Passkey = match serde_json::from_str(passkey_json) {
             Ok(pk) => pk,
             Err(e) => {
                 tracing::warn!(
@@ -219,10 +225,13 @@ pub(crate) fn backfill_webauthn_cred_ids(db: &stoolap::Database) -> anyhow::Resu
             }
         };
         let cred_id = cred_id_b64(&passkey);
-        if let Err(e) = db.execute(
-            "UPDATE users SET recovery_webauthn_cred_id = $1 WHERE id = $2",
-            stoolap::params![cred_id, id.clone()],
-        ) {
+        if let Err(e) = db
+            .execute(
+                "UPDATE users SET recovery_webauthn_cred_id = ? WHERE id = ?",
+                vec![TursoValue::Text(cred_id), TursoValue::Text(id.clone())],
+            )
+            .await
+        {
             tracing::warn!(
                 user_id = %id,
                 error = %e,
@@ -258,26 +267,26 @@ fn take_register_state(state: &AppState, user_id: Uuid) -> Result<PasskeyRegistr
         .map_err(|e| AppError::BadRequest(format!("invalid registration state: {e}")))
 }
 
-fn assert_credential_not_registered_elsewhere(
+async fn assert_credential_not_registered_elsewhere(
     state: &AppState,
     user_id: Uuid,
     passkey: &Passkey,
 ) -> Result<()> {
     let cred_id = cred_id_b64(passkey);
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT id FROM users WHERE recovery_webauthn_cred_id = $1",
-            stoolap::params![cred_id],
+            "SELECT id FROM users WHERE recovery_webauthn_cred_id = ?",
+            vec![TursoValue::Text(cred_id)],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    for row in rows {
-        let row = row.map_err(|e| AppError::Internal(e.to_string()))?;
-        let id = crate::db::row_val(&row, 0)?
-            .as_str()
-            .ok_or_else(|| AppError::Internal("expected user id".into()))?
-            .to_string();
+    for row in &rows {
+        let id = row
+            .text(0)
+            .map(String::from)
+            .ok_or_else(|| AppError::Internal("expected user id".into()))?;
         if id != user_id.to_string() {
             return Err(AppError::Conflict(
                 "WebAuthn credential is already registered to another account".into(),

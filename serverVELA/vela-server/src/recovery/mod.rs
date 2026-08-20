@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -45,14 +46,15 @@ pub async fn put_share(
     }
 
     state
-        .db
+        .sqldb
         .execute(
-            "UPDATE users SET recovery_share = $1, recovery_auth_hash = NULL WHERE id = $2",
-            stoolap::params![
-                crate::db::encode_b64(&share_bytes),
-                session.user_id.to_string(),
+            "UPDATE users SET recovery_share = ?, recovery_auth_hash = NULL WHERE id = ?",
+            vec![
+                TursoValue::Text(crate::db::encode_b64(&share_bytes)),
+                TursoValue::Text(session.user_id.to_string()),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(user_id = %session.user_id, bytes = share_bytes.len(), "recovery share stored");
@@ -73,27 +75,20 @@ pub async fn get_share(
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<GetShareResponse>)> {
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT recovery_share FROM users WHERE id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "SELECT recovery_share FROM users WHERE id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound("user not found".into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let v = crate::db::row_val(&row, 0)?;
-    let share_b64 = if v.is_null() {
-        None
-    } else {
-        v.as_str().map(|s| s.to_string())
-    };
-
-    let share_b64 = share_b64
+    let share_b64 = rows
+        .first()
+        .and_then(|r| match r.get(0) {
+            Some(TursoValue::Text(s)) => Some(s.clone()),
+            _ => None,
+        })
         .ok_or_else(|| AppError::NotFound("no recovery share stored for this user".into()))?;
 
     let share_bytes = crate::db::decode_b64(&share_b64)?;
@@ -114,11 +109,12 @@ pub async fn delete_share(
     session: DeviceSession,
 ) -> Result<(HeaderMap, StatusCode)> {
     state
-        .db
+        .sqldb
         .execute(
-            "UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = $1",
-            stoolap::params![session.user_id.to_string()],
+            "UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(user_id = %session.user_id, "recovery share deleted");

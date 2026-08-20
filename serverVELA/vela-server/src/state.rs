@@ -100,7 +100,7 @@ impl AppStateInner {
 pub type AppState = Arc<AppStateInner>;
 
 impl AppStateInner {
-    pub fn new(
+    pub async fn new(
         db: DbPool,
         sqldb: std::sync::Arc<crate::sqldb::TursoDb>,
         store: Store,
@@ -127,7 +127,7 @@ impl AppStateInner {
             .build()
             .map_err(|e| anyhow::anyhow!("failed to build WebAuthn verifier: {e:?}"))?;
 
-        if let Err(e) = crate::recovery::webauthn::backfill_webauthn_cred_ids(&db.any()) {
+        if let Err(e) = crate::recovery::webauthn::backfill_webauthn_cred_ids(&sqldb).await {
             tracing::warn!(error = %e, "WebAuthn cred_id backfill failed; continuing startup");
         }
 

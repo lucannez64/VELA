@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -57,8 +58,9 @@ pub async fn post_recover(
     rate_limit::recovery_recover_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
     rate_limit::recovery_recover_by_user(&state.store, &body.user_id.to_string())?;
 
-    crate::recovery::initiate::ensure_recovery_share_exists(&state, body.user_id)?;
-    let mut passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)?
+    crate::recovery::initiate::ensure_recovery_share_exists(&state, body.user_id).await?;
+    let mut passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)
+        .await?
         .ok_or_else(|| {
             AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
         })?;
@@ -78,27 +80,24 @@ pub async fn post_recover(
 
     if auth_result.needs_update() {
         if passkey.update_credential(&auth_result).is_some() {
-            crate::recovery::webauthn::update_recovery_passkey(&state, body.user_id, &passkey)?;
+            crate::recovery::webauthn::update_recovery_passkey(&state, body.user_id, &passkey)
+                .await?;
         }
     }
 
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT recovery_share FROM users WHERE id = $1",
-            stoolap::params![body.user_id.to_string()],
+            "SELECT recovery_share FROM users WHERE id = ?",
+            vec![TursoValue::Text(body.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let share_b64 = crate::db::row_val(&row, 0)?
-        .as_str()
-        .map(|s| s.to_string())
+    let share_b64 = rows
+        .first()
+        .and_then(|r| r.text(0))
+        .map(String::from)
         .ok_or_else(|| {
             AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
         })?;

@@ -11,6 +11,7 @@ use webauthn_rs::prelude::{PasskeyAuthentication, RequestChallengeResponse};
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -51,8 +52,9 @@ pub async fn post_initiate(
     rate_limit::recovery_initiate_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
     rate_limit::recovery_initiate_by_user(&state.store, &body.user_id.to_string())?;
 
-    ensure_recovery_share_exists(&state, body.user_id)?;
-    let passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)?
+    ensure_recovery_share_exists(&state, body.user_id).await?;
+    let passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)
+        .await?
         .ok_or_else(|| AppError::NotFound(RECOVERY_UNAVAILABLE.into()))?;
 
     let (challenge, auth_state) = state
@@ -69,22 +71,20 @@ pub async fn post_initiate(
     }))
 }
 
-pub(crate) fn ensure_recovery_share_exists(state: &AppState, user_id: Uuid) -> Result<()> {
+pub(crate) async fn ensure_recovery_share_exists(state: &AppState, user_id: Uuid) -> Result<()> {
     let rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT recovery_share FROM users WHERE id = $1",
-            stoolap::params![user_id.to_string()],
+            "SELECT recovery_share FROM users WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound(RECOVERY_UNAVAILABLE.into()))?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    if crate::db::row_val(&row, 0)?.is_null() {
+        .first()
+        .ok_or_else(|| AppError::NotFound(RECOVERY_UNAVAILABLE.into()))?;
+    if matches!(row.get(0), Some(TursoValue::Null) | None) {
         return Err(AppError::NotFound(RECOVERY_UNAVAILABLE.into()));
     }
     Ok(())

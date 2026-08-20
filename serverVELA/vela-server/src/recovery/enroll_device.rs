@@ -25,6 +25,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -88,13 +89,14 @@ pub async fn post_enroll_device(
     // still possible in principle — fail closed rather than orphan a device
     // row under a FK that no longer resolves.
     let user_rows = state
-        .db
+        .sqldb
         .query(
-            "SELECT id FROM users WHERE id = $1",
-            stoolap::params![body.user_id.to_string()],
+            "SELECT id FROM users WHERE id = ?",
+            vec![TursoValue::Text(body.user_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if user_rows.into_iter().next().is_none() {
+    if user_rows.first().is_none() {
         return Err(AppError::NotFound("account no longer exists".into()));
     }
 
@@ -110,21 +112,22 @@ pub async fn post_enroll_device(
         .unwrap_or_else(|| "unknown".to_string());
 
     state
-        .db
+        .sqldb
         .execute(
             "INSERT INTO devices
              (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-             VALUES ($1, $2, $3, $4, NULL, $5, $6, NULL, $7)",
-            stoolap::params![
-                new_device_id.to_string(),
-                body.user_id.to_string(),
-                device_name,
-                device_type,
-                crate::db::encode_b64(&hybrid_ek),
-                crate::db::encode_b64(&hybrid_vk),
-                now,
+             VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?)",
+            vec![
+                TursoValue::Text(new_device_id.to_string()),
+                TursoValue::Text(body.user_id.to_string()),
+                TursoValue::Text(device_name),
+                TursoValue::Text(device_type),
+                TursoValue::Text(crate::db::encode_b64(&hybrid_ek)),
+                TursoValue::Text(crate::db::encode_b64(&hybrid_vk)),
+                TursoValue::Text(now),
             ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(
