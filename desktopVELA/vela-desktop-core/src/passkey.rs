@@ -24,9 +24,11 @@
 //!    nowhere else — the model's `assertion_is_origin_bound`.
 //!
 //! The request/response types are deliberately plain structs rather than the
-//! extension's message shapes: the browser shim is one front end, and an OS
-//! passkey provider (macOS `ASCredentialProviderExtension`, the Windows plugin
-//! authenticator API) has to be able to drive the same two functions later.
+//! extension's message shapes: the browser shim is one front end, and any OS
+//! passkey provider has to be able to drive the same two functions later. The
+//! concrete plan for native providers is `security/passkey-native-provider-adr.md`
+//! — Windows has a real (plugin-authenticator) API to target; desktop macOS has
+//! no public passkey-provider API and is not pursued.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
 use ciborium::value::Value as Cbor;
