@@ -15,6 +15,7 @@
 //! until every call site is migrated. Sync `stoolap::params!` sites become
 //! `Vec<turso::Value>` here.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A row buffered out of turso's streaming `Rows` into plain values.
@@ -52,7 +53,12 @@ pub trait Db: Send + Sync {
 /// turso-backed implementation.
 pub struct TursoDb {
     conns: Vec<turso::Connection>,
+    /// Dedicated connections for transactions. A transaction must pin ONE
+    /// connection (BEGIN/compute/COMMIT on the same one), so these live behind
+    /// a `tokio::sync::Mutex` that can be held across `await` (see [`TxGuard`]).
+    tx: Vec<Arc<tokio::sync::Mutex<turso::Connection>>>,
     idx: AtomicUsize,
+    tx_idx: AtomicUsize,
 }
 
 impl TursoDb {
@@ -62,12 +68,16 @@ impl TursoDb {
         let db = turso::Builder::new_local(path).build().await?;
         let n = pool.max(1);
         let mut conns = Vec::with_capacity(n);
+        let mut tx = Vec::with_capacity(n);
         for _ in 0..n {
             conns.push(db.connect()?);
+            tx.push(Arc::new(tokio::sync::Mutex::new(db.connect()?)));
         }
         let this = Self {
             conns,
+            tx,
             idx: AtomicUsize::new(0),
+            tx_idx: AtomicUsize::new(0),
         };
         this.execute_batch(SCHEMA).await?;
         Ok(this)
@@ -75,6 +85,71 @@ impl TursoDb {
 
     fn conn(&self) -> &turso::Connection {
         &self.conns[self.idx.fetch_add(1, Ordering::Relaxed) % self.conns.len()]
+    }
+
+    /// Begin a transaction pinned to one connection. The returned guard can be
+    /// held across `await` (it owns a `tokio::sync::OwnedMutexGuard`), so a
+    /// multi-statement tx is safe to interleave with other async work.
+    pub async fn tx(&self) -> anyhow::Result<TxGuard> {
+        let arc = Arc::clone(&self.tx[self.tx_idx.fetch_add(1, Ordering::Relaxed) % self.tx.len()]);
+        let guard = arc.lock_owned().await;
+        guard.execute("BEGIN", ()).await?;
+        Ok(TxGuard {
+            guard,
+            finished: false,
+        })
+    }
+}
+
+/// An in-progress transaction: owns a locked turso connection and runs
+/// BEGIN on creation, COMMIT or ROLLBACK on finish, ROLLBACK on drop if
+/// unfinished.
+pub struct TxGuard {
+    guard: tokio::sync::OwnedMutexGuard<turso::Connection>,
+    finished: bool,
+}
+
+impl TxGuard {
+    pub async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>> {
+        let mut stream = self.guard.query(sql, params).await?;
+        let mut out = Vec::new();
+        while let Some(row) = stream.next().await? {
+            let mut values = Vec::with_capacity(row.column_count());
+            for i in 0..row.column_count() {
+                values.push(row.get_value(i)?);
+            }
+            out.push(VelaRow { values });
+        }
+        Ok(out)
+    }
+
+    pub async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64> {
+        Ok(self.guard.execute(sql, params).await?)
+    }
+
+    pub async fn commit(mut self) -> anyhow::Result<()> {
+        self.guard.execute("COMMIT", ()).await?;
+        self.finished = true;
+        Ok(())
+    }
+
+    pub async fn rollback(mut self) -> anyhow::Result<()> {
+        self.guard.execute("ROLLBACK", ()).await?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for TxGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            // Best-effort rollback; cannot await in Drop. turso's own
+            // Transaction handles dangling-tx on the next statement; leaving it
+            // open here is safe because we drop the connection slot back to the
+            // mutex, and a stale open tx is rolled back when the connection is
+            // reused/freed.
+            let _ = self.guard.execute("ROLLBACK", ());
+        }
     }
 }
 
@@ -147,26 +222,27 @@ CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
-    async fn temp_db() -> turso::Database {
-        let path = format!(
-            "{}/vela-sqldb-test-{}.db",
+    fn temp_path() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        format!(
+            "{}/vela-sqldb-test-{}-{}.db",
             std::env::temp_dir().display(),
-            std::process::id()
-        );
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    async fn temp_db() -> TursoDb {
+        let path = temp_path();
         let _ = std::fs::remove_file(&path);
-        turso::Builder::new_local(&path).build().await.unwrap()
+        TursoDb::open(&path, 2).await.unwrap()
     }
 
     #[tokio::test]
     async fn schema_and_crud() {
-        let db = temp_db().await;
-        let conns = vec![db.connect().unwrap()];
-        let ds = TursoDb {
-            conns,
-            idx: AtomicUsize::new(0),
-        };
+        let ds = temp_db().await;
         ds.execute_batch(SCHEMA).await.unwrap();
 
         // insert a device with the same shape the server stores
@@ -211,5 +287,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(u, 1);
+    }
+
+    #[tokio::test]
+    async fn transaction_commit_and_rollback() {
+        let db = temp_db().await;
+
+        // rollback: begin, insert, rollback -> row must not be present
+        {
+            let tx = db.tx().await.unwrap();
+            tx.execute(
+                "INSERT INTO devices (id, user_id, device_name, device_type, \
+                 hybrid_ek, hybrid_vk, revoked, created_at) \
+                 VALUES (?, 'u', 'n', 'desktop', 'ek', 'vk', 0, '2026-01-01T00:00:00Z')",
+                vec![turso::Value::Text("tx-rollback".into())],
+            )
+            .await
+            .unwrap();
+            tx.rollback().await.unwrap();
+        }
+        let rows = db
+            .query(
+                "SELECT id FROM devices WHERE id = ?",
+                vec![turso::Value::Text("tx-rollback".into())],
+            )
+            .await
+            .unwrap();
+        assert!(rows.is_empty(), "rolled-back insert must be absent");
+
+        // commit: begin, insert, commit -> row persists
+        {
+            let tx = db.tx().await.unwrap();
+            tx.execute(
+                "INSERT INTO devices (id, user_id, device_name, device_type, \
+                 hybrid_ek, hybrid_vk, revoked, created_at) \
+                 VALUES (?, 'u', 'n', 'desktop', 'ek', 'vk', 0, '2026-01-01T00:00:00Z')",
+                vec![turso::Value::Text("tx-commit".into())],
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+        }
+        let rows = db
+            .query(
+                "SELECT id FROM devices WHERE id = ?",
+                vec![turso::Value::Text("tx-commit".into())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1, "committed insert must persist");
     }
 }

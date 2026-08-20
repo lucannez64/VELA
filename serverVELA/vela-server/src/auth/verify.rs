@@ -3,6 +3,7 @@ use crate::{
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
     net, rate_limit,
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 use axum::{
@@ -50,26 +51,24 @@ pub async fn post_verify(
     }
 
     let rows = state
-        .db
+        .sqldb
         .query(
             "SELECT id, user_id, device_name, device_type, last_active,
                 hybrid_ek, hybrid_vk,
                 enrolled_by, rms_capsule, revoked,
                 revoked_at, revoked_by, created_at
-         FROM devices
-         WHERE id = $1 AND revoked = FALSE",
-            stoolap::params![body.device_id.to_string()],
+             FROM devices
+             WHERE id = ? AND revoked = 0",
+            vec![TursoValue::Text(body.device_id.to_string())],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            AppError::Unauthorized(crate::device::enroll::DEVICE_AUTH_FAILED.into())
-        })?
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let device = crate::db::parse_device_row(&row)?;
+    let device = rows
+        .first()
+        .map(|r| crate::db::parse_device_row_turso(r))
+        .transpose()?
+        .ok_or_else(|| AppError::Unauthorized(crate::device::enroll::DEVICE_AUTH_FAILED.into()))?;
 
     let challenge_bytes = B64
         .decode(&body.challenge)
@@ -118,15 +117,24 @@ pub async fn post_verify(
     if requested_name.is_some() || requested_type.is_some() {
         let next_name = requested_name.unwrap_or(&device.device_name);
         let next_type = requested_type.unwrap_or(&device.device_type);
-        let _ = state.db.execute(
-            "UPDATE devices SET last_active = $1, device_name = $2, device_type = $3 WHERE id = $4",
-            stoolap::params![now, next_name, next_type, device_id_str.clone()],
-        );
+        let _ = state.sqldb
+            .execute(
+                "UPDATE devices SET last_active = ?, device_name = ?, device_type = ? WHERE id = ?",
+                vec![
+                    TursoValue::Text(now.clone()),
+                    TursoValue::Text(next_name.to_string()),
+                    TursoValue::Text(next_type.to_string()),
+                    TursoValue::Text(device_id_str.clone()),
+                ],
+            )
+            .await;
     } else {
-        let _ = state.db.execute(
-            "UPDATE devices SET last_active = $1 WHERE id = $2",
-            stoolap::params![now, device_id_str.clone()],
-        );
+        let _ = state.sqldb
+            .execute(
+                "UPDATE devices SET last_active = ? WHERE id = ?",
+                vec![TursoValue::Text(now), TursoValue::Text(device_id_str.clone())],
+            )
+            .await;
     }
 
     let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());

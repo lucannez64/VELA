@@ -4,6 +4,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
+    sqldb::TursoValue,
     state::AppState,
 };
 
@@ -17,27 +18,32 @@ pub async fn get_capsule(
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<CapsuleResponse>)> {
     // Read-then-clear must be atomic: two concurrent requests must never both
-    // observe the same capsule. Do both inside one snapshot-isolated
-    // transaction, and only decode/return the capsule after `commit()`
-    // actually succeeds — if a concurrent request raced us to the same row,
-    // our commit fails with a write conflict and we report 409 instead of
-    // also handing out the secret to the loser of the race.
-    let mut tx = state
-        .db
-        .begin_with_isolation(stoolap::IsolationLevel::SnapshotIsolation)
+    // observe the same capsule. Do both inside one transaction pinned to a
+    // single connection, and only decode/return the capsule after `commit()`
+    // actually succeeds — if a concurrent request raced us to the same row, the
+    // write conflict surfaces here and we report 409 instead of handing the
+    // secret to the loser of the race.
+    let tx = state
+        .sqldb
+        .tx()
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let rows = tx
         .query(
             "SELECT rms_capsule FROM devices
-         WHERE id = $1 AND user_id = $2 AND revoked = FALSE AND rms_capsule IS NOT NULL",
-            stoolap::params![session.device_id.to_string(), session.user_id.to_string()],
+             WHERE id = ? AND user_id = ? AND revoked = 0 AND rms_capsule IS NOT NULL",
+            vec![
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
+        .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = match rows.into_iter().next() {
-        Some(r) => r.map_err(|e| AppError::Internal(e.to_string()))?,
-        None => {
+    let capsule_b64 = match rows.first().and_then(|r| r.get(0)) {
+        Some(TursoValue::Text(s)) => s.clone(),
+        _ => {
             return Err(AppError::NotFound(
                 "no capsule available — device may be the first device, \
                  or the capsule has already been downloaded"
@@ -46,28 +52,17 @@ pub async fn get_capsule(
         }
     };
 
-    let v = crate::db::row_val(&row, 0)?;
-    let capsule_b64 = if v.is_null() {
-        None
-    } else {
-        v.as_str().map(|s| s.to_string())
-    };
-
-    let capsule_b64 = capsule_b64.ok_or_else(|| {
-        AppError::NotFound(
-            "no capsule available — device may be the first device, \
-         or the capsule has already been downloaded"
-                .into(),
-        )
-    })?;
-
     tx.execute(
-        "UPDATE devices SET rms_capsule = NULL WHERE id = $1 AND user_id = $2",
-        stoolap::params![session.device_id.to_string(), session.user_id.to_string()],
+        "UPDATE devices SET rms_capsule = NULL WHERE id = ? AND user_id = ?",
+        vec![
+            TursoValue::Text(session.device_id.to_string()),
+            TursoValue::Text(session.user_id.to_string()),
+        ],
     )
+    .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    tx.commit().map_err(|e| {
+    tx.commit().await.map_err(|e| {
         AppError::Conflict(format!(
             "capsule delivery raced with a concurrent request, please retry: {e}"
         ))
