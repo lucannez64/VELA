@@ -77,13 +77,22 @@ jobs:
           set -x
           APP=$(find desktopVELA/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
           if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R desktopVELA/target/release/bundle || true; exit 1; fi
-          open "$APP"
+
+          # The IPC connection gate reads VELA_NM_BROWSER_NAMES from the
+          # *desktop's* environment (it runs in the server process), so the
+          # variable must be set before the app starts — and `open` does not
+          # pass shell env through launchd. Launch the binary directly so it
+          # inherits this shell's environment.
+          export VELA_NM_BROWSER_NAMES=bash
+          APP_BIN=$(find "$APP/Contents/MacOS" -type f -perm -111 | head -1)
+          if [ -z "$APP_BIN" ]; then echo "no executable in $APP/Contents/MacOS"; exit 1; fi
+          "$APP_BIN" >/tmp/vela-app.log 2>&1 &
           sleep 12
           screencapture -x smoke.png || true
           if pgrep -f 'VELA.app/Contents/MacOS' >/dev/null; then
             echo "app is running after launch"
           else
-            echo "app crashed on launch"; exit 1
+            echo "app crashed on launch"; cat /tmp/vela-app.log || true; exit 1
           fi
 
           # Extension <-> desktop bridge: the desktop must be listening on the
@@ -91,12 +100,13 @@ jobs:
           # host (built with the rest of the workspace) must ping->pong it.
           # Option B (#149): no capability file exists any more; the gate
           # admits a host spawned by a browser. Nothing spawned CI from a
-          # browser, so name a real ancestor executable for the smoke test.
+          # browser, so name a real ancestor executable for the smoke test
+          # (exported above, before the app started, for exactly that reason).
           ENDPOINT=$(ls "$TMPDIR"/vela-*/desktop.sock /tmp/vela-*/desktop.sock 2>/dev/null | head -1)
           if [ -z "$ENDPOINT" ]; then echo "no desktop socket found under $TMPDIR or /tmp"; exit 1; fi
           echo "desktop socket: $ENDPOINT"
-          export VELA_NM_BROWSER_NAMES=bash
-          cargo build --release -p vela-nm-host
+          # The workspace manifest lives in desktopVELA/, not the repo root.
+          (cd desktopVELA && cargo build --release -p vela-nm-host)
           python3 .github/scripts/ipc_ping.py desktopVELA/target/release/vela-native-messaging-host
 
           osascript -e 'quit app "VELA"' 2>/dev/null || pkill -f 'VELA.app' || true

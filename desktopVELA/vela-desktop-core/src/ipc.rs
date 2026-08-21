@@ -871,13 +871,29 @@ pub mod server {
                     );
                     return IpcMessage::error(reason);
                 }
-                crate::audit::record_audit_event(
+                // The audit entry is not decoration: its guarantee is that
+                // every release leaves durable evidence. If it cannot be
+                // written, the release does not happen — a credential handed
+                // out with no record of it is exactly what these limits exist
+                // to prevent. (The cap budget was already spent above; that
+                // is the conservative order.)
+                if let Err(audit_error) = crate::audit::record_audit_event_checked(
                     &state,
                     crate::audit::AuditAction::CredentialReleased {
                         caller: peer.describe(),
                         domain: base_domain.clone(),
                     },
-                );
+                ) {
+                    warn!(
+                        "Refused plaintext release for '{base_domain}' to {}: audit write failed: {audit_error}",
+                        peer.describe()
+                    );
+                    return IpcMessage::error(
+                        "Credential not filled: the activity log could not be updated. \
+                         Check disk space and try again."
+                            .to_string(),
+                    );
+                }
                 host.show_toast(&format!("Filled {base_domain} for {}", peer.describe()));
             }
             return autofill_response(items, false);
@@ -1886,11 +1902,78 @@ pub mod server {
             assert_eq!(toasts, [format!("Filled github.com for {}", peer.describe())]);
         }
 
+        /// The audit entry is a precondition, not a side effect: when the
+        /// encrypted log cannot be written (full disk, broken permissions),
+        /// the release is refused — no secret leaves without its record.
+        #[tokio::test]
+        #[cfg(unix)]
+        async fn a_release_is_refused_when_its_audit_entry_cannot_be_written() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let (_dir, mock) = MockHost::new(true);
+            {
+                let now = chrono::Utc::now();
+                mock.state.vault.write().add_item(VaultItem::Login {
+                    meta: VaultMeta {
+                        id: "1".into(),
+                        name: "GH".into(),
+                        notes: None,
+                        created_at: now,
+                        updated_at: now,
+                        last_modified_device: None,
+                        favorite: false,
+                        shared: false,
+                        share_recipient: None,
+                    },
+                    url: "https://github.com".into(),
+                    username: "alice".into(),
+                    pass: "s3cret".into(),
+                    totp: None,
+                    app_ids: Vec::new(),
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
+                });
+            }
+            let peer = test_peer();
+            mock.state.record_plaintext_release(peer.pid);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let store_dir = mock.state.store.store_path();
+            let restore_perms = |mode: u32| {
+                std::fs::set_permissions(
+                    &store_dir,
+                    std::fs::Permissions::from_mode(mode),
+                )
+                .unwrap();
+            };
+            // Read-only store directory: reads still work (the existing log
+            // loads), writes fail. Restore afterwards so the tempdir can be
+            // cleaned up.
+            restore_perms(0o555);
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &peer).await;
+            restore_perms(0o755);
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error, "{resp:?}");
+            assert!(
+                resp.payload["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("activity log"),
+                "{resp:?}"
+            );
+            // And nothing was given out: no items, no toast.
+            assert!(mock.toasts().is_empty(), "no audit entry, no release");
+        }
+
         /// A request that matches nothing releases nothing — so it must not
         /// burn cap budget, write audit entries, or raise toasts.
         #[tokio::test]
-        async fn a_missed_match_is_not_a_release() {
-            let (_dir, mock) = MockHost::new(true);
+        async fn a_missed_match_is_not_a_release() {            let (_dir, mock) = MockHost::new(true);
             let peer = test_peer();
             mock.state.record_plaintext_release(peer.pid);
             let host: Arc<dyn Host> = mock.clone();

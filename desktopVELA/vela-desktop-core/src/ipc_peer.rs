@@ -97,9 +97,9 @@ pub(crate) fn exe_for_pid(pid: u32) -> Option<PathBuf> {
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+            PROCESS_NAME_WIN32,
         };
 
-        const PROCESS_NAME_WIN32: u32 = 0;
         // SAFETY: `pid` names a possibly-live process; OpenProcess either
         // yields a handle we close below or fails. The buffer and its length
         // are passed as a pair, as the API requires.

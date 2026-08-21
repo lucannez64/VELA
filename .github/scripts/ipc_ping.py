@@ -12,6 +12,7 @@ host that a browser spawned. In CI nothing spawned us from a browser, so set
 VELA_NM_BROWSER_NAMES to a real ancestor's executable name before calling.
 """
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -28,6 +29,15 @@ def main():
         return 2
 
     host = sys.argv[1]
+    # CI-controlled input, but validated anyway: this must be an existing
+    # executable file, not something a stray argument turns into a shell word.
+    if not (os.path.isfile(host) and os.access(host, os.X_OK)):
+        print(f"not an executable file: {host}")
+        return 2
+
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+    # — argv-list form (no shell), path validated above; this script exists to
+    # execute the host binary it is handed.
     proc = subprocess.Popen(
         [host],
         stdin=subprocess.PIPE,

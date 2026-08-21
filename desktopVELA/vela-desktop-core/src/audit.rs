@@ -124,7 +124,23 @@ pub fn get_device_name() -> String {
 }
 
 pub fn record_audit_event(state: &AppState, action: AuditAction) {
-    let mut log = load_audit_log(state).unwrap_or_default();
+    let _ = record_audit_event_checked(state, action);
+}
+
+/// Like [`record_audit_event`], but reports failure instead of swallowing it.
+///
+/// Most callers treat the audit log as best-effort bookkeeping. The plaintext
+/// IPC release does not: its guarantee is that every release leaves a durable
+/// entry, so it must know when one could not be written and decline to
+/// release rather than hand out a secret nobody can later account for.
+pub fn record_audit_event_checked(
+    state: &AppState,
+    action: AuditAction,
+) -> Result<(), String> {
+    // Unreadable counts as unwritable here: an entry we cannot verify went
+    // into the log is not an entry.
+    let mut log = load_audit_log(state)
+        .ok_or_else(|| "the activity log could not be read (locked or corrupt)".to_string())?;
     let device_name = get_device_name();
     let entry = AuditEntry {
         id: uuid::Uuid::new_v4().to_string(),
@@ -133,7 +149,7 @@ pub fn record_audit_event(state: &AppState, action: AuditAction) {
         subject: AuditSubject::Device { device_name },
     };
     log.add_entry(entry);
-    let _ = save_audit_log(state, &log);
+    save_audit_log(state, &log)
 }
 
 pub fn load_audit_log(state: &AppState) -> Option<AuditLog> {
