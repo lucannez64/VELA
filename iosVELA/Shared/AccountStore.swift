@@ -160,6 +160,7 @@ struct FileAccountKeyStore: AccountKeyStore {
     private func write(_ keys: Keys) throws {
         let data = try JSONEncoder().encode(keys)
         try data.write(to: url, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(url)
     }
 
     func storeSealKey(_ key: Data) throws {
@@ -220,6 +221,7 @@ struct AccountStore {
     func save(_ state: AccountState) throws {
         let data = try JSONEncoder().encode(AccountFileState(state))
         try data.write(to: url, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(url)
     }
 
     func clear() {

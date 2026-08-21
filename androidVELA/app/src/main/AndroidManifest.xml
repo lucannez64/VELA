@@ -59,5 +59,10 @@
                 android:name="android.autofill"
                 android:resource="@xml/autofill_service" />
         </service>
+
+        <!-- Enforces the auto-lock deadline while the app is backgrounded. -->
+        <receiver
+            android:name=".security.AutoLockReceiver"
+            android:exported="false" />
     </application>
 </manifest>

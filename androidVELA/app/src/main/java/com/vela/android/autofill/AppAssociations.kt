@@ -15,8 +15,10 @@ import java.util.Locale
  *     signing certificate*. See [AssetLinksVerifier]. Strongest, needs network.
  *  2. **An explicit association the user confirmed**, stored on the item as
  *     `androidapp://<package>`. Offline, and the user is the trust anchor.
- *  3. **A curated list** for well-known apps, as a convenience for the long tail
- *     where neither of the above has happened yet.
+ *  3. **A curated list** of well-known app → site pairs, as a *hint* for the
+ *     long tail: it names the site whose asset link is then asked to vouch for
+ *     the package. The hint never grants trust by itself — a package name is
+ *     precisely what audit A-2 was about.
  *
  * The old `com.<x>` → `<x>.com` fallback is gone; matching nothing is the
  * correct answer for an app nobody has vouched for.

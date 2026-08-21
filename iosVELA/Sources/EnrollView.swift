@@ -36,6 +36,14 @@ struct EnrollView: View {
         return value.isEmpty ? nil : value
     }
 
+    /// A non-v3 code is the legacy v1/v2 format, which embeds the device
+    /// signing key and RMS transfer key *in the code itself*. Interception is
+    /// therefore as bad as theft — the verification digest proves the code
+    /// wasn't substituted, not that nobody copied it.
+    private var hasLegacyCode: Bool {
+        !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isV3Code
+    }
+
     private var canJoin: Bool {
         guard !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard codeConfirmed || isV3Code else { return false }
@@ -99,6 +107,21 @@ struct EnrollView: View {
                                 .font(.caption)
                                 .accessibilityIdentifier("enrollCodeConfirmedToggle")
                         }
+                    }
+                }
+                if hasLegacyCode {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("Legacy enrollment code", systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.red)
+                            Text("This is an older-style enrollment code, and it carries your vault's key material inside the code itself. Anyone who captured it — a photo, clipboard history, a message relay — can join your vault without your approval. The verification code below proves the code wasn't swapped, not that nobody copied it.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Only continue if you handed this code over directly, device to device, just now. If it travelled by any other route, cancel and generate a fresh code on your other device.")
+                                .font(.caption.bold())
+                        }
+                        .accessibilityIdentifier("legacyCodeWarning")
                     }
                 }
                 if isV3Code {

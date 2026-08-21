@@ -12,6 +12,10 @@ final class VaultViewModel: ObservableObject {
     enum UnlockMode { case biometric, password }
 
     @Published var items: [VaultItem] = []
+    /// Deletions awaiting propagation (and honoring remote ones). Kept beside
+    /// `items` so a local delete survives sync instead of being resurrected by
+    /// another device's copy on the next pull.
+    @Published var tombstones: [Tombstone] = []
     @Published var lockState: LockState = .noVault
     @Published var unlockMode: UnlockMode = .biometric
     @Published var errorMessage: String?
@@ -36,9 +40,14 @@ final class VaultViewModel: ObservableObject {
     }
 
     private func bootstrap() {
+        // Launch-env switches are a convenience for development and UI tests
+        // (which run Debug builds). Compiled out of release so they can never
+        // serve as a wipe/seed primitive.
+        #if DEBUG
         if ProcessInfo.processInfo.environment["VELA_RESET"] == "1" {
             repo.reset()
         }
+        #endif
         if repo.hasVault() {
             // Don't read the RMS yet — that would fire Face ID before any UI.
             // The UnlockView drives unlock() on demand.
@@ -47,12 +56,14 @@ final class VaultViewModel: ObservableObject {
         }
 
         // CI/screenshot seed: create a demo vault so the populated UI is captured.
+        #if DEBUG
         if lockState != .unlocked, ProcessInfo.processInfo.environment["VELA_DEMO"] == "1" {
             try? createVault()
             addLogin(name: "GitHub", url: "https://github.com", username: "alice", password: "h7$Kp2!q", totp: nil)
             addLogin(name: "Proton Mail", url: "https://proton.me", username: "alice@proton.me", password: "Zq9!vT3m", totp: nil)
             addLogin(name: "Cloudflare", url: "https://dash.cloudflare.com", username: "alice", password: "Wp4#nL8x", totp: nil)
         }
+        #endif
     }
 
     /// Authenticate with Face ID / Touch ID, then decrypt and open the vault.
@@ -80,6 +91,7 @@ final class VaultViewModel: ObservableObject {
         let r = try repo.generateAndStoreRMS()
         rms = r
         items = []
+        tombstones = []
         backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: r)
         unlockMode = .biometric
@@ -92,6 +104,7 @@ final class VaultViewModel: ObservableObject {
         let r = try repo.generatePasswordRMS(password: password)
         rms = r
         items = []
+        tombstones = []
         backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: r)
         unlockMode = .password
@@ -116,7 +129,9 @@ final class VaultViewModel: ObservableObject {
         errorMessage = nil
         do {
             let r = try repo.loadRMSWithPassword(password)
-            items = try repo.load(rms: r).items
+            let store = try repo.load(rms: r)
+            items = store.items
+            tombstones = store.tombstones
             rms = r
             backgroundedAt = nil
             lockState = .unlocked
@@ -152,6 +167,10 @@ final class VaultViewModel: ObservableObject {
 
     func delete(_ item: VaultItem) {
         items.removeAll { $0.id == item.id }
+        // Record the deletion so sync propagates it instead of resurrecting
+        // the item from another device's (or the server's) copy.
+        tombstones.removeAll { $0.id == item.id }
+        tombstones.append(Tombstone(id: item.id, deletedAt: VaultClock.nowISO8601()))
         persist()
         AuditLog.shared.record("item_deleted")
     }
@@ -177,6 +196,7 @@ final class VaultViewModel: ObservableObject {
         }
         rms = newRMS
         items = []
+        tombstones = []
         backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: newRMS)
         unlockMode = mode
@@ -202,7 +222,10 @@ final class VaultViewModel: ObservableObject {
             return
         }
         backgroundedAt = nil
-        if let store = try? repo.load(rms: rms) { items = store.items }
+        if let store = try? repo.load(rms: rms) {
+            items = store.items
+            tombstones = store.tombstones
+        }
     }
 
     /// Wipe the on-device vault entirely (reset local security).
@@ -218,16 +241,20 @@ final class VaultViewModel: ObservableObject {
     /// The in-memory RMS, available while unlocked (needed to seal sync/share blobs).
     var currentRMS: Data? { rms }
 
-    /// Replace the item set after a sync merge and persist locally.
-    func applyMergedItems(_ merged: [VaultItem]) {
-        items = merged
+    /// The full local store, available while unlocked (needed for sync).
+    var currentStore: VaultStore { VaultStore(items: items, tombstones: tombstones) }
+
+    /// Replace the vault contents after a sync merge and persist locally.
+    func applyMergedStore(_ merged: VaultStore) {
+        items = merged.items
+        tombstones = merged.tombstones
         persist()
     }
 
     private func persist() {
         guard let r = rms else { return }
         do {
-            try repo.save(VaultStore(items: items), rms: r)
+            try repo.save(VaultStore(items: items, tombstones: tombstones), rms: r)
         } catch {
             errorMessage = "Couldn't save the vault."
         }

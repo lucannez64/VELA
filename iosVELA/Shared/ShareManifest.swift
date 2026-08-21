@@ -43,5 +43,6 @@ final class ShareManifest {
 
     private func persist() {
         try? JSONEncoder().encode(entries).write(to: url, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(url)
     }
 }

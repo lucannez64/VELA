@@ -56,14 +56,22 @@ class AssetLinksVerifier(private val context: Context) {
         executor.execute {
             try {
                 val fingerprints = AppSignatures.sha256(context, packageName)
-                val verified = fingerprints.isNotEmpty() &&
-                    runCatching { fetchAndCheck(domain, packageName, fingerprints) }
+                // null = could not determine (network failure). A failed lookup
+                // must not be persisted as a "no": that would let a momentary
+                // disruption — or an attacker who can cause one — suppress DAL
+                // matching for a legitimate pairing for a full TTL. Only
+                // well-formed HTTP answers, including non-200s, are cached.
+                val answer: Boolean? =
+                    if (fingerprints.isEmpty()) false
+                    else runCatching { fetchAndCheck(domain, packageName, fingerprints) }
                         .onFailure { Log.d(TAG, "asset link lookup failed") }
-                        .getOrDefault(false)
-                prefs.edit()
-                    .putBoolean(key, verified)
-                    .putLong(key + TIMESTAMP_SUFFIX, System.currentTimeMillis())
-                    .apply()
+                        .getOrNull()
+                if (answer != null) {
+                    prefs.edit()
+                        .putBoolean(key, answer)
+                        .putLong(key + TIMESTAMP_SUFFIX, System.currentTimeMillis())
+                        .apply()
+                }
             } finally {
                 inFlight.remove(key)
             }

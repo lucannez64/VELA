@@ -18,6 +18,11 @@ struct SyncEngine {
     enum SyncError: LocalizedError {
         case crypto
         case rollback(serverClock: Int, lastSeen: Int)
+        /// A chunk the server served could not be decrypted/verified against
+        /// its sealed clock. Aborting beats proceeding with a truncated vault:
+        /// the partial result would otherwise be pushed back and make the loss
+        /// durable on every device.
+        case unreadableChunk(chunkID: String)
 
         var errorDescription: String? {
             switch self {
@@ -28,6 +33,10 @@ struct SyncEngine {
                     + "(clock \(serverClock), last seen \(lastSeen)). Refusing to "
                     + "overwrite newer local data. If you reset this vault on "
                     + "another device, sign out and back in here."
+            case let .unreadableChunk(chunkID):
+                return "The server returned a chunk that could not be decrypted "
+                    + "(\(chunkID)). The sync was aborted rather than continue "
+                    + "with incomplete vault data."
             }
         }
     }
@@ -35,6 +44,10 @@ struct SyncEngine {
     /// Highest chunk revision this device has accepted, kept in the App Group so
     /// the extension shares the same baseline.
     private static let lastSeenClockKey = "vela.sync.lastSeenLamport"
+    /// Highest revision accepted *per chunk id* — JSON `{chunk_id: clock}`. A
+    /// manifest-max check alone lets a hostile server roll back individual
+    /// chunks as long as one other chunk stays ahead.
+    private static let lastSeenByChunkKey = "vela.sync.lastSeenLamportByChunk"
 
     private static func sharedDefaults() -> UserDefaults {
         UserDefaults(suiteName: AppGroup.identifier) ?? .standard
@@ -50,11 +63,25 @@ struct SyncEngine {
     /// re-created elsewhere legitimately restarts its clocks, which is why the
     /// message says how to clear the local baseline.
     private func rejectRollback(manifest: VelaClient.SyncManifest) throws {
-        let lastSeen = Self.sharedDefaults().integer(forKey: Self.lastSeenClockKey)
+        let defaults = Self.sharedDefaults()
+        let lastSeen = defaults.integer(forKey: Self.lastSeenClockKey)
         guard lastSeen > 0 else { return }
         let serverMax = manifest.chunks.map { $0.lamport_clock }.max() ?? 0
         if serverMax < lastSeen {
             throw SyncError.rollback(serverClock: serverMax, lastSeen: lastSeen)
+        }
+
+        // Per-chunk baseline: one stale chunk must not hide behind a fresh one.
+        // Legacy single-chunk layouts predate this tracking; only chunks we have
+        // actually recorded are checked.
+        guard let stored = defaults.string(forKey: Self.lastSeenByChunkKey),
+              let recorded = try? JSONDecoder().decode([String: Int].self, from: Data(stored.utf8)),
+              !recorded.isEmpty else { return }
+        for chunk in manifest.chunks {
+            if let seen = recorded[chunk.chunk_id], chunk.lamport_clock < seen {
+                throw SyncError.rollback(serverClock: chunk.lamport_clock,
+                                         lastSeen: seen)
+            }
         }
     }
 
@@ -62,6 +89,28 @@ struct SyncEngine {
         let defaults = Self.sharedDefaults()
         if clock > defaults.integer(forKey: Self.lastSeenClockKey) {
             defaults.set(clock, forKey: Self.lastSeenClockKey)
+        }
+    }
+
+    /// Record every chunk's current revision after it has been read or written.
+    private func recordSeenClocks(_ chunks: [VelaClient.ChunkMeta]) {
+        guard !chunks.isEmpty else { return }
+        recordWrittenChunks(chunks.map { (id: $0.chunk_id, clock: $0.lamport_clock) })
+    }
+
+    private func recordWrittenChunks(_ written: [(id: String, clock: Int)]) {
+        guard !written.isEmpty else { return }
+        let defaults = Self.sharedDefaults()
+        var recorded: [String: Int] = [:]
+        if let stored = defaults.string(forKey: Self.lastSeenByChunkKey),
+           let existing = try? JSONDecoder().decode([String: Int].self, from: Data(stored.utf8)) {
+            recorded = existing
+        }
+        for entry in written where entry.clock > (recorded[entry.id] ?? 0) {
+            recorded[entry.id] = entry.clock
+        }
+        if let data = try? JSONEncoder().encode(recorded) {
+            defaults.set(String(decoding: data, as: UTF8.self), forKey: Self.lastSeenByChunkKey)
         }
     }
 
@@ -90,9 +139,9 @@ struct SyncEngine {
     }
 
     /// Two-way sync: pull remote chunks, merge with local, persist, and push the
-    /// merged vault back as `vault-data-*` chunks. Returns the merged item list.
+    /// merged vault back as `vault-data-*` chunks. Returns the merged store.
     @discardableResult
-    func sync(rms: Data, localItems: [VaultItem]) async throws -> [VaultItem] {
+    func sync(rms: Data, localStore: VaultStore) async throws -> VaultStore {
         let rmsB64 = rms.base64EncodedString()
 
         let manifest = try await client.syncManifest()
@@ -117,30 +166,36 @@ struct SyncEngine {
         var remoteJSON = ""
         for id in readIDs {
             let fetched = try await client.getChunk(id)
-            if let piece = VelaCoreFFI.decryptVaultChunk(
+            guard let piece = VelaCoreFFI.decryptVaultChunk(
                 rmsBase64: rmsB64,
                 chunkID: id,
                 ciphertextBase64: fetched.ciphertextBase64,
-                lamportClock: Int64(byID[id]?.lamport_clock ?? 0)) {
-                remoteJSON += piece
+                lamportClock: Int64(byID[id]?.lamport_clock ?? 0)) else {
+                // A failed decrypt used to be skipped silently; the truncated
+                // merge was then pushed back, making the loss durable. Fail the
+                // sync instead — the local vault stays intact and usable.
+                throw SyncError.unreadableChunk(chunkID: id)
             }
+            remoteJSON += piece
         }
-        var remoteItems: [VaultItem] = []
+        recordSeenClocks(manifest.chunks.filter { readIDs.contains($0.chunk_id) })
+        var remoteStore = VaultStore(items: [])
         if !remoteJSON.isEmpty,
            let store = try? JSONDecoder().decode(VaultStore.self, from: Data(remoteJSON.utf8)) {
-            remoteItems = store.items
+            remoteStore = store
         }
 
-        // ── 2. Merge and persist locally.
-        let merged = VaultMerge.merge(local: localItems, remote: remoteItems)
-        try repo.save(VaultStore(items: merged), rms: rms)
+        // ── 2. Merge (tombstone-aware) and persist locally.
+        let merged = VaultMerge.mergeStores(local: localStore, remote: remoteStore)
+        try repo.save(merged, rms: rms)
 
         // ── 3. Push when the vault changed, or to migrate off a legacy layout.
         let alreadyDataLayout = !dataIDs.isEmpty
-        if !alreadyDataLayout || merged != remoteItems {
-            let full = String(decoding: try JSONEncoder().encode(VaultStore(items: merged)), as: UTF8.self)
+        if !alreadyDataLayout || merged != remoteStore {
+            let full = String(decoding: try JSONEncoder().encode(merged), as: UTF8.self)
             let pieces = Self.splitUtf8(full, Self.chunkPlaintextSize)
             var lamport = manifest.chunks.map { $0.lamport_clock }.max() ?? 0
+            var written: [(id: String, clock: Int)] = []
 
             for (index, piece) in pieces.enumerated() {
                 let id = Self.dataChunkID(index)
@@ -155,8 +210,12 @@ struct SyncEngine {
                 }
                 _ = try await client.putChunk(
                     id, ciphertextBase64: cipherB64, ifMatch: existing?.version ?? 0, lamportClock: lamport)
+                written.append((id: id, clock: lamport))
             }
             recordSeenClock(lamport)
+            // Baseline what we wrote per chunk too — otherwise a rollback to
+            // this push's *predecessor* would pass the recorded baseline.
+            recordWrittenChunks(written)
 
             // Drop stale data chunks (vault shrank) and any legacy single chunks.
             for chunk in manifest.chunks {

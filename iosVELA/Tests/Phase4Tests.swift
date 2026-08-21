@@ -88,6 +88,59 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(Set(merged.map { $0.name }), ["A", "B"])
     }
 
+    private static let iso: ISO8601DateFormatter = ISO8601DateFormatter()
+
+    /// Timestamps relative to *now* so retention pruning (30 days) can't rot
+    /// these tests as wall-clock time advances.
+    private static func stamp(daysAgo: Double) -> String {
+        iso.string(from: Date().addingTimeInterval(-daysAgo * 86_400))
+    }
+
+    func testTombstoneSuppressesStaleRemoteCopy() {
+        // Deleted locally; the server still serves an older copy. The merge
+        // must not resurrect it (deletions used to vanish on the next sync).
+        var item = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "p", totp: nil)
+        item.updatedAt = stamp(daysAgo: 10)
+        let tombstone = Tombstone(id: item.id, deletedAt: stamp(daysAgo: 5))
+
+        let merged = VaultMerge.mergeStores(
+            local: VaultStore(items: [], tombstones: [tombstone]),
+            remote: VaultStore(items: [item]))
+        XCTAssertTrue(merged.items.isEmpty, "deleted item must stay deleted")
+        XCTAssertEqual(merged.tombstones.count, 1, "the tombstone must be retained for propagation")
+    }
+
+    func testNewerEditBeatsOlderTombstone() {
+        // Edited elsewhere *after* this device deleted it — the edit wins.
+        var item = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "edited", password: "p", totp: nil)
+        item.updatedAt = stamp(daysAgo: 1)
+        let tombstone = Tombstone(id: item.id, deletedAt: stamp(daysAgo: 5))
+
+        let merged = VaultMerge.mergeStores(
+            local: VaultStore(items: [], tombstones: [tombstone]),
+            remote: VaultStore(items: [item]))
+        XCTAssertEqual(merged.items.first?.username, "edited")
+        XCTAssertEqual(merged.tombstones.count, 1, "the older tombstone is kept for propagation bookkeeping")
+    }
+
+    func testVaultStoreRoundTripsTombstonesThroughJSON() throws {
+        // The Rust core's shape uses snake_case keys and tolerates absence of
+        // `tombstones` (older chunks); both directions must round-trip.
+        let store = VaultStore(
+            items: [],
+            tombstones: [Tombstone(id: "i-1", deletedAt: "2026-06-01T00:00:00Z", deletedBy: "device-9")])
+
+        let data = try JSONEncoder().encode(store)
+        let decoded = try JSONDecoder().decode(VaultStore.self, from: data)
+        XCTAssertEqual(decoded, store)
+        let json = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(json.contains("\"deleted_at\""), "must use the wire key the core expects")
+
+        // Legacy chunk without a tombstones field decodes to an empty set.
+        let legacy = try JSONDecoder().decode(VaultStore.self, from: Data(#"{"items":[]}"#.utf8))
+        XCTAssertEqual(legacy.tombstones, [])
+    }
+
     // MARK: Account persistence
 
     func testAccountStoreRoundTrip() throws {
@@ -142,6 +195,82 @@ final class Phase4Tests: XCTestCase {
         _ = try await client.syncManifest()
         let token = await client.currentToken
         XCTAssertEqual(token, "RENEWED", "should adopt the rotated token")
+    }
+
+    func testTokenRenewalIgnoredOnErrorResponse() async throws {
+        // A hostile server must not be able to plant a token of its choosing
+        // via an error response.
+        MockURLProtocol.handler = { req in
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 401, httpVersion: nil,
+                                       headerFields: ["X-New-Token": "EVIL"])!
+            return (resp, Data("denied".utf8))
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = VelaClient(baseURL: URL(string: "https://vault.example")!, token: "OLD",
+                                session: URLSession(configuration: config))
+        do {
+            _ = try await client.syncManifest()
+            XCTFail("expected 401")
+        } catch {}
+        let token = await client.currentToken
+        XCTAssertEqual(token, "OLD", "must not adopt X-New-Token from an error response")
+    }
+
+    func testCrossHostRedirectIsRefused() async throws {
+        MockURLProtocol.handler = { req in
+            if req.url?.path == "/vault/sync" {
+                let resp = HTTPURLResponse(url: req.url!, statusCode: 302, httpVersion: nil,
+                                           headerFields: ["Location": "https://evil.example/harvest"])!
+                return (resp, Data())
+            }
+            XCTFail("should not follow the cross-host redirect")
+            return (Self.ok(req), Data())
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: config, delegate: VelaRedirectGuard(), delegateQueue: nil)
+        let client = VelaClient(baseURL: URL(string: "https://vault.example")!, token: "OLD",
+                                session: session)
+        do {
+            _ = try await client.syncManifest()
+            XCTFail("expected the redirect to be refused")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .cancelled, "redirect should be cancelled by the guard")
+        }
+    }
+
+    func testPerChunkRollbackHiddenBehindFreshChunkIsRejected() async throws {
+        // A hostile server rolls one chunk back while keeping another ahead:
+        // the manifest-max check passes, so the per-chunk baseline must catch
+        // it. Key names mirror SyncEngine's private constants.
+        let defaults = UserDefaults(suiteName: AppGroup.identifier) ?? .standard
+        defaults.set(5, forKey: "vela.sync.lastSeenLamport")
+        let baseline: [String: Int] = ["vault-data-000000": 5]
+        defaults.set(String(decoding: try JSONEncoder().encode(baseline), as: UTF8.self),
+                     forKey: "vela.sync.lastSeenLamportByChunk")
+        defer {
+            defaults.removeObject(forKey: "vela.sync.lastSeenLamport")
+            defaults.removeObject(forKey: "vela.sync.lastSeenLamportByChunk")
+        }
+
+        MockURLProtocol.handler = { req in
+            XCTAssertEqual(req.url?.path, "/vault/sync")
+            let body = #"{"chunks":["""#
+            + #"{"chunk_id":"vault-data-000000","version":1,"lamport_clock":3,"last_writer":null},""#
+            + #"{"chunk_id":"vault-data-000001","version":1,"lamport_clock":9,"last_writer":null}]}"#
+            return (Self.ok(req), Data(body.utf8))
+        }
+        let repo = VaultRepository(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let engine = SyncEngine(client: mockClient(), repo: repo)
+        do {
+            _ = try await engine.sync(rms: Data(repeating: 1, count: 32), localStore: VaultStore(items: []))
+            XCTFail("expected the rolled-back chunk to be rejected")
+        } catch let error as LocalizedError {
+            XCTAssertTrue(error.errorDescription?.contains("older revision") == true,
+                          "unexpected error: \(error.localizedDescription)")
+        }
     }
 
     private static func ok(_ req: URLRequest) -> HTTPURLResponse {

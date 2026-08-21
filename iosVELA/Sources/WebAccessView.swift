@@ -51,8 +51,10 @@ struct WebAccessView: View {
                     }
                     .pickerStyle(.segmented)
                     if mode == "rw" {
-                        Text("Read & write sends this device's master key to the browser for the "
-                            + "session. Only use it on a device you trust.")
+                        Text("Read & write lets the browser change the vault for this "
+                            + "session: it receives per-chunk vault keys, but never "
+                            + "the master key itself, and the grant expires with the "
+                            + "session. Only approve it on a device you trust.")
                             .font(.caption)
                             .foregroundStyle(.red)
                     }

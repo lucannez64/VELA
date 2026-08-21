@@ -95,6 +95,7 @@ struct VaultRepository {
             throw VaultError.crypto
         }
         try Data(ciphertext.utf8).write(to: vaultURL, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(vaultURL)
     }
 
     func load(rms: Data) throws -> VaultStore {

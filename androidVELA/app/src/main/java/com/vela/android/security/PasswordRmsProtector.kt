@@ -61,15 +61,31 @@ class PasswordRmsProtector(private val storeDir: File) {
     private fun readBlob(): WrappedPasswordBlob {
         DataInputStream(blobFile.inputStream()).use { input ->
             require(input.readInt() == VERSION) { "Unsupported password RMS blob version" }
+            // Every field below is length- or cost-bearing and the file is
+            // writable by anything that can touch app storage: a corrupted or
+            // tampered blob must be rejected, not obeyed. An unclamped
+            // iteration count would hang every future unlock on a
+            // hours-long KDF with no recovery short of wiping the vault.
             val iterations = input.readInt()
-            val salt = ByteArray(input.readInt())
-            input.readFully(salt)
-            val iv = ByteArray(input.readInt())
-            input.readFully(iv)
-            val ciphertext = ByteArray(input.readInt())
-            input.readFully(ciphertext)
+            require(iterations in MIN_ITERATIONS..MAX_ITERATIONS) {
+                "Unreasonable PBKDF2 iteration count: $iterations"
+            }
+            val salt = input.readBounded(SALT_LEN, "salt")
+            require(salt.size == SALT_LEN) { "Unexpected salt length: ${salt.size}" }
+            val iv = input.readBounded(IV_LEN, "iv")
+            require(iv.size == IV_LEN) { "Unexpected iv length: ${iv.size}" }
+            val ciphertext = input.readBounded(MAX_CIPHERTEXT_LEN, "ciphertext")
             return WrappedPasswordBlob(iterations, salt, iv, ciphertext)
         }
+    }
+
+    /** Reads a length-prefixed array, refusing lengths beyond [maxBytes]. */
+    private fun DataInputStream.readBounded(maxBytes: Int, what: String): ByteArray {
+        val length = readInt()
+        require(length in 0..maxBytes) { "Unreasonable $what length: $length" }
+        val bytes = ByteArray(length)
+        readFully(bytes)
+        return bytes
     }
 
     private data class WrappedPasswordBlob(
@@ -83,8 +99,15 @@ class PasswordRmsProtector(private val storeDir: File) {
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val VERSION = 1
         private const val ITERATIONS = 210_000
+        // Bounds a tampered blob may not exceed (see readBlob). The upper
+        // iteration bound still allows deliberately stronger blobs while
+        // keeping an unlock bounded to seconds.
+        private const val MIN_ITERATIONS = 100_000
+        private const val MAX_ITERATIONS = 2_000_000
         private const val KEY_BITS = 256
         private const val SALT_LEN = 16
         private const val IV_LEN = 12
+        // The wrapped payload is always a 32-byte RMS; the GCM tag adds 16.
+        private const val MAX_CIPHERTEXT_LEN = 128
     }
 }

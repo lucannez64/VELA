@@ -46,12 +46,14 @@ final class AutofillMatchTests: XCTestCase {
         XCTAssertEqual(google.map { $0.name }, ["Google"])
     }
 
-    func testNoServiceIdentifiersReturnsAllLogins() {
+    func testNoServiceIdentifiersFailsClosed() {
         let items = [
             VaultItem.newLogin(name: "A", url: "https://a.com", username: "a", password: "p", totp: nil),
             VaultItem.newLogin(name: "B", url: "https://b.com", username: "b", password: "p", totp: nil),
         ]
-        XCTAssertEqual(AutofillMatch.logins(items, matching: []).count, 2)
-        XCTAssertEqual(AutofillMatch.logins(items, matching: ["   "]).count, 2)
+        // Nothing to match against → nothing offered. Returning the whole
+        // vault here would hand every credential to whatever invoked fill.
+        XCTAssertEqual(AutofillMatch.logins(items, matching: []).count, 0)
+        XCTAssertEqual(AutofillMatch.logins(items, matching: ["   "]).count, 0)
     }
 }

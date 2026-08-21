@@ -40,16 +40,21 @@ struct PasswordRMSStore {
         let blob = Blob(version: 1, iterations: Self.iterations,
                         salt: salt.base64EncodedString(), combined: combined.base64EncodedString())
         try JSONEncoder().encode(blob).write(to: url, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(url)
     }
 
     /// Unwrap the RMS; throws on a wrong password (AES-GCM tag mismatch).
     func unwrap(password: String) throws -> Data {
         let blob = try JSONDecoder().decode(Blob.self, from: Data(contentsOf: url))
+        // The file is writable by anything that can touch app storage; a
+        // tampered iteration count must not turn every future unlock into a
+        // main-thread hang. Match the Android clamp (PasswordRmsProtector).
+        let iterations = min(max(blob.iterations, 100_000), 2_000_000)
         guard let salt = Data(base64Encoded: blob.salt),
               let combined = Data(base64Encoded: blob.combined) else {
             throw VaultError.crypto
         }
-        let key = try Self.deriveKey(password: password, salt: salt, iterations: blob.iterations)
+        let key = try Self.deriveKey(password: password, salt: salt, iterations: iterations)
         let box = try AES.GCM.SealedBox(combined: combined)
         return try AES.GCM.open(box, using: key)
     }
