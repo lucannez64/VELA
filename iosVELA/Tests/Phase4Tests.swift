@@ -256,9 +256,9 @@ final class Phase4Tests: XCTestCase {
 
         MockURLProtocol.handler = { req in
             XCTAssertEqual(req.url?.path, "/vault/sync")
-            let body = #"{"chunks":["""#
-            + #"{"chunk_id":"vault-data-000000","version":1,"lamport_clock":3,"last_writer":null},""#
-            + #"{"chunk_id":"vault-data-000001","version":1,"lamport_clock":9,"last_writer":null}]}"#
+            let body = """
+            {"chunks":[{"chunk_id":"vault-data-000000","version":1,"lamport_clock":3,"last_writer":null},{"chunk_id":"vault-data-000001","version":1,"lamport_clock":9,"last_writer":null}]}
+            """
             return (Self.ok(req), Data(body.utf8))
         }
         let repo = VaultRepository(
@@ -292,6 +292,21 @@ final class MockURLProtocol: URLProtocol {
         }
         do {
             let (response, data) = try handler(request)
+            // A 3xx must go through the session's redirect machinery
+            // (wasRedirectedTo → willPerformHTTPRedirection), not be delivered
+            // as a terminal response — otherwise redirect-policy code under
+            // test never runs and a 302 test passes for the wrong reason.
+            if let http = response as? HTTPURLResponse,
+               (300..<400).contains(http.statusCode),
+               let location = http.value(forHTTPHeaderField: "Location"),
+               let target = URL(string: location, relativeTo: request.url ?? URL(string: "https://vault.example")!) {
+                var redirected = request
+                redirected.url = target
+                redirected.httpBody = nil
+                client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: http)
+                client?.urlProtocolDidFinishLoading(self)
+                return
+            }
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
