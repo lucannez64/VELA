@@ -91,15 +91,16 @@ struct VaultRepository {
 
     func save(_ store: VaultStore, rms: Data) throws {
         let vaultJSON = String(decoding: try JSONEncoder().encode(store), as: UTF8.self)
-        guard let ciphertext = VelaCoreFFI.encryptVault(rmsBase64: rms.base64EncodedString(), vaultJSON: vaultJSON) else {
+        guard let ciphertext = VelaCoreFFI.encryptVault(rms: rms, vaultJSON: vaultJSON) else {
             throw VaultError.crypto
         }
         try Data(ciphertext.utf8).write(to: vaultURL, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(vaultURL)
     }
 
     func load(rms: Data) throws -> VaultStore {
         let ciphertext = try String(contentsOf: vaultURL, encoding: .utf8)
-        guard let vaultJSON = VelaCoreFFI.decryptVault(rmsBase64: rms.base64EncodedString(), ciphertextBase64: ciphertext) else {
+        guard let vaultJSON = VelaCoreFFI.decryptVault(rms: rms, ciphertextBase64: ciphertext) else {
             throw VaultError.crypto
         }
         return try JSONDecoder().decode(VaultStore.self, from: Data(vaultJSON.utf8))

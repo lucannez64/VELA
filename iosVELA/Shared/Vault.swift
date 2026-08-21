@@ -1,9 +1,63 @@
 import Foundation
 
-/// Mirrors the Rust `VaultStore` JSON. Tombstones default on the Rust side, so
-/// the iOS client only carries `items`.
-struct VaultStore: Codable {
+/// Mirrors the Rust `VaultStore` JSON. Tombstones are now carried explicitly so
+/// deletions survive sync: without them, the next pull resurrected every item
+/// another device had deleted, and a push from this device silently wiped the
+/// tombstone set for everyone else.
+struct VaultStore: Codable, Equatable {
     var items: [VaultItem]
+    var tombstones: [Tombstone] = []
+
+    init(items: [VaultItem], tombstones: [Tombstone] = []) {
+        self.items = items
+        self.tombstones = tombstones
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = try container.decode([VaultItem].self, forKey: .items)
+        // Older chunks (and older iOS builds) predate the field; the Rust core
+        // defaults it the same way (`#[serde(default)]`).
+        tombstones = try container.decodeIfPresent([Tombstone].self, forKey: .tombstones) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case items, tombstones
+    }
+}
+
+/// Mirrors the Rust `Tombstone`: proof that an item was deleted on some device,
+/// compared against `updatedAt` during merge so "delete" wins over a stale copy.
+struct Tombstone: Codable, Equatable {
+    var id: String
+    var deletedAt: String
+    var deletedBy: String?
+
+    init(id: String, deletedAt: String, deletedBy: String? = nil) {
+        self.id = id
+        self.deletedAt = deletedAt
+        self.deletedBy = deletedBy
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        deletedAt = try container.decodeIfPresent(String.self, forKey: .deletedAt) ?? ""
+        deletedBy = try container.decodeIfPresent(String.self, forKey: .deletedBy)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(deletedAt, forKey: .deletedAt)
+        try container.encodeIfPresent(deletedBy, forKey: .deletedBy)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case deletedAt = "deleted_at"
+        case deletedBy = "deleted_by"
+    }
 }
 
 /// The item kinds VELA supports. iOS creates Login / Card / Note (matching the

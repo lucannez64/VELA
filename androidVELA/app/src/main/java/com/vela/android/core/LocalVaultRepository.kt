@@ -295,6 +295,8 @@ object VelaRepositories {
 
         autoLock = AutoLockStore(context.applicationContext)
         theme = com.vela.android.ui.theme.ThemeStore(context.applicationContext)
-        ProcessLifecycleOwner.get().lifecycle.addObserver(AutoLockController(security, autoLock))
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            AutoLockController(context.applicationContext, security, autoLock)
+        )
     }
 }

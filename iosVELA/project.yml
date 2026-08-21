@@ -8,6 +8,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
+    # CI/unsigned-build convenience ONLY. Entitlements (App Group, keychain
+    # access group, AutoFill) are inert in unsigned builds, so a release App
+    # Store / TestFlight build MUST override this with real code signing —
+    # never ship from this configuration.
     CODE_SIGNING_ALLOWED: "NO"
 
 targets:

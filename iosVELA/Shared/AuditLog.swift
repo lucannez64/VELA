@@ -27,6 +27,7 @@ struct AuditLog {
         if all.count > cap { all = Array(all.prefix(cap)) }
         if let data = try? JSONEncoder().encode(all) {
             try? data.write(to: url, options: [.completeFileProtection, .atomic])
+            BackupExclusion.exclude(url)
         }
     }
 

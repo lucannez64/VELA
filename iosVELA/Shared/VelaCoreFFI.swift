@@ -203,21 +203,35 @@ enum VelaCoreFFI {
 
     // MARK: - Sync (per-chunk)
 
+    /// The RMS crosses this boundary as wipeable bytes, never as an immutable
+    /// `String` (audit I-2; same rationale as the seal key above). An empty
+    /// buffer has no valid pointer — hand the native side a null so it fails
+    /// with its own "RMS must be 32 bytes" error rather than UB.
+    private static func withRmsBytes<R>(_ rms: Data, _ body: (UnsafePointer<UInt8>?, Int) -> R) -> R {
+        guard !rms.isEmpty else { return body(nil, 0) }
+        return rms.withUnsafeBytes { raw in
+            body(raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count)
+        }
+    }
+
     /// `lamportClock` is the revision this chunk is about to be stored under. It
     /// is sealed into the ciphertext so the server cannot serve an older
     /// revision back as if it were current (audit C-2, rollout step 3). It must
     /// be the clock actually sent with the upload, or the result will not
     /// decrypt.
     static func encryptVaultChunk(
-        rmsBase64: String, chunkID: String, vaultJSON: String, lamportClock: Int
+        rms: Data, chunkID: String, vaultJSON: String, lamportClock: Int
     ) -> String? {
         let request = json([
-            "rms_b64": rmsBase64,
             "chunk_id": chunkID,
             "vault_json": vaultJSON,
             "lamport_clock": lamportClock,
         ])
-        let response = request.withCString { consume(vela_ffi_encrypt_vault_chunk_json($0)) }
+        let response = request.withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_encrypt_vault_chunk_json(rmsPtr, rmsLen, req))
+            }
+        }
         return field(response, "ciphertext_b64")
     }
 
@@ -226,7 +240,7 @@ enum VelaCoreFFI {
     /// older unbound ones, so this reads both while the fleet upgrades
     /// (audit C-2, rollout step 2).
     static func decryptVaultChunk(
-        rmsBase64: String,
+        rms: Data,
         chunkID: String,
         ciphertextBase64: String,
         // No default. Defaulting it to 0 meant a caller that forgot it got a
@@ -236,12 +250,15 @@ enum VelaCoreFFI {
         lamportClock: Int64
     ) -> String? {
         let request = json([
-            "rms_b64": rmsBase64,
             "chunk_id": chunkID,
             "ciphertext_b64": ciphertextBase64,
             "lamport_clock": lamportClock,
         ])
-        let response = request.withCString { consume(vela_ffi_decrypt_vault_chunk_json($0)) }
+        let response = request.withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_decrypt_vault_chunk_json(rmsPtr, rmsLen, req))
+            }
+        }
         return field(response, "vault_json")
     }
 
@@ -251,9 +268,13 @@ enum VelaCoreFFI {
     /// `chunk_id → base64(32-byte key)`. The browser gets these instead of the
     /// RMS, so a leaked capsule yields vault chunks only — no identity, share,
     /// audit or recovery key can be derived from it (audit D-2).
-    static func webSessionChunkKeys(rmsBase64: String) -> [String: String]? {
-        let request = json(["rms_b64": rmsBase64])
-        let response = request.withCString { consume(vela_ffi_web_session_chunk_keys_json($0)) }
+    static func webSessionChunkKeys(rms: Data) -> [String: String]? {
+        let request = json([:])
+        let response = request.withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_web_session_chunk_keys_json(rmsPtr, rmsLen, req))
+            }
+        }
         guard let data = response.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let keys = obj["chunk_keys"] as? [String: String], !keys.isEmpty else {
@@ -290,9 +311,13 @@ enum VelaCoreFFI {
     // MARK: - Recovery (Shamir)
 
     /// Split the RMS into `n` base64 shares, `threshold` of which reconstruct it.
-    static func splitRecovery(rmsBase64: String, threshold: Int, n: Int) -> [String]? {
-        let request = json(["rms_b64": rmsBase64, "threshold": threshold, "n": n])
-        let response = request.withCString { consume(vela_ffi_split_recovery_json($0)) }
+    static func splitRecovery(rms: Data, threshold: Int, n: Int) -> [String]? {
+        let request = json(["threshold": threshold, "n": n])
+        let response = request.withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_split_recovery_json(rmsPtr, rmsLen, req))
+            }
+        }
         return stringArray(response, "shares_b64")
     }
 
@@ -309,16 +334,24 @@ enum VelaCoreFFI {
 
 
     /// Encrypt a vault (JSON string) under the RMS. Returns base64 ciphertext, or nil on error.
-    static func encryptVault(rmsBase64: String, vaultJSON: String) -> String? {
-        let request = json(["rms_b64": rmsBase64, "vault_json": vaultJSON])
-        let response = request.withCString { consume(vela_ffi_encrypt_vault_json($0)) }
+    static func encryptVault(rms: Data, vaultJSON: String) -> String? {
+        let request = json(["vault_json": vaultJSON])
+        let response = request.withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_encrypt_vault_json(rmsPtr, rmsLen, req))
+            }
+        }
         return field(response, "ciphertext_b64")
     }
 
     /// Decrypt a vault. Returns the vault JSON string, or nil on error / wrong RMS.
-    static func decryptVault(rmsBase64: String, ciphertextBase64: String) -> String? {
-        let request = json(["rms_b64": rmsBase64, "ciphertext_b64": ciphertextBase64])
-        let response = request.withCString { consume(vela_ffi_decrypt_vault_json($0)) }
+    static func decryptVault(rms: Data, ciphertextBase64: String) -> String? {
+        let request = json(["ciphertext_b64": ciphertextBase64])
+        let response = request.withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_decrypt_vault_json(rmsPtr, rmsLen, req))
+            }
+        }
         return field(response, "vault_json")
     }
 }

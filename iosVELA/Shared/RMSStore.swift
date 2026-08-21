@@ -135,6 +135,7 @@ struct FileRMSStore: RMSStore {
 
     func store(_ rms: Data) throws {
         try rms.write(to: url, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(url)
     }
 
     func load(context: LAContext?) throws -> Data {

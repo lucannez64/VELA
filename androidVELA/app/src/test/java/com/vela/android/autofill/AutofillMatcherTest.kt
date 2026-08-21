@@ -101,11 +101,26 @@ class AutofillMatcherTest {
     }
 
     @Test
-    fun `the curated list covers well-known apps`() {
+    fun `the curated list is only a hint - the site must still vouch`() {
+        val instagram = login("Instagram", "https://instagram.com")
+        // Default verifyAssetLinks answers "no": the curated package name alone
+        // must not unlock anything (an impostor can occupy any package name).
+        assertEquals(
+            emptyList<VaultItem.Login>(),
+            AutofillMatcher.match(listOf(instagram) + vault, null, "com.instagram.android"),
+        )
+    }
+
+    @Test
+    fun `a curated app gets its site's login once the site vouches for it`() {
         val instagram = login("Instagram", "https://instagram.com")
         assertEquals(
             listOf(instagram),
-            AutofillMatcher.match(listOf(instagram) + vault, null, "com.instagram.android"),
+            AutofillMatcher.match(
+                listOf(instagram) + vault, null, "com.instagram.android",
+            ) { domain, pkg ->
+                domain == "instagram.com" && pkg == "com.instagram.android"
+            },
         )
     }
 

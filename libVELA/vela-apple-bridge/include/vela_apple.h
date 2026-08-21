@@ -19,8 +19,13 @@ void vela_ffi_free_string(char *ptr);
  * ABI: takes and returns a plain string. */
 char *vela_ffi_enrollment_verification_code(const char *code);
 char *vela_ffi_password_strength_json(const char *request_json);
-char *vela_ffi_encrypt_vault_json(const char *request_json);
-char *vela_ffi_decrypt_vault_json(const char *request_json);
+/* Vault crypto: the RMS crosses as raw bytes the caller can wipe — never as
+ * base64 inside the JSON envelope, which would leave an un-wipeable String
+ * copy on the heap (audit I-2; same rationale as the seal key, audit C-1). */
+char *vela_ffi_encrypt_vault_json(const uint8_t *rms, size_t rms_len,
+                                  const char *request_json);
+char *vela_ffi_decrypt_vault_json(const uint8_t *rms, size_t rms_len,
+                                  const char *request_json);
 /* Device identity behind an opaque handle: the signing key and the share
  * decapsulation key never cross this boundary (audit C-1). The seal key is
  * passed as raw bytes so the caller can wipe it — a Swift String cannot be. */
@@ -42,14 +47,19 @@ char *vela_ffi_identity_forget_json(const char *request_json);
 char *vela_ffi_identity_forget_all(void);
 
 /* Phase 4: sync (per-chunk vault crypto), enrollment (RMS capsule / enrollment
- * package), and recovery (Shamir split/combine of the RMS). */
-char *vela_ffi_encrypt_vault_chunk_json(const char *request_json);
+ * package), and recovery (Shamir split/combine of the RMS). The RMS-taking
+ * calls pass it as raw bytes (see vault crypto above). */
+char *vela_ffi_encrypt_vault_chunk_json(const uint8_t *rms, size_t rms_len,
+                                        const char *request_json);
 /* Per-chunk vault keys granted to a read-write web session (never the RMS). */
-char *vela_ffi_web_session_chunk_keys_json(const char *request_json);
-char *vela_ffi_decrypt_vault_chunk_json(const char *request_json);
+char *vela_ffi_web_session_chunk_keys_json(const uint8_t *rms, size_t rms_len,
+                                           const char *request_json);
+char *vela_ffi_decrypt_vault_chunk_json(const uint8_t *rms, size_t rms_len,
+                                        const char *request_json);
 char *vela_ffi_decrypt_rms_capsule_json(const char *request_json);
 char *vela_ffi_decrypt_enrollment_package_json(const char *request_json);
-char *vela_ffi_split_recovery_json(const char *request_json);
+char *vela_ffi_split_recovery_json(const uint8_t *rms, size_t rms_len,
+                                   const char *request_json);
 char *vela_ffi_combine_recovery_json(const char *request_json);
 
 /* Real KEM-sealed cross-user sharing (ML-KEM-1024 + X25519 hybrid).

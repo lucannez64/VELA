@@ -28,8 +28,13 @@ struct TOTP {
            let comps = URLComponents(string: trimmed) {
             let query = comps.queryItems ?? []
             secretText = query.first { $0.name.lowercased() == "secret" }?.value ?? ""
-            if let d = query.first(where: { $0.name.lowercased() == "digits" })?.value, let v = Int(d) { digits = v }
-            if let p = query.first(where: { $0.name.lowercased() == "period" })?.value, let v = Int(p) { period = v }
+            // Parameters come from a synced item — hostile input must not be
+            // able to crash the app (period 0 divides by zero; absurd digits
+            // overflow the UInt32 modulus). Clamp to the RFC 6238 sane range.
+            if let d = query.first(where: { $0.name.lowercased() == "digits" })?.value,
+               let v = Int(d) { digits = min(max(v, 6), 10) }
+            if let p = query.first(where: { $0.name.lowercased() == "period" })?.value,
+               let v = Int(p) { period = min(max(v, 1), 3_600) }
             if let a = query.first(where: { $0.name.lowercased() == "algorithm" })?.value,
                let alg = Algorithm(rawValue: a.uppercased()) { algorithm = alg }
         }

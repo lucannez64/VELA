@@ -1,5 +1,36 @@
 import Foundation
 
+/// Redirect policy shared by every VELA API request.
+///
+/// URLSession re-sends request headers — including the Authorization Bearer
+/// token — when it follows a redirect. The sync server is untrusted in
+/// VELA's threat model, so a compromised/misconfigured server (or an open
+/// redirect on it) could bounce an authenticated request at an attacker's
+/// host and hand over the bearer token. Same-host redirects are followed;
+/// anything else cancels the request.
+final class VelaRedirectGuard: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        if Self.shouldFollow(original: task.originalRequest?.url, target: request.url) {
+            completionHandler(request)
+        } else {
+            completionHandler(nil)
+        }
+    }
+
+    /// The policy, pure so it can be tested directly: driving a 302 through
+    /// URLSession + URLProtocol in tests crashed the runner, and the delegate
+    /// shape needs a live task that can't be constructed headlessly.
+    static func shouldFollow(original: URL?, target: URL?) -> Bool {
+        guard let originalHost = original?.host, let targetHost = target?.host else {
+            return false
+        }
+        return originalHost.caseInsensitiveCompare(targetHost) == .orderedSame
+    }
+}
+
 /// Async URLSession client for the VELA server (default `https://vault.klyt.eu`).
 ///
 /// Implements the SPEC §§6-8 client surface used by Phase 4: account register,
@@ -17,9 +48,17 @@ actor VelaClient {
     private let session: URLSession
     private var token: String?
 
+    /// Session used when the caller does not supply one. A non-shared
+    /// session is required so the redirect guard actually runs — `.shared`
+    /// has no delegate and follows redirects unconditionally.
+    private static let guardedSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        return URLSession(configuration: config, delegate: VelaRedirectGuard(), delegateQueue: nil)
+    }()
+
     init(baseURL: URL = URL(string: "https://vault.klyt.eu")!,
          token: String? = nil,
-         session: URLSession = .shared) {
+         session: URLSession = VelaClient.guardedSession) {
         self.baseURL = baseURL
         self.token = token
         self.session = session
@@ -105,7 +144,7 @@ actor VelaClient {
     }
 
     func getChunk(_ chunkID: String) async throws -> FetchedChunk {
-        let (data, http) = try await requestRaw("GET", "/vault/chunk/\(chunkID)", body: nil)
+        let (data, http) = try await requestRaw("GET", "/vault/chunk/\(Self.pathComponent(chunkID))", body: nil)
         // The server returns the raw ciphertext bytes; base64-encode them for the core.
         let ciphertextB64 = data.base64EncodedString()
         let version = Int(http.value(forHTTPHeaderField: "X-Chunk-Version") ?? "") ?? 0
@@ -115,7 +154,7 @@ actor VelaClient {
 
     /// Delete a stale chunk (used when the vault shrinks or migrates chunk ids).
     func deleteChunk(_ chunkID: String, ifMatch: Int) async throws {
-        _ = try await requestRaw("DELETE", "/vault/chunk/\(chunkID)", body: nil,
+        _ = try await requestRaw("DELETE", "/vault/chunk/\(Self.pathComponent(chunkID))", body: nil,
                                  headers: ["If-Match": String(ifMatch)])
     }
 
@@ -125,7 +164,7 @@ actor VelaClient {
             throw ServerError(status: 0, body: "invalid ciphertext base64")
         }
         let (data, _) = try await requestRaw(
-            "PUT", "/vault/chunk/\(chunkID)", body: raw,
+            "PUT", "/vault/chunk/\(Self.pathComponent(chunkID))", body: raw,
             headers: ["If-Match": String(ifMatch), "X-Lamport-Clock": String(lamportClock),
                       "Content-Type": "application/octet-stream"]
         )
@@ -161,7 +200,7 @@ actor VelaClient {
     }
 
     func deleteInboxItem(_ id: String) async throws {
-        _ = try await requestRaw("DELETE", "/share/inbox/\(id)", body: nil)
+        _ = try await requestRaw("DELETE", "/share/inbox/\(Self.pathComponent(id))", body: nil)
     }
 
     struct LinkedShareItem: Decodable, Identifiable {
@@ -181,20 +220,20 @@ actor VelaClient {
     }
 
     func deleteLinkedShare(_ id: String) async throws {
-        _ = try await requestRaw("DELETE", "/share/linked/\(id)", body: nil)
+        _ = try await requestRaw("DELETE", "/share/linked/\(Self.pathComponent(id))", body: nil)
     }
 
     struct RecipientEKResponse: Decodable { let share_ek: String }
 
     /// Fetch the share public key registered by a given user.
     func getRecipientShareEK(userID: String) async throws -> String {
-        let resp: RecipientEKResponse = try await request("GET", "/share/recipient/\(userID)/ek", auth: true)
+        let resp: RecipientEKResponse = try await request("GET", "/share/recipient/\(Self.pathComponent(userID))/ek", auth: true)
         return resp.share_ek
     }
 
     /// Update the capsule of an existing linked share (used when the sender changes the vault item).
     func updateLinkedShare(id: String, capsuleBase64: String) async throws {
-        let _: EmptyResponse = try await request("PUT", "/share/linked/\(id)",
+        let _: EmptyResponse = try await request("PUT", "/share/linked/\(Self.pathComponent(id))",
                                                   json: ["capsule": capsuleBase64], auth: true)
     }
 
@@ -210,7 +249,7 @@ actor VelaClient {
     /// Look up a pending web session's ephemeral public keys (the QR carries only
     /// the session id). Returns `(ephemeral_pk, web_vk)`; `web_vk` is empty for RO.
     func getWebSessionKeys(sessionID: String) async throws -> (String, String) {
-        let resp: WebKeysResponse = try await request("GET", "/web-session/\(sessionID)/keys", auth: true)
+        let resp: WebKeysResponse = try await request("GET", "/web-session/\(Self.pathComponent(sessionID))/keys", auth: true)
         return (resp.ephemeral_pk, resp.web_vk)
     }
 
@@ -227,7 +266,7 @@ actor VelaClient {
             "mode": mode, "capsule": capsuleBase64, "ttl_secs": ttlSecs, "link_nonce": linkNonce,
         ]
         let resp: GrantWebResponse = try await request(
-            "POST", "/web-session/\(sessionID)/grant",
+            "POST", "/web-session/\(Self.pathComponent(sessionID))/grant",
             json: json, auth: true)
         return resp.expires_at
     }
@@ -249,7 +288,7 @@ actor VelaClient {
     }
 
     func revokeWebSession(id: String) async throws {
-        _ = try await requestRaw("DELETE", "/web-session/\(id)", body: nil)
+        _ = try await requestRaw("DELETE", "/web-session/\(Self.pathComponent(id))", body: nil)
     }
 
     // MARK: - Devices
@@ -305,7 +344,7 @@ actor VelaClient {
             "device_name": deviceName, "device_type": deviceType,
         ]
         let _: EmptyResponse = try await request(
-            "POST", "/device/enrollment-grant/\(grantID)/claim", json: body, auth: false)
+            "POST", "/device/enrollment-grant/\(Self.pathComponent(grantID))/claim", json: body, auth: false)
     }
 
     private struct EnrollmentResultResponse: Decodable {
@@ -317,7 +356,7 @@ actor VelaClient {
     /// has not confirmed yet.
     func collectEnrollmentResult(grantID: String, signature: String) async throws -> String? {
         let resp: EnrollmentResultResponse = try await request(
-            "POST", "/device/enrollment-grant/\(grantID)/result",
+            "POST", "/device/enrollment-grant/\(Self.pathComponent(grantID))/result",
             json: ["signature": signature], auth: false)
         return resp.status == "enrolled" ? resp.device_id : nil
     }
@@ -326,7 +365,7 @@ actor VelaClient {
 
     /// Fetch an enrollment package by token (no auth — the token is the secret).
     func getEnrollmentPackage(token: String) async throws -> String {
-        let resp: EnrollmentPackageResponse = try await request("GET", "/device/enrollment-package/\(token)", auth: false)
+        let resp: EnrollmentPackageResponse = try await request("GET", "/device/enrollment-package/\(Self.pathComponent(token))", auth: false)
         return resp.ciphertext
     }
 
@@ -431,6 +470,16 @@ actor VelaClient {
 
     // MARK: - Request plumbing
 
+    /// Percent-encodes an untrusted value for interpolation into a URL path.
+    /// `URL(string:relativeTo:)` resolves `..` segments and raw `/`s, so a
+    /// crafted chunk id / session id / token could reach a different endpoint
+    /// of the base host while still carrying our Authorization header.
+    private static func pathComponent(_ value: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove("/")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
     private struct EmptyResponse: Decodable {
         init() {}
         init(from decoder: Decoder) throws {}
@@ -464,12 +513,16 @@ actor VelaClient {
         guard let http = response as? HTTPURLResponse else {
             throw ServerError(status: 0, body: "no HTTP response")
         }
-        // Sliding-session renewal: adopt a rotated token when offered.
-        if let newToken = http.value(forHTTPHeaderField: "X-New-Token"), !newToken.isEmpty {
-            token = newToken
-        }
+        // Sliding-session renewal: adopt a rotated token when offered — but
+        // only on a 2xx response to an authenticated request. Harvesting the
+        // header unconditionally would let any error response, redirect
+        // landing page, or unauthenticated endpoint plant a token of its
+        // choosing into this client's session state.
         guard (200..<300).contains(http.statusCode) else {
             throw ServerError(status: http.statusCode, body: String(decoding: data, as: UTF8.self))
+        }
+        if auth, let newToken = http.value(forHTTPHeaderField: "X-New-Token"), !newToken.isEmpty {
+            token = newToken
         }
         return (data, http)
     }

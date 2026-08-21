@@ -43,7 +43,7 @@ final class BreachViewModel: ObservableObject {
         run("Checking email") { [self] in
             let breaches = try await BreachService.checkEmail(trimmed)
             emailBreaches = breaches
-            AuditLog.shared.record("breach_email_checked", "\(trimmed): \(breaches.count) breach(es)")
+            AuditLog.shared.record("breach_email_checked", "\(breaches.count) breach(es)")
             return breaches.isEmpty ? "No breaches found for \(trimmed)" : "\(breaches.count) breach(es) found"
         }
     }

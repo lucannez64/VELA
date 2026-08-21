@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -336,6 +337,43 @@ fun EnrollDeviceScreen(
                     enabled = !isEnrolling,
                     icon = Icons.Filled.QrCodeScanner
                 )
+
+                if (!isV3Code && enrollmentCode.isNotBlank()) {
+                    Spacer(Modifier.height(16.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(VelaColors.ErrorRedBg)
+                            .padding(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Warning, null,
+                                modifier = Modifier.size(16.dp),
+                                tint = VelaColors.ErrorRed
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Legacy enrollment code", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VelaColors.ErrorRed)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "This is an older-style enrollment code, and it carries your vault's key material " +
+                                "inside the code itself. Anyone who captured it — a photo, clipboard history, a " +
+                                "message relay — can join your vault without your approval. The verification code " +
+                                "above proves the code wasn't swapped, not that nobody copied it.",
+                            fontSize = 11.sp,
+                            color = VelaColors.TextSecondary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Only continue if you handed this code over directly, device to device, just now. " +
+                                "If it travelled by any other route, go back and generate a fresh code on your other device.",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
 
                 verificationCode?.let { code ->
                     Spacer(Modifier.height(16.dp))

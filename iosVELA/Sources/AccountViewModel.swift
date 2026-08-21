@@ -15,6 +15,20 @@ final class AccountViewModel: ObservableObject {
     private unowned let vault: VaultViewModel
     private let defaultServer: String
 
+    /// Server URLs arrive from user input and from enrollment codes. A code
+    /// must not be able to point the join flow — which sends this device's
+    /// public keys and receives the RMS capsule — at an arbitrary or cleartext
+    /// host (audit L-2). This is the single entry gate for a server URL.
+    private static func validatedBase(_ urlString: String) throws -> URL {
+        let trimmed = urlString.trimmingCharacters(in: .whitespaces)
+        guard let url = URL(string: trimmed),
+              url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty else {
+            throw Failure("server URL must be an https:// address")
+        }
+        return url
+    }
+
     init(vault: VaultViewModel, store: AccountStore = AccountStore(), defaultServer: String = "https://vault.klyt.eu") {
         self.vault = vault
         self.store = store
@@ -73,7 +87,7 @@ final class AccountViewModel: ObservableObject {
             guard let identity = VelaCoreFFI.identityCreate(sealKey: store.sealKey()) else {
                 throw Failure("identity generation failed")
             }
-            let base = URL(string: serverURL) ?? URL(string: defaultServer)!
+            let base = try Self.validatedBase(serverURL)
             let client = VelaClient(baseURL: base)
             let resp = try await client.register(hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
                                                   deviceName: deviceName, shareEK: identity.shareEK)
@@ -119,11 +133,11 @@ final class AccountViewModel: ObservableObject {
             let client = client()
             await ensureShareKey(client: client)
             let engine = SyncEngine(client: client, repo: VaultRepository())
-            let merged = try await engine.sync(rms: rms, localItems: vault.items)
+            let merged = try await engine.sync(rms: rms, localStore: vault.currentStore)
             await persistRenewedToken(from: client)
-            vault.applyMergedItems(merged)
-            AuditLog.shared.record("vault_sync", "\(merged.count) item(s)")
-            return "Synced \(merged.count) item(s)"
+            vault.applyMergedStore(merged)
+            AuditLog.shared.record("vault_sync", "\(merged.items.count) item(s)")
+            return "Synced \(merged.items.count) item(s)"
         }
     }
 
@@ -202,8 +216,7 @@ final class AccountViewModel: ObservableObject {
                 // Per-chunk vault keys, not the RMS: the browser can read and
                 // rewrite the vault for the session, but never holds the root of
                 // the key hierarchy (audit D-2).
-                guard let chunkKeys = VelaCoreFFI.webSessionChunkKeys(
-                    rmsBase64: rms.base64EncodedString()) else {
+                guard let chunkKeys = VelaCoreFFI.webSessionChunkKeys(rms: rms) else {
                     throw Failure("Could not derive the session's vault keys")
                 }
                 let keysJSON = String(
@@ -289,7 +302,7 @@ final class AccountViewModel: ObservableObject {
         run("Setting up recovery") { [self] in
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             guard let account = account else { throw Failure("register first") }
-            guard let shares = VelaCoreFFI.splitRecovery(rmsBase64: rms.base64EncodedString(), threshold: threshold, n: total),
+            guard let shares = VelaCoreFFI.splitRecovery(rms: rms, threshold: threshold, n: total),
                   shares.count == total else {
                 throw Failure("recovery split failed")
             }
@@ -321,7 +334,7 @@ final class AccountViewModel: ObservableObject {
     func restoreAccount(serverURL: String, userID: String, share1Base64: String,
                          secure: VaultViewModel.UnlockMode, password: String?, deviceName: String) {
         run("Recovering account") { [self] in
-            let base = URL(string: serverURL) ?? URL(string: defaultServer)!
+            let base = try Self.validatedBase(serverURL)
             let client = VelaClient(baseURL: base)
 
             let initiateResp = try await client.initiateRecovery(userID: userID)
@@ -361,11 +374,11 @@ final class AccountViewModel: ObservableObject {
             try store.save(state)
             account = state
 
-            let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localItems: vault.items)
+            let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localStore: vault.currentStore)
             await persistRenewedToken(from: client)
-            vault.applyMergedItems(merged)
+            vault.applyMergedStore(merged)
             AuditLog.shared.record("account_recovered", String(deviceID.prefix(8)))
-            return "Account recovered on device \(deviceID.prefix(8))…; \(merged.count) item(s)"
+            return "Account recovered on device \(deviceID.prefix(8))…; \(merged.items.count) item(s)"
         }
     }
 
@@ -377,7 +390,7 @@ final class AccountViewModel: ObservableObject {
             var effectiveServer = serverURL.trimmingCharacters(in: .whitespaces)
             let payload = try await resolvePayload(code: code, serverOverride: &effectiveServer)
             if effectiveServer.isEmpty { effectiveServer = payload.server_url ?? defaultServer }
-            guard let base = URL(string: effectiveServer) else { throw Failure("invalid server URL") }
+            let base = try Self.validatedBase(effectiveServer)
 
             // Authenticate as the device the primary already registered.
             let client = VelaClient(baseURL: base)
@@ -415,11 +428,11 @@ final class AccountViewModel: ObservableObject {
             account = state
 
             // First sync pulls the vault down.
-            let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localItems: vault.items)
+            let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localStore: vault.currentStore)
             await persistRenewedToken(from: client)
-            vault.applyMergedItems(merged)
+            vault.applyMergedStore(merged)
             AuditLog.shared.record("device_enrolled", String(payload.device_id.prefix(8)))
-            return "Enrolled device \(payload.device_id.prefix(8))…; \(merged.count) item(s)"
+            return "Enrolled device \(payload.device_id.prefix(8))…; \(merged.items.count) item(s)"
         }
     }
 
@@ -448,7 +461,7 @@ final class AccountViewModel: ObservableObject {
             }
             var effectiveServer = serverURL.trimmingCharacters(in: .whitespaces)
             if effectiveServer.isEmpty { effectiveServer = locatorURL ?? defaultServer }
-            guard let base = URL(string: effectiveServer) else { throw Failure("invalid server URL") }
+            let base = try Self.validatedBase(effectiveServer)
             let client = VelaClient(baseURL: base)
 
             // Generated here, and the private halves never leave the native side.
@@ -475,7 +488,15 @@ final class AccountViewModel: ObservableObject {
                 throw Failure("could not sign the enrollment result request")
             }
             var deviceID: String?
+            // Bound the wait to the grant's own lifetime (server TTL is 15
+            // minutes): an unconfirmed grant must not keep this device polling
+            // (and the UI stuck) forever.
+            let deadline = Date().addingTimeInterval(Self.v3JoinMaxWaitSeconds)
             while deviceID == nil {
+                guard Date() < deadline else {
+                    throw Failure("no confirmation from your other device within "
+                        + "\(Int(Self.v3JoinMaxWaitSeconds / 60)) minutes — generate a fresh code and try again")
+                }
                 try await Task.sleep(nanoseconds: Self.v3JoinPollIntervalNanos)
                 deviceID = try await client.collectEnrollmentResult(
                     grantID: grantID, signature: resultSignature)
@@ -515,6 +536,10 @@ final class AccountViewModel: ObservableObject {
     /// confirmed. Slow enough not to hammer the server for the minute or two a
     /// person takes to compare two screens.
     private static let v3JoinPollIntervalNanos: UInt64 = 2_000_000_000
+    /// How long the joining device waits for the other device's user to pick
+    /// its fingerprint before giving up (the server's grant TTL is 5 minutes —
+    /// `GRANT_TTL_SECS` in the server's rendezvous module).
+    private static let v3JoinMaxWaitSeconds: TimeInterval = 5 * 60
 
     private func resolvePayload(code: String, serverOverride: inout String) async throws -> EnrollmentPayload {
         switch try EnrollmentCode.parse(code) {
@@ -522,7 +547,8 @@ final class AccountViewModel: ObservableObject {
             return payload
         case .v2(let url, let token, let key):
             let server = serverOverride.isEmpty ? (url ?? "") : serverOverride
-            guard !server.isEmpty, let base = URL(string: server) else { throw Failure("server URL required") }
+            guard !server.isEmpty else { throw Failure("server URL required") }
+            let base = try Self.validatedBase(server)
             let ciphertext = try await VelaClient(baseURL: base).getEnrollmentPackage(token: token)
             if serverOverride.isEmpty { serverOverride = server }
             return try EnrollmentCode.decodeV2Package(ciphertextB64URL: ciphertext, packageKeyB64URL: key)

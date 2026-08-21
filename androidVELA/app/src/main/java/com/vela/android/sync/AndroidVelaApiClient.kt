@@ -637,6 +637,10 @@ class AndroidVelaApiClient(
 }
 
 class UrlConnectionTransport : VelaHttpTransport {
+    private companion object {
+        const val MAX_REDIRECTS = 5
+    }
+
     override fun request(
         method: String,
         url: String,
@@ -645,31 +649,60 @@ class UrlConnectionTransport : VelaHttpTransport {
         extraHeaders: Map<String, String>,
         contentType: String
     ): HttpResponse {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 10_000
-            readTimeout = 20_000
-            if (token.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer $token")
-            }
-            extraHeaders.forEach { (key, value) -> setRequestProperty(key, value) }
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", contentType)
-                outputStream.use { it.write(body) }
-            }
-        }
+        // HttpURLConnection follows redirects transparently and re-sends this
+        // request's properties — including the Authorization Bearer token — to
+        // whatever host the redirect points at. Mirror CronetHttp3Transport's
+        // policy: follow same-host redirects manually, refuse cross-host ones.
+        val originalHost = URI(url).host
+            ?: throw IOException("Request URL $url has no host")
 
-        val code = connection.responseCode
-        val bytes = runCatching {
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            stream?.use { it.readBytes() } ?: ByteArray(0)
-        }.getOrDefault(ByteArray(0))
-        return HttpResponse(
-            code = code,
-            headers = connection.headerFields.orEmpty(),
-            body = bytes
-        )
+        var currentUrl = url
+        var redirects = 0
+        while (true) {
+            val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                requestMethod = method
+                connectTimeout = 10_000
+                readTimeout = 20_000
+                if (token.isNotBlank()) {
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
+                extraHeaders.forEach { (key, value) -> setRequestProperty(key, value) }
+                if (body != null) {
+                    doOutput = true
+                    setRequestProperty("Content-Type", contentType)
+                    outputStream.use { it.write(body) }
+                }
+            }
+
+            val code = connection.responseCode
+            if (code in 300..399 && code != 304) {
+                redirects++
+                if (redirects > MAX_REDIRECTS) {
+                    throw IOException("Too many redirects from $url")
+                }
+                val location = connection.headerFields?.get("Location")?.firstOrNull()
+                    ?: throw IOException("Redirect $code from $currentUrl without Location header")
+                val target = URL(URL(currentUrl), location)
+                val targetHost = target.host
+                    ?: throw IOException("Redirect to $location without a host")
+                if (!originalHost.equals(targetHost, ignoreCase = true)) {
+                    throw IOException("Refusing cross-host redirect from $originalHost to $targetHost")
+                }
+                currentUrl = target.toString()
+                continue
+            }
+
+            val bytes = runCatching {
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                stream?.use { it.readBytes() } ?: ByteArray(0)
+            }.getOrDefault(ByteArray(0))
+            return HttpResponse(
+                code = code,
+                headers = connection.headerFields.orEmpty(),
+                body = bytes
+            )
+        }
     }
 }
 

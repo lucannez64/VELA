@@ -6,11 +6,13 @@ import Foundation
 /// (e.g. requested `mail.google.com` matches stored `google.com`).
 enum AutofillMatch {
     /// Logins whose URL matches any of the requested service identifiers
-    /// (URLs or bare domains). If no usable identifier is given, returns all logins.
+    /// (URLs or bare domains). With no usable identifier there is nothing to
+    /// match against, so nothing is offered: failing open here would present
+    /// the entire credential list to whatever host invoked fill.
     static func logins(_ items: [VaultItem], matching identifiers: [String]) -> [VaultItem] {
         let logins = items.filter { $0.item_type == "login" }
         let queries = identifiers.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard !queries.isEmpty else { return logins }
+        guard !queries.isEmpty else { return [] }
         return logins.filter { login in
             queries.contains { domainsMatch(query: $0, stored: login.url ?? "") }
         }
