@@ -244,7 +244,7 @@ def _report_panics(txt, body, base, path, label):
 
 
 def check_panic_ffi():
-    for d in CRYPTO_DIRS + [os.path.join(ROOT, "libVELA", "cyclo")]:
+    for d in CRYPTO_DIRS:
         if not os.path.isdir(d):
             continue
         for dirpath, _, files in os.walk(d):

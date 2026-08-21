@@ -33,7 +33,6 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 # Copy only what the server workspace needs, preserving the relative layout that
 # vela-server's Cargo.toml expects: vela-crypto = { path = "../../libVELA/vela-crypto" }.
-# (libVELA/cyclo — the Zig crate — is intentionally NOT copied; the server doesn't use it.)
 COPY serverVELA/ serverVELA/
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
 WORKDIR /src/serverVELA

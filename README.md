@@ -2,11 +2,15 @@
 
 VELA is a local-first, zero-knowledge password vault with:
 
-- `desktopVELA`: Tauri desktop app and browser-extension IPC host.
+- `desktopVELA`: Tauri desktop app, native gpui front end, and browser-extension IPC host.
 - `androidVELA`: native Android app.
+- `iosVELA`: native iOS app.
 - `serverVELA`: sync/auth API server.
 - `extension`: browser extension and native messaging host.
-- `libVELA`: shared Rust crypto and Android bridge libraries.
+- `webVELA`: ephemeral read-only web vault (served by the server).
+- `libVELA`: shared Rust core (`vela-core`), crypto (`vela-crypto`), and the Android/iOS/WASM bridges.
+- `security/`: audit tooling — semgrep rules, static Rust scanner, exploit regression suite.
+- `docs/`: design documents and the interactive vault atlas.
 
 The app is designed so vault data and root secrets stay on client devices. The server stores encrypted blobs and verifies device authentication, but it must not receive vault plaintext, RMS material, identity private keys, or browser extension secrets.
 
@@ -26,20 +30,33 @@ Important defaults after the hardening pass:
 ## Repository Layout
 
 ```text
-androidVELA/                 Android application
-desktopVELA/                 Tauri desktop application
-extension/                   Browser extension and native messaging host
-libVELA/vela-crypto/         Shared Rust crypto library
-libVELA/vela-android-bridge/ Android JNI bridge
-serverVELA/                  Axum sync/auth server
+androidVELA/                     Android application (Kotlin)
+iosVELA/                         iOS application (Swift, XcodeGen)
+desktopVELA/                     Desktop application (Tauri + React; native gpui front end in src-gpui/)
+extension/                       Browser extension and native messaging host
+webVELA/                         Ephemeral web vault SPA
+libVELA/vela-core/               Shared Rust core (vault, sync, crypto orchestration)
+libVELA/vela-crypto/             Rust crypto primitives
+libVELA/vela-android-bridge/     Android JNI bridge
+libVELA/vela-apple-bridge/       iOS static library bridge
+libVELA/vela-wasm-bridge/        WASM bridge for the web vault
+serverVELA/                      Axum sync/auth server
+security/                        Audit tooling: semgrep rules, scan.py, exploit suite, formal models
+docs/                            Design docs (SPEC companion pieces) and docs/vela-atlas.html map
 ```
+
+Documentation map:
+
+- `SPEC.md` — protocol specification v2 (identity, enrollment, recovery, sharing).
+- `EPHEMERAL_WEB_ACCESS_DESIGN.md` — the web vault design cited throughout the code.
+- `SECURITY_AUDIT.md` / `SECURITY_REDTEAM.md` — audit findings; `security/exploits/` proves the fixes stay fixed in CI.
 
 ## Server
 
 Run from `serverVELA`.
 
 ```powershell
-cd E:\Projects\VELA\serverVELA
+cd serverVELA
 cargo run
 ```
 
@@ -56,7 +73,7 @@ That is correct for local desktop-only testing, but it is not reachable from And
 For Android or another LAN client, bind to all interfaces or the machine LAN IP:
 
 ```powershell
-cd E:\Projects\VELA\serverVELA
+cd serverVELA
 $env:LISTEN_ADDR="0.0.0.0:8443"
 cargo run
 ```
@@ -181,7 +198,7 @@ Do not use `ALLOW_INSECURE_LAN=true` for internet-facing deployments.
 Run from `desktopVELA`.
 
 ```powershell
-cd E:\Projects\VELA\desktopVELA
+cd desktopVELA
 bun install
 bun tauri dev
 ```
@@ -249,7 +266,7 @@ Common causes:
 Run/build from `androidVELA`.
 
 ```powershell
-cd E:\Projects\VELA\androidVELA
+cd androidVELA
 gradle :app:assembleDebug
 ```
 
@@ -293,7 +310,7 @@ The extension no longer talks to the desktop app over localhost HTTP. It uses br
 Build:
 
 ```powershell
-cd E:\Projects\VELA\extension
+cd extension
 bun install
 bun run build
 ```
@@ -337,7 +354,7 @@ libVELA/vela-crypto/SECURITY.md
 Run tests:
 
 ```powershell
-cd E:\Projects\VELA\libVELA\vela-crypto
+cd libVELA/vela-crypto
 cargo test
 ```
 
@@ -347,37 +364,37 @@ Useful full-stack checks:
 
 ```powershell
 # Server
-cd E:\Projects\VELA\serverVELA
+cd serverVELA
 cargo check
 cargo audit
 
 # Desktop Rust
-cd E:\Projects\VELA\desktopVELA\src-tauri
+cd desktopVELA\src-tauri
 cargo check
 cargo audit
 
 # Desktop frontend and bundle
-cd E:\Projects\VELA\desktopVELA
+cd desktopVELA
 bun audit
 bun run build
 bun tauri build
 
 # Android
-cd E:\Projects\VELA\androidVELA
+cd androidVELA
 gradle :app:assembleDebug
 
 # Extension
-cd E:\Projects\VELA\extension
+cd extension
 bun audit
 bun run build
 
 # Crypto
-cd E:\Projects\VELA\libVELA\vela-crypto
+cd libVELA/vela-crypto
 cargo test
 cargo audit
 
 # Android bridge
-cd E:\Projects\VELA\libVELA\vela-android-bridge
+cd libVELA/vela-android-bridge
 cargo check
 cargo audit
 ```
