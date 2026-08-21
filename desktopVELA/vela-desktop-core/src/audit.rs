@@ -60,6 +60,14 @@ pub enum AuditAction {
     /// the device, and they cannot decide it from a `warn!` they never see
     /// (audit, desktop hardening).
     PlaintextIdentityKeysMigrated,
+    /// A saved credential's plaintext crossed the IPC boundary to a caller
+    /// (browser autofill). Recorded with the caller named, so a same-uid
+    /// drain shows up in this log as an attributable list of fills rather
+    /// than silence (issue #149, option D).
+    CredentialReleased {
+        caller: String,
+        domain: String,
+    },
     WebSessionGranted {
         mode: String,
         ttl_secs: i64,

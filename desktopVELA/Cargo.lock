@@ -10471,6 +10471,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vela-nm-host"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "vela-desktop-core",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

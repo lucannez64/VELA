@@ -595,6 +595,18 @@ user, with no user interaction.
 >   without touching the RMS: a `verify_presence` path distinct from the unlock
 >   one, which would otherwise cache a key as a side effect.
 >
+> On top of those gates sit **blast-radius limits** (issue #149, option D): one
+> unlock releases plaintext for at most 25 distinct domains, and every actual
+> release leaves an encrypted audit entry naming the caller and domain plus a
+> toast in the app's own UI — detailed under "Residual risk" below.
+>
+> The transport itself was rebuilt as **native messaging only** (option B):
+> no `ipc_auth.json`, no bearer capability. The browser spawns a single VELA
+> host binary over stdio; it relays to a well-known per-user endpoint, and a
+> connection gate (`ipc_gate`) admits only that binary when a browser process
+> spawned it. Finding #69 — a same-user process rewriting the auth file's
+> endpoint — is retired outright: there is no auth file.
+>
 > Metadata (names, usernames, URLs) is deliberately left ungated: it is not the
 > secret, and gating it would put a prompt in front of every suggestion.
 >
@@ -622,16 +634,35 @@ user, with no user interaction.
 > delivers. The vault relocks on idle, a locked vault serves nothing on this
 > path, and every relock clears any standing release grant.
 >
-> **Residual risk, accepted.** Code running as the user, while the vault is
-> unlocked, in the same session, can still pull plaintext for a domain it names,
-> one request per domain (`search_by_domain` has no wildcard, and there is no
-> rate limit on this path). Shortening the auto-lock does not remove this: the
-> attacker polls and waits for an unlock rather than racing one, and a local
-> socket round-trip is sub-millisecond, so even a one-minute window is tens of
-> thousands of requests. A confirmation prompt does not remove it either, unless
-> the prompt names the caller *and* the user reads it — which is why removing
-> polkit forfeits nothing here. The bound on this case is the peer check plus
-> whatever keeps hostile code off the machine.
+> **Residual risk, accepted — now bounded as well as stated.** Code running as
+> the user, while the vault is unlocked, in the same session, can still pull
+> plaintext for a domain it names, one request per domain (`search_by_domain`
+> has no wildcard). Shortening the auto-lock does not remove this: the attacker
+> polls and waits for an unlock rather than racing one, and a local socket
+> round-trip is sub-millisecond. A confirmation prompt does not remove it
+> either, unless the prompt names the caller *and* the user reads it — which is
+> why removing polkit forfeits nothing here.
+>
+> What bounds the case now are blast-radius limits, not a gate (nothing here
+> prevents the *first* theft; they stop it from being silent and unlimited):
+>
+> * One unlock releases plaintext for at most
+>   `MAX_RELEASED_DOMAINS_PER_UNLOCK` distinct domains across all callers;
+>   further new domains are refused until a relock resets the budget
+>   (`AppState::try_record_credential_release`). A patient enumerator working
+>   a candidate-site list gets 25 sites, not the vault.
+> * Every actual release writes an encrypted audit entry naming the caller
+>   process and the domain (`CredentialReleased`), and raises a non-blocking
+>   toast in the app's own UI — a drain reads as an attributable list of fills
+>   while it happens, not silence discoverable afterwards.
+>
+> Option B also narrows *who can knock*: a connection is refused unless it
+> comes from the VELA native messaging host binary with a browser among its
+> ancestors. A same-uid script that used to be able to read `ipc_auth.json`
+> and connect directly must now get a browser to spawn a process for it — be
+> a store-signed extension, or inject into the browser. What still gets
+> through that bar (a hostile extension) is unchanged by B, and remains
+> bounded by the D limits above rather than by anything on this list.
 
 **Location.** `desktopVELA/vela-desktop-core/src/ipc.rs:294-312`
 
@@ -1028,7 +1059,7 @@ credit the existing hardening:
 | desktop | `store.rs:296-318` | Legacy plaintext identity-keys file silently re-encrypted (only `warn!`) |
 | extension | `manifests/*.json:56,60-69` | Unused `webNavigation` permission; `web_accessible_resources` enables fingerprinting |
 | extension | ~~`content/content-script.js`~~ | ~~Unescaped interpolation~~ **FIXED** — `velaEscapeHtml` had the same quote bug as the popup's escaper (E-2) while five attribute sites relied on it, including the save prompt's page-supplied username and password |
-| extension | `native-messaging/vela-native-messaging-host.py:81-97` | Windows IPC-auth file check is a no-op; capability token is a static bearer with no HMAC/nonce |
+| extension | ~~`native-messaging/vela-native-messaging-host.py:81-97`~~ | ~~Windows IPC-auth file check is a no-op; capability token is a static bearer with no HMAC/nonce~~ **REMOVED** — the Python host and the capability file are gone entirely (issue #149, option B) |
 | android | ~~`build.gradle.kts:49-54`~~ | ~~No R8/minification → `Log.d` metadata ships~~ **FIXED** — R8 on, with JNI keep rules and log stripping |
 | android | `sync/SyncSettingsStore.kt:84-88` | Server URL accepts `http://` (OS blocks cleartext, but failure is silent) |
 | android | `security/SecureClipboard.kt:20` | 30s clipboard exposure window (industry-standard, but the largest live-secret surface) |

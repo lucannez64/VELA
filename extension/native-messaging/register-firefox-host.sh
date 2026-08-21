@@ -1,24 +1,50 @@
 #!/bin/bash
 # VELA Native Messaging Host Registration Script
 # Registers for Firefox and all Gecko-based forks: Zen Browser, Waterfox, Floorp, Librewolf, etc.
+#
+# Registers the compiled Rust host (vela-nm-host). Since issue #149 option B
+# there is no capability file and no Python dependency: the browser spawns
+# this one self-contained binary over stdio.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-HOST_SCRIPT="$SCRIPT_DIR/vela-native-messaging-host.py"
-HOST_WRAPPER="$SCRIPT_DIR/vela-native-messaging-host"
 HOST_NAME="com.vela.desktop"
 
-if [ ! -f "$HOST_SCRIPT" ]; then
-	echo "ERROR: $HOST_SCRIPT not found"
-	exit 1
-fi
+find_host_binary() {
+	if [ -n "${VELA_NM_HOST_PATH:-}" ]; then
+		echo "$VELA_NM_HOST_PATH"
+		return 0
+	fi
+	local candidate
+	for candidate in \
+		"/usr/bin/vela-native-messaging-host" \
+		"/usr/local/bin/vela-native-messaging-host" \
+		"$HOME/.local/bin/vela-native-messaging-host" \
+		"$SCRIPT_DIR/../../desktopVELA/target/release/vela-native-messaging-host" \
+		"$SCRIPT_DIR/../../desktopVELA/target/debug/vela-native-messaging-host"; do
+		if [ -x "$candidate" ]; then
+			echo "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
 
-chmod +x "$HOST_SCRIPT"
+HOST_BIN="$(find_host_binary)" || {
+	echo "ERROR: vela-native-messaging-host not found."
+	echo ""
+	echo "Build it first:"
+	echo "  cd desktopVELA && cargo build --release -p vela-nm-host"
+	echo ""
+	echo "Or point VELA_NM_HOST_PATH at an existing binary."
+	exit 1
+}
 
 echo "VELA Native Messaging Host Registration for Gecko Browsers"
 echo "============================================================"
+echo "Host binary: $HOST_BIN"
 echo ""
 
 detect_nm_dir() {
@@ -81,27 +107,13 @@ register_browser() {
 
 	mkdir -p "$nm_dir"
 
-	local python_path
-	python_path=$(which python3 2>/dev/null || which python 2>/dev/null || echo "")
-
-	if [ -z "$python_path" ]; then
-		echo "  SKIP $browser (python not found)"
-		return
-	fi
-
-	cat >"$HOST_WRAPPER" <<EOF
-#!/bin/sh
-exec "$python_path" "$HOST_SCRIPT"
-EOF
-	chmod +x "$HOST_WRAPPER"
-
 	rm -f "$nm_dir/vela-desktop.json"
 
 	cat >"$nm_dir/$HOST_NAME.json" <<EOF
 {
   "name": "$HOST_NAME",
   "description": "VELA Desktop Password Manager Native Messaging Host",
-  "path": "$HOST_WRAPPER",
+  "path": "$HOST_BIN",
   "type": "stdio",
   "allowed_extensions": ["vela@vela.app"]
 }

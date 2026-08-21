@@ -86,13 +86,18 @@ jobs:
             echo "app crashed on launch"; exit 1
           fi
 
-          # Extension <-> desktop bridge: the app's IPC server must have written
-          # ipc_auth.json, and the real native-messaging host must ping->pong it.
-          AUTH="$HOME/Library/Application Support/com.vela.VELA/vela/ipc_auth.json"
-          for i in $(seq 1 10); do [ -f "$AUTH" ] && break; sleep 1; done
-          if [ ! -f "$AUTH" ]; then echo "ipc_auth.json not written at: $AUTH"; exit 1; fi
-          python3 -c "import json; d=json.load(open('$AUTH')); assert d.get('capability') and d.get('endpoint') and d.get('protocol'); print('ipc_auth.json OK, protocol=', d['protocol'])"
-          python3 .github/scripts/ipc_ping.py extension/native-messaging/vela-native-messaging-host.py
+          # Extension <-> desktop bridge: the desktop must be listening on the
+          # well-known per-user endpoint, and the real compiled native-messaging
+          # host (built with the rest of the workspace) must ping->pong it.
+          # Option B (#149): no capability file exists any more; the gate
+          # admits a host spawned by a browser. Nothing spawned CI from a
+          # browser, so name a real ancestor executable for the smoke test.
+          ENDPOINT=$(ls "$TMPDIR"/vela-*/desktop.sock /tmp/vela-*/desktop.sock 2>/dev/null | head -1)
+          if [ -z "$ENDPOINT" ]; then echo "no desktop socket found under $TMPDIR or /tmp"; exit 1; fi
+          echo "desktop socket: $ENDPOINT"
+          export VELA_NM_BROWSER_NAMES=bash
+          cargo build --release -p vela-nm-host
+          python3 .github/scripts/ipc_ping.py desktopVELA/target/release/vela-native-messaging-host
 
           osascript -e 'quit app "VELA"' 2>/dev/null || pkill -f 'VELA.app' || true
 

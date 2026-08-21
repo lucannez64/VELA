@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """CI smoke check for the extension<->desktop bridge.
 
-Drives the *real* native-messaging host (passed as argv[1]) with a framed
-`{"action":"ping"}` and asserts it reaches the running VELA desktop app and
-gets a pong back. Exercises the same code path the browser extension uses:
-host -> reads ipc_auth.json -> connects to the desktop IPC socket -> ping/pong.
+Drives the *real* native messaging host binary (passed as argv[1]) with a
+framed `{"action":"ping"}` and asserts it reaches the running VELA desktop
+app and gets a pong back. Exercises the same code path the browser extension
+uses: browser -> host over stdio -> well-known per-user endpoint -> desktop
+connection gate -> ping/pong.
+
+Since issue #149 option B there is no capability file; the desktop admits a
+host that a browser spawned. In CI nothing spawned us from a browser, so set
+VELA_NM_BROWSER_NAMES to a real ancestor's executable name before calling.
 """
 import json
 import struct
@@ -19,12 +24,12 @@ def frame(obj):
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: ipc_ping.py <path-to-native-messaging-host.py>")
+        print("usage: ipc_ping.py <path-to-vela-native-messaging-host>")
         return 2
 
     host = sys.argv[1]
     proc = subprocess.Popen(
-        [sys.executable, host],
+        [host],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

@@ -98,6 +98,9 @@ windows = { version = "0.58", features = [
     "Win32_Security_Authentication_Identity",
     "Win32_System_Memory",
     "Win32_System_Pipes",
+    # The IPC gate walks the connecting process's lineage (parent pid lookup)
+    # to verify a browser spawned our native messaging host — issue #149, B.
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
 ] }
 

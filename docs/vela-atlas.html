@@ -454,7 +454,7 @@ const NODES = [
   inside:[["detect","find username/password fields on the page"],["request","ask background for a credential for this host"],["fill","write into the fields, never into the DOM as text"],["offer save","new credential → SaveCredentials"]] },
 
 { id:"NMH", key:"NM", label:"Native messaging host", group:"clients", gx:-1, gy:-3, w:2, d:2, h:1.6,
-  files:["extension/native-messaging/vela-native-messaging-host.py","extension/native-messaging/chrome/","extension/native-messaging/firefox/"],
+  files:["desktopVELA/vela-nm-host/src/main.rs","extension/native-messaging/chrome/","extension/native-messaging/firefox/"],
   what:["The bridge the browser is willing to launch. It exists because the alternative — a localhost HTTP listener — is reachable by every page in every browser, and this is reachable only by extensions the OS-level manifest names."],
   built:["A 357-line Python host, spoken to over stdio with the standard 4-byte little-endian length prefix, relaying to the desktop app's Unix socket or Windows named pipe."],
   cond:["Registration is per-browser and per-user; a manifest in the wrong directory means silent failure to connect."],
@@ -691,7 +691,7 @@ key    {DATA_DIR}/paseto.key (0600) when PASETO_SECRET_KEY is unset`,
   "url":  "https://github.com/login",
   "host": "github.com" }`,
     note:"The content script found a form. It has no vault access of its own, and the localhost HTTP path it used to have is gone." }},
-  { a:"NMH", b:"IPC", bend:"y", p:{ t:"Over the OS transport", kind:"native messaging", src:"extension/native-messaging/vela-native-messaging-host.py",
+  { a:"NMH", b:"IPC", bend:"y", p:{ t:"Over the OS transport", kind:"native messaging", src:"desktopVELA/vela-nm-host/src/main.rs",
     body:`stdio   <4-byte LE length> ‖ json
 then    unix socket  /run/user/1000/vela.sock       (0600)
         or  \\\\.\\pipe\\vela-<session>

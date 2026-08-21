@@ -54,6 +54,10 @@ pub enum HostCommand {
     /// reload rather than keep showing stale rows. The Tauri build emits a
     /// `vault-items-changed` event for exactly this.
     VaultItemsChanged,
+    /// A non-blocking notification in the app's own UI (a credential was just
+    /// filled into a browser: "Filled github.com for firefox"). The gpui
+    /// build's answer to the Tauri build's `backend-toast` event.
+    ShowToast(String),
     /// Ask the human to approve or deny a presence-sensitive action (an in-core
     /// login, a passkey use). Carries a reply channel back to the caller, which
     /// blocks on it — the gpui build's answer to the Tauri app's modal.
@@ -106,6 +110,10 @@ impl Host for GpuiHost {
 
     fn notify_vault_items_changed(&self) {
         let _ = self.tx.send(HostCommand::VaultItemsChanged);
+    }
+
+    fn show_toast(&self, message: &str) {
+        let _ = self.tx.send(HostCommand::ShowToast(message.to_string()));
     }
 
     /// Ask the human to approve or deny, and wait for the answer.

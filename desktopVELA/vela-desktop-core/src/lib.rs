@@ -15,6 +15,7 @@ pub mod device;
 pub mod favicon;
 pub mod host;
 pub mod ipc;
+pub mod ipc_gate;
 pub mod ipc_peer;
 pub mod js_login;
 pub mod login;
@@ -42,7 +43,7 @@ mod perf_bench;
 mod vault_lifecycle_test;
 
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -103,7 +104,6 @@ pub struct AppState {
     pub rate_limiter: RwLock<HashMap<String, RateLimitState>>,
     pub token_store: RwLock<token::TokenStore>,
     pub secret_key: token::SecretKey,
-    pub ipc_capability: String,
     pub extension_connected: Arc<AtomicBool>,
     /// Serializes sync runs so local edits and merges cannot interleave.
     pub sync_mutex: tokio::sync::Mutex<()>,
@@ -114,6 +114,9 @@ pub struct AppState {
     /// over IPC, and to which caller (audit D-4). Not persisted: a restart
     /// should cost a fresh confirmation.
     plaintext_release: RwLock<Option<(Option<u32>, std::time::Instant)>>,
+    /// Distinct domains plaintext has been released for since the last
+    /// unlock. Not persisted: the cap is per unlocked session by design.
+    released_domains: RwLock<HashSet<String>>,
     /// An enrollment v3 grant this device opened and is waiting on, with the
     /// fingerprint the user has to pick. Deliberately not persisted: a restart
     /// mid-enrollment should mean starting over, not resuming a comparison the
@@ -139,6 +142,18 @@ pub struct AppState {
 /// machine cannot be drained by something that read the capability file.
 pub const PLAINTEXT_RELEASE_TTL: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// How many *distinct* domains one unlock may release plaintext credentials
+/// for, in total, across all callers (issue #149, option D).
+///
+/// No prompt can tell a malicious local process from the browser when the two
+/// ask for the same site at the same moment, so the bound a local attacker
+/// cannot talk their way past is how much one unlock is worth. A patient
+/// enumerator working a candidate-site list burns the cap in seconds and is
+/// then done; a human logging into a handful of sites never notices it.
+/// Generous on purpose — this converts a silent full-vault drain into a
+/// bounded partial one, it does not try to be usable-UX's enemy.
+pub const MAX_RELEASED_DOMAINS_PER_UNLOCK: usize = 25;
+
 impl AppState {
     /// Whether `pid` already proved presence recently. Tied to the caller, so a
     /// second process cannot ride on a confirmation the user gave the browser.
@@ -158,6 +173,32 @@ impl AppState {
     /// Locking the vault must also end any standing release grant.
     pub fn clear_plaintext_release(&self) {
         *self.plaintext_release.write() = None;
+        // And reset the per-unlock blast radius with it (issue #149, D):
+        // the cap is "per unlock", so a relock starts a fresh budget.
+        self.released_domains.write().clear();
+    }
+
+    /// Record that plaintext was (about to be) released for `domain`, or
+    /// refuse when this unlocked session has already spent its distinct-domain
+    /// budget. A repeat release for a domain already served stays free — the
+    /// cap bounds how *many different* sites one unlock can be drained for,
+    /// not how often the user fills the same one.
+    ///
+    /// The error text is user-facing: it reaches both the caller's UI and,
+    /// through the IPC error response, whoever is reading the screen.
+    pub fn try_record_credential_release(&self, domain: &str) -> Result<(), String> {
+        let mut released = self.released_domains.write();
+        if released.contains(domain) {
+            return Ok(());
+        }
+        if released.len() >= MAX_RELEASED_DOMAINS_PER_UNLOCK {
+            return Err(format!(
+                "VELA has filled credentials for {MAX_RELEASED_DOMAINS_PER_UNLOCK} different sites since \
+                 the last unlock. Lock and unlock the vault to keep filling."
+            ));
+        }
+        released.insert(domain.to_string());
+        Ok(())
     }
 
     pub fn is_extension_connected(&self) -> bool {
@@ -211,11 +252,11 @@ impl AppState {
             rate_limiter: RwLock::new(HashMap::new()),
             token_store: RwLock::new(token::TokenStore::new()),
             secret_key: token::SecretKey::generate(),
-            ipc_capability: ipc::generate_capability(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
+            released_domains: RwLock::new(HashSet::new()),
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),
@@ -377,11 +418,11 @@ pub enum RateLimitResult {
             rate_limiter: RwLock::new(HashMap::new()),
             token_store: RwLock::new(token::TokenStore::new()),
             secret_key: token::SecretKey::generate(),
-            ipc_capability: ipc::generate_capability(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
+            released_domains: RwLock::new(HashSet::new()),
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),

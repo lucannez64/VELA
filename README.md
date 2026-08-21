@@ -305,7 +305,7 @@ If Android reports a failed HTTPS connection to `192.168.1.33:8443`, the usual c
 
 ## Browser Extension
 
-The extension no longer talks to the desktop app over localhost HTTP. It uses browser native messaging only.
+The extension no longer talks to the desktop app over localhost HTTP, and there is no capability file: it uses browser native messaging only. The browser spawns a single self-contained binary (`vela-native-messaging-host`, built with `cargo build --release -p vela-nm-host`) over stdio, which relays to a well-known per-user endpoint; the desktop admits only that binary when a browser spawned it.
 
 Build:
 
@@ -471,9 +471,8 @@ tauri = 2.11.0
 Check:
 
 - Desktop app is running.
-- Browser native messaging host is registered.
+- Browser native messaging host is registered (the compiled `vela-native-messaging-host` from `desktopVELA/vela-nm-host`).
 - Chromium registration used `VELA_CHROME_EXTENSION_ID`.
-- The native host can read the desktop `ipc_auth.json`.
 - The desktop session is active and biometric approval succeeds before secrets are returned.
 
 # License

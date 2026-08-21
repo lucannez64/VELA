@@ -9,19 +9,17 @@ echo VELA Native Messaging Host Registration for Gecko Browsers
 echo ============================================================
 echo.
 
-set HOST_SCRIPT=%SCRIPT_DIR%\vela-native-messaging-host.py
-set HOST_EXE=%SCRIPT_DIR%\vela-native-messaging-host.exe
-set HOST_WRAPPER_SOURCE=%SCRIPT_DIR%\vela-native-messaging-host-win.rs
+set HOST_EXE=%VELA_NM_HOST_PATH%
+IF "%HOST_EXE%"=="" SET HOST_EXE=%SCRIPT_DIR%\vela-native-messaging-host.exe
 set HOST_NAME=com.vela.desktop
 
+REM The compiled Rust host (vela-nm-host). Build it with:
+REM   cd desktopVELA && cargo build --release -p vela-nm-host
 if not exist "%HOST_EXE%" (
-  where rustc >nul 2>&1
-  if %errorlevel% neq 0 (
-    echo ERROR: %HOST_EXE% not found and rustc is not available to build it.
-    exit /b 1
-  )
-  rustc "%HOST_WRAPPER_SOURCE%" -O -o "%HOST_EXE%"
-  if %errorlevel% neq 0 exit /b %errorlevel%
+  echo ERROR: native messaging host binary not found: %HOST_EXE%
+  echo Build it with: cd desktopVELA ^&^& cargo build --release -p vela-nm-host
+  echo or set VELA_NM_HOST_PATH to its location.
+  exit /b 1
 )
 
 set MANIFEST_HOST_PATH=%HOST_EXE:\=\\%

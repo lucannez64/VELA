@@ -36,6 +36,13 @@ impl Host for TauriHost {
         commands::vault::emit_vault_items_changed(&self.0);
     }
 
+    /// A non-blocking toast in the app's own window: the React side listens
+    /// for `backend-toast` and routes the payload through its usual toast
+    /// state, so this looks like any other notification the UI raises.
+    fn show_toast(&self, message: &str) {
+        let _ = self.0.emit("backend-toast", message.to_string());
+    }
+
     /// A native modal, deliberately not a web-view one.
     ///
     /// The question is "is a human at this machine right now", and a dialog

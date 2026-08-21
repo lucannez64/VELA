@@ -17,6 +17,9 @@ interface AuditAction {
   item_type?: string;
   // PasswordGenerated
   length?: number;
+  // CredentialReleased
+  caller?: string;
+  domain?: string;
 }
 
 interface AuditEntry {
@@ -40,6 +43,9 @@ const actionLabels: Record<string, { label: string; icon: string; color: string 
   item_deleted: { label: 'Item deleted', icon: 'delete', color: 'text-red-400' },
   password_generated: { label: 'Password generated', icon: 'password', color: 'text-primary' },
   settings_changed: { label: 'Settings changed', icon: 'settings', color: 'text-on-surface-variant' },
+  // A plaintext credential was handed to a browser over IPC — the visible
+  // counterpart of the audit entry, so a drain reads as a list of fills.
+  credential_released: { label: 'Credential filled', icon: 'key', color: 'text-primary' },
   // Red on purpose: this one reports that something already went wrong, not a
   // routine action.
   plaintext_identity_keys_migrated: {
@@ -64,6 +70,7 @@ function getActionDetails(action: AuditAction): string | null {
     case 'item_updated':
     case 'item_deleted': return action.item_type ?? null;
     case 'password_generated': return action.length != null ? `${action.length} characters` : null;
+    case 'credential_released': return [action.domain, action.caller].filter(Boolean).join(' → ') || null;
     default: return null;
   }
 }
