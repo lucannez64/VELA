@@ -176,15 +176,28 @@ pub async fn wait_for_login_request(
                 .map_err(|e| InterceptError::Transport(e.to_string()))?;
             }
             PausedAction::ContinueWith { request, body } => {
-                // Tier-3 (VELA_BROWSER_CORE_PERFORM=1): the core sends the
-                // substituted credential over its own TLS and fulfils the
-                // browser's paused request — the password never crosses into
-                // the browser's address space. Default: hand it to the browser
-                // (the documented residual, one request-instant in its memory).
-                if core_perform_enabled() {
-                    core_send_and_fulfill(cdp, session, request_id, &request, &body).await?;
-                } else {
-                    continue_with_post_data(cdp, session, request_id, &body).await?;
+                // Tier-3 (default ON): the core sends the substituted credential
+                // over its own TLS and fulfils the browser's paused request — the
+                // password never crosses into the browser's address space, and the
+                // exposed CDP port learns nothing (RT-10). If the site refuses a
+                // core client (a bot-walled POST), fall back to handing that one
+                // request to the browser — the documented residual, mitigated by
+                // the debugging-pipe migration. `VELA_BROWSER_CORE_PERFORM=0`
+                // bypasses the core path entirely.
+                match core_perform_enabled() {
+                    true => match core_send_and_fulfill(cdp, session, request_id, &request, &body)
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(core_error) => {
+                            tracing::warn!(
+                                "browser login: core-perform refused ({core_error}); \
+                                 falling back to sending this request through the browser"
+                            );
+                            continue_with_post_data(cdp, session, request_id, &body).await?;
+                        }
+                    },
+                    false => continue_with_post_data(cdp, session, request_id, &body).await?,
                 }
                 last_login_request = Some(std::time::Instant::now());
             }
@@ -216,6 +229,11 @@ const CREDENTIAL_ALLOWLIST: &[&str] = &[
     "securetoken.googleapis.com",
 ];
 
+/// Wire-format allowlist the Firefox driver shares: a credential request aimed
+/// at a well-known identity provider may proceed (the page legitimately
+/// authenticates through it).
+pub(crate) const CREDENTIAL_ALLOWLIST_PUB: &[&str] = CREDENTIAL_ALLOWLIST;
+
 /// What to do with one paused request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PausedAction {
@@ -237,13 +255,15 @@ pub(crate) enum PausedAction {
 /// This is the Tier-3 isolation (see `security/browser-driven-login-design.md`):
 /// when it is on, the real password never enters the browser's address space —
 /// the core performs the login POST itself and fulfils the browser's paused
-/// request with the response. It is opt-in (`VELA_BROWSER_CORE_PERFORM=1`) and
-/// off by default, because only sites whose *POST* is not itself bot-walled
-/// will accept a core-client submission; when the site refuses the core's
-/// client in this mode, the login is refused rather than silently falling back
-/// to exposing the password in the browser.
-fn core_perform_enabled() -> bool {
-    std::env::var("VELA_BROWSER_CORE_PERFORM").as_deref() == Ok("1")
+/// request with the response. Default **on**: the core-send path also neutralises
+/// RT-10 (the unauthenticated CDP debug port yields nothing, because the
+/// password never reaches the browser). A deployment that must hand sites back
+/// to browser-send can opt out with `VELA_BROWSER_CORE_PERFORM=0`; when the core
+/// submits anyway and a site refuses a core client, the interceptor logs and
+/// falls back to handing that one request to the browser (documented residual).
+pub(crate) fn core_perform_enabled() -> bool {
+    // "0" is the only explicit opt-out — absence means the Tier-3 default.
+    std::env::var("VELA_BROWSER_CORE_PERFORM").ok().as_deref() != Some("0")
 }
 
 /// Decide what to do with a paused request.

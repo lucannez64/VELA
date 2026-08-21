@@ -117,6 +117,24 @@ fn a_request_aimed_off_the_site_is_refused() {
     assert!(same.check_same_site(&site).is_ok());
 }
 
+/// An `http://` target is not the same site as an `https://` page — a scheme
+/// change on the same host must not let a credential be sent in cleartext
+/// (RT-12 http downgrade).
+#[test]
+fn an_http_request_is_refused_for_an_https_page() {
+    let site = Url::parse("https://site.example/login").unwrap();
+    let downgraded = CapturedRequest {
+        url: "http://site.example/session".to_string(),
+        method: "POST".to_string(),
+        headers: BTreeMap::new(),
+        body: format!("p={PLACEHOLDER_PASSWORD}"),
+    };
+    assert_eq!(
+        downgraded.check_same_site(&site).unwrap_err(),
+        JsLoginError::CrossSiteRequest("site.example".to_string())
+    );
+}
+
 /// A page that never calls `fetch` gets an honest answer rather than a guess.
 #[cfg(feature = "js-login")]
 #[test]

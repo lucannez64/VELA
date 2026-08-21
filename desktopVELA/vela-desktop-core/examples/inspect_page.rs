@@ -15,9 +15,12 @@ async fn main() {
         .nth(1)
         .unwrap_or_else(|| "https://authenticate.riotgames.com/login".to_string());
 
-    let browser = host::spawn().await.expect("spawn");
-    let ws = host::websocket_url(browser.debug_port()).await.expect("ws");
-    let cdp = cdp::Cdp::connect(&ws).await.expect("cdp");
+    let (browser, pipe) = host::spawn().await.expect("spawn");
+    let cdp = {
+        let command = tokio::fs::File::from_std(std::fs::File::from(pipe.command));
+        let message = tokio::fs::File::from_std(std::fs::File::from(pipe.message));
+        cdp::Cdp::connect_pipe(command, message).await.expect("cdp")
+    };
     let (session, _target) = cdp::create_page_session(&cdp).await.expect("session");
     cdp::navigate_and_wait(&cdp, &session, &url, Duration::from_secs(90)).await.expect("nav");
 

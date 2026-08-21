@@ -180,7 +180,10 @@ fn authenticate_with_server_in_background(
 
 pub async fn get_session_status(state: &Arc<AppState>) -> Result<SessionStatus, String> {
     let session = state.session.read();
-    let remaining = session.remaining_time();
+    // The auto-lock countdown is the *idle* deadline, not the server-token
+    // keepalive (`expires_at`), so background sync refreshing the token cannot
+    // keep a reported-unlocked vault past `auto_lock_minutes`.
+    let remaining = session.remaining_idle_secs();
     // Unlock sets `session.active` and `state.crypto` under separate lock
     // acquisitions (not atomically), so there's a narrow window where a
     // concurrent status check could see active=true while crypto is still
@@ -252,12 +255,25 @@ pub const AUTO_LOCK_TICK: std::time::Duration = std::time::Duration::from_secs(1
 pub fn auto_lock_if_expired(state: &Arc<AppState>) -> bool {
     let expired = {
         let session = state.session.read();
-        session.active && session.is_expired()
+        // Lock on the *idle* deadline, not the server-token keepalive: sync's
+        // `refresh()` extends `expires_at` (server auth, up to the 8h cap) but
+        // must not keep an idle vault's secrets decrypted in RAM.
+        session.active && session.is_idle_expired()
     };
     if expired {
         lock_session(state);
     }
     expired
+}
+
+/// Record that the user did something, resetting the auto-lock (idle) deadline.
+///
+/// Call this from the frontend on real user interaction (input, navigation,
+/// an explicit menu action) — never from background sync. It is what makes
+/// `auto_lock_minutes` mean "minutes of inactivity," not "minutes since unlock."
+pub fn notify_user_activity(state: &Arc<AppState>) {
+    let secs = auto_lock_duration_secs(state);
+    state.session.write().touch(secs);
 }
 
 /// Run [`auto_lock_if_expired`] forever on its own thread, calling `on_locked`
@@ -293,12 +309,13 @@ pub fn spawn_auto_lock_watchdog_every<F>(
 pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, String> {
     state.check_unlock_throttle()?;
 
-    // Fail-closed on expiry: when the previous session expired, do NOT silently
-    // re-unlock from the in-memory cached RMS — force a fresh read from the
-    // OS-backed credential store (TPM / Keychain / Credential Manager).
+    // Fail-closed on expiry: when the previous session expired (by its idle
+    // deadline), do NOT silently re-unlock from the in-memory cached RMS —
+    // force a fresh read from the OS-backed credential store (TPM / Keychain /
+    // Credential Manager).
     let was_expired = {
         let session = state.session.read();
-        session.is_expired()
+        session.is_idle_expired()
     };
     if was_expired {
         biometric::clear_cached_rms();
@@ -806,10 +823,11 @@ mod tests {
         assert!(state.is_unlocked());
 
         // Deadline passes with the app idle — no command runs, nothing touches
-        // the session but the watchdog.
+        // the session but the watchdog. Note: the auto-lock deadline is
+        // `idle_until`, not the server-token `expires_at`.
         {
             let mut session = state.session.write();
-            session.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+            session.idle_until = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
         }
         let generation = state.session_generation();
 
@@ -834,7 +852,7 @@ mod tests {
         state.unlock_for_test(&[7u8; 32]);
         {
             let mut session = state.session.write();
-            session.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+            session.idle_until = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
         }
 
         let locks = Arc::new(AtomicUsize::new(0));

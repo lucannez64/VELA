@@ -66,8 +66,11 @@
  * so a path outside this set cannot be launched through it. */
 static int browser_allowed(const char *name) {
     static const char *const allowed[] = {
-        "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-        "microsoft-edge", "microsoft-edge-stable", NULL,
+        "google-chrome", "google-chrome-stable", "google-chrome-beta",
+        "google-chrome-unstable", "chromium", "chromium-browser",
+        "microsoft-edge", "microsoft-edge-stable", "microsoft-edge-beta",
+        "microsoft-edge-dev", "brave-browser", "brave", "thorium-browser",
+        "helium", "vivaldi-stable", "opera", "ungoogled-chromium", NULL,
     };
     for (int i = 0; allowed[i]; i++) {
         if (strcmp(name, allowed[i]) == 0) {

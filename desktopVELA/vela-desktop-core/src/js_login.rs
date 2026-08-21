@@ -132,7 +132,11 @@ impl CapturedRequest {
     pub fn check_same_site(&self, site: &Url) -> Result<(), JsLoginError> {
         let target = Url::parse(&self.url)
             .map_err(|e| JsLoginError::Script(format!("bad request URL: {e}")))?;
-        if crate::login::site_key(&target) != crate::login::site_key(site) {
+        // Same registrable host *and* same scheme — an http:// target must not be
+        // treated as the same site as an https:// page (RT-12 http downgrade).
+        if crate::login::site_key(&target) != crate::login::site_key(site)
+            || target.scheme() != site.scheme()
+        {
             return Err(JsLoginError::CrossSiteRequest(crate::login::site_key(
                 &target,
             )));

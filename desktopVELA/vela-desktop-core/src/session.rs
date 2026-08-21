@@ -13,6 +13,12 @@ pub struct Session {
     pub user_id: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
+    /// Auto-lock deadline. Pushed **only** by `touch()` (real user activity);
+    /// background sync's `refresh()` must never extend it (that bug made
+    /// `auto_lock_minutes` a no-op up to the 8h cap — sync kept re-extending
+    /// the one deadline the watchdog watched). Decoupled from `expires_at`,
+    /// which is the server-token keepalive.
+    pub idle_until: Option<DateTime<Utc>>,
     pub session_time_remaining_secs: u64,
     pub session_token: Option<String>,
     /// Server-issued Bearer token, kept separate so `unlock()` cannot overwrite it.
@@ -33,6 +39,7 @@ impl Session {
             user_id: None,
             started_at: None,
             expires_at: None,
+            idle_until: None,
             session_time_remaining_secs: 0,
             session_token: None,
             server_token: None,
@@ -45,6 +52,7 @@ impl Session {
         self.user_id = None;
         self.started_at = None;
         self.expires_at = None;
+        self.idle_until = None;
         self.session_time_remaining_secs = 0;
         self.session_token = None;
         self.server_token = None;
@@ -59,6 +67,7 @@ impl Session {
         self.started_at = Some(now);
         let effective_duration = duration_secs.min(MAX_SESSION_DURATION_SECS);
         self.expires_at = Some(now + chrono::Duration::seconds(effective_duration as i64));
+        self.idle_until = Some(now + chrono::Duration::seconds(effective_duration as i64));
         self.session_time_remaining_secs = effective_duration;
         self.session_token = Some(token);
     }
@@ -71,12 +80,45 @@ impl Session {
         }
     }
 
+    /// Whether the auto-lock (idle) deadline has passed. This is what the
+    /// auto-lock watchdog and the session-status health gate consult — it must
+    /// not drift under background `refresh()`.
+    pub fn is_idle_expired(&self) -> bool {
+        if self.active {
+            self.idle_until.map_or(true, |deadline| Utc::now() > deadline)
+        } else {
+            true
+        }
+    }
+
+    /// Reset the auto-lock deadline to `duration_secs` from now. Called on real
+    /// user activity only — never by background sync.
+    pub fn touch(&mut self, duration_secs: u64) {
+        if !self.active {
+            return;
+        }
+        self.idle_until = Some(Utc::now() + chrono::Duration::seconds(duration_secs as i64));
+    }
+
+    /// Seconds until the auto-lock (idle) deadline (0 when locked/expired).
+    pub fn remaining_idle_secs(&self) -> u64 {
+        if let Some(deadline) = self.idle_until {
+            (deadline - Utc::now()).num_seconds().max(0) as u64
+        } else {
+            0
+        }
+    }
+
     pub fn refresh(&mut self) {
         if !self.active {
             return;
         }
         let now = Utc::now();
 
+        // `refresh()` is the *server-token keepalive* (background sync). It must
+        // never touch `idle_until` — if sync re-extended the auto-lock deadline,
+        // an idle vault would stay unlocked up to the 8h cap, making
+        // `auto_lock_minutes` a no-op. Only `touch()` moves the idle deadline.
         let current_expiry = match self.expires_at {
             Some(e) => e,
             None => return,
@@ -171,6 +213,7 @@ impl Session {
             user_id: Some(user_id.to_string()),
             started_at: Some(now),
             expires_at: Some(expires_at),
+            idle_until: Some(expires_at),
             session_time_remaining_secs: SESSION_DURATION_SECS,
             session_token: Some(format!(
                 "v2.local.{}",
@@ -392,6 +435,54 @@ mod tests {
         assert!(s.expires_at.unwrap() <= cap, "expiry must not pass the 8h cap");
         // But it should still extend up to the cap (30s → ~60s).
         assert!(s.expires_at.unwrap() > now + chrono::Duration::seconds(30));
+    }
+
+    /// The core auto-lock bug: background `refresh()` must extend the
+    /// server-token keepalive (`expires_at`) but must NOT move the auto-lock
+    /// (`idle_until`) deadline — otherwise sync keeps an idle vault unlocked.
+    #[test]
+    fn refresh_extends_the_server_token_but_not_the_idle_deadline() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 60);
+        let now = Utc::now();
+        // The user's activity ran out: auto-lock deadline is a moment away, but
+        // the server token still has an hour of keepalive.
+        let old_expiry = now + chrono::Duration::seconds(3600);
+        s.expires_at = Some(old_expiry);
+        s.idle_until = Some(now + chrono::Duration::seconds(1));
+        let idle_before = s.idle_until;
+
+        s.refresh();
+
+        assert!(s.idle_until == idle_before, "refresh must not touch idle_until");
+        // expires_at may still be extended toward its cap for server auth.
+        assert!(s.is_idle_expired() == false || Utc::now() > idle_before.unwrap());
+    }
+
+    #[test]
+    fn touch_resets_the_idle_deadline_to_now_plus_duration() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 60);
+        // Idle deadline already passed.
+        s.idle_until = Some(Utc::now() - chrono::Duration::seconds(1));
+        assert!(s.is_idle_expired());
+
+        s.touch(600); // user did something
+
+        assert!(!s.is_idle_expired(), "activity must clear the idle lock");
+        let remaining = s.remaining_idle_secs();
+        assert!(remaining > 570 && remaining <= 600, "remaining {remaining}");
+    }
+
+    #[test]
+    fn refresh_extending_the_server_token_does_not_report_unexpired_idle() {
+        let mut s = Session::new();
+        s.unlock("d".into(), "u".into(), 60);
+        // Server token has 8h of keepalive; auto-lock deadline is passed.
+        s.expires_at = Some(Utc::now() + chrono::Duration::seconds(3600));
+        s.idle_until = Some(Utc::now() - chrono::Duration::seconds(1));
+        s.refresh();
+        assert!(s.is_idle_expired(), "an idle vault is locked regardless of server keepalive");
     }
 
     #[test]

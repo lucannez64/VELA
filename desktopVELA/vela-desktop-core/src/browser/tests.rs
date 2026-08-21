@@ -135,6 +135,20 @@ fn a_page_that_transformed_the_password_cannot_be_substituted() {
 
 // ── Tier-3 core-perform: the credential goes over the core's own TLS ──────────
 
+/// Tier-3 is on by default; only `VELA_BROWSER_CORE_PERFORM=0` opts it out.
+/// Pins the RT-10 mitigation so a later change doesn't silently flip the
+/// default back to pushing the password through the browser.
+#[test]
+fn tier3_core_perform_is_default_on_and_opt_out_only() {
+    std::env::remove_var("VELA_BROWSER_CORE_PERFORM");
+    assert!(super::intercept::core_perform_enabled(), "default must be core-perform");
+    std::env::set_var("VELA_BROWSER_CORE_PERFORM", "1");
+    assert!(super::intercept::core_perform_enabled());
+    std::env::set_var("VELA_BROWSER_CORE_PERFORM", "0");
+    assert!(!super::intercept::core_perform_enabled(), "=0 must opt out");
+    std::env::remove_var("VELA_BROWSER_CORE_PERFORM");
+}
+
 /// monkeytype (and many SPA sites) authenticate through Firebase Auth: the
 /// login POST goes to the allow-listed `identitytoolkit.googleapis.com`, off
 /// the page's own site, with a JSON body. The Tier-3 interception path lets it
