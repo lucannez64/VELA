@@ -268,7 +268,7 @@ fn main() {
                 );
             }
 
-            let ipc_server = IpcServer::new(state.ipc_capability.clone());
+            let ipc_server = IpcServer::new();
             let host: Arc<dyn vela_desktop::host::Host> =
                 Arc::new(TauriHost(app.handle().clone()));
 

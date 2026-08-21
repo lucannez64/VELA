@@ -1,4 +1,3 @@
-use data_encoding::BASE64URL_NOPAD;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,14 +75,6 @@ pub enum IpcMessageType {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct IpcAuthFile {
-    version: u8,
-    protocol: String,
-    endpoint: String,
-    capability: String,
-}
-
 impl IpcMessage {
     pub fn ping() -> Self {
         Self {
@@ -110,128 +101,109 @@ impl IpcMessage {
     }
 }
 
-pub fn generate_capability() -> String {
-    let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
-    BASE64URL_NOPAD.encode(&bytes)
-}
-
 pub mod server {
-    use super::*;
-    use std::process::Command;
+    //! The desktop side of the autofill bridge.
+    //!
+    //! There is no capability file and no shared secret (issue #149, option
+    //! B): the endpoint is a well-known per-user socket/pipe, and the only
+    //! caller admitted is the VELA native messaging host binary that a
+    //! browser spawned — see [`crate::ipc_gate`] for what that means exactly.
 
-    pub struct IpcServer {
-        capability: String,
+    use super::*;
+    use crate::ipc_gate::{OsProcessTable, authorize_host};
+
+    pub struct IpcServer;
+
+    impl Default for IpcServer {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl IpcServer {
-        pub fn new(capability: String) -> Self {
-            Self { capability }
+        pub fn new() -> Self {
+            Self
         }
 
         pub async fn start(&self, host: Arc<dyn Host>) {
-            let auth_path = host.state().store.store_path().join(IPC_AUTH_FILE);
-            let endpoint = platform_endpoint();
-
-            if let Err(e) =
-                write_auth_file(&auth_path, &self.capability, platform_protocol(), &endpoint)
-            {
-                error!("Failed to write IPC auth file: {}", e);
-                return;
+            // The capability file is gone. Anything left on disk from an
+            // earlier version is a stale bearer token plus an endpoint nobody
+            // listens on — remove it so nothing keeps treating it as live.
+            let legacy = host.state().store.store_path().join(IPC_AUTH_FILE);
+            if legacy.exists() {
+                match std::fs::remove_file(&legacy) {
+                    Ok(()) => info!("Removed legacy {}", IPC_AUTH_FILE),
+                    Err(e) => warn!("Could not remove legacy {}: {}", IPC_AUTH_FILE, e),
+                }
             }
 
-            if let Err(e) = start_platform_server(host, self.capability.clone(), endpoint).await {
+            let endpoint = well_known_endpoint();
+
+            if let Err(e) = start_platform_server(host, endpoint).await {
                 error!("IPC server stopped: {}", e);
             }
         }
     }
 
-    fn write_auth_file(
-        path: &PathBuf,
-        capability: &str,
-        protocol: &str,
-        endpoint: &str,
-    ) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+    /// Where the native messaging host finds us, on every platform, without
+    /// reading any file: a fixed per-user name.
+    ///
+    /// On Unix this lives under `XDG_RUNTIME_DIR` (a 0700 directory on any
+    /// conforming desktop; `/tmp/vela-<uid>` fallback created 0700), so other
+    /// users cannot even see the socket. On Windows, named pipes are
+    /// session-global, so the username namespaces the pipe.
+    #[cfg(unix)]
+    fn runtime_dir() -> PathBuf {
+        let uid = crate::ipc_peer::current_uid();
+        if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+            if !dir.is_empty() {
+                return PathBuf::from(dir).join(format!("vela-{uid}"));
+            }
         }
-
-        let auth = IpcAuthFile {
-            version: 1,
-            protocol: protocol.to_string(),
-            endpoint: endpoint.to_string(),
-            capability: capability.to_string(),
-        };
-        let json = serde_json::to_vec(&auth)?;
-        std::fs::write(path, json)?;
-        restrict_file(path)?;
-        Ok(())
+        std::env::temp_dir().join(format!("vela-{uid}"))
     }
 
-    fn restrict_file(path: &PathBuf) -> std::io::Result<()> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        }
-        #[cfg(windows)]
-        {
-            restrict_file_windows(path)?;
-        }
-        #[cfg(not(any(unix, windows)))]
-        {
-            let _ = path;
-        }
-        Ok(())
+    #[cfg(unix)]
+    fn well_known_endpoint() -> String {
+        runtime_dir().join("desktop.sock").to_string_lossy().to_string()
     }
 
     #[cfg(windows)]
-    fn restrict_file_windows(path: &PathBuf) -> std::io::Result<()> {
-        let user = std::env::var("USERNAME").map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "USERNAME is not set")
-        })?;
-        let domain = std::env::var("USERDOMAIN")
-            .or_else(|_| std::env::var("COMPUTERNAME"))
-            .unwrap_or_default();
-        let principal = if domain.is_empty() {
-            user
-        } else {
-            format!("{domain}\\{user}")
-        };
-
-        let status = Command::new("icacls")
-            .arg(path)
-            .arg("/inheritance:r")
-            .arg("/grant:r")
-            .arg(format!("{principal}:F"))
-            .arg("/grant:r")
-            .arg("*S-1-5-18:F")
-            .arg("/grant:r")
-            .arg("*S-1-5-32-544:F")
-            .status()?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "failed to restrict IPC auth file ACL",
-            ))
-        }
+    fn well_known_endpoint() -> String {
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "user".to_string());
+        let sanitized: String = user
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        format!(r"\\.\pipe\com.vela.VELA.native.{sanitized}")
     }
+
+    #[cfg(not(any(unix, windows)))]
+    fn well_known_endpoint() -> String {
+        String::new()
+    }
+
 
     async fn handle_connection<S>(
         mut stream: S,
         host: Arc<dyn Host>,
-        capability: String,
         peer: PeerIdentity,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
+        // The gate replaces the old capability check (issue #149, B): who may
+        // connect at all is decided here, once, from kernel facts about the
+        // peer — not from anything it says.
+        if let Err(reason) = authorize_host(&OsProcessTable, &peer) {
+            warn!("Refused IPC connection from {}: {}", peer.describe(), reason);
+            return Ok(());
+        }
+        info!("IPC connection accepted from {}", peer.describe());
+
         let message = read_frame(&mut stream).await?;
         let response = match serde_json::from_slice::<IpcMessage>(&message) {
-            Ok(message) => process_message(message, &host, &capability, &peer).await,
+            Ok(message) => process_message(message, &host, &peer).await,
             Err(e) => {
                 warn!("Rejected malformed IPC message: {}", e);
                 IpcMessage::error("Malformed IPC message".to_string())
@@ -247,8 +219,8 @@ pub mod server {
     ///
     /// Two conditions, and the token is neither of them:
     ///
-    ///  * the kernel says the peer runs as us — a token read out of
-    ///    `ipc_auth.json` by something running as another user is not enough; and
+    ///  * the kernel says the peer runs as us, and (since option B) passed
+    ///    the `ipc_gate` checks — a browser-spawned VELA host binary; and
     ///  * the user proved presence within [PLAINTEXT_RELEASE_TTL], where the
     ///    platform can ask. One prompt covers a short burst of fills, because a
     ///    prompt per field would train people to approve without reading, but it
@@ -289,7 +261,7 @@ pub mod server {
                 // auto-lock delivers that: the vault relocks on idle, a locked
                 // vault serves nothing here, and every relock clears any
                 // standing grant. A machine sitting idle cannot be drained by
-                // something that read `ipc_auth.json`.
+                // something that is not allowed to connect at all.
                 //
                 // What is given up is narrower than it looks: code running as
                 // the user, on an unlocked vault, in the same session. A prompt
@@ -330,19 +302,9 @@ pub mod server {
     async fn process_message(
         message: IpcMessage,
         host: &Arc<dyn Host>,
-        capability: &str,
         peer: &PeerIdentity,
     ) -> IpcMessage {
         info!("Processing IPC message: {:?}", message.msg_type);
-
-        // Constant-time comparison so the capability token can't be recovered
-        // byte-by-byte via response timing over the local socket/pipe.
-        use subtle::ConstantTimeEq;
-        let provided = message.capability.as_deref().unwrap_or("");
-        if !bool::from(provided.as_bytes().ct_eq(capability.as_bytes())) {
-            warn!("Rejected IPC message with missing or invalid capability");
-            return IpcMessage::error("Unauthorized IPC request".to_string());
-        }
 
         match message.msg_type {
             IpcMessageType::Ping => IpcMessage::pong(),
@@ -425,11 +387,9 @@ pub mod server {
 
     /// The peer check, restated for passkeys.
     ///
-    /// The capability token is already checked in `process_message` and is not
-    /// worth anything here for the same reason it is not worth anything for a
-    /// plaintext release: anything running as this user can read it out of
-    /// `ipc_auth.json`. What the token cannot forge is the kernel's answer to
-    /// "who is on the other end of this socket".
+    /// What no caller can forge is the kernel's answer to "who is on the
+    /// other end of this socket" — and the connection gate has already used
+    /// it to admit only browser-spawned VELA hosts before we get here.
     fn passkey_peer_is_ours(peer: &PeerIdentity) -> Result<(), String> {
         if !peer.is_same_user() {
             return Err("This request did not come from your own session.".to_string());
@@ -895,8 +855,48 @@ pub mod server {
                 drop(vault);
                 return IpcMessage::error(reason);
             }
-            let items_clone: Vec<_> = items.into_iter().cloned().collect();
-            return autofill_response(items_clone, false);
+            let items: Vec<_> = items.into_iter().cloned().collect();
+            if !items.is_empty() {
+                // Blast-radius limits (issue #149, D). No prompt can tell a
+                // hostile same-uid process from the browser when both ask for
+                // the same site at the same instant, so what bounds that
+                // attacker instead: how many *distinct* domains one unlock is
+                // worth, and how loud each release is. Both fire only when
+                // something was actually released — a miss matches nothing.
+                drop(vault);
+                if let Err(reason) = state.try_record_credential_release(&base_domain) {
+                    warn!(
+                        "Per-unlock domain cap reached at '{base_domain}' for {}",
+                        peer.describe()
+                    );
+                    return IpcMessage::error(reason);
+                }
+                // The audit entry is not decoration: its guarantee is that
+                // every release leaves durable evidence. If it cannot be
+                // written, the release does not happen — a credential handed
+                // out with no record of it is exactly what these limits exist
+                // to prevent. (The cap budget was already spent above; that
+                // is the conservative order.)
+                if let Err(audit_error) = crate::audit::record_audit_event_checked(
+                    &state,
+                    crate::audit::AuditAction::CredentialReleased {
+                        caller: peer.describe(),
+                        domain: base_domain.clone(),
+                    },
+                ) {
+                    warn!(
+                        "Refused plaintext release for '{base_domain}' to {}: audit write failed: {audit_error}",
+                        peer.describe()
+                    );
+                    return IpcMessage::error(
+                        "Credential not filled: the activity log could not be updated. \
+                         Check disk space and try again."
+                            .to_string(),
+                    );
+                }
+                host.show_toast(&format!("Filled {base_domain} for {}", peer.describe()));
+            }
+            return autofill_response(items, false);
         }
 
         let metadata: Vec<_> = items
@@ -1040,48 +1040,8 @@ pub mod server {
     }
 
     #[cfg(windows)]
-    fn platform_protocol() -> &'static str {
-        "windows_named_pipe"
-    }
-
-    #[cfg(windows)]
-    fn platform_endpoint() -> String {
-        format!(
-            r"\\.\pipe\vela-desktop-{}-{}",
-            std::process::id(),
-            random_endpoint_suffix()
-        )
-    }
-
-    #[cfg(unix)]
-    fn platform_protocol() -> &'static str {
-        "unix_socket"
-    }
-
-    #[cfg(unix)]
-    fn platform_endpoint() -> String {
-        let base = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| std::env::temp_dir());
-        base.join(format!(
-            "vela-desktop-{}-{}.sock",
-            std::process::id(),
-            random_endpoint_suffix()
-        ))
-        .to_string_lossy()
-        .to_string()
-    }
-
-    fn random_endpoint_suffix() -> String {
-        let mut bytes = [0u8; 16];
-        getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
-        BASE64URL_NOPAD.encode(&bytes)
-    }
-
-    #[cfg(windows)]
     async fn start_platform_server(
         host: Arc<dyn Host>,
-        capability: String,
         endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::net::windows::named_pipe::ServerOptions;
@@ -1109,13 +1069,12 @@ pub mod server {
             }
 
             let host = host.clone();
-            let capability = capability.clone();
             let peer = crate::ipc_peer::identify_named_pipe(&server);
             tokio::spawn(async move {
                 host.state()
                     .extension_connected
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = handle_connection(server, host.clone(), capability, peer).await {
+                if let Err(e) = handle_connection(server, host.clone(), peer).await {
                     error!("IPC connection error: {}", e);
                 }
                 host.state()
@@ -1128,15 +1087,35 @@ pub mod server {
     #[cfg(unix)]
     async fn start_platform_server(
         host: Arc<dyn Host>,
-        capability: String,
         endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::net::UnixListener;
         use tokio::time::{sleep, Duration};
 
+        // The socket sits in its own per-user directory (0700), so other
+        // users cannot even attempt to connect to it. Creating it here rather
+        // than assuming it exists is what makes the `/tmp/vela-<uid>` fallback
+        // safe; if the directory exists but is not ours, binding would still
+        // work only for someone who could write there — refuse that loudly.
+        {
+            let dir = runtime_dir();
+            match std::fs::create_dir_all(&dir) {
+                Ok(()) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ =
+                            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                    }
+                }
+                Err(e) => {
+                    return Err(format!("could not create IPC runtime dir {}: {e}", dir.display()).into());
+                }
+            }
+        }
+
         let _ = std::fs::remove_file(&endpoint);
         let listener = UnixListener::bind(&endpoint)?;
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&endpoint, std::fs::Permissions::from_mode(0o600))?;
@@ -1153,19 +1132,18 @@ pub mod server {
                 }
             };
             let peer = crate::ipc_peer::identify_unix(&stream);
-            // The socket is already 0600, so this should be unreachable — which
-            // is exactly why it is cheap to enforce and worth enforcing.
+            // The gate refuses same-user strangers anyway; this early check
+            // just avoids handing another user's connection to it at all.
             if !peer.is_same_user() {
                 warn!("Refused IPC connection from another user: {}", peer.describe());
                 continue;
             }
             let host = host.clone();
-            let capability = capability.clone();
             tokio::spawn(async move {
                 host.state()
                     .extension_connected
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = handle_connection(stream, host.clone(), capability, peer).await {
+                if let Err(e) = handle_connection(stream, host.clone(), peer).await {
                     error!("IPC connection error: {}", e);
                 }
                 host.state()
@@ -1178,7 +1156,6 @@ pub mod server {
     #[cfg(not(any(windows, unix)))]
     async fn start_platform_server(
         _host: Arc<dyn Host>,
-        _capability: String,
         _endpoint: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Err("No supported local IPC transport for this platform".into())
@@ -1207,6 +1184,8 @@ pub mod server {
             focus_calls: AtomicUsize,
             quick_search_calls: AtomicUsize,
             notify_calls: AtomicUsize,
+            /// Messages handed to `show_toast`, oldest first.
+            toasts: std::sync::Mutex<Vec<String>>,
             /// What this host answers when asked to confirm presence:
             /// -1 = cannot ask at all, 0 = the user declined, 1 = approved.
             /// Defaults to "cannot ask", so a test that wants a ceremony to
@@ -1227,6 +1206,7 @@ pub mod server {
                     focus_calls: AtomicUsize::new(0),
                     quick_search_calls: AtomicUsize::new(0),
                     notify_calls: AtomicUsize::new(0),
+                    toasts: std::sync::Mutex::new(Vec::new()),
                     presence_answer: AtomicI8::new(-1),
                     presence_prompts: AtomicUsize::new(0),
                 });
@@ -1239,6 +1219,10 @@ pub mod server {
 
             fn notifies(&self) -> usize {
                 self.notify_calls.load(Ordering::SeqCst)
+            }
+
+            fn toasts(&self) -> Vec<String> {
+                self.toasts.lock().unwrap().clone()
             }
 
             fn set_presence_answer(&self, answer: Option<bool>) {
@@ -1274,6 +1258,9 @@ pub mod server {
             fn notify_vault_items_changed(&self) {
                 self.notify_calls.fetch_add(1, Ordering::SeqCst);
             }
+            fn show_toast(&self, message: &str) {
+                self.toasts.lock().unwrap().push(message.to_string());
+            }
             fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
                 self.presence_prompts.fetch_add(1, Ordering::SeqCst);
                 match self.presence_answer.load(Ordering::SeqCst) {
@@ -1284,8 +1271,10 @@ pub mod server {
             }
         }
 
-        fn message(msg_type: IpcMessageType, payload: serde_json::Value, capability: &str) -> IpcMessage {
-            IpcMessage { msg_type, payload, capability: Some(capability.into()) }
+        /// Capability is still accepted on the wire (older callers may send it)
+        /// but is ignored — the connection gate decides everything now.
+        fn message(msg_type: IpcMessageType, payload: serde_json::Value, _capability: &str) -> IpcMessage {
+            IpcMessage { msg_type, payload, capability: Some(_capability.into()) }
         }
 
         #[tokio::test]
@@ -1312,39 +1301,49 @@ pub mod server {
         }
 
         #[tokio::test]
-        async fn write_auth_file_creates_restricted_json() {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("nested").join(IPC_AUTH_FILE);
-            write_auth_file(&path, "cap-123", "unix_socket", "/tmp/x.sock").unwrap();
+        async fn no_capability_file_and_a_well_known_endpoint() {
+            // The old scheme's whole point was a per-boot random endpoint plus
+            // a bearer token in ipc_auth.json. Option B removes both: the
+            // endpoint is derivable without reading anything.
+            let (_dir, _mock) = MockHost::new(false);
 
-            let parsed: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            assert_eq!(parsed["version"], 1);
-            assert_eq!(parsed["capability"], "cap-123");
-            assert_eq!(parsed["protocol"], "unix_socket");
-            assert_eq!(parsed["endpoint"], "/tmp/x.sock");
+            let endpoint = super::server::well_known_endpoint();
+            assert!(
+                !endpoint.contains("ipc_auth"),
+                "endpoint must not be tied to any auth file: {endpoint}"
+            );
 
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-                assert_eq!(mode & 0o777, 0o600);
+                let path = std::path::Path::new(&endpoint);
+                assert_eq!(path.file_name().unwrap(), "desktop.sock");
+                // The directory name carries our uid, so two users never share.
+                let dir = path.parent().unwrap();
+                assert!(
+                    dir.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .contains(&crate::ipc_peer::current_uid().to_string()),
+                    "runtime dir {dir:?} must be namespaced by uid"
+                );
             }
         }
 
         #[tokio::test]
-        async fn rejects_missing_or_wrong_capability() {
+        async fn the_capability_field_is_dead_wire_weight() {
+            // Older callers still send a capability; it is accepted and
+            // ignored. What decides everything now is the connection gate,
+            // covered in ipc_gate's own tests.
             let (_dir, host) = MockHost::new(false);
             let host: Arc<dyn Host> = host;
 
             let no_cap = IpcMessage { msg_type: IpcMessageType::Ping, payload: serde_json::json!({}), capability: None };
-            let resp = process_message(no_cap, &host, "real-cap", &test_peer()).await;
-            assert_eq!(resp.msg_type, IpcMessageType::Error);
-            assert_eq!(resp.payload["message"], "Unauthorized IPC request");
+            let resp = process_message(no_cap, &host, &test_peer()).await;
+            assert_eq!(resp.msg_type, IpcMessageType::Pong);
 
             let wrong = message(IpcMessageType::Ping, serde_json::json!({}), "nope");
-            let resp = process_message(wrong, &host, "real-cap", &test_peer()).await;
-            assert_eq!(resp.payload["message"], "Unauthorized IPC request");
+            let resp = process_message(wrong, &host, &test_peer()).await;
+            assert_eq!(resp.msg_type, IpcMessageType::Pong);
         }
 
         #[tokio::test]
@@ -1352,18 +1351,17 @@ pub mod server {
             let (_dir, mock) = MockHost::new(false);
             let host: Arc<dyn Host> = mock.clone();
 
-            let resp = process_message(message(IpcMessageType::Ping, serde_json::json!({}), "cap"), &host, "cap", &test_peer()).await;
+            let resp = process_message(message(IpcMessageType::Ping, serde_json::json!({}), "cap"), &host, &test_peer()).await;
             assert_eq!(resp.msg_type, IpcMessageType::Pong);
             assert_eq!(resp.payload["connected"], true);
 
-            let resp = process_message(message(IpcMessageType::OpenVault, serde_json::json!({}), "cap"), &host, "cap", &test_peer()).await;
+            let resp = process_message(message(IpcMessageType::OpenVault, serde_json::json!({}), "cap"), &host, &test_peer()).await;
             assert_eq!(resp.msg_type, IpcMessageType::Pong);
             assert_eq!(mock.focuses(), 1, "open_vault surfaces the main window");
 
             let resp = process_message(
                 message(IpcMessageType::BiometricChallenge, serde_json::json!({}), "cap"),
                 &host,
-                "cap",
                 &test_peer(),
             )
             .await;
@@ -1383,7 +1381,6 @@ pub mod server {
                     "cap",
                 ),
                 &host,
-                "cap",
                 &stranger,
             )
             .await;
@@ -1403,7 +1400,6 @@ pub mod server {
                     "cap",
                 ),
                 &host,
-                "cap",
                 &PeerIdentity::default(),
             )
             .await;
@@ -1411,7 +1407,7 @@ pub mod server {
             assert_eq!(resp.msg_type, IpcMessageType::Error, "unknown peer must not read as ours");
         }
 
-        /// The wire names are the contract with `vela-native-messaging-host.py`,
+        /// The wire names are the contract with the native messaging host,
         /// which matches on these strings. A rename here that is not mirrored
         /// there breaks passkeys silently — the host just stops recognising the
         /// reply — so pin them.
@@ -1488,7 +1484,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             seed_passkey(&mock, "github.com");
 
-            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+            let resp = process_message(passkey_get("github.com"), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::PasskeyGetResponse);
             // The stored secret, in the form it is stored in.
@@ -1514,7 +1510,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             seed_passkey(&mock, "github.com");
 
-            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+            let resp = process_message(passkey_get("github.com"), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error, "{:?}", resp.payload);
             assert_eq!(mock.presence_prompts(), 1, "the user must actually have been asked");
@@ -1530,7 +1526,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             seed_passkey(&mock, "github.com");
 
-            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+            let resp = process_message(passkey_get("github.com"), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error);
         }
@@ -1545,7 +1541,7 @@ pub mod server {
             seed_passkey(&mock, "github.com");
 
             for _ in 0..3 {
-                let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+                let resp = process_message(passkey_get("github.com"), &host, &test_peer()).await;
                 assert_eq!(resp.msg_type, IpcMessageType::PasskeyGetResponse);
             }
 
@@ -1563,7 +1559,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             seed_passkey(&mock, "github.com");
 
-            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+            let resp = process_message(passkey_get("github.com"), &host, &test_peer()).await;
 
             let auth_data = b64url_decode(resp.payload["authenticator_data"].as_str()).unwrap();
             assert_eq!(&auth_data[..32], Sha256::digest(b"github.com").as_slice());
@@ -1581,7 +1577,7 @@ pub mod server {
             seed_passkey(&mock, "github.com");
 
             let resp =
-                process_message(passkey_get("evil-github.com"), &host, "cap", &test_peer()).await;
+                process_message(passkey_get("evil-github.com"), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error);
             assert_eq!(mock.presence_prompts(), 0, "a site with no passkey must not prompt");
@@ -1602,7 +1598,7 @@ pub mod server {
                 exe: None,
             };
 
-            let resp = process_message(passkey_get("github.com"), &host, "cap", &stranger).await;
+            let resp = process_message(passkey_get("github.com"), &host, &stranger).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error);
             assert_eq!(mock.presence_prompts(), 0);
@@ -1629,7 +1625,6 @@ pub mod server {
                     "cap",
                 ),
                 &host,
-                "cap",
                 &test_peer(),
             )
             .await;
@@ -1647,8 +1642,8 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             seed_passkey(&mock, "github.com");
 
-            let first = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
-            let second = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+            let first = process_message(passkey_get("github.com"), &host, &test_peer()).await;
+            let second = process_message(passkey_get("github.com"), &host, &test_peer()).await;
 
             let count = |resp: &IpcMessage| {
                 let d = b64url_decode(resp.payload["authenticator_data"].as_str()).unwrap();
@@ -1665,7 +1660,7 @@ pub mod server {
             mock.set_presence_answer(Some(true));
             let host: Arc<dyn Host> = mock.clone();
 
-            let resp = process_message(passkey_get("github.com"), &host, "cap", &test_peer()).await;
+            let resp = process_message(passkey_get("github.com"), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error);
             assert_eq!(mock.presence_prompts(), 0);
@@ -1687,7 +1682,6 @@ pub mod server {
                     "cap",
                 ),
                 &host,
-                "cap",
                 &test_peer(),
             )
             .await;
@@ -1713,7 +1707,6 @@ pub mod server {
                     "cap",
                 ),
                 &host,
-                "cap",
                 &PeerIdentity::default(),
             )
             .await;
@@ -1743,7 +1736,6 @@ pub mod server {
                     "cap",
                 ),
                 &host,
-                "cap",
                 &us,
             )
             .await;
@@ -1782,7 +1774,7 @@ pub mod server {
                 serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &test_peer()).await;
+            let resp = process_message(req, &host, &test_peer()).await;
             assert_eq!(resp.msg_type, IpcMessageType::AutofillResponse);
             assert_eq!(resp.payload["requires_biometric"], true);
             assert_eq!(resp.payload["items"].as_array().unwrap().len(), 0);
@@ -1830,7 +1822,7 @@ pub mod server {
                 serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &peer).await;
+            let resp = process_message(req, &host, &peer).await;
             let items = resp.payload["items"].as_array().unwrap();
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["password"], "s3cret");
@@ -1841,11 +1833,249 @@ pub mod server {
                 serde_json::json!({ "domain": "https://github.com/login", "user_initiated": false }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &peer).await;
+            let resp = process_message(req, &host, &peer).await;
             let items = resp.payload["items"].as_array().unwrap();
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["username"], "alice");
             assert!(items[0].get("password").is_none(), "passive autofill must not leak passwords");
+        }
+
+        /// Issue #149, D: a drain should be visible while it happens, not
+        /// discoverable afterwards. Every actual plaintext release leaves an
+        /// encrypted audit entry naming who got it and for what site.
+        #[tokio::test]
+        async fn a_release_is_audited_with_the_caller_named() {
+            let (_dir, mock) = MockHost::new(true);
+            {
+                let now = chrono::Utc::now();
+                mock.state.vault.write().add_item(VaultItem::Login {
+                    meta: VaultMeta {
+                        id: "1".into(),
+                        name: "GH".into(),
+                        notes: None,
+                        created_at: now,
+                        updated_at: now,
+                        last_modified_device: None,
+                        favorite: false,
+                        shared: false,
+                        share_recipient: None,
+                    },
+                    url: "https://github.com".into(),
+                    username: "alice".into(),
+                    pass: "s3cret".into(),
+                    totp: None,
+                    app_ids: Vec::new(),
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
+                });
+            }
+            let peer = test_peer();
+            mock.state.record_plaintext_release(peer.pid);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
+                "cap",
+            );
+            process_message(req, &host, &peer).await;
+
+            let log = crate::audit::load_audit_log(&mock.state).unwrap();
+            let released: Vec<_> = log
+                .entries
+                .iter()
+                .filter_map(|e| match &e.action {
+                    crate::audit::AuditAction::CredentialReleased { caller, domain } => {
+                        Some((caller.as_str(), domain.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                released,
+                [(peer.describe().as_str(), "github.com")],
+                "the audit entry names who got the credential and for what site"
+            );
+
+            // And the same release surfaces as a toast naming both halves.
+            let toasts = mock.toasts();
+            assert_eq!(toasts, [format!("Filled github.com for {}", peer.describe())]);
+        }
+
+        /// The audit entry is a precondition, not a side effect: when the
+        /// encrypted log cannot be written (full disk, broken permissions),
+        /// the release is refused — no secret leaves without its record.
+        #[tokio::test]
+        #[cfg(unix)]
+        async fn a_release_is_refused_when_its_audit_entry_cannot_be_written() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let (_dir, mock) = MockHost::new(true);
+            {
+                let now = chrono::Utc::now();
+                mock.state.vault.write().add_item(VaultItem::Login {
+                    meta: VaultMeta {
+                        id: "1".into(),
+                        name: "GH".into(),
+                        notes: None,
+                        created_at: now,
+                        updated_at: now,
+                        last_modified_device: None,
+                        favorite: false,
+                        shared: false,
+                        share_recipient: None,
+                    },
+                    url: "https://github.com".into(),
+                    username: "alice".into(),
+                    pass: "s3cret".into(),
+                    totp: None,
+                    app_ids: Vec::new(),
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
+                });
+            }
+            let peer = test_peer();
+            mock.state.record_plaintext_release(peer.pid);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let store_dir = mock.state.store.store_path();
+            let restore_perms = |mode: u32| {
+                std::fs::set_permissions(
+                    &store_dir,
+                    std::fs::Permissions::from_mode(mode),
+                )
+                .unwrap();
+            };
+            // Read-only store directory: reads still work (the existing log
+            // loads), writes fail. Restore afterwards so the tempdir can be
+            // cleaned up.
+            restore_perms(0o555);
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &peer).await;
+            restore_perms(0o755);
+
+            assert_eq!(resp.msg_type, IpcMessageType::Error, "{resp:?}");
+            assert!(
+                resp.payload["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("activity log"),
+                "{resp:?}"
+            );
+            // And nothing was given out: no items, no toast.
+            assert!(mock.toasts().is_empty(), "no audit entry, no release");
+        }
+
+        /// A request that matches nothing releases nothing — so it must not
+        /// burn cap budget, write audit entries, or raise toasts.
+        #[tokio::test]
+        async fn a_missed_match_is_not_a_release() {            let (_dir, mock) = MockHost::new(true);
+            let peer = test_peer();
+            mock.state.record_plaintext_release(peer.pid);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://nowhere.example", "user_initiated": true }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &peer).await;
+            assert_eq!(resp.payload["items"].as_array().unwrap().len(), 0);
+
+            let log = crate::audit::load_audit_log(&mock.state).unwrap();
+            assert!(
+                !log.entries.iter().any(|e| matches!(
+                    e.action,
+                    crate::audit::AuditAction::CredentialReleased { .. }
+                )),
+                "no release, no entry"
+            );
+            assert!(mock.toasts().is_empty(), "no release, no toast");
+        }
+
+        /// Issue #149, D: one unlock is only worth so many *distinct* domains.
+        /// An enumerator working a candidate-site list hits the wall; repeats
+        /// of a domain already served stay free, because the cap bounds how
+        /// much a session can be drained for, not how often the user fills
+        /// the same site.
+        #[tokio::test]
+        async fn one_unlock_only_releases_so_many_distinct_domains() {
+            let (_dir, mock) = MockHost::new(true);
+            {
+                let mut vault = mock.state.vault.write();
+                for i in 0..(crate::MAX_RELEASED_DOMAINS_PER_UNLOCK + 1) {
+                    let now = chrono::Utc::now();
+                    vault.add_item(VaultItem::Login {
+                        meta: VaultMeta {
+                            id: format!("item{i}"),
+                            name: format!("Site{i}"),
+                            notes: None,
+                            created_at: now,
+                            updated_at: now,
+                            last_modified_device: None,
+                            favorite: false,
+                            shared: false,
+                            share_recipient: None,
+                        },
+                        url: format!("https://site{i}.example"),
+                        username: "alice".into(),
+                        pass: "s3cret".into(),
+                        totp: None,
+                        app_ids: Vec::new(),
+                        credential_change_needs_reauth: None,
+                        allow_second_factor_downgrade: None,
+                    });
+                }
+            }
+            let peer = test_peer();
+            mock.state.record_plaintext_release(peer.pid);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let fill = |i: usize| {
+                message(
+                    IpcMessageType::AutofillRequest,
+                    serde_json::json!({
+                        "domain": format!("https://site{i}.example/login"),
+                        "user_initiated": true
+                    }),
+                    "cap",
+                )
+            };
+
+            // The whole budget releases normally...
+            for i in 0..crate::MAX_RELEASED_DOMAINS_PER_UNLOCK {
+                let resp = process_message(fill(i), &host, &peer).await;
+                assert_eq!(resp.msg_type, IpcMessageType::AutofillResponse, "site {i}");
+            }
+            // ...then a new domain is refused outright...
+            let resp = process_message(
+                fill(crate::MAX_RELEASED_DOMAINS_PER_UNLOCK),
+                &host,
+                &peer,
+            )
+            .await;
+            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            // ...while an already-served domain keeps working.
+            let resp = process_message(fill(0), &host, &peer).await;
+            assert_eq!(resp.msg_type, IpcMessageType::AutofillResponse);
+            assert_eq!(
+                mock.toasts().len(),
+                crate::MAX_RELEASED_DOMAINS_PER_UNLOCK + 1
+            );
+
+            // Relocking resets the budget along with the standing grant.
+            mock.state.clear_plaintext_release();
+            let resp = process_message(
+                fill(crate::MAX_RELEASED_DOMAINS_PER_UNLOCK),
+                &host,
+                &peer,
+            )
+            .await;
+            assert_eq!(resp.msg_type, IpcMessageType::AutofillResponse);
         }
 
         #[tokio::test]
@@ -1859,7 +2089,7 @@ pub mod server {
                 serde_json::json!({ "username": "alice", "password": "", "url": "https://github.com" }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &test_peer()).await;
+            let resp = process_message(req, &host, &test_peer()).await;
             assert_eq!(resp.payload["success"], false);
             assert_eq!(resp.payload["error"], "Password is required");
 
@@ -1870,7 +2100,7 @@ pub mod server {
                 serde_json::json!({ "username": "alice", "password": "pw", "url": "https://github.com/login", "name": "" }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &test_peer()).await;
+            let resp = process_message(req, &host, &test_peer()).await;
             assert_eq!(resp.payload["success"], true);
             assert!(!resp.payload["id"].as_str().unwrap().is_empty());
             assert_eq!(mock.notifies(), 1);
@@ -1891,7 +2121,7 @@ pub mod server {
                 serde_json::json!({ "username": "alice", "password": "pw", "url": "https://github.com" }),
                 "cap",
             );
-            let resp = process_message(req, &host, "cap", &test_peer()).await;
+            let resp = process_message(req, &host, &test_peer()).await;
             assert_eq!(resp.payload["success"], false);
             assert_eq!(resp.payload["error"], "Vault is locked");
             assert_eq!(mock.focuses(), 1);
@@ -1973,7 +2203,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             let (_server, item_id) = seed_site_and_login(&mock).await;
 
-            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+            let resp = process_message(in_core_login(&item_id), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::InCoreLoginResponse);
             let rendered = serde_json::to_string(&resp).unwrap();
@@ -1997,7 +2227,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             let (server, item_id) = seed_site_and_login(&mock).await;
 
-            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+            let resp = process_message(in_core_login(&item_id), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error);
             assert_eq!(mock.presence_prompts(), 1, "the user should have been asked");
@@ -2019,7 +2249,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             let (server, item_id) = seed_site_and_login(&mock).await;
 
-            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+            let resp = process_message(in_core_login(&item_id), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error);
             assert!(server.received_requests().await.unwrap().is_empty());
@@ -2034,7 +2264,7 @@ pub mod server {
             mock.set_presence_answer(Some(true));
             let host: Arc<dyn Host> = mock.clone();
 
-            let resp = process_message(in_core_login("login-1"), &host, "cap", &test_peer()).await;
+            let resp = process_message(in_core_login("login-1"), &host, &test_peer()).await;
 
             assert_eq!(resp.msg_type, IpcMessageType::Error);
             assert_eq!(resp.payload["message"], "Vault is locked");
@@ -2053,7 +2283,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             let (_server, item_id) = seed_site_and_login(&mock).await;
 
-            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+            let resp = process_message(in_core_login(&item_id), &host, &test_peer()).await;
 
             assert_eq!(resp.payload["site_mode"], "self_serve");
             assert!(
@@ -2082,7 +2312,6 @@ pub mod server {
                     "cap",
                 ),
                 &host,
-                "cap",
                 &test_peer(),
             )
             .await;
@@ -2100,7 +2329,7 @@ pub mod server {
         }
 
         /// The payload keys are a contract too, and a quieter one than the
-        /// message names: `vela-native-messaging-host.py` reads these strings
+        /// message names: the native messaging host reads these strings
         /// out of the reply, and a rename here produces a login that "succeeds"
         /// with no cookies rather than an error anyone would notice. Pinning
         /// the exact key set means a field added, removed or renamed in
@@ -2115,7 +2344,7 @@ pub mod server {
             let host: Arc<dyn Host> = mock.clone();
             let (_server, item_id) = seed_site_and_login(&mock).await;
 
-            let resp = process_message(in_core_login(&item_id), &host, "cap", &test_peer()).await;
+            let resp = process_message(in_core_login(&item_id), &host, &test_peer()).await;
 
             let mut keys: Vec<&str> = resp
                 .payload
@@ -2155,7 +2384,7 @@ pub mod server {
             );
         }
 
-        /// Same contract as the passkey names: `vela-native-messaging-host.py`
+        /// Same contract as the passkey names: the native messaging host
         /// matches on these strings, so a silent rename breaks the feature.
         #[test]
         fn in_core_login_message_types_have_the_wire_names_the_native_host_expects() {
@@ -2202,16 +2431,6 @@ fn extract_base_domain(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn capability_tokens_are_unique_and_url_safe() {
-        let a = generate_capability();
-        let b = generate_capability();
-        assert_ne!(a, b);
-        // 32 random bytes → 43 base64url-nopad chars.
-        assert_eq!(a.len(), 43);
-        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
-    }
 
     #[test]
     fn extract_base_domain_returns_full_lowercase_host() {

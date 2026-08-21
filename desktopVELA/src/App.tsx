@@ -106,6 +106,9 @@ function AppContent() {
   const clearClipboardRef = useRef(clearClipboard);
   clearClipboardRef.current = clearClipboard;
 
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+
   const refreshSession = async () => {
     try {
       const status = await invoke<SessionStatus>('get_session_status');
@@ -182,11 +185,19 @@ function AppContent() {
       loadItems();
     });
 
+    // Non-blocking notifications raised by the Rust core on its own threads
+    // (a credential just filled into a browser, most commonly). Info-level:
+    // it reports what already happened, it does not ask anything.
+    const unlistenBackendToast = listen<string>('backend-toast', event => {
+      showToastRef.current(event.payload, 'info');
+    });
+
     return () => {
       unlistenSessionLocked.then(fn => fn());
       unlistenOpenItem.then(fn => fn());
       unlistenSync.then(fn => fn());
       unlistenVaultItemsChanged.then(fn => fn());
+      unlistenBackendToast.then(fn => fn());
     };
     // Mount-once bootstrap: loads settings/items and wires listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps

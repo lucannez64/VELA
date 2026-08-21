@@ -25,7 +25,7 @@ extension/
 ├── manifests/             # Browser-specific manifest templates
 │   ├── chrome.json
 │   └── firefox.json
-├── native-messaging/      # Native messaging hosts
+├── native-messaging/      # Native messaging registration
 │   ├── chromium/
 │   │   └── manifest.json
 │   ├── firefox/
@@ -33,8 +33,9 @@ extension/
 │   ├── register-host.sh          # All Chromium browsers (Linux/macOS)
 │   ├── register-host.bat         # All Chromium browsers (Windows)
 │   ├── register-firefox-host.sh  # All Gecko browsers (Linux/macOS)
-│   ├── register-firefox-host.bat # All Gecko browsers (Windows)
-│   └── vela-native-messaging-host.py
+│   └── register-firefox-host.bat # All Gecko browsers (Windows)
+│
+│   (the host binary itself lives in desktopVELA/vela-nm-host)
 ├── src/
 │   ├── background/        # Service worker (background.js)
 │   ├── content/           # Content scripts for autofill
@@ -128,13 +129,13 @@ unsigned add-ons.
 
 ### Native Messaging Setup
 
-Native messaging is required. The extension does not talk to localhost HTTP; it sends requests through the browser native messaging API, and the host relays them to the desktop app over an OS-protected pipe/socket with a per-session capability token.
+Native messaging is required. The extension does not talk to localhost HTTP; it sends requests through the browser native messaging API, and the host relays them to the desktop app over a well-known per-user pipe/socket. There is no capability token: the desktop admits only the VELA host binary that a browser spawned (`desktopVELA/vela-nm-host`).
 
 #### All Chromium Browsers
 
 ```bash
 # Linux / macOS
-chmod +x native-messaging/register-host.sh native-messaging/vela-native-messaging-host.py
+cd ../desktopVELA && cargo build --release -p vela-nm-host && cd ../extension
 export VELA_CHROME_EXTENSION_ID=<your-audited-extension-id>
 ./native-messaging/register-host.sh
 ```
@@ -147,7 +148,7 @@ This registers for: Chrome, Edge, Brave, Thorium, Helium, Vivaldi, Opera, Arc.
 
 ```bash
 # Linux / macOS
-chmod +x native-messaging/register-firefox-host.sh native-messaging/vela-native-messaging-host.py
+cd ../desktopVELA && cargo build --release -p vela-nm-host && cd ../extension
 ./native-messaging/register-firefox-host.sh
 ```
 
@@ -165,8 +166,10 @@ This registers for: Firefox, Zen Browser, Waterfox, Floorp, LibreWolf.
 ### Testing Native Messaging
 
 ```bash
-python3 native-messaging/vela-native-messaging-host.py
-echo -e "Content-Length: 16\n\n{\"action\":\"ping\"}" | python3 native-messaging/vela-native-messaging-host.py
+cd ../desktopVELA && cargo build --release -p vela-nm-host && cd ../extension
+echo '{"action":"ping"}' | \
+  ../desktopVELA/target/release/vela-native-messaging-host
+# (framed on stdin; with the desktop app running this answers {"success":true,...})
 ```
 
 ## Security

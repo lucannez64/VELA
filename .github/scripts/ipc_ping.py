@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """CI smoke check for the extension<->desktop bridge.
 
-Drives the *real* native-messaging host (passed as argv[1]) with a framed
-`{"action":"ping"}` and asserts it reaches the running VELA desktop app and
-gets a pong back. Exercises the same code path the browser extension uses:
-host -> reads ipc_auth.json -> connects to the desktop IPC socket -> ping/pong.
+Drives the *real* native messaging host binary (passed as argv[1]) with a
+framed `{"action":"ping"}` and asserts it reaches the running VELA desktop
+app and gets a pong back. Exercises the same code path the browser extension
+uses: browser -> host over stdio -> well-known per-user endpoint -> desktop
+connection gate -> ping/pong.
+
+Since issue #149 option B there is no capability file; the desktop admits a
+host that a browser spawned. In CI nothing spawned us from a browser, so set
+VELA_NM_BROWSER_NAMES to a real ancestor's executable name before calling.
 """
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -19,12 +25,21 @@ def frame(obj):
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: ipc_ping.py <path-to-native-messaging-host.py>")
+        print("usage: ipc_ping.py <path-to-vela-native-messaging-host>")
         return 2
 
     host = sys.argv[1]
+    # CI-controlled input, but validated anyway: this must be an existing
+    # executable file, not something a stray argument turns into a shell word.
+    if not (os.path.isfile(host) and os.access(host, os.X_OK)):
+        print(f"not an executable file: {host}")
+        return 2
+
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+    # — argv-list form (no shell), path validated above; this script exists to
+    # execute the host binary it is handed.
     proc = subprocess.Popen(
-        [sys.executable, host],
+        [host],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

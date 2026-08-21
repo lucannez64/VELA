@@ -1,17 +1,16 @@
 //! Who is on the other end of the IPC connection.
 //!
-//! The capability token is a bearer written to `ipc_auth.json` (0600). Any
-//! process running as the same user can read that file and then speak to us as
-//! if it were the browser extension, which is how a plaintext password could
-//! leave the app without the user doing anything (audit D-4).
-//!
-//! The kernel already knows who connected. Asking it costs nothing and cannot
-//! be forged by the peer: `SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS and
-//! the BSDs, `GetNamedPipeClientProcessId` on Windows. That does not stop a
+//! There is no capability token any more (issue #149, option B removed the
+//! `ipc_auth.json` bearer): what a caller *says* proves nothing, because
+//! anything running as this user could read whatever file we once shared with
+//! it. What cannot be forged by the peer is the kernel's answer to "who is on
+//! the other end": `SO_PEERCRED` on Linux, `LOCAL_PEERCRED`/`LOCAL_PEERPID` on
+//! macOS and `GetNamedPipeClientProcessId` on Windows. That does not stop a
 //! process that legitimately runs as the user, but it turns an anonymous
-//! request into a named one — which is what lets the release be shown to the
-//! user, rate-limited per caller, and refused outright when it comes from
-//! something that is not the browser we expect.
+//! request into a named one — which is what lets the connection gate
+//! (`ipc_gate`) verify the peer is a browser-spawned VELA host binary, and
+//! what lets a plaintext release be bound to a pid, audited per caller, and
+//! refused outright when it comes from something that is not expected.
 
 use std::path::PathBuf;
 
@@ -71,7 +70,11 @@ pub fn current_uid() -> u32 {
 }
 
 /// Resolve a pid to its executable path, where the platform allows it.
-fn exe_for_pid(pid: u32) -> Option<PathBuf> {
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos", windows)),
+    allow(dead_code)
+)]
+pub(crate) fn exe_for_pid(pid: u32) -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         std::fs::read_link(format!("/proc/{pid}/exe")).ok()
@@ -89,10 +92,123 @@ fn exe_for_pid(pid: u32) -> Option<PathBuf> {
         buf.truncate(len as usize);
         Some(PathBuf::from(String::from_utf8_lossy(&buf).to_string()))
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+            PROCESS_NAME_WIN32,
+        };
+
+        // SAFETY: `pid` names a possibly-live process; OpenProcess either
+        // yields a handle we close below or fails. The buffer and its length
+        // are passed as a pair, as the API requires.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let result = QueryFullProcessImageNameW(
+                HANDLE(handle.0),
+                PROCESS_NAME_WIN32,
+                windows::core::PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            );
+            let _ = windows::Win32::Foundation::CloseHandle(HANDLE(handle.0));
+            if result.is_err() || len == 0 {
+                return None;
+            }
+            Some(PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = pid;
         None
+    }
+}
+
+/// The pid of `pid`'s parent process, where the platform allows it.
+///
+/// Best-effort and racy by nature: the parent may exit between the connect
+/// and this lookup, and pids can be recycled. Callers treat "unknown" as
+/// refusal, never as a pass.
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), allow(dead_code))]
+pub fn parent_pid(pid: u32) -> Option<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        // /proc/<pid>/stat: fields after the final ')' are space-separated,
+        // the first being the process state and the second being ppid (comm
+        // may contain spaces and parentheses, so everything before the last
+        // ')' is skipped wholesale).
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let rest = stat.rsplit_once(')')?.1;
+        let ppid = rest.split_whitespace().nth(1)?.parse::<u32>().ok()?;
+        (ppid > 0).then_some(ppid)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // No cheap libc-only route to ppid; `ps` is always present on macOS.
+        let out = std::process::Command::new("ps")
+            .args(["-o", "ppid=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        std::str::from_utf8(&out.stdout)
+            .ok()?
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|p| *p > 0)
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        };
+
+        // SAFETY: the snapshot handle is closed before every return; the
+        // PROCESSENTRY32W struct is size-initialised as the API demands and
+        // only ever written by Process32*W.
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+            let _guard = HandleGuard(snapshot);
+            let mut entry = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            if Process32FirstW(snapshot, &mut entry).is_err() {
+                return None;
+            }
+            loop {
+                if entry.th32ProcessID == pid {
+                    let ppid = entry.th32ParentProcessID;
+                    return (ppid > 0).then_some(ppid);
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    return None;
+                }
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+#[cfg(windows)]
+struct HandleGuard(windows::Win32::Foundation::HANDLE);
+#[cfg(windows)]
+impl Drop for HandleGuard {
+    fn drop(&mut self) {
+        // SAFETY: closing a handle we own exactly once.
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(self.0);
+        }
     }
 }
 
@@ -193,7 +309,7 @@ pub fn identify_named_pipe<S: std::os::windows::io::AsRawHandle>(pipe: &S) -> Pe
     // A named pipe with reject_remote_clients only accepts local callers, and
     // the pipe's DACL already restricts it to this user; there is no cheap uid
     // equivalent to read here, so same-user is enforced by the DACL alone.
-    PeerIdentity { pid: Some(pid), uid: Some(current_uid()), exe: None }
+    PeerIdentity { pid: Some(pid), uid: Some(current_uid()), exe: exe_for_pid(pid) }
 }
 
 #[cfg(test)]

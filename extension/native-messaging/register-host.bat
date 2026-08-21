@@ -6,9 +6,8 @@ REM Run this as Administrator or current user
 SET APP_PATH=%~dp0
 SET APP_PATH=%APP_PATH:~0,-1%
 SET MANIFEST_PATH=%APP_PATH%\chromium\manifest.local.json
-SET HOST_EXE=%APP_PATH%\vela-native-messaging-host.exe
-SET HOST_SCRIPT=%APP_PATH%\vela-native-messaging-host.py
-SET HOST_WRAPPER_SOURCE=%APP_PATH%\vela-native-messaging-host-win.rs
+SET HOST_EXE=%VELA_NM_HOST_PATH%
+IF "%HOST_EXE%"=="" SET HOST_EXE=%APP_PATH%\vela-native-messaging-host.exe
 SET HOST_NAME=com.vela.desktop
 
 IF "%VELA_CHROME_EXTENSION_ID%"=="" (
@@ -16,19 +15,15 @@ IF "%VELA_CHROME_EXTENSION_ID%"=="" (
   exit /b 1
 )
 
-IF NOT EXIST "%HOST_SCRIPT%" (
-  echo ERROR: native messaging host script not found: %HOST_SCRIPT%
-  exit /b 1
-)
-
+REM The compiled Rust host (vela-nm-host). Since issue #149 option B there is
+REM no capability file and no Python dependency: the browser spawns this one
+REM self-contained binary over stdio. Build it with:
+REM   cd desktopVELA && cargo build --release -p vela-nm-host
 IF NOT EXIST "%HOST_EXE%" (
-  where rustc >nul 2>&1
-  if %errorlevel% neq 0 (
-    echo ERROR: %HOST_EXE% not found and rustc is not available to build it.
-    exit /b 1
-  )
-  rustc "%HOST_WRAPPER_SOURCE%" -O -o "%HOST_EXE%"
-  if %errorlevel% neq 0 exit /b %errorlevel%
+  echo ERROR: native messaging host binary not found: %HOST_EXE%
+  echo Build it with: cd desktopVELA ^&^& cargo build --release -p vela-nm-host
+  echo or set VELA_NM_HOST_PATH to its location.
+  exit /b 1
 )
 
 SET MANIFEST_HOST_PATH=%HOST_EXE:\=\\%

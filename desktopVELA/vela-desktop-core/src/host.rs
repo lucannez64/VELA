@@ -28,6 +28,15 @@ pub trait Host: Send + Sync + 'static {
     /// import, ...) so any open list view can refresh.
     fn notify_vault_items_changed(&self);
 
+    /// Show a non-blocking notification in the app's own UI (a saved
+    /// credential was just handed to a caller over IPC: "filled github.com
+    /// for firefox"). Part of the #149 blast-radius limits — a drain should
+    /// be visible while it happens, not discoverable afterwards.
+    ///
+    /// Must not block and must not require interaction; a host that cannot
+    /// show anything right now may drop the message.
+    fn show_toast(&self, message: &str);
+
     /// Put a blocking yes/no question to the user in the app's own window, and
     /// report what they said.
     ///

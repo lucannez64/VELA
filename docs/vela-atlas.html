@@ -291,7 +291,7 @@ const NODES = [
   what:["What survives a restart. Nothing lands here in plaintext: the vault, the audit log, the share list and the conflict list are each sealed under their own derived key before they touch the disk."],
   built:["Per-file envelopes (`vault.enc`, `audit.enc`, `shares.enc`, `conflicts.enc`) written under the app data directory, each opened only after the RMS is available."],
   cond:["A file's freshness on disk is not authenticated against the server's view — rollback protection lives in the sync engine's Lamport check, not here."],
-  inside:[["vault.enc","sealed items"],["audit.enc","sealed local audit trail"],["shares.enc","sealed inbox / linked shares"],["conflicts.enc","sealed unresolved merges"],["ipc_auth.json","endpoint + capability for the extension"]] },
+  inside:[["vault.enc","sealed items"],["audit.enc","sealed local audit trail"],["shares.enc","sealed inbox / linked shares"],["conflicts.enc","sealed unresolved merges"]] },
 
 { id:"SYN", key:"C", label:"Sync engine", group:"vault", gx:11, gy:9, w:3, d:3, h:3.8,
   files:["desktopVELA/vela-desktop-core/src/sync.rs","desktopVELA/src-tauri/src/commands/sync.rs"],
@@ -450,23 +450,23 @@ const NODES = [
   what:["Finds the login form on the page, asks for a credential, and offers to save a new one. 1,710 lines of the content script are field detection, which is where the real difficulty of autofill lives.",
         "It has **no vault access of its own**. It cannot reach the desktop app over localhost HTTP either — that path was removed."],
   built:["Manifest v3 with separate Chromium and Firefox manifests. The background service worker is the only part that speaks to the native messaging host."],
-  cond:["Any page it runs on is hostile by assumption; nothing it sends is trusted by the desktop side without a capability token and a presence check."],
+  cond:["Any page it runs on is hostile by assumption; nothing it sends is trusted by the desktop side — the gate verifies the process, and presence plus blast-radius limits bound what a verified caller gets."],
   inside:[["detect","find username/password fields on the page"],["request","ask background for a credential for this host"],["fill","write into the fields, never into the DOM as text"],["offer save","new credential → SaveCredentials"]] },
 
 { id:"NMH", key:"NM", label:"Native messaging host", group:"clients", gx:-1, gy:-3, w:2, d:2, h:1.6,
-  files:["extension/native-messaging/vela-native-messaging-host.py","extension/native-messaging/chrome/","extension/native-messaging/firefox/"],
+  files:["desktopVELA/vela-nm-host/src/main.rs","extension/native-messaging/chrome/","extension/native-messaging/firefox/"],
   what:["The bridge the browser is willing to launch. It exists because the alternative — a localhost HTTP listener — is reachable by every page in every browser, and this is reachable only by extensions the OS-level manifest names."],
-  built:["A 357-line Python host, spoken to over stdio with the standard 4-byte little-endian length prefix, relaying to the desktop app's Unix socket or Windows named pipe."],
-  cond:["Registration is per-browser and per-user; a manifest in the wrong directory means silent failure to connect."],
-  inside:[["stdio","4-byte length prefix + JSON"],["locate","read ipc_auth.json for endpoint + capability"],["connect","unix socket / named pipe"],["relay","message in, response out"]] },
+  built:["A self-contained Rust binary (vela-nm-host), spoken to over stdio with the standard 4-byte little-endian length prefix, relaying to the desktop app's well-known per-user Unix socket or Windows named pipe. No capability file exists: the desktop authenticates the process, not a token."],
+  cond:["Registration is per-browser and per-user; a manifest in the wrong directory means silent failure to connect. The desktop additionally refuses any connection that is not this binary spawned by a browser."],
+  inside:[["stdio","4-byte length prefix + JSON"],["locate","derive the well-known per-user endpoint; nothing to read"],["connect","unix socket / named pipe"],["relay","message in, response out"]] },
 
 { id:"IPC", key:"IPC", label:"IPC socket server", group:"clients", gx:-1, gy:4, w:2, d:2, h:3.2,
   files:["desktopVELA/vela-desktop-core/src/ipc.rs","desktopVELA/vela-desktop-core/src/ipc_peer.rs"],
   what:["The desktop app's only door for the browser, and the tightest one on the map. **OS-protected transport only** — a Unix socket or a Windows named pipe, never a TCP port.",
-        "Three things must hold before a plaintext credential leaves: a valid per-session **capability token**, a peer whose identity the OS confirms, and a fresh presence proof from the user. The release is recorded with the caller's pid and timestamp, held in memory only."],
-  built:["Newline-delimited JSON `IpcMessage { msg_type, payload, capability }`, capped at 1 MiB per message. The capability is 32 random bytes, base64url, regenerated every session and written to `ipc_auth.json` for the host to read. Host matching for autofill hands the full host to `urls_match` so the Public Suffix List decides, rather than truncating labels."],
-  cond:["The extension's own trustworthiness is not verifiable from here — only the transport, the capability and the user's confirmation are."],
-  inside:[["listen","unix socket / named pipe, 0600"],["capability","32-byte token, per session"],["peer identity","OS-level check on the connecting process"],["urls_match","PSL-aware, full host"],["biometric","presence proof before plaintext"],["respond","AutofillResponse / SaveResponse"]] },
+        "Three things must hold before a plaintext credential leaves: the connection came from a browser-spawned VELA host binary (kernel-verified), the user proved presence where the platform can ask, and the per-unlock domain budget is not spent. The release is recorded with the caller's pid, an audit entry names caller and domain, and a toast says so on screen."],
+  built:["Newline-delimited JSON `IpcMessage { msg_type, payload }`, capped at 1 MiB per message. There is no capability token: authentication is who connected, not what they say. Host matching for autofill hands the full host to `urls_match` so the Public Suffix List decides, rather than truncating labels."],
+  cond:["The extension's own trustworthiness is not verifiable from here — only the transport, the process behind it, and the user's confirmation are."],
+  inside:[["listen","well-known per-user socket / pipe, 0600"],["gate","same-user + VELA host binary + browser ancestor"],["peer identity","OS-level check on the connecting process"],["urls_match","PSL-aware, full host"],["biometric","presence proof before plaintext"],["audit+toast","every release recorded and surfaced"]] },
 
 { id:"TAU", key:"U", label:"Tauri + React", group:"clients", gx:-5, gy:4, w:3, d:3, h:1.9,
   files:["desktopVELA/src-tauri/src/commands/","desktopVELA/src/App.tsx","desktopVELA/src/views/"],
@@ -691,18 +691,18 @@ key    {DATA_DIR}/paseto.key (0600) when PASETO_SECRET_KEY is unset`,
   "url":  "https://github.com/login",
   "host": "github.com" }`,
     note:"The content script found a form. It has no vault access of its own, and the localhost HTTP path it used to have is gone." }},
-  { a:"NMH", b:"IPC", bend:"y", p:{ t:"Over the OS transport", kind:"native messaging", src:"extension/native-messaging/vela-native-messaging-host.py",
+  { a:"NMH", b:"IPC", bend:"y", p:{ t:"Over the OS transport", kind:"native messaging", src:"desktopVELA/vela-nm-host/src/main.rs",
     body:`stdio   <4-byte LE length> ‖ json
-then    unix socket  /run/user/1000/vela.sock       (0600)
-        or  \\\\.\\pipe\\vela-<session>
+then    unix socket  $XDG_RUNTIME_DIR/vela-<uid>/desktop.sock   (0600, dir 0700)
+        or  \\\\.\\pipe\\com.vela.VELA.native.<user>
 
 { "msg_type": "autofill_request",
-  "capability": "kQ7f…",                 32 B, base64url, per session
-  "payload": { "url": "https://github.com/login" } }`,
+  "payload": { "url": "https://github.com/login" } }   (no capability — none exists)`,
     note:"A named pipe or a Unix socket is reachable only by processes the OS lets in. A localhost port is reachable by every page in every browser — which is why this replaced it." }},
   { a:"IPC", b:"VLT", bend:"y", p:{ t:"Who is asking, and for what", kind:"checks", src:"vela-desktop-core/src/ipc.rs",
-    body:`capability matches this session?      yes
-peer identity confirmed by the OS?    yes
+    body:`peer is same user (kernel)?          yes
+peer is the VELA host binary?         yes
+spawned by a browser?                 yes
 message ≤ 1 MiB?                      yes
 
 urls_match("https://github.com/login", item.url)

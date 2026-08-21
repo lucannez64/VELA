@@ -82,6 +82,7 @@ fn action_label_icon(action: &AuditAction) -> (&'static str, &'static str) {
         AuditAction::PlaintextIdentityKeysMigrated => {
             ("Device keys were stored unencrypted", "warning")
         }
+        AuditAction::CredentialReleased { .. } => ("Credential filled", "key"),
     }
 }
 
@@ -116,6 +117,9 @@ fn action_details(action: &AuditAction) -> Option<String> {
             Some(item_type.clone())
         }
         AuditAction::PasswordGenerated { length } => Some(format!("{length} characters")),
+        AuditAction::CredentialReleased { caller, domain } => {
+            Some(format!("{domain} → {caller}"))
+        }
         _ => None,
     }
 }
@@ -388,6 +392,10 @@ mod tests {
             AuditAction::PasswordGenerated { length: 20 },
             AuditAction::SettingsChanged,
             AuditAction::WebSessionGranted { mode: "ro".into(), ttl_secs: 60 },
+            AuditAction::CredentialReleased {
+                caller: "firefox (pid 4321)".into(),
+                domain: "github.com".into(),
+            },
         ];
         for action in &actions {
             let (label, icon) = action_label_icon(action);
@@ -410,6 +418,13 @@ mod tests {
         assert_eq!(
             action_details(&AuditAction::PasswordGenerated { length: 20 }),
             Some("20 characters".into())
+        );
+        assert_eq!(
+            action_details(&AuditAction::CredentialReleased {
+                caller: "firefox (pid 4321)".into(),
+                domain: "github.com".into(),
+            }),
+            Some("github.com → firefox (pid 4321)".into())
         );
         assert_eq!(
             action_details(&AuditAction::DeviceEnrolled {

@@ -1,14 +1,37 @@
 # VELA Native Messaging Host
 
-This directory contains the native messaging bridge between the VELA browser extension and the VELA desktop application.
+This directory contains the registration manifests and scripts for the native messaging bridge between the VELA browser extension and the VELA desktop application.
 
 ## How It Works
 
-The extension communicates with the desktop app only through browser native messaging. The native host relays framed messages to the desktop app over an OS-protected pipe/socket using a per-session capability token written by the desktop app.
+The extension communicates with the desktop app only through browser native
+messaging. The browser spawns a single self-contained binary —
+`vela-native-messaging-host`, built from `desktopVELA/vela-nm-host` — over
+stdio, and it relays framed messages to the desktop app over a well-known
+per-user endpoint (a Unix socket under `XDG_RUNTIME_DIR/vela-<uid>/`, or a
+named pipe on Windows).
+
+**There is no capability file and no shared secret.** The desktop does not
+authenticate what the host *says*; it authenticates what the kernel says about
+*who connected* (`vela-desktop-core`'s `ipc_gate`): same user, the VELA host
+binary, started by a browser. An arbitrary process running as the user can no
+longer read a token off disk and talk to the vault (issue #149, option B;
+retires finding #69).
 
 The Chromium/Gecko native messaging host name is `com.vela.desktop`. Do not use
 the previous `vela-desktop` name; Chromium rejects host names that contain
 hyphens before it even reads the registered manifest.
+
+### Building the host
+
+```bash
+cd desktopVELA && cargo build --release -p vela-nm-host
+# -> desktopVELA/target/release/vela-native-messaging-host
+```
+
+The registration scripts look for it in the usual install locations
+(`/usr/bin`, `/usr/local/bin`, `~/.local/bin`) and in the workspace target
+directory; set `VELA_NM_HOST_PATH` to point at one anywhere else.
 
 ## Registration Scripts
 
@@ -22,13 +45,13 @@ hyphens before it even reads the registered manifest.
 ### Quick Start
 
 ```bash
+# Build the host binary once
+cd desktopVELA && cargo build --release -p vela-nm-host && cd ..
+
 # All Chromium-based browsers
-chmod +x native-messaging/vela-native-messaging-host.py
-chmod +x native-messaging/register-host.sh
 ./native-messaging/register-host.sh
 
 # All Gecko-based browsers
-chmod +x native-messaging/register-firefox-host.sh
 ./native-messaging/register-firefox-host.sh
 ```
 
@@ -69,5 +92,10 @@ manifest files.
 ## Testing
 
 ```bash
-python3 native-messaging/vela-native-messaging-host.py
+cd ../../desktopVELA && cargo build --release -p vela-nm-host
+echo '{"action":"ping"}' | ../desktopVELA/target/release/vela-native-messaging-host
 ```
+
+(The host speaks the native messaging length-prefixed framing; the desktop app
+must be running for the ping to be answered. The full round trip — real host,
+real gate, real socket — is covered by `vela-nm-host`'s `e2e` test.)

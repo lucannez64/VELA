@@ -569,7 +569,6 @@ fn main() {
         let (host_tx, host_rx) = std::sync::mpsc::channel::<host::HostCommand>();
         let ipc_host: Arc<dyn vela_desktop_core::host::Host> =
             Arc::new(host::GpuiHost::new(app_state_for_ipc.clone(), host_tx.clone()));
-        let ipc_capability = app_state_for_ipc.ipc_capability.clone();
         std::thread::spawn(move || {
             // Its own single-threaded runtime, exactly as `src-tauri/src/
             // main.rs` does — this server owns a long-lived listener and
@@ -579,7 +578,7 @@ fn main() {
                 .build()
                 .expect("Failed to create IPC tokio runtime");
             rt.block_on(async {
-                vela_desktop_core::ipc::server::IpcServer::new(ipc_capability)
+                vela_desktop_core::ipc::server::IpcServer::new()
                     .start(ipc_host)
                     .await;
             });
@@ -645,6 +644,11 @@ fn main() {
                     }
                     host::HostCommand::VaultItemsChanged => {
                         cx.update(host::notify_vault_items_changed);
+                    }
+                    host::HostCommand::ShowToast(message) => {
+                        cx.update(|cx| {
+                            toast::show(cx, message, toast::ToastKind::Info);
+                        });
                     }
                     host::HostCommand::ConfirmPresence { prompt, reply } => {
                         cx.update(|cx| {
