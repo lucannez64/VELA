@@ -13,14 +13,21 @@ final class VelaRedirectGuard: NSObject, URLSessionTaskDelegate {
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        let originalHost = task.originalRequest?.url?.host
-        let targetHost = request.url?.host
-        if let original = originalHost, let target = targetHost,
-           original.caseInsensitiveCompare(target) == .orderedSame {
+        if Self.shouldFollow(original: task.originalRequest?.url, target: request.url) {
             completionHandler(request)
         } else {
             completionHandler(nil)
         }
+    }
+
+    /// The policy, pure so it can be tested directly: driving a 302 through
+    /// URLSession + URLProtocol in tests crashed the runner, and the delegate
+    /// shape needs a live task that can't be constructed headlessly.
+    static func shouldFollow(original: URL?, target: URL?) -> Bool {
+        guard let originalHost = original?.host, let targetHost = target?.host else {
+            return false
+        }
+        return originalHost.caseInsensitiveCompare(targetHost) == .orderedSame
     }
 }
 

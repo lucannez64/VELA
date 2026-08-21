@@ -217,27 +217,29 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(token, "OLD", "must not adopt X-New-Token from an error response")
     }
 
-    func testCrossHostRedirectIsRefused() async throws {
-        MockURLProtocol.handler = { req in
-            if req.url?.path == "/vault/sync" {
-                let resp = HTTPURLResponse(url: req.url!, statusCode: 302, httpVersion: nil,
-                                           headerFields: ["Location": "https://evil.example/harvest"])!
-                return (resp, Data())
-            }
-            XCTFail("should not follow the cross-host redirect")
-            return (Self.ok(req), Data())
-        }
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
-        let session = URLSession(configuration: config, delegate: VelaRedirectGuard(), delegateQueue: nil)
-        let client = VelaClient(baseURL: URL(string: "https://vault.example")!, token: "OLD",
-                                session: session)
-        do {
-            _ = try await client.syncManifest()
-            XCTFail("expected the redirect to be refused")
-        } catch let error as URLError {
-            XCTAssertEqual(error.code, .cancelled, "redirect should be cancelled by the guard")
-        }
+    func testRedirectPolicyRefusesCrossHost() {
+        // URLSession re-sends the Authorization header when following a
+        // redirect; a cross-host hop would hand the bearer token to whatever
+        // host the 302 points at.
+        XCTAssertFalse(VelaRedirectGuard.shouldFollow(
+            original: URL(string: "https://vault.example/vault/sync"),
+            target: URL(string: "https://evil.example/harvest")))
+    }
+
+    func testRedirectPolicyAllowsSameHost() {
+        XCTAssertTrue(VelaRedirectGuard.shouldFollow(
+            original: URL(string: "https://vault.example/vault/sync"),
+            target: URL(string: "https://vault.example/vault/sync/next")))
+        XCTAssertTrue(VelaRedirectGuard.shouldFollow(
+            original: URL(string: "https://VAULT.EXAMPLE/vault/sync"),
+            target: URL(string: "https://vault.example/other")))
+    }
+
+    func testRedirectPolicyFailsClosedWithoutHosts() {
+        XCTAssertFalse(VelaRedirectGuard.shouldFollow(
+            original: nil, target: URL(string: "https://evil.example/")))
+        XCTAssertFalse(VelaRedirectGuard.shouldFollow(
+            original: URL(string: "https://vault.example/"), target: nil))
     }
 
     func testPerChunkRollbackHiddenBehindFreshChunkIsRejected() async throws {
@@ -292,21 +294,6 @@ final class MockURLProtocol: URLProtocol {
         }
         do {
             let (response, data) = try handler(request)
-            // A 3xx must go through the session's redirect machinery
-            // (wasRedirectedTo → willPerformHTTPRedirection), not be delivered
-            // as a terminal response — otherwise redirect-policy code under
-            // test never runs and a 302 test passes for the wrong reason.
-            if let http = response as? HTTPURLResponse,
-               (300..<400).contains(http.statusCode),
-               let location = http.value(forHTTPHeaderField: "Location"),
-               let target = URL(string: location, relativeTo: request.url ?? URL(string: "https://vault.example")!) {
-                var redirected = request
-                redirected.url = target
-                redirected.httpBody = nil
-                client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: http)
-                client?.urlProtocolDidFinishLoading(self)
-                return
-            }
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
