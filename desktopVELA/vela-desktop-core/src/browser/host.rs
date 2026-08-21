@@ -129,17 +129,26 @@ fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Create an `O_CLOEXEC` pipe, returning (read end, write end).
+/// Create a pipe with `FD_CLOEXEC` set on both ends, returning (read, write).
+///
+/// Uses `libc::pipe` + `fcntl(F_SETFD, FD_CLOEXEC)` rather than `pipe2`, which
+/// the `libc` crate only exposes on Linux/Android — the macOS build needs the
+/// portable form.
 #[cfg(unix)]
 fn new_pipe() -> Result<(std::os::unix::io::OwnedFd, std::os::unix::io::OwnedFd), String> {
     use std::os::unix::io::FromRawFd;
     let mut fds = [0i32; 2];
-    // SAFETY: `fds` is a two-element mutable array of int, a valid `pipe2` out.
-    let rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
-    if rc != 0 {
-        return Err(format!("pipe2 failed: {}", std::io::Error::last_os_error()));
+    // SAFETY: `fds` is a two-element mutable array of int, a valid `pipe` out.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(format!("pipe failed: {}", std::io::Error::last_os_error()));
     }
-    // SAFETY: on success `pipe2` filled `fds` with two valid open file descriptors.
+    for &fd in &fds {
+        // SAFETY: `fd` is a valid open fd we just created.
+        unsafe {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+    }
+    // SAFETY: on success `pipe` filled `fds` with two valid open file descriptors.
     Ok((
         unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fds[0]) },
         unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fds[1]) },
