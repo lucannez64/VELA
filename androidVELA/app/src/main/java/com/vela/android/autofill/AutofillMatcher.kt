@@ -67,15 +67,17 @@ object AutofillMatcher {
                     add(claimedDomain)
                 }
             }
-            AppAssociations.curatedDomain(pkg)?.let { curated ->
-                // The curated pair is a *hint about which site to ask*, not a
-                // grant. Granting on the package name alone would resurrect
-                // audit A-2 through a side door: third-party stores do not
-                // enforce Google's namespace, so an impostor installed under a
-                // curated name would be handed the real credentials. The site's
-                // own asset-link statement — which checks the signing key, not
-                // just the name — is what turns the hint into trust.
-                if (verifyAssetLinks(curated, pkg)) add(curated)
+            if (pkg != null) {
+                AppAssociations.curatedDomain(pkg)?.let { curated ->
+                    // The curated pair is a *hint about which site to ask*, not a
+                    // grant. Granting on the package name alone would resurrect
+                    // audit A-2 through a side door: third-party stores do not
+                    // enforce Google's namespace, so an impostor installed under a
+                    // curated name would be handed the real credentials. The site's
+                    // own asset-link statement — which checks the signing key, not
+                    // just the name — is what turns the hint into trust.
+                    if (verifyAssetLinks(curated, pkg)) add(curated)
+                }
             }
         }
 

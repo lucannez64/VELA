@@ -28,17 +28,19 @@ import com.vela.android.core.VelaRepositories
  */
 class AutoLockReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // VelaRepositories.init may not have run (early broadcast).
-        if (!VelaRepositories::security.isInitialized || !VelaRepositories::vault.isInitialized) return
+        // VelaRepositories.init may not have run (early broadcast). The
+        // properties are lateinit with a private setter, so `::x.isInitialized`
+        // can't see their backing field from here — access-and-catch instead.
+        val security = runCatching { VelaRepositories.security }.getOrNull() ?: return
+        val vault = runCatching { VelaRepositories.vault }.getOrNull() ?: return
         // The user came back before the alarm fired: the lifecycle observer owns
         // the decision then, and locking under their fingers would be wrong.
         if (ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
-        val security = VelaRepositories.security
         if (!security.session.value.unlocked) return
 
         security.lock()
-        VelaRepositories.vault.clearMemory()
-        VelaRepositories.audit.record("vault_locked", "auto-lock timeout")
+        vault.clearMemory()
+        runCatching { VelaRepositories.audit.record("vault_locked", "auto-lock timeout") }
     }
 
     companion object {

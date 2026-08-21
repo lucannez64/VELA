@@ -100,8 +100,8 @@ final class Phase4Tests: XCTestCase {
         // Deleted locally; the server still serves an older copy. The merge
         // must not resurrect it (deletions used to vanish on the next sync).
         var item = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "p", totp: nil)
-        item.updatedAt = stamp(daysAgo: 10)
-        let tombstone = Tombstone(id: item.id, deletedAt: stamp(daysAgo: 5))
+        item.updatedAt = Self.stamp(daysAgo: 10)
+        let tombstone = Tombstone(id: item.id, deletedAt: Self.stamp(daysAgo: 5))
 
         let merged = VaultMerge.mergeStores(
             local: VaultStore(items: [], tombstones: [tombstone]),
@@ -113,8 +113,8 @@ final class Phase4Tests: XCTestCase {
     func testNewerEditBeatsOlderTombstone() {
         // Edited elsewhere *after* this device deleted it — the edit wins.
         var item = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "edited", password: "p", totp: nil)
-        item.updatedAt = stamp(daysAgo: 1)
-        let tombstone = Tombstone(id: item.id, deletedAt: stamp(daysAgo: 5))
+        item.updatedAt = Self.stamp(daysAgo: 1)
+        let tombstone = Tombstone(id: item.id, deletedAt: Self.stamp(daysAgo: 5))
 
         let merged = VaultMerge.mergeStores(
             local: VaultStore(items: [], tombstones: [tombstone]),
