@@ -40,12 +40,19 @@ class EncryptedVaultStore(private val storeDir: File) {
         // number, note). Unlike the ByteArray it's derived from, a String
         // cannot be wiped — `plaintext.fill(0)` only zeroes the original
         // array, not this copy, which lingers on the heap until GC reclaims
-        // it. Fixing this fully would mean redesigning the JNI bridge to pass
-        // raw bytes instead of a JSON-string envelope end-to-end (it's used
-        // by every NativeVelaCore call, not just this one) — out of scope
-        // here. Exploiting this specific gap requires memory-dump access to
-        // this app's process (root / a kernel exploit), a much stronger
-        // capability than the sandboxing Android otherwise provides.
+        // it.
+        //
+        // This is a *residual*, not an oversight (audit N-6): the RMS already
+        // crosses JNI as wipeable bytes (above), so no key material leaks —
+        // only this payload copy, which exists as a String anyway because
+        // `VaultJson.encode` produces one upstream. Moving the payload out of
+        // the JSON envelope (the bridge's `jni_json_result_with_secret`
+        // pattern) and returning plaintext through an out-param buffer would
+        // remove one transient envelope copy but not that primary String; the
+        // real fix is byte-oriented vault serialization end-to-end. Exploiting
+        // this gap requires memory-dump access to this app's process
+        // (root / a kernel exploit), far stronger than the sandboxing Android
+        // otherwise provides.
         NativeVelaCore.encryptVaultJson(rms, plaintext.toString(Charsets.UTF_8))?.let { ciphertextB64 ->
             plaintext.fill(0)
             writeNativeBlob(java.util.Base64.getDecoder().decode(ciphertextB64))

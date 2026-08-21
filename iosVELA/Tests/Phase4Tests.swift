@@ -8,32 +8,32 @@ final class Phase4Tests: XCTestCase {
     // MARK: FFI
 
     func testRecoverySplitThenCombine() {
-        let rms = Data(repeating: 7, count: 32).base64EncodedString()
-        guard let shares = VelaCoreFFI.splitRecovery(rmsBase64: rms, threshold: 2, n: 3) else {
+        let rmsBytes = Data(repeating: 7, count: 32)
+        guard let shares = VelaCoreFFI.splitRecovery(rms: rmsBytes, threshold: 2, n: 3) else {
             return XCTFail("split failed")
         }
         XCTAssertEqual(shares.count, 3)
         let combined = VelaCoreFFI.combineRecovery(sharesBase64: [shares[0], shares[2]])
-        XCTAssertEqual(combined, rms)
+        XCTAssertEqual(combined, rmsBytes.base64EncodedString())
     }
 
     func testVaultChunkRoundTripBindsChunkID() {
-        let rms = Data(repeating: 5, count: 32).base64EncodedString()
+        let rms = Data(repeating: 5, count: 32)
         let vaultJSON = "{\"items\":[]}"
-        guard let cipher = VelaCoreFFI.encryptVaultChunk(rmsBase64: rms, chunkID: "vault", vaultJSON: vaultJSON, lamportClock: 1) else {
+        guard let cipher = VelaCoreFFI.encryptVaultChunk(rms: rms, chunkID: "vault", vaultJSON: vaultJSON, lamportClock: 1) else {
             return XCTFail("encrypt failed")
         }
         XCTAssertEqual(
             VelaCoreFFI.decryptVaultChunk(
-                rmsBase64: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 1),
+                rms: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 1),
             vaultJSON)
         // A different chunk id derives a different key → must fail.
         XCTAssertNil(VelaCoreFFI.decryptVaultChunk(
-            rmsBase64: rms, chunkID: "other", ciphertextBase64: cipher, lamportClock: 1))
+            rms: rms, chunkID: "other", ciphertextBase64: cipher, lamportClock: 1))
         // And an older revision of the same chunk must fail too — the rollback
         // the seal exists to stop (audit C-2).
         XCTAssertNil(VelaCoreFFI.decryptVaultChunk(
-            rmsBase64: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 0))
+            rms: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 0))
     }
 
     /// Audit C-1: the identity comes back as a handle plus public halves. No

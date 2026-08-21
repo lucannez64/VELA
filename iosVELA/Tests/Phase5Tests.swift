@@ -49,12 +49,12 @@ final class Phase5Tests: XCTestCase {
 
     // MARK: Multi-type round-trip through the core
 
-    private let rms = Data(repeating: 8, count: 32).base64EncodedString()
+    private let rms = Data(repeating: 8, count: 32)
 
     private func roundTrip(_ item: VaultItem) throws -> VaultItem {
         let json = String(decoding: try JSONEncoder().encode(VaultStore(items: [item])), as: UTF8.self)
-        let cipher = try XCTUnwrap(VelaCoreFFI.encryptVault(rmsBase64: rms, vaultJSON: json))
-        let back = try XCTUnwrap(VelaCoreFFI.decryptVault(rmsBase64: rms, ciphertextBase64: cipher))
+        let cipher = try XCTUnwrap(VelaCoreFFI.encryptVault(rms: rms, vaultJSON: json))
+        let back = try XCTUnwrap(VelaCoreFFI.decryptVault(rms: rms, ciphertextBase64: cipher))
         let store = try JSONDecoder().decode(VaultStore.self, from: Data(back.utf8))
         return try XCTUnwrap(store.items.first)
     }

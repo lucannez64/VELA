@@ -142,8 +142,6 @@ struct SyncEngine {
     /// merged vault back as `vault-data-*` chunks. Returns the merged store.
     @discardableResult
     func sync(rms: Data, localStore: VaultStore) async throws -> VaultStore {
-        let rmsB64 = rms.base64EncodedString()
-
         let manifest = try await client.syncManifest()
         let byID = Dictionary(manifest.chunks.map { ($0.chunk_id, $0) }, uniquingKeysWith: { a, _ in a })
 
@@ -167,7 +165,7 @@ struct SyncEngine {
         for id in readIDs {
             let fetched = try await client.getChunk(id)
             guard let piece = VelaCoreFFI.decryptVaultChunk(
-                rmsBase64: rmsB64,
+                rms: rms,
                 chunkID: id,
                 ciphertextBase64: fetched.ciphertextBase64,
                 lamportClock: Int64(byID[id]?.lamport_clock ?? 0)) else {
@@ -205,7 +203,7 @@ struct SyncEngine {
                 let existing = byID[id]
                 lamport = max(lamport, existing?.lamport_clock ?? 0) + 1
                 guard let cipherB64 = VelaCoreFFI.encryptVaultChunk(
-                    rmsBase64: rmsB64, chunkID: id, vaultJSON: piece, lamportClock: lamport) else {
+                    rms: rms, chunkID: id, vaultJSON: piece, lamportClock: lamport) else {
                     throw SyncError.crypto
                 }
                 _ = try await client.putChunk(

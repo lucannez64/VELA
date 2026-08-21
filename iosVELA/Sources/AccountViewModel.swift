@@ -216,8 +216,7 @@ final class AccountViewModel: ObservableObject {
                 // Per-chunk vault keys, not the RMS: the browser can read and
                 // rewrite the vault for the session, but never holds the root of
                 // the key hierarchy (audit D-2).
-                guard let chunkKeys = VelaCoreFFI.webSessionChunkKeys(
-                    rmsBase64: rms.base64EncodedString()) else {
+                guard let chunkKeys = VelaCoreFFI.webSessionChunkKeys(rms: rms) else {
                     throw Failure("Could not derive the session's vault keys")
                 }
                 let keysJSON = String(
@@ -303,7 +302,7 @@ final class AccountViewModel: ObservableObject {
         run("Setting up recovery") { [self] in
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             guard let account = account else { throw Failure("register first") }
-            guard let shares = VelaCoreFFI.splitRecovery(rmsBase64: rms.base64EncodedString(), threshold: threshold, n: total),
+            guard let shares = VelaCoreFFI.splitRecovery(rms: rms, threshold: threshold, n: total),
                   shares.count == total else {
                 throw Failure("recovery split failed")
             }
