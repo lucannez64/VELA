@@ -77,6 +77,11 @@ jobs:
           # See the note in the macOS workflow: the workspace root is
           # desktopVELA, so src-tauri caches the wrong lockfile/target dir.
           workspaces: desktopVELA
+          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
+          # crate *inside* the workspace dir as a "workspace crate" and skips
+          # caching them by default - vendor/gpui-ce lives under desktopVELA/,
+          # so its whole debug + release output was rebuilt on every run.
+          cache-workspace-crates: true
           # Shared with build-windows-dryrun. rust-cache keys on the job id by
           # default, and these are two jobs — this one runs on main, that one on
           # PRs — so the cache main fills was under a key no PR ever looked up,
@@ -130,6 +135,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: desktopVELA
+          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
+          # crate *inside* the workspace dir as a "workspace crate" and skips
+          # caching them by default - vendor/gpui-ce lives under desktopVELA/,
+          # so its whole debug + release output was rebuilt on every run.
+          cache-workspace-crates: true
           # Same key as build-windows above, so a PR restores what the last
           # main build left rather than starting cold (#135).
           shared-key: desktop-windows
@@ -203,6 +213,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: desktopVELA
+          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
+          # crate *inside* the workspace dir as a "workspace crate" and skips
+          # caching them by default - vendor/gpui-ce lives under desktopVELA/,
+          # so its whole debug + release output was rebuilt on every run.
+          cache-workspace-crates: true
           cache-on-failure: true
 
       # The main place the desktop crates' tests run: the macOS job compiles
