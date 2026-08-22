@@ -16,7 +16,7 @@ the corrections made after review.
 | `m3_de_se.spthy` | human approval + hardware key: the working-set bound |
 | `m4_bool_naive.spthy` | an unbound boolean approval — replayable, worthless |
 | `m5_tr_originbound.spthy` | origin-bound signature: zero persistent value |
-| `m6_ipc_handshake.spthy` | the real browser↔desktop handshake: pairing, per-client keys, grant lifecycle |
+| `m6_ipc_handshake.spthy` | the real browser↔desktop handshake: pairing, per-client keys, grant lifecycle, browser-spawn gate (no capability file) |
 | `m7_oneshot_assertion.spthy` | passkey-shaped one-shot assertion — below the working-set floor |
 | `m8_hybrid.spthy` | M7 for passkey origins + M6 for legacy, airtight mode split |
 | `m9a_in_core_login.spthy` | in-core login for plain-form sites — credential never enters the domain |
@@ -42,7 +42,7 @@ for f in m1_indomain m2_se_alone m3_de_se m4_bool_naive m5_tr_originbound \
 done
 ```
 
-Expected: **70 verified, 3 falsified**. The three falsifications are intended
+Expected: **73 verified, 3 falsified**. The three falsifications are intended
 results, not failures — `m1`/`m2` secrecy, `m9b`'s and `m9c`'s `credential_never_leaks`,
 and `m9c`'s `unused_credentials_stay_secret`
 are the negative claims the ladder is built on. Any *other* falsification is a

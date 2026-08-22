@@ -1,17 +1,37 @@
 theory M6_IpcHandshake
 /*
-  Model 6 - the real IPC handshake. Where M1-M5 isolate the decide/unwrap/consume
-  skeleton, this model encodes the actual VELA browser<->desktop channel and the
-  grant lifecycle it should carry:
+  Model 6 - the real IPC handshake after #149.
 
-    * native-messaging channel setup  - the desktop writes a per-session
-      capability to ipc_auth.json (0600). A co-resident same-UID process can
-      read that file, so the capability is modelled as adversary-visible and
-      grants nothing on its own (the code's own docstring says exactly this:
-      "the attacker worth worrying about is another process running as the same
-      user: it can read that file"). The honest native-messaging host is a
-      transparent relay and is subsumed by the Dolev-Yao adversary, so no rule
-      for it.
+  This is the same skeleton as the pre-#149 M6, updated for the two changes
+  landed together as the D-4 follow-up:
+
+    * no capability file (issue #149, option B) - the desktop no longer writes
+      a per-session bearer to ipc_auth.json (0600). The old Desktop_Channel
+      rule published Out(~cap) for the Dolev-Yao adversary; that file is now
+      deleted on startup (see ipc.rs IpcServer::start). The endpoint is a
+      well-known per-user name (Unix: $XDG_RUNTIME_DIR/vela-<uid>/desktop.sock
+      with dir 0700; Windows: \\.\pipe\com.vela.VELA.native.<user>) and is
+      public knowledge - modelled as a persistent !Listening fact that the
+      adversary knows - but knowing it buys nothing. What decides whether a
+      connection is accepted is the kernel's answer about who is on the other
+      end (ipc_peer + ipc_gate): the peer must be same-UID, be the
+      vela-native-messaging-host binary (the compiled Rust host in
+      desktopVELA/vela-nm-host), and have a browser among its recent
+      ancestors. The transparent stdio relay itself remains subsumed by the
+      adversary - only its spawn provenance matters.
+
+    * blast-radius limits (issue #149, option D) - one unlock releases at most
+      25 distinct domains, every actual release writes an encrypted audit entry
+      naming caller+domain and raises an on-screen toast, and a missed match
+      releases nothing. These are quantitative, per-unlock bounds; this
+      symbolic model does not count to 25, it proves the underlying
+      agreement/injectivity/cross-origin properties that the cap, audit and
+      toast make durable. The cap lives above this handshake: it bounds how
+      many distinct successful handshakes one unlock is worth, not whether a
+      single handshake leaks. See SECURITY_AUDIT.md D-4 "bounded as well as
+      stated".
+
+  The rest is unchanged from the previous M6:
 
     * first-use pairing              - the joining client generates its own
       keypair, computes the fingerprint phrase h(pk) locally, and displays it
@@ -27,11 +47,11 @@ theory M6_IpcHandshake
 
     * Approved-grant lifecycle       - issue (human approves exactly one
       (client, origin, item), bound, not a boolean); use (a release consumes the
-      grant AND a client-signed request); anomaly-reconfirm (grants are single
-      use and bound to the triple, so any use outside it needs a fresh human
-      issue - encoded as the linear Grant consumed by Release); expire and
-      revoke (linear grant removed by an explicit rule, so a later use is
-      impossible).
+      grant AND a client-signed request AND a browser-spawned channel);
+      anomaly-reconfirm (grants are single use and bound to the triple, so any
+      use outside it needs a fresh human issue - encoded as the linear Grant
+      consumed by Release); expire and revoke (linear grant removed by an
+      explicit rule, so a later use is impossible).
 
     * request replay cache          - the desktop honours each request nonce at
       most once (`RequestNonceIsFresh`). Without it the agreement below is only
@@ -44,10 +64,15 @@ theory M6_IpcHandshake
       makes the injective claim below actually hold.
 
   The adversary is the SDC adversary of M1-M5: a co-resident same-UID process
-  with full control of In/Out and the capability. Model 6 adds the two things a
-  real handshake adds beyond M3: (1) release requires a per-client signature, so
-  the grant alone leaks nothing; (2) the compromise of a client is an explicit
-  event, so we can prove what a compromised browser can and cannot do.
+  with full control of In/Out - except it no longer controls the local IPC
+  channel directly. It can compute the well-known endpoint name for free, but
+  to make the desktop accept a connection it must be a browser-spawned host
+  (honest BrowserSpawned) or have compromised a browser (CompromisedBrowser -
+  the "hostile extension / injected browser" residual stated in #149). Model 6
+  adds beyond M3: (1) release requires a per-client signature, so the grant
+  alone leaks nothing; (2) a browser-spawned channel, so the network alone
+  leaks nothing; (3) the compromise of a client is an explicit event, so we
+  can prove what a compromised browser can and cannot do.
 
   Expected verdicts (all-traces unless marked):
     client_key_secret_unless_compromised   VERIFIED  - a client key is secret
@@ -72,6 +97,10 @@ theory M6_IpcHandshake
     compromised_client_cannot_act_as_others   VERIFIED - a compromised browser
         gains nothing beyond its own grants: releases for an uncompromised
         client only happen through that client's own signed request.
+    no_release_without_browser_channel     VERIFIED  - NEW in this revision: a
+        release for C needs a browser-spawned channel for same C (or that
+        browser having been compromised); an arbitrary same-UID process cannot
+        cause a release by itself.
     used_item_leaks / release_reachable /
     compromised_browser_residual          (exists-trace) VERIFIED - the consume
         residual and the presence residual both exist.
@@ -80,13 +109,52 @@ begin
 
 builtins: signing, hashing
 
-// Native-messaging channel setup: the desktop writes a per-session capability
-// to the auth file. Same-UID readable, so modelled as public; it is NOT what
-// protects the release (the SDC assumption, restated for the real channel).
-rule Desktop_Channel:
-    [ Fr(~cap) ]
-  --[ Capability(~cap) ]->
-    [ Out(~cap) ]
+// The desktop listens on a well-known per-user endpoint (Unix socket under
+// $XDG_RUNTIME_DIR/vela-<uid>/desktop.sock with dir 0700, or the Windows
+// named pipe). The name is public knowledge - the adversary can derive it
+// without reading any file - so the desktop's willingness to listen is a
+// persistent public fact. What is NOT public is the ability to be accepted:
+// that requires a browser-spawned host (see below). The old capability file
+// rule is gone: no Out(~cap) is ever produced.
+rule Desktop_Listen:
+    [ ]
+  --[ DesktopListening() ]->
+    [ !Listening() ]
+
+// Honest case: the browser spawns the VELA native messaging host binary over
+// stdio. The host binary identity (vela-native-messaging-host) and the
+// browser ancestry check (firefox/chrome/... within MAX_ANCESTRY_HOPS) are
+// enforced in ipc_gate; symbolically, only this rule and the compromise rule
+// below can produce a Spawned fact for a given client. The adversary cannot
+// mint Spawned on its own.
+rule Browser_Spawn_Host:
+    [ !Listening() ]
+  --[ BrowserSpawned($C) ]->
+    [ Spawned($C) ]
+
+// Compromised case: a browser the adversary controls can be made to spawn the
+// host for any client it chooses. This is the "hostile extension / injected
+// browser" residual stated honestly in #149: option B raises the bar from
+// "any process" to "a store-signed extension or a browser injection", it does
+// not remove the extension itself. The only way the adversary comes by a
+// Spawned fact for a client without an honest BrowserSpawned is through this
+// explicit compromise event (proved by no_release_without_browser_channel
+// without the compromise disjunct).
+rule Compromised_Browser_Spawn:
+    [ !Listening() ]
+  --[ CompromisedBrowser($C) ]->
+    [ Spawned($C) ]
+
+// The spawned host connects to the desktop's well-known endpoint. One
+// connection per request in the implementation (UnixStream::connect per
+// framed exchange); modelled as one Talking fact per release, linear so each
+// release needs a fresh browser-spawned connection. A long-lived host that
+// reuses one connection for many requests is strictly weaker than this (fewer
+// gate checks), so proving with per-request checks implies the real system.
+rule Host_Connect:
+    [ Spawned($C), !Listening() ]
+  --[ HostConnected($C) ]->
+    [ Talking($C) ]
 
 // The vault: each credential is minted under exactly one origin.
 rule Vault_Setup:
@@ -133,12 +201,18 @@ rule Human_Approve:
     [ Grant($C, $O, cred, ~g) ]
 
 // USE: a release consumes the grant AND a request signed by the enrolled
-// client. The signature binds client and origin; the grant binds client, origin
-// and item; the item is stored under the same origin. The plaintext still
-// reaches the domain (Out) - the consume-stage residual of M3, carried over.
+// client AND a browser-spawned channel. The signature binds client and
+// origin; the grant binds client, origin and item; the channel binds client
+// to a browser ancestor; the item is stored under the same origin. The
+// plaintext still reaches the domain (Out) - the consume-stage residual of
+// M3, carried over. The blast-radius cap (25 distinct domains per unlock)
+// and the encrypted audit+toast are not modelled as counting - they bound
+// how many distinct successful handshakes one unlock is worth, not whether a
+// single handshake leaks (see SECURITY_AUDIT.md D-4 "bounded as well as
+// stated").
 rule Desktop_Release:
     [ Grant($C, $O, cred, g), !ClientKey($C, pkey), !Vault(cred, $O),
-      In(<'fill', $C, $O, r, sig>) ]
+      Talking($C), In(<'fill', $C, $O, r, sig>) ]
   --[ Released($C, $O, cred, g, r), RequestUsed(r),
       Verified(verify(sig, <'fill', $C, $O, r>, pkey)) ]->
     [ Out(cred) ]
@@ -241,6 +315,23 @@ lemma expire_prevents_use:
      Expired(C, O, c, g) @ i
      ==> not(Ex r #j. Released(C, O, c, g, r) @ j & #i < #j)"
 
+// ---- Browser channel (new in #149) ----------------------------------------
+
+// No release without a browser-spawned channel for the same client, unless
+// that client's browser was compromised - an arbitrary same-UID process
+// cannot cause a release by itself.
+lemma no_release_without_browser_channel:
+  "All C O c g r #i.
+     Released(C, O, c, g, r) @ i
+     ==> (Ex #j. BrowserSpawned(C) @ j & #j < #i)
+       | (Ex #j. CompromisedBrowser(C) @ j & #j < #i)"
+
+lemma host_connected_requires_browser_spawn:
+  "All C #i.
+     HostConnected(C) @ i
+     ==> (Ex #j. BrowserSpawned(C) @ j & #j < #i)
+       | (Ex #j. CompromisedBrowser(C) @ j & #j < #i)"
+
 // ---- Compromised browser -----------------------------------------------------
 
 // A compromised C2 buys nothing outside its own grants: a release for a
@@ -253,6 +344,18 @@ lemma compromised_client_cannot_act_as_others:
      & not(C = C2)
      & not(Ex #h. Compromised(C) @ h & #h < #k)
      ==> Ex #j. ClientRequests(C, O, r) @ j & #j < #k"
+
+// A compromised browser buys nothing outside its own spawning: a release for
+// a different, uncompromised browser's client still requires that client's
+// browser to have spawned. This is the dual of the previous lemma for the
+// channel.
+lemma compromised_browser_cannot_act_as_others:
+  "All C C2 O c g r #i #k.
+     CompromisedBrowser(C2) @ i
+     & Released(C, O, c, g, r) @ k
+     & not(C = C2)
+     & not(Ex #h. CompromisedBrowser(C) @ h & #h < #k)
+     ==> Ex #j. BrowserSpawned(C) @ j & #j < #k"
 
 // ---- Existence ---------------------------------------------------------------
 
