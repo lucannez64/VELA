@@ -118,6 +118,53 @@ impl Store {
             .clone()
     }
 
+    /// Re-seal every RMS-derived secret file across a seed rotation
+    /// (docs/VAULT_REKEYING_DESIGN.md §6 step 5).
+    ///
+    /// Each file is decrypted under its old derivation and re-encrypted under
+    /// the new one with a fresh nonce — the ciphertext bytes on disk change,
+    /// the plaintext never touches anything but a `Zeroizing` buffer inside
+    /// `vela_crypto::rekey::rekey_blob`. Files are rewritten atomically via
+    /// [`write_secret_file`]. Missing files (no audit log yet, no shares) are
+    /// skipped; a corrupt one is an error, because silently leaving a file on
+    /// the old key would strand it after the rotation completes.
+    pub fn rekey_secret_files(&self, old: &Crypto, new: &Crypto) -> anyhow::Result<()> {
+        use vela_crypto::rekey;
+
+        let old_rms = old.rms();
+        let new_rms = new.rms();
+
+        // vault.enc / audit.enc / shares.enc all use the vault envelope.
+        for file in [VAULT_FILE, "audit.enc", "shares.enc"] {
+            let path = self.store_path.join(file);
+            if !path.exists() {
+                continue;
+            }
+            let ct = fs::read(&path)?;
+            let rekeyed = rekey::rekey_blob(
+                &old_rms,
+                &new_rms,
+                kdf::contexts::VAULT_ENCRYPTION,
+                &ct,
+            )?;
+            write_secret_file(&path, &rekeyed)?;
+        }
+
+        // identity_keys.enc has its own derivation context off the identity key.
+        let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
+        if identity_path.exists() {
+            let ct = fs::read(&identity_path)?;
+            let old_key = Self::derive_identity_file_key(old);
+            let new_key = Self::derive_identity_file_key(new);
+            let plaintext = crate::crypto::Crypto::decrypt_with_key(&old_key, &ct)?;
+            let rekeyed = crate::crypto::Crypto::encrypt_with_key(&new_key, &plaintext)?;
+            drop(plaintext);
+            write_secret_file(&identity_path, &rekeyed)?;
+        }
+
+        Ok(())
+    }
+
     pub fn save_vault(&self, vault: &VaultStore, crypto: &Crypto) -> anyhow::Result<()> {
         let plaintext = serde_json::to_vec(vault)?;
         let ciphertext = crypto.encrypt_vault(&plaintext)?;

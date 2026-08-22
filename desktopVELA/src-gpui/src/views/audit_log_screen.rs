@@ -79,6 +79,7 @@ fn action_label_icon(action: &AuditAction) -> (&'static str, &'static str) {
         AuditAction::PasswordGenerated { .. } => ("Password generated", "password"),
         AuditAction::SettingsChanged => ("Settings changed", "settings"),
         AuditAction::WebSessionGranted { .. } => ("Web session granted", "devices"),
+        AuditAction::VaultRekeyed { .. } => ("Vault keys rotated", "sync"),
         AuditAction::PlaintextIdentityKeysMigrated => {
             ("Device keys were stored unencrypted", "warning")
         }
@@ -119,6 +120,9 @@ fn action_details(action: &AuditAction) -> Option<String> {
         AuditAction::PasswordGenerated { length } => Some(format!("{length} characters")),
         AuditAction::CredentialReleased { caller, domain } => {
             Some(format!("{domain} → {caller}"))
+        }
+        AuditAction::VaultRekeyed { from_epoch, to_epoch } => {
+            Some(format!("Epoch {from_epoch} → {to_epoch}"))
         }
         _ => None,
     }

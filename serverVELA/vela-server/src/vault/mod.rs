@@ -1,5 +1,6 @@
 pub mod chunk;
 pub mod oram;
+pub mod rekey;
 pub mod sync;
 
 use crate::{

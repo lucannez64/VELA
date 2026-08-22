@@ -29,7 +29,8 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             recovery_share  TEXT,
             recovery_auth_hash TEXT,
             created_at      TIMESTAMP NOT NULL,
-            recovery_webauthn_credential TEXT
+            recovery_webauthn_credential TEXT,
+            key_epoch       INTEGER NOT NULL DEFAULT 1
         )",
         (),
     )?;
@@ -59,6 +60,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             lamport_clock INTEGER NOT NULL DEFAULT 0,
             last_writer   TEXT,
             ciphertext    TEXT NOT NULL,
+            epoch         INTEGER NOT NULL DEFAULT 1,
             created_at    TIMESTAMP NOT NULL,
             updated_at    TIMESTAMP NOT NULL
         )",
@@ -73,6 +75,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             lamport_clock INTEGER NOT NULL DEFAULT 0,
             last_writer   TEXT,
             ciphertext    TEXT NOT NULL,
+            epoch         INTEGER NOT NULL DEFAULT 1,
             created_at    TIMESTAMP NOT NULL,
             updated_at    TIMESTAMP NOT NULL
         )",
@@ -197,6 +200,37 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         (),
     )?;
     migrate_vault_chunks_schema(db)?;
+    migrate_rekey_schema(db)?;
+    Ok(())
+}
+
+/// Vault re-keying schema (docs/VAULT_REKEYING_DESIGN.md §9): per-account key
+/// epoch + rotation state, and an epoch column on both ciphertext tables.
+///
+/// Tolerant ALTERs follow the file's existing pattern: a fresh database already
+/// has the columns from `CREATE TABLE` (the `let _ =` absorbs the duplicate-
+/// column error), an upgraded one gets them here.
+fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
+    let _ = db.execute("ALTER TABLE users ADD COLUMN key_epoch INTEGER NOT NULL DEFAULT 1", ());
+    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_state TEXT", ());
+    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_started_at TIMESTAMP", ());
+    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_starter TEXT", ());
+    let _ = db.execute("ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
+    let _ = db.execute("ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
+
+    // Shadow rows during a rotation coexist with the current-epoch rows for the
+    // same chunk, so uniqueness moves from (user, chunk) to (user, chunk,
+    // epoch). Commit sweeps the superseded rows; see the design doc, §5.
+    let _ = db.execute("DROP INDEX IF EXISTS idx_vault_chunks_user_chunk", ());
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
+         ON vault_chunks(user_id, chunk_id, epoch)",
+        (),
+    )?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
+         ON vault_chunks(user_id, epoch)",
+        ())?;
     Ok(())
 }
 

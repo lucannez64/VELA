@@ -20,15 +20,20 @@ pub async fn get_chunk(
     session: AuthSession,
 ) -> Result<impl IntoResponse> {
     let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
+    // Serve only the account's current-epoch rows: shadow rows from an
+    // in-flight rotation belong to nobody until commit, and superseded rows
+    // are gone by the time anyone could ask (docs/VAULT_REKEYING_DESIGN.md §5).
+    let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
     let rows = state
         .sqldb
         .query(
             "SELECT chunk_id, user_id, version, lamport_clock, last_writer, ciphertext
          FROM vault_chunks
-         WHERE chunk_id = ? AND user_id = ?",
+         WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(read_epoch),
             ],
         )
         .await
@@ -94,14 +99,54 @@ pub async fn put_chunk(
     crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), body.len() as u64).await?;
     let now = Utc::now().to_rfc3339();
 
+    // Which epoch this ciphertext claims to belong to. Absent header = the
+    // current epoch (legacy-client tolerance, docs/VAULT_REKEYING_DESIGN.md §5);
+    // anything else is resolved — or refused — by the re-key guard.
+    let declared_epoch: Option<i64> = headers_in
+        .get("x-vela-epoch")
+        .or_else(|| headers_in.get("X-Vela-Epoch"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok());
+    let (write_epoch, read_epoch) =
+        crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared_epoch)
+            .await?;
+
     if if_match == 0 {
-        let existing = state
-            .sqldb
-            .query(
-                "SELECT 1 FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+        // Shadow writes (epoch above the served one, i.e. a rotation in
+        // flight) must tolerate replays: a crashed initiator restarts and
+        // re-uploads the same chunks. Upsert instead of create-or-conflict.
+        let is_shadow = write_epoch != read_epoch;
+        if is_shadow {
+            state.sqldb.execute(
+                "INSERT INTO vault_chunks
+                 (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
+                 VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(user_id, chunk_id, epoch) DO UPDATE SET
+                     version       = version + 1,
+                     lamport_clock = excluded.lamport_clock,
+                     last_writer   = excluded.last_writer,
+                     ciphertext    = excluded.ciphertext,
+                     updated_at    = excluded.updated_at",
                 vec![
                     TursoValue::Text(id.clone()),
                     TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Integer(lamport_clock),
+                    TursoValue::Text(session.device_id.to_string()),
+                    TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                    TursoValue::Integer(write_epoch),
+                    TursoValue::Text(now.clone()),
+                    TursoValue::Text(now),
+                ],
+            ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+        } else {
+        let existing = state
+            .sqldb
+            .query(
+                "SELECT 1 FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
+                vec![
+                    TursoValue::Text(id.clone()),
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Integer(write_epoch),
                 ],
             )
             .await
@@ -115,14 +160,15 @@ pub async fn put_chunk(
 
         state.sqldb.execute(
             "INSERT INTO vault_chunks
-             (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, created_at, updated_at)
-             VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
+             (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
+             VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Integer(lamport_clock),
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                TursoValue::Integer(write_epoch),
                 TursoValue::Text(now.clone()),
                 TursoValue::Text(now),
             ],
@@ -142,6 +188,7 @@ pub async fn put_chunk(
                 AppError::Internal(e.to_string())
             }
         })?;
+        }
     } else {
         let n = state
             .sqldb
@@ -154,7 +201,8 @@ pub async fn put_chunk(
                  updated_at    = ?
              WHERE chunk_id = ?
                AND user_id  = ?
-               AND version  = ?",
+               AND version  = ?
+               AND epoch    = ?",
                 vec![
                     TursoValue::Integer(lamport_clock),
                     TursoValue::Text(session.device_id.to_string()),
@@ -163,6 +211,7 @@ pub async fn put_chunk(
                     TursoValue::Text(id.clone()),
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Integer(if_match),
+                    TursoValue::Integer(write_epoch),
                 ],
             )
             .await
@@ -178,10 +227,11 @@ pub async fn put_chunk(
     let ver_rows = state
         .sqldb
         .query(
-            "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+            "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(write_epoch),
             ],
         )
         .await
@@ -217,13 +267,18 @@ pub async fn delete_chunk(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
+    // Deletes target the currently-served epoch only — never a rotation's
+    // shadow rows, which belong to the in-flight re-key.
+    let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
+
     let rows = state
         .sqldb
         .query(
-            "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+            "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(read_epoch),
             ],
         )
         .await
@@ -243,10 +298,11 @@ pub async fn delete_chunk(
     state
         .sqldb
         .execute(
-            "DELETE FROM vault_chunks WHERE chunk_id = ? AND user_id = ?",
+            "DELETE FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(read_epoch),
             ],
         )
         .await

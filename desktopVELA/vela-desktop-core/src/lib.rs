@@ -138,6 +138,12 @@ pub struct AppState {
     /// claiming a grant and opening the capsule sealed to it. The private
     /// halves in here never leave the process (audit P-1).
     pub pending_join: RwLock<Option<commands::enrollment_v3::PendingJoin>>,
+    /// The toolkit host, registered once at startup by whichever binary is
+    /// hosting the core (`TauriHost` or `GpuiHost`). Core code that must put a
+    /// question to a human — destructive-action presence gates — reaches the UI
+    /// through this, so a gate cannot be forgotten by a new caller: an absent
+    /// host means there is nobody to ask, and every gate fails closed.
+    host: RwLock<Option<Arc<dyn host::Host>>>,
 }
 
 /// How long one user-presence confirmation covers further plaintext releases to
@@ -268,6 +274,7 @@ impl AppState {
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),
+            host: RwLock::new(None),
         }
     }
 
@@ -279,6 +286,32 @@ impl AppState {
             session.unlock("test-device".to_string(), "test-user".to_string(), 900);
         }
         *self.crypto.write() = Some(crypto::Crypto::new(rms));
+    }
+
+    /// Called once at startup by the hosting binary.
+    pub fn register_host(&self, host: Arc<dyn host::Host>) {
+        *self.host.write() = Some(host);
+    }
+
+    /// Put a yes/no question to a human through the host's UI — the same
+    /// native-modal channel the passkey presence gate uses, deliberately not a
+    /// web-view dialog the requesting renderer could answer itself.
+    ///
+    /// Fails closed in every direction: no registered host means nobody can be
+    /// asked (`None`), a refusal is an answer (`Some(false)`), and only an
+    /// explicit approval proceeds. Blocking — waits for a human — so callers
+    /// must invoke it off the async runtime.
+    pub fn confirm_with_human(&self, prompt: &str) -> Result<(), String> {
+        let host = self
+            .host
+            .read()
+            .clone()
+            .ok_or_else(|| "No way to ask for confirmation; action refused".to_string())?;
+        match host.confirm_presence(prompt) {
+            Some(true) => Ok(()),
+            Some(false) => Err("You declined this action.".to_string()),
+            None => Err("No way to ask for confirmation; action refused".to_string()),
+        }
     }
 }
 
@@ -452,6 +485,7 @@ pub enum RateLimitResult {
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),
+            host: RwLock::new(None),
         }
     }
 }
