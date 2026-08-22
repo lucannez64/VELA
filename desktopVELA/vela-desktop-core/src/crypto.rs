@@ -246,6 +246,17 @@ impl Crypto {
         Ok(decrypt(self.vault_key().as_bytes(), ciphertext)?)
     }
 
+    /// Raw AEAD access for `Store::rekey_secret_files`: the identity-keys file
+    /// is sealed under its own derivation off the identity key, not under the
+    /// vault key, so re-keying it needs the key handed in rather than derived
+    /// from the seed the way every other file's is.
+    pub(crate) fn encrypt_with_key(key: &[u8; 32], plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
+        Ok(encrypt(key, plaintext)?)
+    }
+
+    pub(crate) fn decrypt_with_key(key: &[u8; 32], ct: &[u8]) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+        Ok(decrypt(key, ct)?)
+    }
     pub fn rms_as_bytes(&self) -> [u8; 32] {
         self.rms
     }

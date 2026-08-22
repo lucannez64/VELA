@@ -156,8 +156,12 @@ preserved: the credential still transits only the core→site private leg.
       client, the same verdict as the Netflix-class tier. The Riot recipe is
       removed from the registry** (kept in the live harness for re-verification
       if the wall ever comes down).
-- [ ] M9d the formal model (cheap, and it settles whether the CAPTCHA token is
-      an adversary-observable that changes the secrecy story — expected inert).
+- [x] **M9d the formal model** (done — `security/formal/m9d_captcha_artifact.spthy`,
+      all six lemmas verified): the CAPTCHA token is modelled as fully
+      adversary-observable and the cookie jar as fully adversary-chosen, and
+      neither changes the secrecy story — `credential_never_leaks` holds with
+      both in place, sessions still require the vault approval path, and a
+      lifted token is single-use. Expected inert; confirmed inert.
 
 ### Honest recommendation (updated)
 The policy cost the original text worried about is real, and the owner has

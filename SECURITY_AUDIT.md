@@ -1052,15 +1052,15 @@ credit the existing hardening:
 |---|---|---|
 | server | `routes.rs:275-278` | `cf-visitor` matched via `contains` (substring) instead of strict JSON parse (only honored from trusted proxies, so bounded) |
 | server | ~~`routes.rs:289-319`~~ | ~~`/health` leaks backend state~~ **FIXED** — the response is up/down; detail goes to the logs |
-| server | `account/mod.rs:50` | No global account cap (per-IP only) → disk-exhaustion at scale via rotating IPs |
-| server | `vault/chunk.rs:18,59`, `oram.rs:68,148` | `chunk_id`/`tree_id` are unvalidated-length `String` paths |
+| server | `account/mod.rs` | ~~No global account cap (per-IP only) → disk-exhaustion at scale via rotating IPs~~ **FIXED** — optional `max_accounts` ceiling on registration |
+| server | `vault/chunk.rs`, `vault/oram.rs` | ~~`chunk_id`/`tree_id` are unvalidated-length `String` paths~~ **FIXED** — `crate::ids::validate_id` bounds length and charset at every entry point |
 | server | ~~`share/mod.rs:48-58,491-515`~~ | ~~User enumeration via distinct 404s~~ **FIXED** — one message for every case |
-| server | `web_session/mod.rs:437-495` | No exponential backoff on `/web-session/:id/token` (flat 10/min; inconsistent with `/auth/verify`) |
+| server | `web_session/mod.rs` | ~~No exponential backoff on `/web-session/:id/token` (flat 10/min; inconsistent with `/auth/verify`)~~ **FIXED** — exponential backoff on consecutive proof failures, keyed `(ip, id)` so an onlooker cannot lock the real browser out |
 | server | `device/revoke.rs:58-77` | Microsecond revocation race (middleware checks sled sentinel, not SQL `revoked` column) |
 | desktop | `commands/biometric.rs:42-48` | `enroll()` always returns `WindowsHello` regardless of platform |
 | desktop | `tauri.conf.json:31` | CSP permits plaintext `http://localhost:*` from renderer |
 | desktop | ~~`tauri.conf.json:60-62`~~ | ~~`shell.open` unrestricted~~ **FIXED** — `^https?://` only |
-| desktop | `commands/session.rs:636-669` | `reset_vault` wipes on `"DELETE"` alone when locked/no server → trivial data-loss primitive |
+| desktop | `commands/session.rs` | ~~`reset_vault` wipes on `"DELETE"` alone when locked/no server → trivial data-loss primitive~~ **FIXED** — every path without a password or server-challenge proof now requires a native user-presence confirmation drawn outside the requester's reach; no way to ask → refused |
 | desktop | ~~`commands/totp.rs:4-12`~~ | ~~TOTP oracle callable while locked~~ **FIXED** — requires an unlocked session |
 | desktop | ~~`commands/vault.rs:281-289`~~ | ~~Modulo bias in `generate_password`~~ **FIXED** — rejection sampling, in both copies |
 | desktop | `commands/audit.rs:18-179` | Renderer can forge audit entries (action whitelist, but arbitrary `details`) |
@@ -1074,7 +1074,7 @@ credit the existing hardening:
 | crypto | ~~`shamir.rs:19-56`~~ | ~~Variable-time GF(2⁸) arithmetic~~ **FIXED** — fixed-iteration, branch-free multiply and exponentiation |
 | crypto | ~~`password_kdf.rs:31-33` vs `vela-wasm-bridge/src/lib.rs:19-21`~~ | ~~Argon2id params diverge~~ **FIXED** — blobs record their own cost (v3), the default is 64 MiB/t=3, and the divergent WASM copy was dead code (removed) |
 | crypto | ~~`kdf.rs:58-61`~~ | ~~`chunk_key` context from `{:?}`~~ **FIXED** — context built explicitly, byte-identical (no re-key), and both bridge copies now delegate to it |
-| crypto | `vela-core/src/vault.rs:46-106` | `VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s |
+| crypto | `vela-core/src/vault.rs` | ~~`VaultItem::Debug` prints passwords/CVV/SSN; no `Zeroize` on plaintext `String`s~~ **FIXED** — hand-written redacted `Debug` (no formatting of a `VaultItem` reveals a secret) and `Drop` wipes every secret field in place |
 | crypto | ~~`password.rs:106`~~ | ~~`getrandom(...).expect(...)` panics across `extern "C"`~~ **FIXED** — returns `PasswordError` |
 
 ---

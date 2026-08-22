@@ -324,19 +324,40 @@ impl ApiClient {
         ciphertext: Vec<u8>,
         lamport_clock: i64,
     ) -> Result<(i64, Option<String>)> {
+        self.put_chunk_with_epoch(token, chunk_id, version, ciphertext, lamport_clock, None)
+            .await
+    }
+
+    /// Upload a chunk declaring the key epoch its ciphertext is sealed under
+    /// (vault re-keying, docs/VAULT_REKEYING_DESIGN.md §5). `None` keeps the
+    /// legacy no-header shape, which the server treats as the current epoch.
+    pub async fn put_chunk_with_epoch(
+        &self,
+        token: &str,
+        chunk_id: &str,
+        version: i64,
+        ciphertext: Vec<u8>,
+        lamport_clock: i64,
+        epoch: Option<i64>,
+    ) -> Result<(i64, Option<String>)> {
         let resp = self
             .send_request(false, |client| {
-                client
+                let mut b = client
                     .put(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
                     .header("Authorization", format!("Bearer {}", token))
                     .header("If-Match", format!("{}", version))
-                    .header("X-Lamport-Clock", format!("{}", lamport_clock))
-                    .body(ciphertext.clone())
+                    .header("X-Lamport-Clock", format!("{}", lamport_clock));
+                if let Some(e) = epoch {
+                    b = b.header("X-Vela-Epoch", format!("{}", e));
+                }
+                b.body(ciphertext.clone())
             })
             .await?;
 
         if !resp.status().is_success() {
-            anyhow::bail!("Chunk upload failed: {}", resp.status());
+            let status = resp.status();
+            let detail = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Chunk upload failed: {} ({})", status, detail.trim());
         }
 
         let new_token = extract_new_token(&resp);
@@ -346,6 +367,108 @@ impl ApiClient {
         }
         let upload_resp: UploadResponse = resp.json().await?;
         Ok((upload_resp.version, new_token))
+    }
+
+    /// Current key epoch and rotation state (`"active"` | `"freezing"`).
+    pub async fn get_key_epoch(&self, token: &str) -> Result<(i64, String)> {
+        #[derive(Deserialize)]
+        struct EpochResponse {
+            epoch: i64,
+            state: String,
+        }
+        let resp = self
+            .send_request(true, |client| {
+                client
+                    .get(format!("{}/vault/epoch", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("epoch request failed: {}", resp.status());
+        }
+        let body: EpochResponse = resp.json().await?;
+        Ok((body.epoch, body.state))
+    }
+
+    /// Begin a rotation: freeze the account and fetch the re-encryption work.
+    pub async fn rekey_start(&self, token: &str) -> Result<(RekeyStart, Option<String>)> {
+        #[derive(Deserialize)]
+        struct RawChunk {
+            chunk_id: String,
+            version: i64,
+            lamport_clock: i64,
+        }
+        #[derive(Deserialize)]
+        struct StartResponse {
+            epoch: i64,
+            chunks: Vec<RawChunk>,
+        }
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/vault/rekey/start", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("re-key start failed: {}", resp.status());
+        }
+        let new_token = extract_new_token(&resp);
+        let body: StartResponse = resp.json().await?;
+        Ok((
+            RekeyStart {
+                epoch: body.epoch,
+                chunks: body
+                    .chunks
+                    .into_iter()
+                    .map(|c| RekeyChunk {
+                        chunk_id: c.chunk_id,
+                        version: c.version,
+                        lamport_clock: c.lamport_clock,
+                    })
+                    .collect(),
+            },
+            new_token,
+        ))
+    }
+
+    /// Store the KEM-sealed new-seed capsules for every device.
+    pub async fn rekey_store_capsules(
+        &self,
+        token: &str,
+        capsules: &std::collections::HashMap<String, String>,
+    ) -> Result<Option<String>> {
+        let body = serde_json::json!({ "capsules": capsules });
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/vault/rekey/capsules", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(body.to_string())
+            })
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let detail = resp.text().await.unwrap_or_default();
+            anyhow::bail!("capsule upload failed: {} ({})", status, detail.trim());
+        }
+        Ok(extract_new_token(&resp))
+    }
+
+    /// Commit the rotation (flip epoch, sweep superseded rows).
+    pub async fn rekey_commit(&self, token: &str) -> Result<Option<String>> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/vault/rekey/commit", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("re-key commit failed: {}", resp.status());
+        }
+        Ok(extract_new_token(&resp))
     }
 
     pub async fn delete_chunk(
@@ -1292,6 +1415,25 @@ pub struct DeviceInfo {
     pub created_at: String,
     pub last_active: Option<String>,
     pub revoked: bool,
+    /// Base64 KEM public key; target for re-keying capsules. Present when the
+    /// server exposes it (all current servers do); `None` tolerated so the
+    /// client keeps working against an older deployment.
+    #[serde(default)]
+    pub hybrid_ek: Option<String>,
+}
+
+/// The rotation work order returned by `POST /vault/rekey/start`.
+#[derive(Debug, Clone)]
+pub struct RekeyStart {
+    pub epoch: i64,
+    pub chunks: Vec<RekeyChunk>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RekeyChunk {
+    pub chunk_id: String,
+    pub version: i64,
+    pub lamport_clock: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

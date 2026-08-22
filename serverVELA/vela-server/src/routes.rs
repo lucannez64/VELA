@@ -106,6 +106,17 @@ pub fn build(state: AppState) -> Router {
         .route("/device/capsule", get(crate::device::capsule::get_capsule))
         .route("/devices", get(crate::device::list::list_devices))
         .route("/vault/sync", get(crate::vault::sync::get_sync))
+        .route("/vault/epoch", get(crate::vault::rekey::get_epoch))
+        .route("/vault/rekey/start", post(crate::vault::rekey::post_start))
+        .route(
+            "/vault/rekey/capsules",
+            post(crate::vault::rekey::post_capsules),
+        )
+        .route(
+            "/vault/rekey/commit",
+            post(crate::vault::rekey::post_commit),
+        )
+        .route("/vault/rekey/abort", post(crate::vault::rekey::post_abort))
         .route("/vault/chunk/:id", get(crate::vault::chunk::get_chunk))
         .route("/vault/chunk/:id", put(crate::vault::chunk::put_chunk))
         .route(

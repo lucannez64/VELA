@@ -22,6 +22,10 @@ pub struct DeviceInfo {
     pub revoked_at: Option<DateTime<Utc>>,
     pub revoked_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
+    /// Base64 KEM public key (`ML-KEM-1024 ‖ X25519`). Public material: this is
+    /// what RMS capsules are sealed to at enrollment and during vault
+    /// re-keying, so sibling devices need to see it.
+    pub hybrid_ek: String,
 }
 
 #[derive(Serialize)]
@@ -63,6 +67,7 @@ pub async fn list_devices(
                 revoked_at: d.revoked_at,
                 revoked_by: d.revoked_by,
                 created_at: d.created_at,
+                hybrid_ek: crate::db::encode_b64(&d.hybrid_ek),
             })
         })
         .collect::<Result<Vec<_>>>()?;

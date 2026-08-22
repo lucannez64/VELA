@@ -74,17 +74,21 @@ pub async fn get_path(
     let indices = path_bucket_indices(query.height, leaf)?;
     let mut buckets = Vec::with_capacity(indices.len());
 
+    // Serve only the account's current-epoch rows (re-keying design §5).
+    let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
+
     for bucket_index in indices {
         let rows = state
             .sqldb
             .query(
                 "SELECT version, lamport_clock, last_writer, ciphertext
              FROM oram_buckets
-             WHERE user_id = ? AND tree_id = ? AND bucket_index = ?",
+             WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
                 vec![
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Text(tree_id.clone()),
                     TursoValue::Integer(bucket_index as i64),
+                    TursoValue::Integer(read_epoch),
                 ],
             )
             .await
@@ -162,6 +166,14 @@ pub async fn put_path(
     let now = Utc::now().to_rfc3339();
     let mut updated = Vec::with_capacity(body.buckets.len());
 
+    // ORAM paths rewrite whole buckets, so they cannot be shadowed the way
+    // vault chunks can. Rather than risk a mixed-epoch tree, writes are simply
+    // refused for the (bounded) freeze window; clients retry after adopting.
+    let declared: Option<i64> = None; // JSON transport carries no epoch header yet.
+    let (write_epoch, _read_epoch) =
+        crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared)
+            .await?;
+
     let incoming: u64 = body
         .buckets
         .iter()
@@ -187,11 +199,12 @@ pub async fn put_path(
                 .sqldb
                 .query(
                     "SELECT 1 FROM oram_buckets
-                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ?",
+                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
                     vec![
                         TursoValue::Text(session.user_id.to_string()),
                         TursoValue::Text(tree_id.clone()),
                         TursoValue::Integer(bucket_index_i64),
+                        TursoValue::Integer(write_epoch),
                     ],
                 )
                 .await
@@ -206,8 +219,8 @@ pub async fn put_path(
 
             state.sqldb.execute(
                 "INSERT INTO oram_buckets
-                 (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, created_at, updated_at)
-                 VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+                 (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
+                 VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
                 vec![
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Text(tree_id.clone()),
@@ -215,6 +228,7 @@ pub async fn put_path(
                     TursoValue::Integer(bucket.lamport_clock),
                     TursoValue::Text(session.device_id.to_string()),
                     TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                    TursoValue::Integer(write_epoch),
                     TursoValue::Text(now.clone()),
                     TursoValue::Text(now.clone()),
                 ],
@@ -233,7 +247,8 @@ pub async fn put_path(
                  WHERE user_id = ?
                    AND tree_id = ?
                    AND bucket_index = ?
-                   AND version = ?",
+                   AND version = ?
+                   AND epoch = ?",
                     vec![
                         TursoValue::Integer(bucket.lamport_clock),
                         TursoValue::Text(session.device_id.to_string()),
@@ -243,6 +258,7 @@ pub async fn put_path(
                         TursoValue::Text(tree_id.clone()),
                         TursoValue::Integer(bucket_index_i64),
                         TursoValue::Integer(bucket.if_match),
+                        TursoValue::Integer(write_epoch),
                     ],
                 )
                 .await

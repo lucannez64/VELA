@@ -26,14 +26,21 @@ pub async fn get_sync(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<SyncManifest>)> {
+    // The manifest lists only the currently-served epoch's rows: a device that
+    // has not yet adopted sees the pre-rotation world; after adopting (and
+    // commit), it sees the new one — never a mix of both.
+    let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
     let rows = state
         .sqldb
         .query(
             "SELECT chunk_id, version, lamport_clock, last_writer
          FROM vault_chunks
-         WHERE user_id = ?
+         WHERE user_id = ? AND epoch = ?
          ORDER BY chunk_id",
-            vec![TursoValue::Text(session.user_id.to_string())],
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(read_epoch),
+            ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;

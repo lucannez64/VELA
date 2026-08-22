@@ -272,6 +272,11 @@ fn main() {
             let host: Arc<dyn vela_desktop::host::Host> =
                 Arc::new(TauriHost(app.handle().clone()));
 
+            // Register the host on core state so toolkit-agnostic code (the
+            // destructive-action presence gates) can put a question to the
+            // human through the same native-modal channel.
+            state.register_host(host.clone());
+
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -314,6 +319,7 @@ fn main() {
             commands::session::create_vault_with_password,
             commands::session::check_vault_exists,
             commands::session::reset_vault,
+            commands::rekey::rotate_vault_keys,
             commands::session::get_device_id,
             commands::vault::get_items,
             commands::vault::get_item,

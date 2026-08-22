@@ -110,7 +110,32 @@ impl TursoDb {
             tx_idx: AtomicUsize::new(0),
         };
         this.execute_batch(SCHEMA).await?;
+        this.backfill_rekey_columns().await?;
         Ok(this)
+    }
+
+    /// Add the re-keying columns to databases created before they existed
+    /// (docs/VAULT_REKEYING_DESIGN.md §9). Fresh databases already have them
+    /// from `SCHEMA`, so each ALTER failing with "duplicate column" is the
+    /// expected no-op path and is swallowed; anything else surfaces.
+    async fn backfill_rekey_columns(&self) -> anyhow::Result<()> {
+        const ALTERS: &[&str] = &[
+            "ALTER TABLE users ADD COLUMN key_epoch INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN rekey_state TEXT",
+            "ALTER TABLE users ADD COLUMN rekey_started_at TEXT",
+            "ALTER TABLE users ADD COLUMN rekey_starter TEXT",
+            "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+        ];
+        for sql in ALTERS {
+            if let Err(e) = self.conn().execute(sql, ()).await {
+                let msg = e.to_string().to_lowercase();
+                if !msg.contains("duplicate") && !msg.contains("exists") {
+                    return Err(e.into());
+                }
+            }
+        }
+        Ok(())
     }
 
     fn conn(&self) -> &turso::Connection {
@@ -212,7 +237,9 @@ pub const SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS users (
     id TEXT UNIQUE NOT NULL, recovery_share TEXT, recovery_auth_hash TEXT,
     created_at TEXT NOT NULL, recovery_webauthn_credential TEXT,
-    share_ek TEXT, recovery_webauthn_cred_id TEXT);
+    share_ek TEXT, recovery_webauthn_cred_id TEXT,
+    key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
+    rekey_started_at TEXT, rekey_starter TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_webauthn_cred_id ON users(recovery_webauthn_cred_id);
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
@@ -224,14 +251,19 @@ CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE TABLE IF NOT EXISTS vault_chunks (
     chunk_id TEXT NOT NULL, user_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
     lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT, ciphertext TEXT NOT NULL,
+    epoch INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk ON vault_chunks(user_id, chunk_id);
-CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch ON vault_chunks(user_id, chunk_id, epoch);
+CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
+-- Re-keying (docs/VAULT_REKEYING_DESIGN.md §5): rotation shadow rows share a
+-- chunk_id with the live row, so chunk uniqueness includes the epoch. Drop the
+-- older two-column form wherever it still exists.
+DROP INDEX IF EXISTS idx_vault_chunks_user_chunk;
 CREATE TABLE IF NOT EXISTS oram_buckets (
     user_id TEXT NOT NULL, tree_id TEXT NOT NULL, bucket_index INTEGER NOT NULL,
     version INTEGER NOT NULL DEFAULT 1, lamport_clock INTEGER NOT NULL DEFAULT 0,
-    last_writer TEXT, ciphertext TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket ON oram_buckets(user_id, tree_id, bucket_index);
+    last_writer TEXT, ciphertext TEXT NOT NULL, epoch INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS share_inbox (
     id TEXT UNIQUE NOT NULL, sender_user_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL,
     capsule TEXT NOT NULL, created_at TEXT NOT NULL);
