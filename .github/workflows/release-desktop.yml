@@ -183,10 +183,22 @@ jobs:
   # build; `update-aur` below therefore needs no changes at all.
   build-linux:
     runs-on: ubuntu-latest
+    env:
+      # Content-hash compilation cache (mozilla-actions/sccache-action below).
+      # This is what actually fixes the vendored-gpui-ce rebuild problem:
+      # cargo freshness-checks path dependencies by file mtime, and every
+      # checkout stamps fresh mtimes, so artifact caches alone cannot stop
+      # the vendor tree from recompiling. sccache keys on source content, so
+      # unchanged crates are cache hits regardless of mtimes.
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Derive version from commit
         id: version
@@ -279,6 +291,10 @@ jobs:
       - name: Build (release)
         working-directory: desktopVELA
         run: cargo build --release -p vela-desktop-gpui
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
 
       - name: Package .deb and .rpm
         working-directory: desktopVELA/src-gpui
