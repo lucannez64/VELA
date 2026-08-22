@@ -5,7 +5,9 @@ WebAssembly (wasm-bindgen) bridge over the shared VELA Rust core
 **ephemeral web vault client** described in
 [`EPHEMERAL_WEB_ACCESS_DESIGN.md`](../../EPHEMERAL_WEB_ACCESS_DESIGN.md).
 
-This is **Phase 1** of that design: it proves the core runs in the browser. No UI.
+This bridge now backs the phase-4c web SPA: read-only snapshot opening plus
+read-write chunk sync and editing. The UI itself lives in `webVELA`; this crate
+remains the Rust/WASM cryptographic boundary.
 
 ## Exported functions
 
@@ -19,17 +21,18 @@ Each takes a JSON request string and returns a JSON response string
 | `generate_signing_keypair()` | → `{ vk_b64, sk_b64 }` (RW token auth) |
 | `create_auth_signature_json` | `{ sk_b64, device_id, challenge_b64 }` → `{ signature_b64 }` |
 | `open_share_json` | `{ share_dk_b64, capsule_b64 }` → `{ item_json }` |
-| `encrypt_vault_chunk_json` | `{ rms_b64, chunk_id, vault_json }` → `{ ciphertext_b64 }` |
-| `decrypt_vault_chunk_json` | `{ rms_b64, chunk_id, ciphertext_b64 }` → `{ vault_json }` |
+| `encrypt_vault_chunk_json` | `{ chunk_key_b64, chunk_id, lamport_clock, vault_json }` → `{ ciphertext_b64 }` |
+| `decrypt_vault_chunk_json` | `{ chunk_key_b64, chunk_id, lamport_clock, ciphertext_b64 }` → `{ vault_json }` |
 | `password_strength_json` | `{ password }` → `{ entropy, score, crack_time }` |
 | `argon2_wrap_json` | `{ pin, plaintext_b64 }` → `{ blob_b64 }` |
 | `argon2_unwrap_json` | `{ pin, blob_b64 }` → `{ plaintext_b64 }` |
 
-Chunk crypto is **byte-identical** to the Apple/Android/desktop bridges
-(`derive("vela chunk key v1" || {:?}(chunk_id_bytes), rms)`), so chunks written by
-any client decrypt here. `argon2_*` implements the RW reload-survival wrap from the
-design (§8.1): Argon2id (3 iterations, 64 MiB, 4 lanes) → XChaCha20-Poly1305, blob =
-`salt(16) ‖ ciphertext`.
+Chunk crypto is **byte-identical** to the Apple/Android/desktop bridges. The
+approver derives and grants the exact per-chunk keys; the browser never receives
+the RMS. `chunk_id` and `lamport_clock` are authenticated as associated data, so
+server-side relabeling or rollback fails to decrypt. The generic `argon2_*`
+wrapping exports remain available, but the web client deliberately does not
+persist RW session material or support reload survival.
 
 TOTP is intentionally **not** in this crate (computed client-side, as on native).
 

@@ -23,6 +23,17 @@ js-login = ["dep:boa_engine"]
 # default, deliberately.
 browser-login = []
 
+# These diagnostics import the feature-gated browser driver directly. Declaring
+# the requirement here makes ordinary `cargo test` skip them while preserving
+# their documented `cargo run --features browser-login --example ...` usage.
+[[example]]
+name = "capture_login"
+required-features = ["browser-login"]
+
+[[example]]
+name = "inspect_page"
+required-features = ["browser-login"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 # Pure Rust on purpose. M9c's escape rule assumes a C interpreter where a JS

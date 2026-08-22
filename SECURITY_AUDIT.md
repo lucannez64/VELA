@@ -86,10 +86,10 @@ Torn down after testing (`pkill` + `rm -rf /tmp/opencode/vela-test-data`).
 | E-1 | Medium | extension | `nativeMessage` / `getNativeMessage` bypass credential auth | code | **FIXED** (passthrough handlers deleted) |
 | E-2 | Medium | extension | Popup XSS via unescaped `login.id` in attributes | code | **FIXED** (attribute-safe escaping) |
 | C-1 | High | crypto (JNI) | Private keys / RMS cross FFI as immutable base64 `String`s | code | **FIXED** (RMS as bytes; identity keys behind handles, Android + iOS) |
-| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **PARTIAL** (vault chunks bound end to end; audit chunks and share blobs are not) |
+| C-2 | Medium | crypto | No AAD/version binding on AEAD → silent rollback by server | code | **FIXED** (vault and audit chunks bound; sealed share timestamps reject replay) |
 | C-3 | Medium | crypto | Shamir recovery shares unauthenticated (tamper → wrong RMS) | code | **FIXED** (tagged shares; tampering is an error) |
 | C-4 | Medium | crypto | `VelaByteBuffer` capacity UB across FFI | code | **FIXED** (boxed slice: capacity == len) |
-| P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | **PARTIAL** (server-side v3 rendezvous landed; clients still on v2) |
+| P-1 | **High** | protocol | Enrollment code is vault-equivalent and carries a permanent device identity | code | **FIXED** (v3 rendezvous and device-generated keys shipped on all clients) |
 
 `P-` denotes a protocol-level finding — one that lives in the shape of the
 handshake rather than in any single component's code. P-1 was found while
@@ -579,8 +579,9 @@ user, with no user interaction.
 
 ### D-4 — IPC returns plaintext passwords to any same-uid caller  ·  **MEDIUM**
 
-> **STATUS: PARTLY FIXED.** The capability token no longer buys plaintext on its
-> own. Releasing a credential now needs two things the token is not:
+> **STATUS: FIXED AS DESIGNED; RESIDUAL ACCEPTED AND BOUNDED.** The capability
+> file has been removed entirely. Releasing a credential now needs two things a
+> stolen bearer token could not provide:
 >
 > * **The kernel's word on who connected.** `SO_PEERCRED` (Linux),
 >   `LOCAL_PEERCRED`/`LOCAL_PEERPID` (macOS) and `GetNamedPipeClientProcessId`
@@ -791,6 +792,13 @@ opaque Rust handles and perform all crypto in Rust, returning only the result.
 
 ### P-1 — The enrollment code is vault-equivalent and carries a permanent device identity  ·  **HIGH**
 
+> **STATUS: FIXED.** Enrollment v3 codes contain only a one-time grant id and
+> server URL. The joining device generates and retains its own private identity
+> keys; the approver confirms its fingerprint and KEM-seals the RMS capsule to
+> that device. Desktop, Android, and iOS use the v3 rendezvous flow. Legacy v2
+> parsing remains only for mixed-version compatibility and is explicitly
+> labelled as vault-equivalent in the client UIs.
+
 **Locations**
 - `desktopVELA/vela-desktop-core/src/commands/devices.rs:230-286` (the primary builds the payload)
 - `serverVELA/vela-server/src/device/invitation.rs` (package storage, 15-min TTL, one-shot fetch)
@@ -867,8 +875,8 @@ enrollment driver.
 
 ### C-2 — No AAD/version binding on AEAD ciphertexts → silent rollback  ·  **MEDIUM**
 
-> **STATUS: PARTIALLY FIXED — the detection half is in, the binding half is
-> staged.** The finding has two parts and they have very different blast radii.
+> **STATUS: FIXED.** Rollback detection and ciphertext binding are deployed on
+> every client. The finding has two parts and they have very different blast radii.
 >
 > **Done: every client refuses an older revision.** Per-chunk lamport clocks only
 > increase, so a value below what a device already recorded is a rollback, not a
@@ -1248,13 +1256,12 @@ credit the existing hardening:
 5. ~~**Crypto JNI (C-1).**~~ **Done** — the RMS crosses as bytes, and the identity/share private
    keys now live behind opaque handles with sealed storage on both mobile platforms; the entry
    points that could hand out a private key are deleted.
-6. **Enrollment protocol (P-1).** Stop shipping the joining device's private key and the RMS
-   transfer key inside the enrollment code: device-generated keys, a one-time grant, and a
-   capsule KEM-sealed to the joining device. Highest-value remaining item — an enrollment code is
-   currently worth the whole vault.
-6. **Extension credential bypass (E-1).** Remove/gate `nativeMessage`/`getNativeMessage`.
-7. **AEAD binding (C-2) + authenticated shares (C-3) + `VelaByteBuffer` UB (C-4).**
-8. The lower-severity items above are opportunistic hardening.
+6. ~~**Enrollment protocol (P-1).**~~ **Done** — v3 codes carry only a one-time grant;
+   joining devices generate their keys and receive a KEM-sealed capsule after fingerprint approval.
+7. ~~**Extension credential bypass (E-1).**~~ **Done** — the passthrough handlers were deleted.
+8. ~~**AEAD binding (C-2) + authenticated shares (C-3) + `VelaByteBuffer` UB (C-4).**~~
+   **Done** — sealed chunk revisions, tagged shares, and boxed-slice FFI ownership are deployed.
+9. The lower-severity items above remain opportunistic hardening.
 
 ---
 

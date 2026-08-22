@@ -7,14 +7,18 @@ It runs the VELA core as WebAssembly ([`vela-wasm-bridge`](../libVELA/vela-wasm-
 so the server never sees plaintext. It is meant to be served **same-origin as the
 API** (e.g. `vault.klyt.eu`) under a strict CSP.
 
-## Status — phase 4b (read-only)
+## Status — phase 4c (read-only + read-write)
 
 - Generates an ephemeral KEM keypair in-browser, `POST /web-session/start`, shows a
   QR + paste code for the approver, polls `GET /web-session/:id`.
 - On a **read-only** grant: decapsulates the one-shot snapshot capsule
   (`open_share`) and renders the vault read-only (reveal / copy fields).
-- Read-write (RMS in memory + live sync + Argon2id reload survival) is **phase 4c**;
-  this build sends no signing key, so the server can only grant read-only.
+- On a **read-write** grant: generates an ephemeral signing key, decapsulates a
+  bounded set of per-chunk vault keys (never the RMS), authenticates for a
+  session-scoped token, fetches the live encrypted chunks, and saves edits with
+  optimistic concurrency.
+- RW keys and tokens are memory-only. Navigation, tab close, or backgrounding
+  wipes them; a reload requires a new approval.
 
 ## Develop / build
 

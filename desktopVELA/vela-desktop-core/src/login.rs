@@ -356,6 +356,10 @@ pub enum LoginError {
     /// attempted, because attempting it with a missing artifact would both fail
     /// and look like an automated attack.
     NeedsBrowserArtifact(String),
+    /// A disposable-browser ceremony is already active. Refuse instead of
+    /// letting two browser process trees, interception loops, and human prompts
+    /// race for credentials and session artifacts.
+    BrowserLoginInProgress,
     Http(String),
 }
 
@@ -402,6 +406,10 @@ impl std::fmt::Display for LoginError {
                 f,
                 "{what} Complete the captcha in the browser tab first, then try again \
                  — VELA picks the token up from the page and finishes the sign-in."
+            ),
+            Self::BrowserLoginInProgress => write!(
+                f,
+                "Another browser sign-in is already in progress. Finish or close it, then try again."
             ),
             Self::Http(message) => write!(f, "Could not reach the site: {message}"),
         }
@@ -552,6 +560,7 @@ pub async fn perform_login(
         #[cfg(feature = "browser-login")]
         {
             let outcome = crate::browser::login(
+                state,
                 &target,
                 &username,
                 &password,
@@ -609,6 +618,7 @@ pub async fn perform_login(
                     #[cfg(feature = "browser-login")]
                     {
                         let outcome = crate::browser::login(
+                            state,
                             &target,
                             &username,
                             &password,

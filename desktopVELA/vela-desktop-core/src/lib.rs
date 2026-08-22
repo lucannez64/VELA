@@ -107,6 +107,11 @@ pub struct AppState {
     pub extension_connected: Arc<AtomicBool>,
     /// Serializes sync runs so local edits and merges cannot interleave.
     pub sync_mutex: tokio::sync::Mutex<()>,
+    /// Allows only one disposable-browser login ceremony at a time. Both
+    /// desktop frontends share this core state, and the owned guard acquired
+    /// by `browser::login` releases on return, error, cancellation, or panic.
+    #[cfg(feature = "browser-login")]
+    pub(crate) browser_login_mutex: Arc<tokio::sync::Mutex<()>>,
     /// Bumped on every lock/unlock. Sync captures it and aborts if it changes
     /// mid-flight (vault locked during sync).
     pub session_generation: AtomicU64,
@@ -254,6 +259,8 @@ impl AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            #[cfg(feature = "browser-login")]
+            browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
             released_domains: RwLock::new(HashSet::new()),
@@ -420,6 +427,8 @@ pub enum RateLimitResult {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            #[cfg(feature = "browser-login")]
+            browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),
             plaintext_release: RwLock::new(None),
             released_domains: RwLock::new(HashSet::new()),

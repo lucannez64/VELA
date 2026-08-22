@@ -7,7 +7,7 @@ VELA is a local-first, zero-knowledge password vault with:
 - `iosVELA`: native iOS app.
 - `serverVELA`: sync/auth API server.
 - `extension`: browser extension and native messaging host.
-- `webVELA`: ephemeral read-only web vault (served by the server).
+- `webVELA`: ephemeral read-only or read-write web vault (served by the server).
 - `libVELA`: shared Rust core (`vela-core`), crypto (`vela-crypto`), and the Android/iOS/WASM bridges.
 - `security/`: audit tooling — semgrep rules, static Rust scanner, exploit regression suite.
 - `docs/`: design documents and the interactive vault atlas.
@@ -19,7 +19,8 @@ The app is designed so vault data and root secrets stay on client devices. The s
 Important defaults after the hardening pass:
 
 - Desktop browser IPC uses OS-protected IPC only: Windows named pipes or Unix sockets.
-- Desktop IPC requires a random per-session capability token.
+- Desktop IPC admits only authenticated browser-native-messaging process trees;
+  there is no bearer capability file to steal.
 - Browser extension access is routed through authenticated native messaging, not localhost HTTP.
 - Autofill secrets require an active desktop session plus biometric/user approval.
 - Server defaults to loopback: `127.0.0.1:8443`.

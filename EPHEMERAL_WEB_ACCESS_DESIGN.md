@@ -1,6 +1,6 @@
 # VELA Ephemeral Web Access — Design Document
 
-**Status:** Draft for review
+**Status:** Implemented (RO + RW; current deviations recorded below)
 **Date:** 2026-06-22
 **Author:** design proposal
 **Related:** [SPEC.md](SPEC.md) §4 (Identity & Device Management), §7.4 (Web Extension)
@@ -55,7 +55,7 @@ device at grant time.
 | :--- | :--- | :--- |
 | What the browser receives | A **decrypted vault snapshot**, sealed by the approver | The **per-chunk vault keys**, sealed by the approver |
 | RMS ever in the browser? | **Never** | **Never** (only keys derived from it, for a bounded set of chunks) |
-| Live sync / editing | No (point-in-time snapshot) | Yes (full ORAM sync) |
+| Live sync / editing | No (point-in-time snapshot) | Yes (live encrypted chunk sync) |
 | Server token | Short-lived, read-scoped (snapshot fetch only) | TTL-capped PASETO v4, vault read/write |
 | Best for | Untrusted / borrowed device, "just read a password" | Temporary but trusted device |
 | Residual risk on revoke | None beyond the snapshot already shown | The vault chunk keys could have been copied (see §9) |
@@ -72,7 +72,7 @@ decides, per grant, how much power to hand the browser.
 | Maximum TTL | **24 hours** (server-enforced cap) |
 | RO snapshot delivery | **Inline-in-grant, one-shot** — the sealed snapshot rides in the grant response; the server keeps **no re-fetchable copy** (deleted/never persisted after first delivery). |
 | Web SPA hosting | **Same origin as the API** (`vault.klyt.eu`). |
-| RW reload survival | **Yes (opt-in per grant):** RMS PIN-wrapped with Argon2id + XChaCha20-Poly1305 in `sessionStorage`, re-validated on reload (§8.1). |
+| RW reload survival | **No:** keys and tokens are memory-only; navigation, close, or backgrounding ends access and a reload requires a fresh approval (§8.1). |
 | Audit logging | **In v1:** web-session grant/revoke/expire events in the encrypted device audit log, written by trusted devices only (§9.2). |
 
 ---
@@ -279,42 +279,22 @@ A periodic task (modeled on the existing `inbox_cleanup_task`) deletes expired
 - **UI:** can reuse the desktop Tauri React/TS frontend, gated to read-only in RO
   mode.
 - **Memory hygiene:**
-  - By default, vault chunk keys / snapshot / ephemeral keys live in **WASM
-    memory only**;
-    never `localStorage`/`IndexedDB`/cookies. The only exception is the opt-in RW
-    reload-survival blob below, which is **PIN-wrapped** and in `sessionStorage`.
-  - Zeroize and drop on **`visibilitychange`→hidden idle timeout**, on
-    **`beforeunload`** (RO; and RW when reload-survival is off), and on **expiry**.
-  - An **idle timeout** shorter than the TTL (e.g. 5 min) auto-locks the session.
+  - Vault chunk keys, session tokens, snapshots, and ephemeral keys remain in
+    tab/process memory; they are never persisted to `localStorage`, IndexedDB,
+    cookies, or `sessionStorage`.
+  - Wipe and reload on **`visibilitychange`→hidden** and wipe on
+    **`beforeunload`**. Server-side expiry bounds every RW token.
   - A persistent **security-downgrade banner** in RW mode (consistent with the
     SPEC §7.4 WASM-fallback warning), naming the active mode and time remaining.
 
-### 8.1 RW reload survival within the TTL (Argon2id-wrapped)
+### 8.1 RW reload behavior (implemented)
 
-By default a page reload ends an RW session (memory-only). Optionally — chosen at
-grant time — an RW session can **survive reloads within its TTL** without re-linking
-from the phone, using the exact hardening already specified for the browser fallback
-in [SPEC.md §7.4]:
-
-1. On RW unlock the web client asks the user to set a **session PIN** (≥ 8 chars,
-   per SPEC §7.4 — distinct from any vault password).
-2. The PIN is stretched with **Argon2id (3 iterations, 64 MB, 4 parallelism)** to a
-   256-bit wrapping key.
-3. The **RMS + ephemeral signing key + `session_id` + `expires_at`** are encrypted
-   with **XChaCha20-Poly1305** under that key and written to **`sessionStorage`**
-   (per-tab; cleared automatically on tab/window close — *not* `localStorage`/
-   `IndexedDB`, so it does not persist across a browser restart).
-4. **On reload:** prompt for the PIN → Argon2id-unwrap → **re-validate with the
-   server** (`GET /web-session/{id}` must return `status = granted` and not expired)
-   → resume. If revoked/expired, **wipe** the blob and refuse. A small cap on failed
-   PIN attempts (e.g. 5) wipes the blob.
-
-Security properties: Argon2id makes an offline PIN guess expensive should the
-`sessionStorage` blob ever spill to disk; the server-side TTL + revocation re-check
-on every reload means a revoked session cannot be resumed even with the correct PIN;
-and the blob is gone on tab close regardless. This is strictly an RW affordance — RO
-never persists anything (§5.2). The security-downgrade banner notes when
-reload-survival is active.
+A reload ends an RW session. The implemented client deliberately removed the
+planned Argon2id/PIN `sessionStorage` resume blob: even wrapped session material
+is persistence on the borrowed/shared machines this feature targets. The page
+keeps its per-chunk keys, ephemeral signing key, token, and decrypted items only
+in memory, clears the old storage key defensively, and requires a fresh approval
+after navigation, close, or backgrounding.
 
 ---
 
@@ -391,18 +371,18 @@ and the client notes it). The log remains an opaque XChaCha20-Poly1305 blob unde
 
 ## 12. Implementation Phases
 
-1. **`vela-wasm-bridge`** crate: keypair gen, `open_share`, chunk crypto, TOTP,
-   plus **Argon2id wrap/unwrap** (for §8.1) → prove the core runs in-browser. (No UI.)
-2. **Server:** `web_sessions` table, the four endpoints, TTL default/cap + cleanup
+1. **Done — `vela-wasm-bridge`:** keypair generation, `open_share`, chunk crypto,
+   signing, and password wrapping primitives used by the browser client.
+2. **Done — server:** `web_sessions` table, endpoints, TTL default/cap + cleanup
    job, `web_ephemeral` device kind, token-exp capping.
-3. **Approver UI** (phone/desktop): scan → confirm mode/duration → seal → grant,
+3. **Done — approver UI** (phone/desktop): scan → confirm mode/duration → seal → grant,
    and **write `web_session_granted` to the audit log** (§9.2). RO snapshot sealing
-   first (lower risk), then RW RMS sealing.
-4. **Web SPA:** handshake + decapsulation + read-only render (RO), then RW sync +
-   edit, **opt-in Argon2id reload-survival** (§8.1), memory hygiene, banners.
-5. **Revocation + audit surfacing** under *Devices → Temporary web sessions*
-   (writing `web_session_revoked`/reconciling `web_session_expired`, §9.2) +
-   hardening (rate limits, CSP/SRI, idle timeout).
+   plus RW per-chunk-key sealing.
+4. **Done — web SPA:** handshake, decapsulation, RO rendering, RW sync/edit,
+   memory-only cleanup, and mode/expiry banners.
+5. **Done — revocation + audit surfacing** under *Devices → Temporary web sessions*
+   (writing `web_session_revoked`/reconciling `web_session_expired`, §9.2) plus
+   rate limits, CSP, and lock-on-background hardening.
 
 ---
 
@@ -419,13 +399,12 @@ The initial open questions are resolved (see the summary table in §3):
 - **SPA hosting:** ✅ **same origin as the API** (`vault.klyt.eu`), behind the same
   Cloudflare Tunnel, keeping `connect-src 'self'` and avoiding CORS. (§8)
 
-- **RW reload survival:** ✅ **yes** — opt-in per grant, RMS PIN-wrapped with
-  **Argon2id (3/64 MB/4)** + XChaCha20-Poly1305 in `sessionStorage`, re-validated
-  with the server on every reload. (§8.1)
+- **RW reload survival:** ✅ resolved as **no persistence** — reload/background
+  ends the session and requires a fresh trusted-device approval. (§8.1)
 - **Audit logging:** ✅ **in v1** — web-session grant/revoke/expire events written
   to the encrypted device audit log by trusted devices only. (§9.2)
 
-Nothing remains open; the design is ready to implement.
+The v1 design is implemented. Future extensions remain in §11.
 
 ---
 

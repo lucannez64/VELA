@@ -233,7 +233,9 @@ monkeytype** — the end-to-end success.
   — an http:// target is not the same site as an https:// one, RT-12) by
   default, plus the short identity-provider allowlist. The core will never fill
   a credential into a request to an arbitrary host.
-- **One browser login at a time** is not yet enforced (see §7).
+- **One browser login at a time is enforced.** A shared-core non-blocking gate
+  refuses a second ceremony immediately and releases automatically on success,
+  error, timeout/cancellation, or panic. Both desktop frontends share the gate.
 - **Formal model M9e** ("browser mints a session, core substitutes at
   interception") is proposed but **not written** — open, cheap, and the paper
   counterpart of the placeholder argument.
@@ -242,22 +244,21 @@ monkeytype** — the end-to-end success.
 
 ## 6. Verification status
 
-- Unit tests (9) cover interception (substitution, pass-through, cross-site,
-  transformed-password, identity-provider), cookie/storage mapping, and the
-  `perform_login`→browser fallback wiring (windowless via the test seam).
+- Unit tests cover interception (substitution, pass-through, cross-site,
+  transformed-password, identity-provider), cookie/storage mapping,
+  `perform_login`→browser fallback wiring, concurrent-login refusal, and gate
+  cleanup after error, cancellation/timeout, and panic.
 - Live-verified on real sites through the gpui app + extension:
   - **rateyourmusic** — redirect login, cookie session. ✓
   - **hardcover.app** — SPA login, cookie session. ✓
   - **monkeytype** — Firebase token session (IndexedDB). ✓
-- 302 core tests + 9 browser-tier tests pass; clippy clean; the browser-login
-  feature is off by default (the gpui and Tauri apps opt in).
+- The core and browser-tier suites pass; the browser-login feature is off by
+  default in the library, while both GPUI and Tauri apps opt in.
 
 ---
 
 ## 7. Remaining work
 
-- **One-at-a-time lock.** A second in-core login while one is running is not
-  refused.
 - **2FA pass-through is untested.** The window stays open for the human to
   finish a second factor, but the flow is untested end-to-end for it.
 - **Teardown robustness.** The browser is killed via `child.kill()`; on some

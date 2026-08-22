@@ -20,6 +20,80 @@ fn site(url: &str) -> Url {
     Url::parse(url).unwrap()
 }
 
+// ── Browser-login single flight ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_second_browser_login_is_rejected_immediately() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = std::sync::Arc::new(crate::AppState::for_test(dir.path()));
+    let first = acquire_single_flight(&state).expect("first login owns the gate");
+
+    let other_state = state.clone();
+    let second = tokio::spawn(async move {
+        login(
+            &other_state,
+            &site("https://example.com/login"),
+            "ada",
+            PASSWORD,
+            &[],
+            SiteMode::SelfServe,
+            true,
+        )
+        .await
+    })
+    .await
+    .expect("the competing task should not panic")
+    .expect_err("a competing browser login must be refused");
+    assert_eq!(second, crate::login::LoginError::BrowserLoginInProgress);
+
+    drop(first);
+    acquire_single_flight(&state).expect("the gate should reopen after success");
+}
+
+#[tokio::test]
+async fn browser_login_gate_releases_after_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = crate::AppState::for_test(dir.path());
+
+    let result: Result<(), &'static str> = async {
+        let _guard = acquire_single_flight(&state).expect("login owns the gate");
+        Err("simulated browser failure")
+    }
+    .await;
+    assert_eq!(result, Err("simulated browser failure"));
+    acquire_single_flight(&state).expect("an error must release the gate");
+}
+
+#[tokio::test]
+async fn browser_login_gate_releases_when_the_future_times_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = std::sync::Arc::new(crate::AppState::for_test(dir.path()));
+    let timed_state = state.clone();
+
+    let result = tokio::time::timeout(std::time::Duration::from_millis(10), async move {
+        let _guard = acquire_single_flight(&timed_state).expect("login owns the gate");
+        std::future::pending::<()>().await;
+    })
+    .await;
+    assert!(result.is_err(), "the simulated login should time out");
+    acquire_single_flight(&state).expect("cancellation must release the gate");
+}
+
+#[tokio::test]
+async fn browser_login_gate_releases_after_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = std::sync::Arc::new(crate::AppState::for_test(dir.path()));
+    let panic_state = state.clone();
+
+    let joined = tokio::spawn(async move {
+        let _guard = acquire_single_flight(&panic_state).expect("login owns the gate");
+        panic!("simulated browser panic");
+    })
+    .await;
+    assert!(joined.expect_err("the task should panic").is_panic());
+    acquire_single_flight(&state).expect("unwinding must release the gate");
+}
+
 // ── Interception decision ─────────────────────────────────────────────────────
 
 #[test]
@@ -430,9 +504,19 @@ async fn a_real_browser_logs_in_without_the_page_seeing_the_password() {
         .await;
 
     let login_url = Url::parse(&format!("{}/login", server.uri())).unwrap();
-    let outcome = login(&login_url, "ada", PASSWORD, &[], SiteMode::SelfServe, true)
-        .await
-        .expect("the browser login should complete");
+    let dir = tempfile::tempdir().unwrap();
+    let state = crate::AppState::for_test(dir.path());
+    let outcome = login(
+        &state,
+        &login_url,
+        "ada",
+        PASSWORD,
+        &[],
+        SiteMode::SelfServe,
+        true,
+    )
+    .await
+    .expect("the browser login should complete");
 
     assert!(outcome.looks_authenticated);
     assert!(

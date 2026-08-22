@@ -22,6 +22,7 @@ use url::Url;
 
 use crate::browser::cdp::Cdp;
 use crate::login::{LoginError, LoginOutcome, SiteMode};
+use crate::AppState;
 
 /// The whole-ceremony budget for one browser-driven login.
 const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
@@ -53,6 +54,7 @@ const POST_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2
 /// `browser_cookies` are the tab's pre-session cookies, seeded before the
 /// page loads.
 pub async fn login(
+    state: &AppState,
     start_url: &Url,
     username: &str,
     password: &str,
@@ -60,6 +62,12 @@ pub async fn login(
     site_mode: SiteMode,
     user_verified: bool,
 ) -> Result<LoginOutcome, LoginError> {
+    // An owned try-lock makes this a process-local single-flight gate without
+    // queueing a second human ceremony behind the first. The guard is held for
+    // the whole disposable-browser lifetime and Tokio's RAII guard releases it
+    // on success, every `?` error, future cancellation/timeout, and unwinding.
+    let _single_flight = acquire_single_flight(state)?;
+
     let (browser, pipe) = host::spawn()
         .await
         .map_err(|e| LoginError::Http(e.to_string()))?;
@@ -254,6 +262,16 @@ pub async fn login(
         local_session,
         cached_db,
     })
+}
+
+fn acquire_single_flight(
+    state: &AppState,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, LoginError> {
+    state
+        .browser_login_mutex
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| LoginError::BrowserLoginInProgress)
 }
 
 /// Seed the browser's cookie jar with the tab's pre-session cookies before the
