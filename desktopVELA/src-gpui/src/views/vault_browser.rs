@@ -28,7 +28,7 @@ use gpui::{
 };
 use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
 
-use vela_desktop_core::commands::vault::{get_items, get_vault_health, VaultHealth};
+use vela_desktop_core::commands::vault::{get_items_arc, get_vault_health, VaultHealth};
 use vela_desktop_core::vault::{ItemType, VaultItem};
 use vela_desktop_core::AppState;
 
@@ -87,13 +87,48 @@ pub enum VaultBrowserEvent {
 impl EventEmitter<VaultBrowserEvent> for VaultBrowser {}
 
 /// One virtualized row: either an "A / B / C" section header or an item.
-/// Matches the original's `Row` union in `VaultBrowser.tsx`. The item is
-/// boxed: the enum is stored long-term in the rows cache (`Arc<Vec<Row>>`),
-/// and the unboxed variant made every cached row ~280 bytes (and tripped
-/// clippy's `large_size_differences`).
+/// Matches the original's `Row` union in `VaultBrowser.tsx`. Items are
+/// stored as an index into the view's shared `items` snapshot rather than a
+/// boxed clone: the enum lives long-term in the rows cache (`Arc<Vec<Row>>`),
+/// and boxing a full `VaultItem` (plaintext password included) made every
+/// cached row ~280 bytes on top of paying a deep clone per item per rebuild.
 enum Row {
     Header(SharedString),
-    Item(Box<VaultItem>),
+    Item(usize),
+}
+
+/// Which field the copy icon will take, decided at render time (see the
+/// priority in `item_row`). The plaintext itself is only materialized when
+/// the icon is actually clicked.
+#[derive(Clone, Copy)]
+enum CopySource {
+    Password,
+    CardNumber,
+    Username,
+}
+
+/// Resolves a row's copy payload from the live items snapshot. Returns
+/// `None` for "nothing to copy" — including the case where the item was
+/// deleted between render and click, which toasts instead of copying a
+/// stale secret.
+fn resolve_copy_value(
+    items: &[VaultItem],
+    id: &str,
+    source: Option<CopySource>,
+) -> Option<(&'static str, String)> {
+    let item = items.iter().find(|item| item.id() == id)?;
+    match (source, item) {
+        (Some(CopySource::Password), _) => {
+            item.password().map(|pass| ("Password", pass.to_string()))
+        }
+        (Some(CopySource::CardNumber), VaultItem::CreditCard { number, .. }) if !number.is_empty() => {
+            Some(("Card number", number.clone()))
+        }
+        (Some(CopySource::Username), _) => {
+            item.username().map(|user| ("Username", user.to_string()))
+        }
+        _ => None,
+    }
 }
 
 /// Cache key for the derived row set: the dataset version + filter +
@@ -109,7 +144,9 @@ struct RowsKey {
 
 pub struct VaultBrowser {
     app_state: Arc<AppState>,
-    items: Vec<VaultItem>,
+    /// Shared with the render closure so cached rows can reference entries
+    /// by index instead of cloning every visible item on each rebuild.
+    items: Arc<Vec<VaultItem>>,
     /// Bumped every time `items` is replaced, so `refresh_rows` can tell a
     /// same-filter/same-query re-render from an actual dataset change.
     items_version: u64,
@@ -149,7 +186,7 @@ impl VaultBrowser {
 
         Self {
             app_state,
-            items: Vec::new(),
+            items: Arc::new(Vec::new()),
             items_version: 0,
             health: None,
             error: None,
@@ -179,7 +216,7 @@ impl VaultBrowser {
         cx.spawn(async move |this, cx| {
             let (items, health) = cx
                 .background_spawn_guarded("load vault items", async move {
-                    (get_items(&app_state), get_vault_health(&app_state))
+                    (get_items_arc(&app_state), get_vault_health(&app_state))
                 })
                 .await
                 .unwrap_or_else(|| {
@@ -233,7 +270,7 @@ impl VaultBrowser {
         cx.spawn(async move |this, cx| {
             let (items, health) = cx
                 .background_spawn_guarded("load vault items", async move {
-                    (get_items(&app_state), get_vault_health(&app_state))
+                    (get_items_arc(&app_state), get_vault_health(&app_state))
                 })
                 .await
                 .unwrap_or_else(|| {
@@ -263,7 +300,10 @@ impl VaultBrowser {
     /// keystroke, hover frame and reload; before this cache it re-lowercased
     /// and re-sorted (with a per-comparison allocation) and re-cloned every
     /// vault item on each of those frames. The heavy part only depends on
-    /// `items`, `filter` and the query, so a key hit is a no-op.
+    /// `items`, `filter` and the query, so a key hit is a no-op. Rows keep
+    /// indices into `items`, so even a rebuild only allocates one
+    /// `(lowercased name, index)` pair per match — never a clone of the item
+    /// itself.
     ///
     /// Returns whether the row set changed (used to reset the virtualized
     /// list — the same stale-layout fix the old `last_rows_signature` did, but
@@ -278,16 +318,15 @@ impl VaultBrowser {
         // Lowercase each candidate's name exactly once — it drives the query
         // match, the sort, and the section letter — and only touch username
         // /url when the query isn't empty (matching the original's early-out).
-        let mut matched: Vec<(String, VaultItem)> = self
+        let mut matched: Vec<(String, usize)> = self
             .items
             .iter()
-            .filter(|item| self.filter.matches(item.item_type()))
-            .filter_map(|item| {
+            .enumerate()
+            .filter(|(_, item)| self.filter.matches(item.item_type()))
+            .filter_map(|(ix, item)| {
                 let lower_name = item.name().to_lowercase();
-                if query.is_empty() {
-                    return Some((lower_name, item.clone()));
-                }
-                let hits = lower_name.contains(&query)
+                let hits = query.is_empty()
+                    || lower_name.contains(&query)
                     || item
                         .username()
                         .map(|u| u.to_lowercase().contains(&query))
@@ -296,7 +335,7 @@ impl VaultBrowser {
                         .url()
                         .map(|u| u.to_lowercase().contains(&query))
                         .unwrap_or(false);
-                hits.then(|| (lower_name, item.clone()))
+                hits.then_some((lower_name, ix))
             })
             .collect();
         matched.sort_by(|a, b| a.0.cmp(&b.0));
@@ -306,7 +345,8 @@ impl VaultBrowser {
         // for an empty name), groups already sorted by name here.
         let mut rows = Vec::with_capacity(matched.len() * 2);
         let mut current_letter: Option<char> = None;
-        for (_lower_name, item) in matched {
+        for (_lower_name, ix) in matched {
+            let item = &self.items[ix];
             // Group by the *original* name's first char (like the original),
             // not the lowercased one — `to_ascii_uppercase` leaves non-ASCII
             // chars untouched, so a lowercased 'ä' would group differently
@@ -322,12 +362,12 @@ impl VaultBrowser {
                 rows.push(Row::Header(letter.to_string().into()));
                 current_letter = Some(letter);
             }
-            rows.push(Row::Item(Box::new(item)));
+            rows.push(Row::Item(ix));
         }
 
         // All four filter-chip counts in one pass over the vault.
         let mut counts = [0usize; 4];
-        for item in &self.items {
+        for item in self.items.iter() {
             for (i, f) in Filter::ALL.iter().enumerate() {
                 if f.matches(item.item_type()) {
                     counts[i] += 1;
@@ -533,15 +573,20 @@ impl Render for VaultBrowser {
                     .sum();
                 let list_height = content_height.clamp(HEADER_ROW_HEIGHT, MAX_LIST_HEIGHT);
                 let favicon_cache = self.favicon_cache.clone();
+                // Same snapshot the cached rows were built from (a dataset
+                // swap bumps `items_version`, forcing `refresh_rows` to
+                // rebuild before this closure can run), so index lookups are
+                // always in bounds and consistent with the rendered rows.
+                let row_items = Arc::clone(&self.items);
                 list(
                     self.list_state.clone(),
                     move |ix, window, app| match &rows[ix] {
                         Row::Header(letter) => header_row(&palette, letter).into_any_element(),
-                        Row::Item(item) => div()
+                        Row::Item(item_ix) => div()
                             .pb_3()
                             .child(item_row(
                                 &palette,
-                                item,
+                                &row_items[*item_ix],
                                 &favicon_cache,
                                 weak_view.clone(),
                                 window,
@@ -619,14 +664,21 @@ fn item_row(
     let shared = item.shared();
     let is_received = item.is_received_share();
     // Matches the original's `handleCopy` priority: password, then card
-    // number, then username, else nothing to copy.
-    let copy_value: Option<(&'static str, String)> = if let Some(pass) = item.password() {
-        Some(("Password", pass.to_string()))
-    } else if let VaultItem::CreditCard { number, .. } = item {
-        (!number.is_empty()).then(|| ("Card number", number.clone()))
+    // number, then username, else nothing to copy. Only the *which field*
+    // decision happens at render time; the value itself is resolved from
+    // live vault state when the icon is clicked, so no rendered row keeps
+    // its own plaintext copy alive.
+    let copy_source = if item.password().is_some() {
+        Some(CopySource::Password)
+    } else if matches!(item, VaultItem::CreditCard { number, .. } if !number.is_empty()) {
+        Some(CopySource::CardNumber)
+    } else if item.username().is_some() {
+        Some(CopySource::Username)
     } else {
-        item.username().map(|u| ("Username", u.to_string()))
+        None
     };
+    let copy_id = id.clone();
+    let copy_weak_view = weak_view.clone();
     let open_url: Option<String> = item.url().filter(|u| !u.is_empty()).map(|u| u.to_string());
 
     let hover_t = animation::hover_transition(format!("item-{id}"), window, app);
@@ -737,15 +789,21 @@ fn item_row(
                                     // ItemDetail — stop it here, same as the
                                     // original's `e.stopPropagation()`.
                                     cx.stop_propagation();
-                                    match &copy_value {
-                                        Some((label, value)) => crate::clipboard::copy(cx, label, value),
+                                    let copied = copy_weak_view.update(cx, |this, cx| {
+                                        resolve_copy_value(&this.items, &copy_id, copy_source)
+                                            .map(|(label, value)| {
+                                                crate::clipboard::copy(cx, label, &value)
+                                            })
+                                            .is_some()
+                                    });
+                                    if !copied.unwrap_or(false) {
                                         // Matches the original's
                                         // `showToast('Nothing to copy', 'info')`.
-                                        None => crate::toast::show(
+                                        crate::toast::show(
                                             cx,
                                             "Nothing to copy",
                                             crate::toast::ToastKind::Info,
-                                        ),
+                                        );
                                     }
                                 }),
                         )

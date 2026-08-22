@@ -574,12 +574,35 @@ impl VaultItem {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(from = "VaultStoreRepr")]
 pub struct VaultStore {
     pub items: Vec<VaultItem>,
     #[serde(default)]
     pub tombstones: Vec<Tombstone>,
+    /// Bumped by every mutation of `items`. [`Self::items_snapshot`] keys its
+    /// cached `Arc` on this, so repeated reads share one allocation instead
+    /// of deep-cloning the vault per request.
+    ///
+    /// Direct assignments to `items` outside [`Self::add_item`] /
+    /// [`Self::update_item`] / [`Self::delete_item`] /
+    /// [`Self::replace_items`] leave both this counter and the lookup index
+    /// stale — use those methods instead. (`get_item` still reads correctly
+    /// through its scan fallback, which is why the compiler can't catch it.)
+    #[serde(skip, default)]
+    pub generation: u64,
+    /// The last snapshot handed out by [`Self::items_snapshot`], valid for
+    /// the current [`Self::generation`]. Cleared on every mutation so the
+    /// store never pins two copies of the item list between an edit and the
+    /// next read.
+    ///
+    /// Living inside the store — not in `AppState` — is what makes whole-store
+    /// swaps safe: unlock/lock/recovery replace `*vault_state = new_store`,
+    /// and a fresh store carries no stale cache. A deserialized store always
+    /// starts here with `generation == 0`, which would collide with a stale
+    /// AppState-side cache keyed on generation alone.
+    #[serde(skip, default)]
+    snapshot: parking_lot::RwLock<Option<std::sync::Arc<Vec<VaultItem>>>>,
     #[serde(skip, default = "HashMap::new")]
     item_index: HashMap<String, usize>,
 }
@@ -604,10 +627,28 @@ impl From<VaultStoreRepr> for VaultStore {
         let mut store = Self {
             items: repr.items,
             tombstones: repr.tombstones,
+            generation: 0,
+            snapshot: parking_lot::RwLock::new(None),
             item_index: HashMap::new(),
         };
         store.reindex();
         store
+    }
+}
+
+impl Clone for VaultStore {
+    fn clone(&self) -> Self {
+        Self {
+            items: self.items.clone(),
+            tombstones: self.tombstones.clone(),
+            generation: self.generation,
+            // A clone rebuilds its snapshot lazily on first read rather than
+            // sharing this store's slot — one extra copy on the rare clone
+            // path in exchange for never having to reason about which store
+            // a cached `Arc` belongs to.
+            snapshot: parking_lot::RwLock::new(None),
+            item_index: self.item_index.clone(),
+        }
     }
 }
 
@@ -622,8 +663,55 @@ impl VaultStore {
         Self {
             items: Vec::new(),
             tombstones: Vec::new(),
+            generation: 0,
+            snapshot: parking_lot::RwLock::new(None),
             item_index: HashMap::new(),
         }
+    }
+
+    /// Records that `items` changed and drops the cached snapshot, so the
+    /// store never holds two copies of the item list between an edit and the
+    /// next read. Consumers holding earlier `Arc`s keep their (now stale)
+    /// copy alive until they drop it — that is the point of the Arc.
+    pub fn touch_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        *self.snapshot.write() = None;
+    }
+
+    /// Bulk-replaces `items` — the one sanctioned way to write the vector
+    /// outside the CRUD methods. The sync merge is the motivating caller;
+    /// anything else should use [`Self::add_item`] / [`Self::update_item`] /
+    /// [`Self::delete_item`].
+    ///
+    /// Assigning `.items` directly instead leaves the lookup index pointing
+    /// at wrong slots (`get_item` falls back to a linear scan when it notices,
+    /// so reads stay *correct* — just O(n) until the next mutation) and keeps
+    /// serving the pre-replacement snapshot cache.
+    pub fn replace_items(&mut self, items: Vec<VaultItem>) {
+        self.items = items;
+        self.reindex();
+        self.touch_generation();
+    }
+
+    /// A shared, cheap-to-clone view of `items`, rebuilt only after a
+    /// mutation. The rebuild happens under whatever lock the caller already
+    /// holds (`AppState.vault`), i.e. no worse than the per-request clone
+    /// this replaces; concurrent first readers may race to build and the
+    /// loser's copy is dropped.
+    ///
+    /// The cache is keyed on the store instance itself, so unlock/lock/recovery
+    /// paths that swap in a whole new `VaultStore` can never observe another
+    /// session's snapshot.
+    pub fn items_snapshot(&self) -> std::sync::Arc<Vec<VaultItem>> {
+        if let Some(snapshot) = self.snapshot.read().clone() {
+            return snapshot;
+        }
+
+        let built = std::sync::Arc::new(self.items.clone());
+        // Another reader may have built one while we cloned; either way both
+        // snapshots have identical content for this generation.
+        *self.snapshot.write() = Some(built.clone());
+        built
     }
 
     fn reindex(&mut self) {
@@ -637,11 +725,12 @@ impl VaultStore {
     /// Rebuild the index whenever it can no longer describe `items`.
     ///
     /// "The index is empty" was never a sufficient staleness test: `items` is
-    /// public, and the sync merge replaces it wholesale (`local.items =
-    /// final_items.into_values().collect()`), which left the index holding the
-    /// *old* positions — `get_item` then handed back whichever item had moved
-    /// into that slot. Comparing lengths catches a wholesale replacement, and
-    /// `get_item` re-checks the id at the position it lands on for the rest.
+    /// public, and a wholesale replacement (historically `local.items = …` in
+    /// the sync merge, now [`Self::replace_items`]) leaves the index holding
+    /// the *old* positions — `get_item` then handed back whichever item had
+    /// moved into that slot. Comparing lengths catches a wholesale
+    /// replacement, and `get_item` re-checks the id at the position it lands
+    /// on for the rest.
     fn ensure_index(&mut self) {
         if self.item_index.len() != self.items.len() {
             self.reindex();
@@ -654,6 +743,7 @@ impl VaultStore {
         let idx = self.items.len();
         self.items.push(item);
         self.item_index.insert(id, idx);
+        self.touch_generation();
     }
 
     pub fn update_item(&mut self, item: VaultItem) {
@@ -661,9 +751,11 @@ impl VaultStore {
         let id = item.id().to_string();
         if let Some(&idx) = self.item_index.get(&id) {
             self.items[idx] = item;
+            self.touch_generation();
         } else if let Some(existing) = self.items.iter_mut().find(|i| i.id() == id) {
             *existing = item;
             self.reindex();
+            self.touch_generation();
             return;
         } else {
             self.add_item(item);
@@ -691,6 +783,7 @@ impl VaultStore {
             deleted_at: Utc::now(),
             deleted_by: device_id.map(|s| s.to_string()),
         });
+        self.touch_generation();
     }
 
     pub fn prune_tombstones(&mut self, max_age: chrono::Duration) {
@@ -720,6 +813,10 @@ impl VaultStore {
     /// motivating case. Use [`Self::update_item`] to replace an item wholesale,
     /// which is what keeps `updated_at` and the sync index honest.
     pub fn get_item_mut(&mut self, id: &str) -> Option<&mut VaultItem> {
+        // Eager rather than on-write-back: we cannot observe what the caller
+        // does through the returned `&mut`, and an unnecessary bump only
+        // invalidates a snapshot one read earlier than strictly needed.
+        self.touch_generation();
         if let Some(&idx) = self.item_index.get(id) {
             return self.items.get_mut(idx);
         }
@@ -1616,6 +1713,61 @@ mod tests {
         assert_eq!(vault.get_item("1").unwrap().password(), None);
     }
 
+    /// The snapshot cache must share one allocation across reads and go stale
+    /// the moment `items` changes — including through the out-of-band paths
+    /// (sync merge, whole-store swap) that bypass the CRUD methods.
+    #[test]
+    fn items_snapshot_shares_until_mutated() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "Bank", "https://bank.example", "ada", "hunter2"));
+
+        let first = vault.items_snapshot();
+        let second = vault.items_snapshot();
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "reads between mutations must share one snapshot"
+        );
+        assert_eq!(first.len(), 1);
+
+        // A method-mediated edit invalidates it.
+        vault.update_item(login("1", "Bank Renamed", "https://bank.example", "ada", "hunter2"));
+        assert!(!std::sync::Arc::ptr_eq(&first, &vault.items_snapshot()));
+        assert_eq!(vault.items_snapshot()[0].name(), "Bank Renamed");
+
+        // So does an out-of-band assignment that skips touch_generation…
+        vault.items = vec![login("2", "Solo", "https://s.example", "bob", "p")];
+        let stale = vault.items_snapshot();
+
+        // …but a merge-style touch repairs it.
+        vault.items = vec![login("3", "Merged", "https://m.example", "carol", "p")];
+        vault.touch_generation();
+        let fresh = vault.items_snapshot();
+        assert!(!std::sync::Arc::ptr_eq(&stale, &fresh));
+        assert_eq!(fresh[0].name(), "Merged");
+    }
+
+    /// Unlock/lock/recovery replace the whole store (`*vault_state = new`).
+    /// Because the snapshot cache lives inside the store, a fresh or
+    /// deserialized store can never serve another session's cached list —
+    /// even though every deserialized store restarts at generation 0.
+    #[test]
+    fn a_replaced_store_never_serves_the_previous_sessions_snapshot() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "Old session", "https://old.example", "ada", "p"));
+        let old = vault.items_snapshot();
+
+        // What unlock does: deserialize from disk (generation resets to 0)
+        // and swap the store in wholesale.
+        let json = serde_json::to_string(&vault).unwrap();
+        let fresh: VaultStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(fresh.generation, 0, "generation is not serialized");
+
+        let new_view = fresh.items_snapshot();
+        assert!(!std::sync::Arc::ptr_eq(&old, &new_view));
+        assert_eq!(old[0].name(), "Old session");
+        assert_eq!(new_view[0].name(), "Old session"); // same content, own copy
+    }
+
     #[test]
     fn passkeys_for_rp_matches_exactly_and_not_by_suffix() {
         let mut vault = VaultStore::new();
@@ -1662,13 +1814,19 @@ mod tests {
     /// The sync merge assigns `local.items` wholesale, which used to leave the
     /// index pointing at the previous positions — `get_item` then returned
     /// whichever item had moved into the slot.
+    ///
+    /// [`VaultStore::replace_items`] is the sanctioned replacement path: it
+    /// reindexes up front, so lookups never fall into the scan fallback at
+    /// all. The first half of this test pins the legacy direct-assignment
+    /// behavior (reads stay *correct*, just O(n) until a mutation repairs the
+    /// index); the second pins what merges should actually do.
     #[test]
     fn replacing_items_directly_does_not_return_the_wrong_item() {
         let mut vault = VaultStore::new();
         vault.add_item(login("a", "A", "u", "alice", "p"));
         vault.add_item(login("b", "B", "u", "bob", "p"));
 
-        // What a merge does: a fresh vector, in a different order.
+        // Legacy shape: raw assignment leaves a lying index.
         vault.items = vec![
             login("b", "B", "u", "bob", "p"),
             login("a", "A", "u", "alice", "p"),
@@ -1681,6 +1839,35 @@ mod tests {
         vault.add_item(login("c", "C", "u", "carol", "p"));
         assert_eq!(vault.get_item("a").unwrap().username(), Some("alice"));
         assert_eq!(vault.get_item("c").unwrap().username(), Some("carol"));
+    }
+
+    /// The merge path must go through [`VaultStore::replace_items`], which
+    /// keeps the index honest immediately and drops the snapshot cache.
+    #[test]
+    fn replace_items_reindexes_and_invalidates_the_snapshot() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("a", "A", "u", "alice", "p"));
+        vault.add_item(login("b", "B", "u", "bob", "p"));
+        let before = vault.items_snapshot();
+
+        // What a merge does now: a fresh vector, in a different order.
+        vault.replace_items(vec![
+            login("b", "B2", "u", "bob", "p"),
+            login("a", "A2", "u", "alice", "p"),
+        ]);
+
+        assert_eq!(vault.get_item("a").unwrap().name(), "A2");
+        assert_eq!(vault.get_item("b").unwrap().name(), "B2");
+        assert_eq!(
+            vault.item_index.len(),
+            vault.items.len(),
+            "index rebuilt to match the replacement"
+        );
+
+        let after = vault.items_snapshot();
+        assert!(!std::sync::Arc::ptr_eq(&before, &after));
+        assert_eq!(after.len(), 2);
+        assert_eq!(after.iter().find(|i| i.id() == "a").unwrap().name(), "A2");
     }
 
     #[test]

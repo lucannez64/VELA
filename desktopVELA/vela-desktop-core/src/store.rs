@@ -55,6 +55,14 @@ pub struct Store {
     /// Read once by the unlock path, which turns it into an audit entry the
     /// user can actually see.
     plaintext_identity_migrated: std::sync::atomic::AtomicBool,
+    /// Last-known Settings. The file is small but `load_settings` used to hit
+    /// disk + JSON-parse on *every* call — including once per user-input
+    /// event (auto-lock deadline resets) and per scheduler tick — and the
+    /// parsed value is what every caller wants. Writes go through
+    /// [`Store::save_settings`], which refreshes the cache, so staleness
+    /// would require the settings file to be edited out-of-band by another
+    /// process while the app is running.
+    settings_cache: std::sync::RwLock<Option<std::sync::Arc<crate::settings::Settings>>>,
 }
 
 impl Store {
@@ -77,6 +85,7 @@ impl Store {
         Ok(Self {
             store_path: data_dir,
             plaintext_identity_migrated: std::sync::atomic::AtomicBool::new(false),
+            settings_cache: std::sync::RwLock::new(None),
         })
     }
 
@@ -89,6 +98,7 @@ impl Store {
         Ok(Self {
             store_path: path,
             plaintext_identity_migrated: std::sync::atomic::AtomicBool::new(false),
+            settings_cache: std::sync::RwLock::new(None),
         })
     }
 
@@ -200,18 +210,28 @@ impl Store {
 
         let json = serde_json::to_string_pretty(settings)?;
         write_secret_file(&settings_path, json.as_bytes())?;
+        // Only refresh the cache after the write has actually succeeded —
+        // a failed save must not make the cache claim a state that never
+        // reached disk.
+        *self.settings_cache.write().unwrap() = Some(std::sync::Arc::new(settings.clone()));
         Ok(())
     }
 
     pub fn load_settings(&self) -> anyhow::Result<crate::settings::Settings> {
-        let settings_path = self.store_path.join(SETTINGS_FILE);
-
-        if !settings_path.exists() {
-            return Ok(crate::settings::Settings::default());
+        if let Some(cached) = self.settings_cache.read().unwrap().as_ref() {
+            return Ok((**cached).clone());
         }
 
-        let json = fs::read_to_string(settings_path)?;
-        let settings: crate::settings::Settings = serde_json::from_str(&json)?;
+        let settings_path = self.store_path.join(SETTINGS_FILE);
+
+        let settings = if !settings_path.exists() {
+            crate::settings::Settings::default()
+        } else {
+            let json = fs::read_to_string(settings_path)?;
+            serde_json::from_str(&json)?
+        };
+
+        *self.settings_cache.write().unwrap() = Some(std::sync::Arc::new(settings.clone()));
         Ok(settings)
     }
 

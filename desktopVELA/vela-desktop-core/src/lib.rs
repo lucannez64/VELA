@@ -43,6 +43,7 @@ mod perf_bench;
 mod vault_lifecycle_test;
 
 use parking_lot::RwLock;
+use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -301,6 +302,22 @@ impl AppState {
     pub fn check_rate_limit(&self, device_id: &str, _ip: &str) -> RateLimitResult {
         let mut limiter = self.rate_limiter.write();
         let now = Instant::now();
+
+        // Bounded memory: drop entries that are neither blocking anyone nor
+        // recently active. Without this the map grows by one entry per
+        // distinct device_id forever — IPC peers can mint arbitrary ids, so
+        // that is a slow leak an attacker can drive.
+        //
+        // The window comfortably exceeds RateLimitEntry::MAX_BACKOFF_SECS,
+        // so a pruned entry can never be one a live block depends on; the
+        // only effect of pruning is dropping an attempts counter after a day
+        // of total inactivity.
+        let now_utc = Utc::now();
+        let prune_after = chrono::Duration::hours(24);
+        limiter.retain(|_, state| {
+            state.entry.is_blocked()
+                || now_utc.signed_duration_since(state.entry.last_attempt) < prune_after
+        });
 
         let state = limiter
             .entry(device_id.to_string())

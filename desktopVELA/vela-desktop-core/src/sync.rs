@@ -325,7 +325,7 @@ pub(crate) fn merge_server_vaults(
         }
     }
 
-    local.items = final_items.into_values().collect();
+    local.replace_items(final_items.into_values().collect());
 
     // ── 4. Merge tombstones, keeping newest timestamp per ID ────────────────
     let mut merged_tombstones: HashMap<String, Tombstone> = HashMap::new();
@@ -997,6 +997,7 @@ pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool
             if let Some(local_item) = vault.items.iter_mut().find(|i| i.id() == item_id) {
                 if local_item.updated_at() != conflict.local_version.updated_at() {
                     *local_item = conflict.local_version.clone().with_updated_at(Utc::now());
+                    vault.touch_generation();
                 }
             }
             drop(vault);
@@ -1015,6 +1016,7 @@ pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool
         } else {
             vault.items.push(resolved);
         }
+        vault.touch_generation();
         drop(vault);
         let crypto_guard = state.crypto.read();
         if let Some(crypto) = crypto_guard.as_ref() {
@@ -1051,6 +1053,7 @@ pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool
             } else {
                 vault.items.push(server_item.clone());
             }
+            vault.touch_generation();
             drop(vault);
 
             let crypto_guard = state.crypto.read();
@@ -1134,7 +1137,7 @@ mod tests {
 
     fn store_with(items: Vec<VaultItem>) -> VaultStore {
         let mut store = VaultStore::new();
-        store.items = items;
+        store.replace_items(items);
         store
     }
 

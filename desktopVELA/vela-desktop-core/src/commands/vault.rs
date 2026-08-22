@@ -146,6 +146,16 @@ pub fn get_items(state: &Arc<AppState>) -> Result<Vec<VaultItem>, String> {
     Ok(vault.items.clone())
 }
 
+/// Same as [`get_items`] but shares the store's snapshot instead of
+/// deep-cloning: repeated calls between mutations cost one refcount bump.
+/// Prefer this for in-process readers (the gpui front end); out-of-process
+/// consumers (the Tauri renderer) need owned data for IPC anyway.
+pub fn get_items_arc(state: &Arc<AppState>) -> Result<std::sync::Arc<Vec<VaultItem>>, String> {
+    require_unlocked(state)?;
+    let vault = state.vault.read();
+    Ok(vault.items_snapshot())
+}
+
 /// Items of a single type, selected by the string tag both front ends use.
 /// An unrecognised tag returns the whole vault, which is what the Tauri
 /// command has always done — the sidebar sends "all" for the unfiltered view.

@@ -31,6 +31,40 @@ fn normalize_login_domain(url: &str) -> Option<String> {
 static FAVICON_CACHE: Lazy<Mutex<HashMap<String, (String, Instant)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 const FAVICON_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Hard cap on cached hosts. Each entry holds a base64 data URL (often
+/// several KB), so without a cap the cache grows for the whole process
+/// lifetime — the TTL only decides when to *re-fetch*, it never evicted.
+const FAVICON_CACHE_MAX_ENTRIES: usize = 256;
+
+/// Insert into the favicon cache, keeping it bounded. Drops expired entries
+/// first; if the cache is still full, evicts the stalest entry. Lookup
+/// behavior is unchanged: a fresh entry is never evicted while capacity
+/// remains, and an expired entry was already treated as a miss.
+fn cache_insert(domain: String, data_url: String) {
+    let mut cache = FAVICON_CACHE.lock().unwrap();
+    evict_favicon_cache(&mut cache, FAVICON_CACHE_MAX_ENTRIES);
+    cache.insert(domain, (data_url, Instant::now()));
+}
+
+fn evict_favicon_cache(
+    cache: &mut HashMap<String, (String, Instant)>,
+    max_entries: usize,
+) {
+    if cache.len() < max_entries {
+        return;
+    }
+    cache.retain(|_, (_, fetched_at)| fetched_at.elapsed() < FAVICON_CACHE_TTL);
+    while cache.len() >= max_entries {
+        let Some(oldest) = cache
+            .iter()
+            .min_by_key(|(_, (_, fetched_at))| *fetched_at)
+            .map(|(domain, _)| domain.clone())
+        else {
+            break;
+        };
+        cache.remove(&oldest);
+    }
+}
 
 /// SSRF guard: reject IPs that aren't globally routable (loopback, RFC 1918
 /// private ranges, link-local — which also covers the 169.254.169.254 cloud
@@ -286,10 +320,7 @@ pub async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
 
     for candidate in candidates {
         if let Some(data_url) = fetch_favicon_data_url_from(&client, &candidate).await {
-            FAVICON_CACHE
-                .lock()
-                .unwrap()
-                .insert(domain.clone(), (data_url.clone(), Instant::now()));
+            cache_insert(domain.clone(), data_url.clone());
             return Ok(Some(data_url));
         }
     }
@@ -297,10 +328,7 @@ pub async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
     // 2. Slower HTML discovery for sites that declare icons via <link rel="icon">.
     if let Ok(Some(found)) = discover_favicon_from_html(&client, &base).await {
         if let Some(data_url) = fetch_favicon_data_url_from(&client, &found).await {
-            FAVICON_CACHE
-                .lock()
-                .unwrap()
-                .insert(domain.clone(), (data_url.clone(), Instant::now()));
+            cache_insert(domain.clone(), data_url.clone());
             return Ok(Some(data_url));
         }
     }
@@ -312,6 +340,49 @@ pub async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+
+    #[test]
+    fn favicon_cache_eviction_drops_expired_then_stalest() {
+        let mut cache: HashMap<String, (String, Instant)> = HashMap::new();
+        let now = Instant::now();
+        // Two entries already past the TTL.
+        cache.insert(
+            "old-a.example".into(),
+            ("data:a".into(), now - FAVICON_CACHE_TTL - Duration::from_secs(10)),
+        );
+        cache.insert(
+            "old-b.example".into(),
+            ("data:b".into(), now - FAVICON_CACHE_TTL * 2),
+        );
+        // One fresh entry, older than a third one inserted below.
+        cache.insert("fresh.example".into(), ("data:f".into(), now - Duration::from_secs(60)));
+
+        // Under capacity → no-op, everything survives.
+        evict_favicon_cache(&mut cache, 10);
+        assert_eq!(cache.len(), 3);
+
+        // At capacity: expired entries go first…
+        evict_favicon_cache(&mut cache, 2);
+        assert!(!cache.contains_key("old-a.example"));
+        assert!(!cache.contains_key("old-b.example"));
+        assert!(cache.contains_key("fresh.example"));
+
+        // …then, when everything is fresh and full, the stalest one goes.
+        // Note the loop runs *before* an insert (post-evict len must be
+        // below the cap so the insert lands within it).
+        cache.insert("newer.example".into(), ("data:n".into(), now));
+        assert_eq!(cache.len(), 2);
+        evict_favicon_cache(&mut cache, 1);
+        assert_eq!(cache.len(), 0);
+
+        cache.insert("newer.example".into(), ("data:n".into(), now));
+        evict_favicon_cache(&mut cache, 2);
+        assert_eq!(cache.len(), 1);
+        assert!(
+            cache.contains_key("newer.example"),
+            "when all entries are fresh, the stalest must be the one evicted"
+        );
+    }
 
     #[test]
     fn normalize_login_domain_adds_scheme_and_lowercases() {
