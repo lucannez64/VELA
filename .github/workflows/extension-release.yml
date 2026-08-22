@@ -4,7 +4,9 @@ name: extension-release
 # release carrying the Firefox XPI and a Chromium zip on every push to main.
 # When AMO credentials are configured (repo secrets WEB_EXT_API_KEY /
 # WEB_EXT_API_SECRET), the Firefox build is additionally submitted to AMO for
-# signing and the *signed* add-on is what ships.
+# signing and the *signed* add-on is what ships. PRs build and test only:
+# signing their synthetic merge commit would consume the version that the
+# subsequent main push needs.
 #
 # Mirrors release-desktop/release-android: the version is derived from the
 # commit (patch = commit count, monotonic and unique), and the short SHA is
@@ -80,9 +82,10 @@ jobs:
 
       # AMO rejects a re-submitted version, so stamp the commit-derived version
       # into the built Firefox manifest before signing — each main release gets
-      # a unique version. Only runs when the AMO secrets are configured.
+      # a unique version. Only runs on a main push when the AMO secrets are
+      # configured.
       - name: Stamp version into the Firefox build (for signing)
-        if: env.WEB_EXT_API_KEY != '' && env.WEB_EXT_API_SECRET != ''
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.WEB_EXT_API_KEY != '' && env.WEB_EXT_API_SECRET != ''
         working-directory: extension
         run: |
           jq --arg v "${{ steps.version.outputs.version }}" \
@@ -90,7 +93,7 @@ jobs:
             && mv tmp.json dist/firefox/manifest.json
 
       - name: Submit to AMO for signing
-        if: env.WEB_EXT_API_KEY != '' && env.WEB_EXT_API_SECRET != ''
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.WEB_EXT_API_KEY != '' && env.WEB_EXT_API_SECRET != ''
         working-directory: extension
         run: |
           set -euo pipefail
