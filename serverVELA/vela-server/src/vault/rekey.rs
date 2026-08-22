@@ -15,6 +15,11 @@
 //!       └──── abort / timeout ─────┘
 //! ```
 //!
+//! Every handler takes [`DeviceSession`], not `AuthSession`: rotation changes
+//! account authority, so an ephemeral web-session token must never reach it —
+//! that includes the scoped token this same rotation will invalidate
+//! (red-team RT-5/RT-6).
+//!
 //! While `FREEZING`, writes are accepted only at epoch N+1 (the initiator's
 //! re-keyed copies landing as shadow rows alongside the untouched epoch-N
 //! rows); reads keep serving epoch N, because nobody has adopted yet. Commit
@@ -33,7 +38,7 @@ use std::collections::HashMap;
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
     sqldb::{Db as _, TursoValue},
     state::AppState,
 };
@@ -235,7 +240,7 @@ fn ensure_starter(ks: &KeyState, session: &AuthSession) -> Result<()> {
 
 pub async fn get_epoch(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<EpochResponse>)> {
     let user_id = session.user_id.to_string();
     let ks = maybe_rollback(&state, &user_id, &load_key_state(&state, &user_id).await?).await?;
@@ -254,7 +259,7 @@ pub async fn get_epoch(
 
 pub async fn post_start(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<StartResponse>)> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
@@ -324,7 +329,7 @@ pub async fn post_start(
 
 pub async fn post_capsules(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<CapsulesRequest>,
 ) -> Result<StatusCode> {
     let user_id = session.user_id.to_string();
@@ -373,7 +378,7 @@ pub async fn post_capsules(
 
 // ── POST /vault/rekey/commit ───────────────────────────────────────────────────
 
-pub async fn post_commit(State(state): State<AppState>, session: AuthSession) -> Result<StatusCode> {
+pub async fn post_commit(State(state): State<AppState>, session: DeviceSession) -> Result<StatusCode> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
 
@@ -422,7 +427,7 @@ pub async fn post_commit(State(state): State<AppState>, session: AuthSession) ->
 
 // ── POST /vault/rekey/abort ────────────────────────────────────────────────────
 
-pub async fn post_abort(State(state): State<AppState>, session: AuthSession) -> Result<StatusCode> {
+pub async fn post_abort(State(state): State<AppState>, session: DeviceSession) -> Result<StatusCode> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
 
