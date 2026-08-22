@@ -67,3 +67,4 @@ extension/native-messaging/vela-native-messaging-host
 extension/fuzz/node_modules/
 extension/fuzz/crash-*
 extension/fuzz/slow-unit-*
+extension/fuzz/corpus/
