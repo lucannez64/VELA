@@ -82,6 +82,10 @@ jobs:
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,
           # so its whole debug + release output was rebuilt on every run.
           cache-workspace-crates: true
+          # New cache contents (gpui-ce now included) need a new key: rust-cache
+          # refuses to re-save when the restore key already matched, so the
+          # first run after this is cold and every later one is fast.
+          prefix-key: v1-rust
           # Shared with build-windows-dryrun. rust-cache keys on the job id by
           # default, and these are two jobs — this one runs on main, that one on
           # PRs — so the cache main fills was under a key no PR ever looked up,
@@ -140,6 +144,10 @@ jobs:
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,
           # so its whole debug + release output was rebuilt on every run.
           cache-workspace-crates: true
+          # New cache contents (gpui-ce now included) need a new key: rust-cache
+          # refuses to re-save when the restore key already matched, so the
+          # first run after this is cold and every later one is fast.
+          prefix-key: v1-rust
           # Same key as build-windows above, so a PR restores what the last
           # main build left rather than starting cold (#135).
           shared-key: desktop-windows
@@ -218,6 +226,10 @@ jobs:
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,
           # so its whole debug + release output was rebuilt on every run.
           cache-workspace-crates: true
+          # New cache contents (gpui-ce now included) need a new key: rust-cache
+          # refuses to re-save when the restore key already matched, so the
+          # first run after this is cold and every later one is fast.
+          prefix-key: v1-rust
           cache-on-failure: true
 
       # The main place the desktop crates' tests run: the macOS job compiles
