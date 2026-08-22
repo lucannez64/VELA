@@ -3,9 +3,13 @@ name = "vela-nm-host"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "vela_nm_host"
+path = "src/lib.rs"
+
 [[bin]]
 name = "vela-native-messaging-host"
-path = "src/main.rs"
+path = "src/bin/vela-native-messaging-host.rs"
 
 [dependencies]
 serde_json = "1"

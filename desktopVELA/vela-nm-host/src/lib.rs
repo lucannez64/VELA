@@ -1,4 +1,8 @@
-//! VELA Native Messaging Host.
+//! VELA Native Messaging Host — browser-facing protocol logic.
+//!
+//! Library form so unit tests and fuzz targets can drive the framing and
+//! action mapping directly; the process wrapper lives in
+//! `src/bin/vela-native-messaging-host.rs`.
 //!
 //! The browser spawns this process over the native messaging stdio protocol.
 //! Each request is relayed to VELA Desktop over a well-known per-user
@@ -32,7 +36,7 @@ const SLOW_TIMEOUT_SECONDS: u64 = 120;
 
 // ── Browser side (native messaging stdio framing) ──────────────────────────
 
-fn read_browser_message(stdin: &mut impl Read) -> Option<Value> {
+pub fn read_browser_message(stdin: &mut impl Read) -> Option<Value> {
     let mut raw_length = [0u8; 4];
     if stdin.read_exact(&mut raw_length).is_err() {
         return None;
@@ -48,7 +52,7 @@ fn read_browser_message(stdin: &mut impl Read) -> Option<Value> {
     serde_json::from_slice(&payload).ok()
 }
 
-fn write_browser_message(stdout: &mut impl Write, message: &Value) {
+pub fn write_browser_message(stdout: &mut impl Write, message: &Value) {
     let payload = serde_json::to_vec(message).expect("serializable response");
     let _ = stdout.write_all(&(payload.len() as u32).to_le_bytes());
     let _ = stdout.write_all(&payload);
@@ -60,7 +64,7 @@ fn write_browser_message(stdout: &mut impl Write, message: &Value) {
 /// Where the desktop listens. Must stay in sync with
 /// `vela-desktop-core/src/ipc.rs`'s `well_known_endpoint`.
 #[cfg(unix)]
-fn desktop_endpoint() -> std::path::PathBuf {
+pub fn desktop_endpoint() -> std::path::PathBuf {
     let uid = current_uid();
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         if !dir.is_empty() {
@@ -79,7 +83,7 @@ fn current_uid() -> u32 {
 }
 
 #[cfg(windows)]
-fn desktop_endpoint() -> String {
+pub fn desktop_endpoint() -> String {
     let user = std::env::var("USERNAME").unwrap_or_else(|_| "user".to_string());
     let sanitized: String = user
         .chars()
@@ -91,7 +95,7 @@ fn desktop_endpoint() -> String {
 /// One framed request, one framed response, one connection — the desktop's
 /// per-connection gate runs on connect, so keeping exchanges stateless keeps
 /// its job simple.
-fn send_to_desktop(mut message: Value, slow: bool) -> Option<Value> {
+pub fn send_to_desktop(mut message: Value, slow: bool) -> Option<Value> {
     message["capability"] = Value::Null;
 
     #[cfg(unix)]
@@ -123,7 +127,7 @@ fn send_to_desktop(mut message: Value, slow: bool) -> Option<Value> {
     }
 }
 
-fn framed_exchange(stream: &mut (impl Read + Write), message: &Value) -> Option<Value> {
+pub fn framed_exchange(stream: &mut (impl Read + Write), message: &Value) -> Option<Value> {
     let payload = serde_json::to_vec(message).ok()?;
     stream.write_all(&(payload.len() as u32).to_le_bytes()).ok()?;
     stream.write_all(&payload).ok()?;
@@ -142,7 +146,7 @@ fn framed_exchange(stream: &mut (impl Read + Write), message: &Value) -> Option<
 
 // ── Extension action mapping ───────────────────────────────────────────────
 
-fn error_of(response: Option<&Value>) -> String {
+pub fn error_of(response: Option<&Value>) -> String {
     response
         .and_then(|r| r.get("payload"))
         .map(|p| {
@@ -155,7 +159,7 @@ fn error_of(response: Option<&Value>) -> String {
         .unwrap_or_else(|| "Could not reach VELA Desktop".to_string())
 }
 
-fn passkey_payload(message: &Value, keys: &[&str]) -> Value {
+pub fn passkey_payload(message: &Value, keys: &[&str]) -> Value {
     let mut out = serde_json::Map::new();
     for key in keys {
         if let Some(v) = message.get(*key) {
@@ -167,7 +171,7 @@ fn passkey_payload(message: &Value, keys: &[&str]) -> Value {
     Value::Object(out)
 }
 
-fn handle_ping(_message: &Value) -> Value {
+pub fn handle_ping(_message: &Value) -> Value {
     match send_to_desktop(json!({ "msg_type": "ping", "payload": {} }), false) {
         Some(response)
             if response.get("msg_type").and_then(|v| v.as_str()) == Some("pong")
@@ -179,7 +183,7 @@ fn handle_ping(_message: &Value) -> Value {
     }
 }
 
-fn handle_open_vault(_message: &Value) -> Value {
+pub fn handle_open_vault(_message: &Value) -> Value {
     match send_to_desktop(json!({ "msg_type": "open_vault", "payload": {} }), false) {
         Some(response)
             if response.get("msg_type").and_then(|v| v.as_str()) == Some("pong")
@@ -191,7 +195,7 @@ fn handle_open_vault(_message: &Value) -> Value {
     }
 }
 
-fn handle_get_logins(message: &Value) -> Value {
+pub fn handle_get_logins(message: &Value) -> Value {
     let user_initiated = message.get("userInitiated").and_then(Value::as_bool).unwrap_or(false)
         || message.get("user_initiated").and_then(Value::as_bool).unwrap_or(false)
         || message.get("action").and_then(Value::as_str) == Some("getLogins");
@@ -239,7 +243,7 @@ fn handle_get_logins(message: &Value) -> Value {
     json!({ "success": true, "logins": logins })
 }
 
-fn handle_save_credentials(message: &Value) -> Value {
+pub fn handle_save_credentials(message: &Value) -> Value {
     let response = send_to_desktop(
         json!({
             "msg_type": "save_credentials",
@@ -274,7 +278,7 @@ fn handle_save_credentials(message: &Value) -> Value {
     }
 }
 
-fn handle_passkey_create(message: &Value) -> Value {
+pub fn handle_passkey_create(message: &Value) -> Value {
     let response = send_to_desktop(
         json!({
             "msg_type": "passkey_create",
@@ -315,7 +319,7 @@ fn handle_passkey_create(message: &Value) -> Value {
     })
 }
 
-fn handle_passkey_get(message: &Value) -> Value {
+pub fn handle_passkey_get(message: &Value) -> Value {
     let response = send_to_desktop(
         json!({
             "msg_type": "passkey_get",
@@ -347,7 +351,7 @@ fn handle_passkey_get(message: &Value) -> Value {
     })
 }
 
-fn handle_passkey_list(message: &Value) -> Value {
+pub fn handle_passkey_list(message: &Value) -> Value {
     // Public metadata only, and never prompts — the shim calls this on every
     // WebAuthn request to decide whether it has anything to offer, so it must
     // be cheap and silent.
@@ -377,7 +381,7 @@ fn handle_passkey_list(message: &Value) -> Value {
     })
 }
 
-fn handle_in_core_login_candidates(message: &Value) -> Value {
+pub fn handle_in_core_login_candidates(message: &Value) -> Value {
     // Which saved logins could sign in to this page. Metadata only, no
     // prompt — the popup calls it to decide whether to offer the button.
     let response = send_to_desktop(
@@ -406,7 +410,7 @@ fn handle_in_core_login_candidates(message: &Value) -> Value {
     })
 }
 
-fn handle_in_core_login(message: &Value) -> Value {
+pub fn handle_in_core_login(message: &Value) -> Value {
     // The M9a login itself. Two things make this slow: the desktop puts a
     // confirmation in front of a human, then talks to a website over its own
     // connection — hence the slow timeout. The reply carries cookies, not
@@ -467,11 +471,11 @@ fn handle_in_core_login(message: &Value) -> Value {
     })
 }
 
-fn handle_not_implemented(_message: &Value) -> Value {
+pub fn handle_not_implemented(_message: &Value) -> Value {
     json!({ "success": false, "error": "Not implemented" })
 }
 
-fn handle_message(message: &Value) -> Value {
+pub fn handle_message(message: &Value) -> Value {
     let action = message.get("action").and_then(Value::as_str).unwrap_or("");
     let handler = match action {
         "ping" => handle_ping,
@@ -490,14 +494,4 @@ fn handle_message(message: &Value) -> Value {
         }
     };
     handler(message)
-}
-
-fn main() {
-    let mut stdin = std::io::stdin().lock();
-    let mut stdout = std::io::stdout().lock();
-
-    while let Some(message) = read_browser_message(&mut stdin) {
-        let response = handle_message(&message);
-        write_browser_message(&mut stdout, &response);
-    }
 }

@@ -60,3 +60,10 @@ desktopVELA/dist/
 # register-firefox-host.sh (bakes in an absolute machine-specific path)
 extension/native-messaging/vela-native-messaging-host
 .worktrees/
+
+# Fuzzing build/cache outputs
+**/fuzz/artifacts/
+**/fuzz/target/
+extension/fuzz/node_modules/
+extension/fuzz/crash-*
+extension/fuzz/slow-unit-*
