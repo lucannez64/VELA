@@ -310,7 +310,16 @@ fn uniform_index(draws: &mut RandomDraws, n: usize) -> Result<usize, String> {
 }
 
 /// No `AppState` dependency at all — pure generation, no vault write.
+///
+/// `length` is clamped, not trusted: the options arrive as JSON straight from
+/// the webview (or any future caller), and only the UI slider caps them at 64.
+/// A compromised page could otherwise ask for a multi-megabyte password on
+/// every keystroke — bounded work from an untrusted source (fuzzing pass,
+/// issue #149 family). The UI's own 8–64 range stays untouched; this is only
+/// the ceiling a hostile caller cannot push past.
 pub fn generate_password(options: PasswordGeneratorOptions) -> Result<PasswordWithStrength, String> {
+    const MAX_LENGTH: usize = 1024;
+    let length = options.length.min(MAX_LENGTH);
     let mut charset = String::new();
 
     if options.uppercase {
@@ -340,8 +349,8 @@ pub fn generate_password(options: PasswordGeneratorOptions) -> Result<PasswordWi
     // panicking, and the index is drawn without modulo bias — `value % n`
     // favours the low indices whenever `n` does not divide 2^32.
     let mut draws = RandomDraws::new();
-    let mut password = String::with_capacity(options.length);
-    for _ in 0..options.length {
+    let mut password = String::with_capacity(length);
+    for _ in 0..length {
         password.push(charset[uniform_index(&mut draws, charset.len())?]);
     }
 
@@ -747,6 +756,35 @@ mod tests {
         let a = generate_password(PasswordGeneratorOptions::default()).unwrap();
         let b = generate_password(PasswordGeneratorOptions::default()).unwrap();
         assert_ne!(a.password, b.password);
+    }
+
+    /// The options arrive as JSON from the webview, past the UI slider's
+    /// 8–64 range. Whatever a hostile page asks for, the work done stays
+    /// bounded (fuzzing pass).
+    #[test]
+    fn generate_password_clamps_an_absurd_length() {
+        let pw = generate_password(PasswordGeneratorOptions {
+            length: 100_000_000,
+            ..PasswordGeneratorOptions::default()
+        })
+        .unwrap();
+        assert!(pw.password.len() <= 1024, "untrusted length must be clamped");
+
+        // Zero and the exact ceiling still behave.
+        assert_eq!(
+            generate_password(PasswordGeneratorOptions { length: 0, ..Default::default() })
+                .unwrap()
+                .password
+                .len(),
+            0
+        );
+        assert_eq!(
+            generate_password(PasswordGeneratorOptions { length: 1024, ..Default::default() })
+                .unwrap()
+                .password
+                .len(),
+            1024
+        );
     }
 
     #[test]

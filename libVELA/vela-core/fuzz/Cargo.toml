@@ -1,0 +1,107 @@
+[package]
+name = "vela-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chrono = "0.4"
+psl = "2"
+serde_json = "1"
+url = "2"
+vela-core = { path = ".." }
+vela-crypto = { path = "../../vela-crypto" }
+vela-desktop-core = { path = "../../../desktopVELA/vela-desktop-core" }
+vela-nm-host = { path = "../../../desktopVELA/vela-nm-host" }
+
+[[bin]]
+name = "vault_json"
+path = "fuzz_targets/vault_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "url_domain_match"
+path = "fuzz_targets/url_domain_match.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shamir_shares"
+path = "fuzz_targets/shamir_shares.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crypto_parsers"
+path = "fuzz_targets/crypto_parsers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "password_options"
+path = "fuzz_targets/password_options.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "totp_otpauth"
+path = "fuzz_targets/totp_otpauth.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ipc_message"
+path = "fuzz_targets/ipc_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pwkdf_blob"
+path = "fuzz_targets/pwkdf_blob.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "oram_state"
+path = "fuzz_targets/oram_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "enrollment_codes"
+path = "fuzz_targets/enrollment_codes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "credential_key_verify"
+path = "fuzz_targets/credential_key_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nm_host_protocol"
+path = "fuzz_targets/nm_host_protocol.rs"
+test = false
+doc = false
+bench = false
+
+# Keep symbols for readable crash traces.
+[profile.release]
+debug = 1
