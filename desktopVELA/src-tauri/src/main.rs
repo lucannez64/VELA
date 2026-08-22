@@ -378,7 +378,7 @@ fn main() {
             commands::recovery::acknowledge_trusted_contact_share,
             commands::recovery::get_recovery_setup_status,
             commands::recovery::finalize_recovery_setup,
-            commands::recovery::fetch_cloud_recovery_share,
+            commands::recovery::fetch_cloud_recovery_shares,
             commands::recovery::complete_account_recovery,
             commands::ipc::handle_autofill_request,
             commands::window::minimize_window,

@@ -332,7 +332,41 @@ pub async fn initiate_account_recovery(
 // recovery.rs`; the WebAuthn half lives in `crate::webauthn`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CLOUD_BACKUP_REMOTE_PATH: &str = "VELA/recovery-share.json";
+// The backup used to live at one fixed path shared by every account, which
+// meant a second VELA account backed up to the same rclone remote silently
+// overwrote the first account's Shamir share (re-onboarding *to recover*
+// could destroy the share being recovered). Shares now go to a per-account
+// directory; the legacy path is still read for backups made by older builds,
+// and cleaned up at the next setup once it's confirmed to be ours.
+
+/// File name of the Share 1 envelope inside its per-account directory.
+const CLOUD_BACKUP_FILE_NAME: &str = "recovery-share.json";
+
+/// Pre-per-account path, shared by every account. Read for old backups;
+/// deleted (only when it holds this account's share) at the next setup.
+const LEGACY_CLOUD_BACKUP_REMOTE_PATH: &str = "VELA/recovery-share.json";
+
+/// `user_id` becomes a remote path component, so it gets the same treatment
+/// as an rclone remote name: an allowlist that keeps anything path- or
+/// flag-like out (`..`, separators, leading dashes).
+fn validate_user_id_for_path(user_id: &str) -> Result<(), String> {
+    if user_id.is_empty() || user_id.len() > 128 {
+        return Err("Invalid account ID".to_string());
+    }
+    if !user_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("Invalid account ID: unexpected characters".to_string());
+    }
+    Ok(())
+}
+
+/// `<per-account dir>/<file>` under the VELA prefix on the chosen remote.
+fn cloud_backup_remote_path(user_id: &str) -> Result<String, String> {
+    validate_user_id_for_path(user_id)?;
+    Ok(format!("VELA/{user_id}/{CLOUD_BACKUP_FILE_NAME}"))
+}
 
 #[derive(Debug, Clone, Deserialize)]
 struct CloudBackupEnvelope {
@@ -355,19 +389,73 @@ pub async fn list_cloud_backup_remotes() -> Result<Vec<String>, String> {
         .map_err(|e| format!("Task panicked: {e}"))?
 }
 
-/// Download and parse the Share 1 envelope from a cloud remote. Runs before
-/// any vault exists on this device (no unlock check — there is nothing to
-/// unlock yet), so the caller can identify the account from the cloud file
-/// alone before starting the WebAuthn ceremony.
-pub async fn fetch_cloud_recovery_share(remote: String) -> Result<CloudRecoveryShare, String> {
-    let bytes = tokio::task::spawn_blocking(move || {
-        crate::rclone::download_bytes(&remote, CLOUD_BACKUP_REMOTE_PATH)
+/// Download and parse every Share 1 envelope on a cloud remote — the
+/// per-account backups plus any legacy fixed-path backup from an older
+/// build. Runs before any vault exists on this device (no unlock check —
+/// there is nothing to unlock yet), so the caller can identify the account
+/// from the envelope alone before starting the WebAuthn ceremony. One remote
+/// may hold backups for several accounts; the caller lets the user pick.
+///
+/// Individual unreadable entries are skipped rather than failing the whole
+/// scan: one corrupt file should not hide the healthy backup next to it.
+pub async fn fetch_cloud_recovery_shares(
+    remote: String,
+) -> Result<Vec<CloudRecoveryShare>, String> {
+    // Discover candidates first. If listing fails entirely (older rclone,
+    // exotic remote), fall back to the two known locations instead of
+    // refusing to recover at all.
+    let remote_for_list = remote.clone();
+    let listed = tokio::task::spawn_blocking(move || {
+        crate::rclone::list_files(&remote_for_list, "VELA")
     })
     .await
-    .map_err(|e| format!("Download task panicked: {e}"))??;
+    .map_err(|e| format!("Listing task panicked: {e}"))?;
+    let candidates: Vec<String> = match listed {
+        Ok(entries) => {
+            let mut paths: Vec<String> = entries
+                .into_iter()
+                .filter(|entry| entry.ends_with(CLOUD_BACKUP_FILE_NAME))
+                .map(|entry| format!("VELA/{entry}"))
+                .collect();
+            if !paths.iter().any(|p| p == LEGACY_CLOUD_BACKUP_REMOTE_PATH) {
+                paths.push(LEGACY_CLOUD_BACKUP_REMOTE_PATH.to_string());
+            }
+            paths
+        }
+        Err(e) => {
+            tracing::warn!("Falling back to known recovery-backup paths after listing failed: {e}");
+            vec![LEGACY_CLOUD_BACKUP_REMOTE_PATH.to_string()]
+        }
+    };
 
+    let mut shares = Vec::new();
+    for path in candidates {
+        let remote_for_task = remote.clone();
+        let path_for_task = path.clone();
+        let bytes = tokio::task::spawn_blocking(move || {
+            crate::rclone::download_bytes(&remote_for_task, &path_for_task)
+        })
+        .await
+        .map_err(|e| format!("Download task panicked: {e}"))?;
+        match bytes.and_then(|b| parse_cloud_backup_envelope(&b)) {
+            Ok(share) => shares.push(share),
+            Err(e) => tracing::info!("Skipping '{path}' on recovery-share scan: {e}"),
+        }
+    }
+
+    if shares.is_empty() {
+        return Err(
+            "No VELA recovery backup was found on this remote. Pick the remote used during \
+             recovery setup."
+                .to_string(),
+        );
+    }
+    Ok(shares)
+}
+
+fn parse_cloud_backup_envelope(bytes: &[u8]) -> Result<CloudRecoveryShare, String> {
     let envelope: CloudBackupEnvelope =
-        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid cloud backup file: {e}"))?;
+        serde_json::from_slice(bytes).map_err(|e| format!("Invalid cloud backup file: {e}"))?;
 
     Ok(CloudRecoveryShare {
         user_id: envelope.user_id,
@@ -574,17 +662,94 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     });
     let payload = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
 
+    let remote_path = cloud_backup_remote_path(&user_id)?;
     let remote_for_task = remote.clone();
+    let path_for_task = remote_path.clone();
     tokio::task::spawn_blocking(move || {
-        crate::rclone::upload_bytes(&remote_for_task, CLOUD_BACKUP_REMOTE_PATH, &payload)
+        crate::rclone::upload_bytes(&remote_for_task, &path_for_task, &payload)
     })
     .await
     .map_err(|e| format!("Upload task panicked: {e}"))??;
+
+    // Best-effort migration off the legacy shared path: if it currently
+    // holds *this* account's share, delete it so a stale copy can't be
+    // mistaken for the live backup. Another account's legacy file — or an
+    // unreadable one — is left strictly alone.
+    let remote_for_cleanup = remote.clone();
+    if let Err(e) = tokio::task::spawn_blocking(move || {
+        cleanup_legacy_cloud_backup(&remote_for_cleanup, &user_id)
+    })
+    .await
+    .map_err(|e| format!("Cleanup task panicked: {e}"))?
+    {
+        tracing::warn!("Legacy recovery-share cleanup skipped: {e}");
+    }
 
     let mut pending = load_pending(state);
     pending.cloud_backup_delivered = true;
     save_pending(state, &pending)?;
 
-    tracing::info!("Recovery Share 1 uploaded to rclone remote '{}'", remote);
+    tracing::info!(
+        "Recovery Share 1 uploaded to rclone remote '{}' at '{remote_path}'",
+        remote
+    );
     Ok(())
+}
+
+/// Delete the legacy fixed-path backup iff it parses and belongs to
+/// `user_id`. Blocking rclone I/O — call from `spawn_blocking`.
+fn cleanup_legacy_cloud_backup(remote: &str, user_id: &str) -> Result<(), String> {
+    let bytes = match crate::rclone::download_bytes(remote, LEGACY_CLOUD_BACKUP_REMOTE_PATH) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(()), // nothing there (or unreachable) — done
+    };
+    match parse_cloud_backup_envelope(&bytes) {
+        Ok(share) if share.user_id == user_id => {
+            crate::rclone::delete_file(remote, LEGACY_CLOUD_BACKUP_REMOTE_PATH)
+        }
+        Ok(_) => Ok(()), // someone else's backup — leave it alone
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn per_account_path_contains_the_user_id() {
+        let path = cloud_backup_remote_path("9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607").unwrap();
+        assert_eq!(
+            path,
+            "VELA/9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607/recovery-share.json"
+        );
+    }
+
+    #[test]
+    fn per_account_path_rejects_path_traversal_and_separators() {
+        assert!(cloud_backup_remote_path("..").is_err());
+        assert!(cloud_backup_remote_path("../other/recovery-share").is_err());
+        assert!(cloud_backup_remote_path("a/b").is_err());
+        assert!(cloud_backup_remote_path("a\\b").is_err());
+        assert!(cloud_backup_remote_path("").is_err());
+    }
+
+    #[test]
+    fn envelope_parses_back_into_a_share() {
+        let json = serde_json::json!({
+            "version": 1,
+            "user_id": "user-y",
+            "share_b64": "AAAA",
+        });
+        let share = parse_cloud_backup_envelope(serde_json::to_vec(&json).unwrap().as_slice())
+            .expect("envelope should parse");
+        assert_eq!(share.user_id, "user-y");
+        assert_eq!(share.share_b64, "AAAA");
+    }
+
+    #[test]
+    fn envelope_rejects_garbage() {
+        assert!(parse_cloud_backup_envelope(b"not json").is_err());
+        assert!(parse_cloud_backup_envelope(b"{}").is_err());
+    }
 }

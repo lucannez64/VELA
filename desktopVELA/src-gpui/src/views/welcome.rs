@@ -101,6 +101,8 @@ struct JoinV3 {
 enum RecoverStep {
     /// Pick the rclone remote holding Share 1.
     Remote,
+    /// The remote holds backups for several accounts — pick one.
+    Account,
     /// Share 1 downloaded — confirm the account, then verify with the
     /// security key.
     Confirm,
@@ -115,6 +117,9 @@ struct RecoverState {
     selected_remote: Option<SharedString>,
     loading_remotes: bool,
     fetching_share: bool,
+    /// All Share 1 envelopes found on the selected remote. Usually one; a
+    /// remote shared by several VELA accounts carries one per account.
+    shares: Vec<vela_desktop_core::recovery::CloudRecoveryShare>,
     share: Option<vela_desktop_core::recovery::CloudRecoveryShare>,
     verifying: bool,
     /// Share 2 + the enrollment grant, both released by the server only after
@@ -190,6 +195,7 @@ impl WelcomeScreen {
                 selected_remote: None,
                 loading_remotes: false,
                 fetching_share: false,
+                shares: Vec::new(),
                 share: None,
                 verifying: false,
                 recover_response: None,
@@ -209,6 +215,7 @@ impl WelcomeScreen {
         self.recover.step = RecoverStep::Remote;
         self.recover.remotes = None;
         self.recover.selected_remote = None;
+        self.recover.shares = Vec::new();
         self.recover.share = None;
         self.recover.recover_response = None;
         self.recover.error = None;
@@ -261,16 +268,25 @@ impl WelcomeScreen {
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn_guarded("fetch cloud recovery share", async move {
-                    vela_desktop_core::recovery::fetch_cloud_recovery_share(remote.to_string()).await
+                    vela_desktop_core::recovery::fetch_cloud_recovery_shares(
+                        remote.to_string(),
+                    )
+                    .await
                 })
                 .await
                 .unwrap_or_else(|| Err("Downloading the recovery share failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.recover.fetching_share = false;
                 match result {
-                    Ok(share) => {
-                        this.recover.share = Some(share);
+                    Ok(shares) if shares.len() == 1 => {
+                        this.recover.share = Some(shares.into_iter().next().unwrap());
                         this.recover.step = RecoverStep::Confirm;
+                    }
+                    Ok(shares) => {
+                        // A remote shared by several VELA accounts: let the
+                        // user pick whose backup to recover.
+                        this.recover.shares = shares;
+                        this.recover.step = RecoverStep::Account;
                     }
                     Err(e) => {
                         this.recover.error =
@@ -1000,7 +1016,7 @@ fn recover_account_modal(
         // can never reach here.
         .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
             match this.recover.step {
-                RecoverStep::Remote => {}
+                RecoverStep::Remote | RecoverStep::Account => {}
                 RecoverStep::Confirm => {
                     if !this.recover.verifying {
                         this.verify_with_security_key(cx);
@@ -1111,6 +1127,56 @@ fn recover_account_modal(
                     ),
                 }
             }),
+
+        RecoverStep::Account => body
+            .child(
+                div().text_sm().text_color(palette.on_surface_variant).child(
+                    "This remote holds recovery backups for more than one account. Pick the one \
+                     you are recovering:",
+                ),
+            )
+            .child(
+                div()
+                    .id("welcome-recover-accounts")
+                    .max_h(px(180.))
+                    .overflow_y_scroll()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                    .bg(palette.surface_bright)
+                    .flex()
+                    .flex_col()
+                    .children(state.shares.iter().enumerate().map(|(index, share)| {
+                        // Clone out of the borrowed `state` before the
+                        // 'static listener closure captures it.
+                        let share_for_click = share.clone();
+                        let user_id = SharedString::from(share.user_id.clone());
+                        div()
+                            .id(("welcome-recover-account", index))
+                            .px_4()
+                            .py_3()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .cursor_pointer()
+                            .hover(|el| el.bg(gpui::Hsla { a: 0.06, ..palette.primary }))
+                            .child(
+                                div()
+                                    .font_family(fonts::MONO)
+                                    .text_xs()
+                                    .text_color(palette.on_surface)
+                                    .child(user_id),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.recover.share = Some(share_for_click.clone());
+                                    this.recover.step = RecoverStep::Confirm;
+                                    cx.notify();
+                                }),
+                            )
+                    })),
+            ),
 
         RecoverStep::Confirm => body
             .child(

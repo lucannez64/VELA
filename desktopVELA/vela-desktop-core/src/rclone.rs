@@ -123,3 +123,58 @@ pub fn download_bytes(remote: &str, dest_path: &str) -> Result<Vec<u8>, String> 
     }
     Ok(output.stdout)
 }
+
+/// List files under `<remote>:<dir>` recursively, as paths relative to
+/// `dir` (e.g. `"<user-id>/recovery-share.json"`). Used by account recovery
+/// to discover every VELA backup on a remote without knowing the account ID
+/// up front — one remote can legitimately hold backups for several accounts,
+/// each in its own directory.
+pub fn list_files(remote: &str, dir: &str) -> Result<Vec<String>, String> {
+    validate_remote_name(remote)?;
+    let target = format!("{remote}:{dir}");
+
+    let output = Command::new("rclone")
+        .arg("lsf")
+        .arg(&target)
+        .args(["--recursive", "--files-only"])
+        .output()
+        .map_err(|e| {
+            format!("Could not run rclone ({e}). Is it installed?")
+        })?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "rclone listing of '{remote}:{dir}' failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Delete a single file at `<remote>:<path>` via `rclone deletefile`. Used to
+/// clean up the pre-per-account legacy backup path once it has been confirmed
+/// to hold *this* account's share — never as a blind delete.
+pub fn delete_file(remote: &str, dest_path: &str) -> Result<(), String> {
+    validate_remote_name(remote)?;
+    let target = format!("{remote}:{dest_path}");
+
+    let output = Command::new("rclone")
+        .arg("deletefile")
+        .arg(&target)
+        .output()
+        .map_err(|e| format!("Could not run rclone ({e}). Is it installed?"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "rclone delete on '{remote}' failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}

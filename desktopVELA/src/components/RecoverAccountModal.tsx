@@ -12,7 +12,7 @@ interface CloudRecoveryShare {
   share_b64: string;
 }
 
-type Step = 'remote' | 'confirm' | 'device';
+type Step = 'remote' | 'account' | 'confirm' | 'device';
 
 // Account recovery (SPEC.md §4.3): reconstruct the RMS from Share 1 (cloud
 // backup) + Share 2 (server, released only after a WebAuthn assertion
@@ -25,6 +25,7 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
   const [selectedRemote, setSelectedRemote] = useState('');
   const [isLoadingRemotes, setIsLoadingRemotes] = useState(true);
   const [isFetchingShare, setIsFetchingShare] = useState(false);
+  const [shares, setShares] = useState<CloudRecoveryShare[]>([]);
   const [share, setShare] = useState<CloudRecoveryShare | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [credential, setCredential] = useState<Record<string, unknown> | null>(null);
@@ -50,11 +51,18 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
     setIsFetchingShare(true);
     setError('');
     try {
-      const result = await invoke<CloudRecoveryShare>('fetch_cloud_recovery_share', {
+      // One remote can hold backups for several accounts (each in its own
+      // per-account path); the scan returns all of them.
+      const result = await invoke<CloudRecoveryShare[]>('fetch_cloud_recovery_shares', {
         remote: selectedRemote,
       });
-      setShare(result);
-      setStep('confirm');
+      if (result.length === 1) {
+        setShare(result[0]);
+        setStep('confirm');
+      } else {
+        setShares(result);
+        setStep('account');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to download Share 1 from this remote');
     } finally {
@@ -162,6 +170,29 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
                 remote used during recovery setup, then come back here.
               </p>
             )}
+          </div>
+        )}
+
+        {step === 'account' && (
+          <div className="space-y-4">
+            <p className="text-on-surface-variant text-sm">
+              This remote holds recovery backups for more than one account. Pick the one you are
+              recovering:
+            </p>
+            <div className="space-y-2">
+              {shares.map(s => (
+                <button
+                  key={s.user_id}
+                  onClick={() => {
+                    setShare(s);
+                    setStep('confirm');
+                  }}
+                  className="w-full text-left font-mono text-xs bg-surface-bright hover:bg-surface-container-highest rounded-lg px-4 py-3 break-all text-on-surface transition-colors"
+                >
+                  {s.user_id}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

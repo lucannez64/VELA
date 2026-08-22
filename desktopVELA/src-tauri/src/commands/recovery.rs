@@ -50,8 +50,10 @@ pub async fn finalize_recovery_setup(state: State<'_, Arc<AppState>>) -> Result<
 }
 
 #[tauri::command]
-pub async fn fetch_cloud_recovery_share(remote: String) -> Result<CloudRecoveryShare, String> {
-    vela_desktop_core::recovery::fetch_cloud_recovery_share(remote).await
+pub async fn fetch_cloud_recovery_shares(
+    remote: String,
+) -> Result<Vec<CloudRecoveryShare>, String> {
+    vela_desktop_core::recovery::fetch_cloud_recovery_shares(remote).await
 }
 
 #[tauri::command]

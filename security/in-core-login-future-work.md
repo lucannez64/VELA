@@ -320,15 +320,17 @@ pass-through, one-at-a-time locking, platform coverage, and the M9e model.
 
 ## 6. Separate bugs found this session, filed here so they are not lost
 
-- [ ] **Cloud-backup recovery writes to a fixed remote path**
-      (`VELA/recovery-share.json`, `src-tauri/src/commands/recovery.rs:29`).
-      One VELA account per rclone remote; setting up backup from a second vault
-      **overwrites the first account's Shamir share**. Circular in the worst
-      case: re-onboarding *to recover* destroys the share being recovered. Needs
-      a per-account path (account id in the path) + a migration for existing
-      backups.
+- [x] **Cloud-backup recovery wrote to a fixed remote path**
+      (`VELA/recovery-share.json`). One VELA account per rclone remote;
+      setting up backup from a second vault **overwrote the first account's
+      Shamir share**. Fixed: Share 1 now uploads to a per-account path
+      (`VELA/<user-id>/recovery-share.json`); recovery scans the remote and,
+      if several accounts have backups there, asks which one to recover.
+      Legacy fixed-path backups are still read by the scan, and deleted at
+      the next setup only when they hold *this* account's share.
 - [ ] The recovery-deferral fix (done, committed) is the mitigation for the
-      *onboarding* half of this; the fixed-path bug itself is still open.
+      *onboarding* half of this; the fixed-path bug itself is now fixed too
+      (per-account remote paths, above).
 - [ ] **Native-messaging host manifest must live in the profile when Chromium
       runs with a custom `--user-data-dir`.** Launched that way, Chromium looks
       for `com.vela.desktop.json` in `<user-data-dir>/NativeMessagingHosts/`, not
