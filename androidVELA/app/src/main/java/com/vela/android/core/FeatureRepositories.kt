@@ -224,6 +224,9 @@ class SharingRepository(
             check(epoch.state == "active") {
                 "A vault key rotation is in progress; approve web access after it completes."
             }
+            check(sync.localVaultEpoch() == epoch.epoch) {
+                "This device has not adopted vault key epoch ${epoch.epoch}; sync or re-enroll it before approving web access."
+            }
             val keys = client.getWebSessionKeys(requestToken, sessionId)
             keys.newToken?.let {
                 requestToken = it

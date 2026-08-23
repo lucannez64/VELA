@@ -22,6 +22,7 @@ final class DevicesViewModel: ObservableObject {
             // revoke the bearer token that the second request would otherwise
             // already have captured.
             let list = try await client.listDevices()
+            await account.adoptToken(from: client)
             let sessions = try await client.listWebSessions()
             await account.adoptToken(from: client)
             devices = list

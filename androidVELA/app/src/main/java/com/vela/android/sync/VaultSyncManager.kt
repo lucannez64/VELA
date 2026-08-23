@@ -73,6 +73,8 @@ class VaultSyncManager(
         token?.takeIf { it.isNotBlank() }?.let(settingsStore::updateBearerToken)
     }
 
+    fun localVaultEpoch(): Long = settingsStore.settings.value.keyEpoch
+
     fun enrollWithCode(serverUrl: String, enrollmentCode: String): ByteArray {
         val payload = EnrollmentCodePayload.fromCode(serverUrl, enrollmentCode)
         val effectiveServerUrl = serverUrl.ifBlank { payload.serverUrl }
@@ -94,8 +96,10 @@ class VaultSyncManager(
         val token = authenticateOrRegister(client)
         val capsule = client.getCapsule(token)
         capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
-        return NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
+        val rms = NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
+        persistAdoptedEpoch(client, capsule.newToken ?: token)
+        return rms
     }
 
     // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
@@ -163,8 +167,10 @@ class VaultSyncManager(
         capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
 
         val handle = identityStore.handle() ?: error("This device has no identity")
-        return NativeVelaCore.identityOpenEnrollmentCapsule(handle, capsule.capsuleB64)
+        val rms = NativeVelaCore.identityOpenEnrollmentCapsule(handle, capsule.capsuleB64)
             ?: error("The vault key was not sealed to this device — enrollment aborted")
+        persistAdoptedEpoch(client, capsule.newToken ?: token)
+        return rms
     }
 
     /// Split the RMS into recovery shares (SPEC.md §4.3), register a WebAuthn
@@ -254,6 +260,7 @@ class VaultSyncManager(
 
         val token = authenticateOrRegister(client)
         updateServer(effectiveServerUrl, token)
+        persistAdoptedEpoch(client, token)
         return rms
     }
 
@@ -479,6 +486,7 @@ class VaultSyncManager(
             val registered = client.registerAccount(identity)
             identity = identity.copy(userId = registered.userId, deviceId = registered.deviceId)
             identityStore.save(identity)
+            settingsStore.updateKeyEpoch(1)
             registered.token?.takeIf { it.isNotBlank() }?.let { return it }
         }
 
@@ -500,6 +508,16 @@ class VaultSyncManager(
         )
         identityStore.save(identity.copy(userId = verified.userId))
         return verified.token
+    }
+
+    /** Record an epoch only after this flow has successfully opened/rebuilt its RMS. */
+    private fun persistAdoptedEpoch(client: AndroidVelaApiClient, token: String) {
+        val epoch = client.getVaultEpoch(token)
+        check(epoch.state == "active") {
+            "Vault key rotation started during enrollment; retry after it completes."
+        }
+        settingsStore.updateKeyEpoch(epoch.epoch)
+        acceptRefreshedToken(epoch.newToken ?: token)
     }
 
     private fun authenticatedToken(client: AndroidVelaApiClient, cachedToken: String): String =
