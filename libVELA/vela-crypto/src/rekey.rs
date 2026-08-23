@@ -41,9 +41,12 @@ use crate::shamir;
 ///
 /// The whole security model rests on this being 32 bytes the world has never
 /// seen, straight from the OS RNG — same source [`crate::kdf`] consumers trust.
-pub fn rotate() -> Result<[u8; 32]> {
-    let mut rms = [0u8; 32];
-    OsRng.fill_bytes(&mut rms);
+/// Returned in `Zeroizing` like everything else in this module: a raw seed
+/// should never sit in an un-zeroized array just because the API made the
+/// caller wrap it.
+pub fn rotate() -> Result<Zeroizing<[u8; 32]>> {
+    let mut rms = Zeroizing::new([0u8; 32]);
+    OsRng.fill_bytes(rms.as_mut());
     Ok(rms)
 }
 
@@ -87,7 +90,9 @@ pub fn rekey_blob(
 /// Epochs start at 1; epoch 0 is reserved so it can never collide with a real
 /// account state.
 pub fn epoch_aad(epoch: u64, chunk_id: &str, lamport_clock: i64) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(8 + 4 + 13 + 4 + chunk_id.len() + 8);
+    // "vela epoch v1" (13) + epoch (8) + the inner AAD: tag (13) + chunk-id
+    // length (4) + chunk_id + lamport clock (8).
+    let mut aad = Vec::with_capacity(13 + 8 + 13 + 4 + chunk_id.len() + 8);
     aad.extend_from_slice(b"vela epoch v1");
     aad.extend_from_slice(&epoch.to_le_bytes());
     aad.extend_from_slice(aead::vault_chunk_aad(chunk_id, lamport_clock).as_slice());
@@ -178,9 +183,9 @@ mod tests {
     fn rotate_produces_distinct_32byte_seeds() {
         let a = rotate().unwrap();
         let b = rotate().unwrap();
-        assert_ne!(a, b, "two rotations must never agree");
+        assert_ne!(*a, *b, "two rotations must never agree");
         // Uniformity is the RNG's job; uniqueness of successive draws is ours.
-        assert_ne!(a, seed(0));
+        assert_ne!(*a, seed(0));
     }
 
     #[test]
@@ -195,7 +200,7 @@ mod tests {
 
         // Opens under the new derivation, to the original bytes.
         let opened =
-            crate::aead::decrypt(kdf::derive(ctx, &new).as_bytes(), &rekeyed).unwrap();
+            crate::aead::decrypt(kdf::derive(ctx, &*new).as_bytes(), &rekeyed).unwrap();
         assert_eq!(&opened[..], plaintext);
         // And no longer under the old one.
         assert!(crate::aead::decrypt(kdf::derive(ctx, &old).as_bytes(), &rekeyed).is_err());
@@ -306,11 +311,18 @@ mod tests {
         let old = seed(4);
         let new = rotate().unwrap();
         let ctx = kdf::contexts::VAULT_ENCRYPTION;
-        let pt = vec![7u8; 100];
-        let ct = crate::aead::encrypt(kdf::derive(ctx, &old).as_bytes(), &pt).unwrap();
-        let out = rekey_blob(&old, &new, ctx, &ct).unwrap();
-        assert_eq!(out.len(), rekey_blob(&old, &new, ctx, &ct).unwrap().len());
-        assert_eq!(out.len(), ct.len(), "same format, same overhead shape");
-        assert!(out.len() >= rekeyed_len(0));
+        for pt_len in [0usize, 1, 100] {
+            let pt = vec![7u8; pt_len];
+            let ct = crate::aead::encrypt(kdf::derive(ctx, &old).as_bytes(), &pt).unwrap();
+            let out = rekey_blob(&old, &new, ctx, &ct).unwrap();
+            // Same wire format as the input, so the size prediction must hold
+            // exactly — not just "at least the overhead".
+            assert_eq!(out.len(), ct.len(), "same format, same overhead shape");
+            assert_eq!(
+                out.len(),
+                rekeyed_len(pt_len),
+                "predicted size for {pt_len}-byte plaintext"
+            );
+        }
     }
 }

@@ -1261,7 +1261,7 @@ pub mod server {
             fn show_toast(&self, message: &str) {
                 self.toasts.lock().unwrap().push(message.to_string());
             }
-            fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
+            fn confirm_presence(&self, _title: &str, _prompt: &str) -> Option<bool> {
                 self.presence_prompts.fetch_add(1, Ordering::SeqCst);
                 match self.presence_answer.load(Ordering::SeqCst) {
                     1 => Some(true),

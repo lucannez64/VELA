@@ -154,7 +154,7 @@ impl TursoDb {
         let guard = arc.lock_owned().await;
         guard.execute("BEGIN", ()).await?;
         Ok(TxGuard {
-            guard,
+            guard: Some(guard),
             finished: false,
         })
     }
@@ -164,7 +164,7 @@ impl TursoDb {
 /// BEGIN on creation, COMMIT or ROLLBACK on finish, ROLLBACK on drop if
 /// unfinished.
 pub struct TxGuard {
-    guard: tokio::sync::OwnedMutexGuard<turso::Connection>,
+    guard: Option<tokio::sync::OwnedMutexGuard<turso::Connection>>,
     finished: bool,
 }
 
@@ -174,7 +174,12 @@ impl TxGuard {
         sql: &str,
         params: Vec<turso::Value>,
     ) -> anyhow::Result<Vec<VelaRow>> {
-        let mut stream = self.guard.query(sql, params).await?;
+        let mut stream = self
+            .guard
+            .as_ref()
+            .expect("tx guard taken while in use")
+            .query(sql, params)
+            .await?;
         let mut out = Vec::new();
         while let Some(row) = stream.next().await? {
             let mut values = Vec::with_capacity(row.column_count());
@@ -187,17 +192,32 @@ impl TxGuard {
     }
 
     pub async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64> {
-        Ok(self.guard.execute(sql, params).await?)
+        Ok(self
+            .guard
+            .as_ref()
+            .expect("tx guard taken while in use")
+            .execute(sql, params)
+            .await?)
     }
 
+    /// COMMIT and release the connection back to the tx pool.
     pub async fn commit(mut self) -> anyhow::Result<()> {
-        self.guard.execute("COMMIT", ()).await?;
+        self.guard
+            .take()
+            .expect("tx guard taken while finishing")
+            .execute("COMMIT", ())
+            .await?;
         self.finished = true;
         Ok(())
     }
 
+    /// ROLLBACK and release the connection back to the tx pool.
     pub async fn rollback(mut self) -> anyhow::Result<()> {
-        self.guard.execute("ROLLBACK", ()).await?;
+        self.guard
+            .take()
+            .expect("tx guard taken while finishing")
+            .execute("ROLLBACK", ())
+            .await?;
         self.finished = true;
         Ok(())
     }
@@ -205,13 +225,26 @@ impl TxGuard {
 
 impl Drop for TxGuard {
     fn drop(&mut self) {
-        if !self.finished {
-            // Best-effort rollback; cannot await in Drop. turso's own
-            // Transaction handles dangling-tx on the next statement; leaving it
-            // open here is safe because we drop the connection slot back to the
-            // mutex, and a stale open tx is rolled back when the connection is
-            // reused/freed.
-            let _ = self.guard.execute("ROLLBACK", ());
+        if self.finished {
+            return;
+        }
+        // Roll back an abandoned transaction (an early `return Err` between
+        // statements). The previous fire-and-forget attempt dropped the
+        // ROLLBACK future without awaiting it, so nothing was ever sent and
+        // the pooled connection stayed inside an open transaction — every
+        // later `BEGIN` on it failed with "cannot start a transaction within
+        // a transaction". Spawning keeps the connection locked (the guard IS
+        // the lock) until the ROLLBACK completes, so the slot is guaranteed
+        // clean when it becomes reusable.
+        if let Some(guard) = self.guard.take() {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = guard.execute("ROLLBACK", ()).await;
+                });
+            }
+            // No ambient runtime (a sync test, most plausibly): the guard
+            // drops here and turso recovers the dangling transaction when the
+            // connection is next used or freed.
         }
     }
 }

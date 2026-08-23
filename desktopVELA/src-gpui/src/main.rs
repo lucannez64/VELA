@@ -258,9 +258,22 @@ impl Render for RootView {
 fn presence_modal(palette: &Palette, prompt: host::PresencePrompt) -> gpui::AnyElement {
     let approve = prompt.reply.clone();
     let deny = prompt.reply.clone();
+    // The passkey prompts get their purpose-built layout ("VELA would sign
+    // you in to …"); every other confirmation (vault reset, key rotation)
+    // renders its title as the caption and the prompt as the body, so the
+    // caption always names the action actually being approved.
+    let is_sign_in = prompt.prompt.starts_with("Sign in to ");
+    let heading = if prompt.title.is_empty() {
+        "Approve sign in".to_string()
+    } else {
+        prompt.title.clone()
+    };
     let (site, requester) = parse_presence_prompt(&prompt.prompt);
-    let details = if let Some(requester) = &requester {
-        format!("Requested by {requester}")
+    let details = if is_sign_in {
+        match &requester {
+            Some(requester) => format!("Requested by {requester}"),
+            None => String::new(),
+        }
     } else {
         prompt.prompt.clone()
     };
@@ -313,7 +326,7 @@ fn presence_modal(palette: &Palette, prompt: host::PresencePrompt) -> gpui::AnyE
                                         .font_family(fonts::LABEL)
                                         .text_color(palette.on_surface)
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .child("Approve sign in"),
+                                        .child(heading),
                                 )
                                 .child(
                                     div()
@@ -324,7 +337,8 @@ fn presence_modal(palette: &Palette, prompt: host::PresencePrompt) -> gpui::AnyE
                                 ),
                         ),
                 )
-                .child(
+                .when(is_sign_in, |el| {
+                    el.child(
                     div()
                         .rounded_lg()
                         .bg(palette.surface_container_highest)
@@ -344,7 +358,8 @@ fn presence_modal(palette: &Palette, prompt: host::PresencePrompt) -> gpui::AnyE
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .child(site),
                         ),
-                )
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -654,9 +669,14 @@ fn main() {
                             toast::show(cx, message, toast::ToastKind::Info);
                         });
                     }
-                    host::HostCommand::ConfirmPresence { prompt, reply } => {
+                    host::HostCommand::ConfirmPresence {
+                        title,
+                        prompt,
+                        reply,
+                    } => {
                         cx.update(|cx| {
                             cx.set_global(host::PresencePromptGlobal(Some(host::PresencePrompt {
+                                title,
                                 prompt,
                                 reply,
                             })));

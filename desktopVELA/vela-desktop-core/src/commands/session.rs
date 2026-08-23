@@ -767,8 +767,9 @@ pub async fn reset_vault(
 
         // When the vault is unlocked and a server is configured, additionally
         // require a freshly verified server auth challenge — an unlocked UI
-        // alone is not sufficient proof for destruction.
-        let mut server_verified = false;
+        // alone is not sufficient proof for destruction. This narrows who can
+        // reset (a device holding its identity signing key) but is not itself
+        // the human gate; the presence confirmation below always runs.
         if state.is_unlocked() && server_url_configured(&app_state) {
             let (identity_keys, device_id) = {
                 let crypto_guard = state.crypto.read();
@@ -794,30 +795,26 @@ pub async fn reset_vault(
             )
             .await
             .map_err(|e| format!("Server re-authentication for reset failed: {}", e))?;
-            server_verified = true;
         }
 
-        // Residual gate for the paths with no cryptographic proof available:
-        // the locked vault (forgot-password flow — the identity signing key is
-        // RMS-encrypted, so no server challenge is possible) and the unlocked
-        // vault with no server configured. Typed "DELETE" alone used to be the
-        // only barrier there, which made reset a one-call data-loss primitive
-        // for anything that could reach the command layer (audit, lower-
-        // severity table). What cannot be said of a renderer-supplied string
-        // is that a human pressed a button drawn outside the requester's
-        // reach — so ask, exactly like the passkey presence gate does, and
-        // fail closed when there is nobody to ask.
-        if !server_verified {
-            let app_state_for_gate = app_state.clone();
-            tokio::task::spawn_blocking(move || {
-                app_state_for_gate.confirm_with_human(
-                    "Permanently delete this VELA vault on this device? \
-                     Every secret stored here will be erased. This cannot be undone.",
-                )
-            })
-            .await
-            .map_err(|e| format!("Confirmation task panicked: {e}"))??;
-        }
+        // Presence gate for every path without master-password proof. Typed
+        // "DELETE" is a renderer-supplied string, and a server challenge
+        // proves device identity to the server — not that a human is at this
+        // keyboard; a compromised renderer with an unlocked session can fire
+        // both. What cannot be said of either is that a human pressed a
+        // button drawn outside the requester's reach — so ask, exactly like
+        // the passkey presence gate does, and fail closed when there is
+        // nobody to ask.
+        let app_state_for_gate = app_state.clone();
+        tokio::task::spawn_blocking(move || {
+            app_state_for_gate.confirm_with_human(
+                "VELA — delete vault",
+                "Permanently delete this VELA vault on this device? \
+                 Every secret stored here will be erased. This cannot be undone.",
+            )
+        })
+        .await
+        .map_err(|e| format!("Confirmation task panicked: {e}"))??;
     }
 
     biometric::delete_stored_rms().map_err(|e| format!("Failed to delete credentials: {}", e))?;
@@ -969,7 +966,7 @@ mod tests {
         fn open_quick_search(&self) {}
         fn notify_vault_items_changed(&self) {}
         fn show_toast(&self, _message: &str) {}
-        fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
+        fn confirm_presence(&self, _title: &str, _prompt: &str) -> Option<bool> {
             *self.answer.lock().unwrap()
         }
     }
@@ -1016,13 +1013,13 @@ mod tests {
         let state = Arc::new(AppState::for_test(dir.path()));
         state.register_host(Arc::new(ScriptedHost::new(&state, Some(true))));
         state
-            .confirm_with_human("test prompt")
+            .confirm_with_human("test title", "test prompt")
             .expect("an explicit approval proceeds");
 
         // Re-register with a declining host and check the same question fails.
         state.register_host(Arc::new(ScriptedHost::new(&state, Some(false))));
         state
-            .confirm_with_human("test prompt")
+            .confirm_with_human("test title", "test prompt")
             .expect_err("a declined confirmation refuses");
     }
 

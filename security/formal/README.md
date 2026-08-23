@@ -1,7 +1,7 @@
 # Formal models — the decide → unwrap → consume flow
 
 Symbolic (Dolev-Yao) models of VELA's credential-release flow, checked with
-[Tamarin](https://tamarin-prover.com/). Twelve theories, `m1`–`m10`, building a
+[Tamarin](https://tamarin-prover.com/). Thirteen theories, `m1`–`m10`, building a
 ladder from "in-domain checks are impossible" up to the three-tier deployment
 the desktop should implement.
 
@@ -44,7 +44,8 @@ for f in m1_indomain m2_se_alone m3_de_se m4_bool_naive m5_tr_originbound \
 done
 ```
 
-Expected: **84 verified, 5 falsified**. The five falsifications are intended
+Expected: **83 verified, 5 falsified** (88 lemmas total across the thirteen
+theories). The five falsifications are intended
 results, not failures — `m1`/`m2` secrecy, `m9b`'s and `m9c`'s `credential_never_leaks`,
 and `m9c`'s `unused_credentials_stay_secret`
 are the negative claims the ladder is built on. Any *other* falsification is a

@@ -96,9 +96,16 @@ All endpoints require device authentication unless noted.
 | `GET /vault/epoch` *(device auth)* | `{epoch, state}` — the adoption probe |
 | `POST /vault/rekey/start` | `ACTIVE(N) → FREEZING(N+1)`. Returns `{epoch: N+1, rotation_id, chunks: [...]}` — the inventory and unique attempt nonce. Rejects if already `FREEZING`. |
 | `POST /vault/rekey/capsules` | Only while `FREEZING`, only from the device that started it, with matching `X-Vela-Rekey-Id`. Body: `{capsules: {device_id: b64}}` — RMS₂ sealed to each device's `hybrid_ek`. Stored into `devices.rms_capsule` (the existing read-and-clear relay). |
-| `POST /vault/rekey/commit` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Atomically: set `users.key_epoch = N+1`, clear state, delete chunk rows with `epoch < N+1`. Unfreezes writes. |
+| `POST /vault/rekey/commit` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Atomically: set `users.key_epoch = N+1`, clear state, delete chunk rows with `epoch < N+1`. Unfreezes writes. A replay after a lost commit response carries the target epoch in `X-Vela-Epoch` and is answered with success when the account already sits at that epoch — so crash recovery never has to guess between "committed" and "failed". |
 | `POST /vault/rekey/abort` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Delete rows and capsules for the attempt, back to `ACTIVE(N)`. |
 | *(automatic)* | A `FREEZING` account older than `REKEY_TIMEOUT` (15 min) rolls back lazily: the next state-observing call for that account performs the abort. No cron. |
+
+Known, accepted limitation: because every successful shadow write refreshes
+`rekey_started_at`, an initiator can hold its own account in `FREEZING`
+indefinitely by trickling uploads slower than the timeout. This is
+account-holder-only authority (the starter check gates shadow writes) and
+self-heals on abort or process exit, so it is a self-denial-of-service note,
+not an attack vector.
 
 ### Write rules (`PUT /vault/chunk/:id`, `oram` writes)
 

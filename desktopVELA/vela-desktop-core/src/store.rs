@@ -113,10 +113,10 @@ impl Store {
             .clone()
     }
 
-    fn derive_identity_file_key(crypto: &Crypto) -> [u8; 32] {
+    /// The identity-file key as a [`kdf::DerivedKey`], so the raw bytes are
+    /// zeroized on drop instead of lingering in a plain array copy.
+    fn derive_identity_file_key(crypto: &Crypto) -> kdf::DerivedKey {
         kdf::derive(IDENTITY_KEY_FILE_CONTEXT, crypto.identity_key().as_bytes())
-            .as_bytes()
-            .clone()
     }
 
     /// Re-seal every RMS-derived secret file across a seed rotation
@@ -132,8 +132,10 @@ impl Store {
     pub fn rekey_secret_files(&self, old: &Crypto, new: &Crypto) -> anyhow::Result<()> {
         use vela_crypto::rekey;
 
-        let old_rms = old.rms();
-        let new_rms = new.rms();
+        // Held in `Zeroizing` so the retired seed does not linger in a plain
+        // stack array after the migration completes.
+        let old_rms = zeroize::Zeroizing::new(old.rms());
+        let new_rms = zeroize::Zeroizing::new(new.rms());
         let mut rewrites: Vec<(PathBuf, Vec<u8>, Vec<u8>)> = Vec::new();
 
         // These files all use the vault envelope. Build every replacement
@@ -170,9 +172,10 @@ impl Store {
             let ct = fs::read(&identity_path)?;
             let old_key = Self::derive_identity_file_key(old);
             let new_key = Self::derive_identity_file_key(new);
-            if crate::crypto::Crypto::decrypt_with_key(&new_key, &ct).is_err() {
-                let plaintext = crate::crypto::Crypto::decrypt_with_key(&old_key, &ct)?;
-                let rekeyed = crate::crypto::Crypto::encrypt_with_key(&new_key, &plaintext)?;
+            if crate::crypto::Crypto::decrypt_with_key(new_key.as_bytes(), &ct).is_err() {
+                let plaintext =
+                    crate::crypto::Crypto::decrypt_with_key(old_key.as_bytes(), &ct)?;
+                let rekeyed = crate::crypto::Crypto::encrypt_with_key(new_key.as_bytes(), &plaintext)?;
                 drop(plaintext);
                 rewrites.push((identity_path, ct, rekeyed));
             }
@@ -579,7 +582,7 @@ impl Store {
 
         let plaintext = serde_json::to_vec(keys)?;
         let key = Self::derive_identity_file_key(crypto);
-        let ciphertext = encrypt(&key, &plaintext)?;
+        let ciphertext = encrypt(key.as_bytes(), &plaintext)?;
         write_secret_file(&identity_path, &ciphertext)?;
         Ok(())
     }
@@ -605,7 +608,7 @@ impl Store {
         // Decryption is a decision, not a guess: a legacy plaintext file will
         // never satisfy the AEAD tag, and a real ciphertext always will.
         let key = Self::derive_identity_file_key(crypto);
-        let store: IdentityKeysStore = match decrypt(&key, &bytes) {
+        let store: IdentityKeysStore = match decrypt(key.as_bytes(), &bytes) {
             Ok(plaintext) => serde_json::from_slice(&plaintext)?,
             Err(decrypt_error) => {
                 // Not ours to decrypt. Either a legacy plaintext file (private

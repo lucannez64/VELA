@@ -517,13 +517,23 @@ impl ApiClient {
     }
 
     /// Commit the rotation (flip epoch, sweep superseded rows).
-    pub async fn rekey_commit(&self, token: &str, rotation_id: &str) -> Result<Option<String>> {
+    ///
+    /// `target_epoch` rides in `X-Vela-Epoch` so a retry after a lost
+    /// response is unambiguous: the server answers success when the rotation
+    /// already committed, instead of a 409 indistinguishable from failure.
+    pub async fn rekey_commit(
+        &self,
+        token: &str,
+        rotation_id: &str,
+        target_epoch: i64,
+    ) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
                     .post(format!("{}/vault/rekey/commit", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
                     .header("X-Vela-Rekey-Id", rotation_id)
+                    .header("X-Vela-Epoch", target_epoch.to_string())
             })
             .await?;
         if !resp.status().is_success() {

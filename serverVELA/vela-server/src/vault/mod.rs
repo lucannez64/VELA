@@ -29,12 +29,18 @@ pub fn max_user_storage_bytes() -> u64 {
 /// buckets (base64-encoded ciphertext length, as stored).
 async fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
     let mut total: u64 = 0;
+    // Only rows at or below the account's served epoch are reachable by any
+    // reader. Superseded rows left behind by a failed commit sweep (or shadow
+    // rows of a rotation in progress) must not count against the user while
+    // they wait for the next start-of-rotation cleanup.
     for table in ["vault_chunks", "oram_buckets"] {
         let rows = state
             .sqldb
             .query(
                 &format!(
-                    "SELECT COALESCE(SUM(LENGTH(ciphertext)), 0) FROM {table} WHERE user_id = ?"
+                    "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM {table} t
+                     JOIN users u ON u.id = t.user_id
+                     WHERE t.user_id = ? AND t.epoch <= u.key_epoch"
                 ),
                 vec![TursoValue::Text(user_id.to_string())],
             )

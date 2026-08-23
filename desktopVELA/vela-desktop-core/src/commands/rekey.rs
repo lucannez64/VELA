@@ -48,9 +48,20 @@ fn accept_new_token(state: &AppState, token: &mut String, refreshed: Option<Stri
 /// Rotate the account's Root Master Seed.
 pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, String> {
     super::vault::require_unlocked(state)?;
+    // Fail fast before involving a human: an unsigned-in install can never
+    // rotate, so do not make someone approve a dialog that only leads here.
+    if state
+        .session
+        .read()
+        .get_server_token()
+        .is_none()
+    {
+        return Err("Not signed in to a server — rotation needs an account".into());
+    }
     let state_for_confirmation = state.clone();
     tokio::task::spawn_blocking(move || {
         state_for_confirmation.confirm_with_human(
+            "VELA — rotate vault keys",
             "Rotate this vault's master key? Existing recovery shares and backups will stop working. You must set up all recovery methods again after rotation.",
         )
     })
@@ -132,11 +143,9 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     // has frozen writes, any ordinary preparation failure must explicitly
     // abort instead of leaving the account read-only until timeout.
     let preparation = async {
-        // 2. Fresh seed, locally generated.
-        let new_rms = zeroize::Zeroizing::new(
-            vela_crypto::rekey::rotate()
-                .map_err(|e| format!("Failed to generate a new seed: {e}"))?,
-        );
+        // 2. Fresh seed, locally generated (already `Zeroizing`).
+        let new_rms = vela_crypto::rekey::rotate()
+            .map_err(|e| format!("Failed to generate a new seed: {e}"))?;
         let new_crypto = crate::crypto::Crypto::new(&new_rms);
 
         // 3. Re-encrypt every chunk into a shadow row at the new epoch.
@@ -256,7 +265,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     // N. If it dies after commit, the retryable self-capsule lets ordinary sync
     // adopt N+1. There is no state in which the only local key is ahead of a
     // server that can roll back behind it.
-    let commit_token = match client.rekey_commit(&token, &rotation_id).await {
+    let commit_token = match client.rekey_commit(&token, &rotation_id, new_epoch).await {
         Ok(refreshed) => refreshed,
         Err(commit_err) => {
             // A lost response can mean commit actually won. Leave local state
@@ -271,6 +280,19 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         }
     };
     accept_new_token(state, &mut token, commit_token);
+
+    // Record the rotation in the audit log immediately after the server
+    // committed — before local adoption. A crash during migration must not
+    // leave a completed rotation absent from the audit trail; the event is
+    // written under the still-installed old key and rides the same RMS
+    // migration as every other secret file.
+    crate::audit::record_audit_event(
+        state,
+        crate::audit::AuditAction::VaultRekeyed {
+            from_epoch: current_epoch,
+            to_epoch: new_epoch,
+        },
+    );
 
     // 6. Now adopt locally using the same all-or-old migration as every other
     // device. Failure is recoverable: the server is already authoritative at
@@ -318,14 +340,6 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         devices_sealed,
         recovery_setup_required: true,
     };
-
-    crate::audit::record_audit_event(
-        state,
-        crate::audit::AuditAction::VaultRekeyed {
-            from_epoch: summary.from_epoch,
-            to_epoch: summary.to_epoch,
-        },
-    );
 
     tracing::info!(
         from = summary.from_epoch,

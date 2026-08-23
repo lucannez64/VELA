@@ -309,17 +309,22 @@ impl AppState {
     /// native-modal channel the passkey presence gate uses, deliberately not a
     /// web-view dialog the requesting renderer could answer itself.
     ///
+    /// `title` names the action (the dialog caption); `prompt` is the body.
+    /// The caption must say what is being approved — a dialog always titled
+    /// like a passkey request would let somebody clicking through captions
+    /// approve a vault wipe without ever reading it.
+    ///
     /// Fails closed in every direction: no registered host means nobody can be
     /// asked (`None`), a refusal is an answer (`Some(false)`), and only an
     /// explicit approval proceeds. Blocking — waits for a human — so callers
     /// must invoke it off the async runtime.
-    pub fn confirm_with_human(&self, prompt: &str) -> Result<(), String> {
+    pub fn confirm_with_human(&self, title: &str, prompt: &str) -> Result<(), String> {
         let host = self
             .host
             .read()
             .clone()
             .ok_or_else(|| "No way to ask for confirmation; action refused".to_string())?;
-        match host.confirm_presence(prompt) {
+        match host.confirm_presence(title, prompt) {
             Some(true) => Ok(()),
             Some(false) => Err("You declined this action.".to_string()),
             None => Err("No way to ask for confirmation; action refused".to_string()),

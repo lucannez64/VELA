@@ -40,6 +40,11 @@ pub trait Host: Send + Sync + 'static {
     /// Put a blocking yes/no question to the user in the app's own window, and
     /// report what they said.
     ///
+    /// `title` names the action being confirmed (the dialog's caption);
+    /// `prompt` is the question body. A dialog always titled like a passkey
+    /// request would let somebody clicking through captions approve a vault
+    /// wipe without ever reading it.
+    ///
     /// `None` means this host cannot ask at all — no window, no UI thread — and
     /// is distinct from `Some(false)`: a refusal is an answer, an inability to
     /// ask is not. [`crate::presence`] is the caller that cares, because a
@@ -47,5 +52,5 @@ pub trait Host: Send + Sync + 'static {
     /// has no biometric factor to offer.
     ///
     /// Blocking, and called off the async runtime — it waits for a human.
-    fn confirm_presence(&self, prompt: &str) -> Option<bool>;
+    fn confirm_presence(&self, title: &str, prompt: &str) -> Option<bool>;
 }

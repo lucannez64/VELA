@@ -455,8 +455,19 @@ pub async fn post_start(
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let next = ks.epoch + 1;
-    let inventory = state
+
+    // The inventory must be captured inside the same transaction as the
+    // freeze CAS. Taken separately, a concurrent same-account write could
+    // land between them: a new chunk would get no shadow (wedging commit's
+    // completeness check until abort) and an updated chunk would be
+    // re-encrypted from its stale version and swept at commit — an
+    // acknowledged write silently lost.
+    let tx = state
         .sqldb
+        .tx()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let inventory = tx
         .query(
             "SELECT chunk_id, version, lamport_clock FROM vault_chunks
              WHERE user_id = ? AND epoch = ? ORDER BY chunk_id",
@@ -481,8 +492,7 @@ pub async fn post_start(
     }
 
     let rotation_id = uuid::Uuid::new_v4().to_string();
-    let updated = state
-        .sqldb
+    let updated = tx
         .execute(
             "UPDATE users SET rekey_state = 'freezing', rekey_started_at = ?,
                 rekey_starter = ?, rekey_id = ?
@@ -505,6 +515,9 @@ pub async fn post_start(
             "a re-key was started concurrently for this account".into(),
         ));
     }
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::info!(
         user_id = %user_id,
@@ -610,12 +623,32 @@ pub async fn post_commit(
     rate_limit(&state, &user_id)?;
 
     let ks = maybe_rollback(&state, &user_id, &load_key_state(&state, &user_id).await?).await?;
+    let new_epoch = ks.epoch + 1;
     if !ks.freezing {
-        return Err(AppError::Conflict("no re-key is in progress".into()));
+        // Idempotent replay: if the caller targets the *current* epoch, its
+        // commit already succeeded and only the response was lost. Answer
+        // success instead of an error indistinguishable from "your rotation
+        // failed", so crash recovery is unambiguous.
+        if headers
+            .get("X-Vela-Epoch")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok())
+            .map(|target| target == ks.epoch && ks.rotation_id.is_none())
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                user_id = %user_id,
+                epoch = ks.epoch,
+                "re-key commit replayed after a lost response"
+            );
+            return Ok(no_content(&session));
+        }
+        return Err(AppError::Conflict(
+            "no re-key is in progress".into(),
+        ));
     }
     ensure_starter(&ks, &session)?;
     let rotation_id = require_rotation_id(&headers, &ks)?;
-    let new_epoch = ks.epoch + 1;
 
     // Never make N+1 authoritative unless it contains exactly one replacement
     // for every live N chunk and every active device has a capsule. The server

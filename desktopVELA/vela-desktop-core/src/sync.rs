@@ -132,8 +132,10 @@ pub(crate) fn migrate_local_rms(
     new_epoch: i64,
     password: Option<&str>,
 ) -> Result<(), String> {
-    let old_rms = old_crypto.rms();
-    let new_rms = new_crypto.rms();
+    // Held in `Zeroizing` so the seeds do not linger in plain stack arrays
+    // after the migration completes.
+    let old_rms = zeroize::Zeroizing::new(old_crypto.rms());
+    let new_rms = zeroize::Zeroizing::new(new_crypto.rms());
     let has_platform_rms = crate::biometric::has_platform_stored_rms();
     if !has_platform_rms && password.is_none() {
         return Err("No durable RMS store is available for the rotated key".into());
@@ -169,7 +171,7 @@ pub(crate) fn migrate_local_rms(
     crate::recovery::retire_recovery_setup(state)
         .map_err(|e| format!("Failed to retire old recovery shares: {e}"))?;
     *state.crypto.write() = Some(new_crypto);
-    crate::biometric::set_cached_rms(new_rms);
+    crate::biometric::set_cached_rms(*new_rms);
     set_local_key_epoch(state, new_epoch)
         .map_err(|e| format!("Failed to persist the new key epoch: {e}"))?;
 
@@ -1473,6 +1475,13 @@ pub async fn resolve_conflict(
     if !state.is_unlocked() {
         return Err("Vault is locked".to_string());
     }
+
+    // Serialize against `trigger_sync`: the "use server" branch below can
+    // adopt a new server epoch, which migrates every RMS-derived file and
+    // swaps `state.crypto`. Letting that interleave with an in-flight sync
+    // would let the sync continue writing files under the retired key after
+    // the migration journal is consumed — stranding them unopenable.
+    let _sync_guard = state.sync_mutex.lock().await;
 
     // Read the stored conflict (if any) up-front: its server_version snapshot
     // is the authoritative "server side" for resolution.
