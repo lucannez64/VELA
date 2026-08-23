@@ -64,14 +64,22 @@ struct LocalChunkMeta {
 }
 
 fn load_local_sync_meta(state: &AppState) -> LocalSyncMeta {
+    let durable_epoch = state
+        .crypto
+        .read()
+        .as_ref()
+        .and_then(|crypto| state.store.load_key_epoch(crypto).ok().flatten());
     let meta_path = state.store.store_path().join("sync_meta.json");
     if let Ok(json) = std::fs::read_to_string(&meta_path) {
-        if let Ok(meta) = serde_json::from_str::<LocalSyncMeta>(&json) {
+        if let Ok(mut meta) = serde_json::from_str::<LocalSyncMeta>(&json) {
+            if let Some(epoch) = durable_epoch {
+                meta.key_epoch = epoch;
+            }
             return meta;
         }
     }
     LocalSyncMeta {
-        key_epoch: default_key_epoch(),
+        key_epoch: durable_epoch.unwrap_or_else(default_key_epoch),
         chunks: HashMap::new(),
     }
 }
@@ -154,6 +162,12 @@ pub(crate) fn migrate_local_rms(
             .map_err(|e| format!("Failed to update the master-password vault key: {e}"))?;
     }
 
+    state
+        .store
+        .save_key_epoch(&new_crypto, new_epoch)
+        .map_err(|e| format!("Failed to persist the authenticated key epoch: {e}"))?;
+    crate::recovery::retire_recovery_setup(state)
+        .map_err(|e| format!("Failed to retire old recovery shares: {e}"))?;
     *state.crypto.write() = Some(new_crypto);
     crate::biometric::set_cached_rms(new_rms);
     set_local_key_epoch(state, new_epoch)
@@ -213,6 +227,12 @@ pub(crate) fn recover_pending_rms_migration(
 
     set_local_key_epoch(state, new_epoch)
         .map_err(|e| format!("Failed to persist the recovered key epoch: {e}"))?;
+    state
+        .store
+        .save_key_epoch(&new_crypto, new_epoch)
+        .map_err(|e| format!("Failed to persist the authenticated key epoch: {e}"))?;
+    crate::recovery::retire_recovery_setup(state)
+        .map_err(|e| format!("Failed to retire old recovery shares: {e}"))?;
     crate::biometric::set_cached_rms(new_rms);
 
     // A biometric unlock cannot rewrite an independent password wrapper. Keep
@@ -1576,6 +1596,24 @@ pub fn set_server_url(state: &AppState, url: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn authenticated_epoch_survives_missing_or_legacy_sync_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        let crypto = crate::crypto::Crypto::new(&[12u8; 32]);
+        state.store.save_key_epoch(&crypto, 4).unwrap();
+        *state.crypto.write() = Some(crypto);
+
+        assert_eq!(load_local_sync_meta(&state).key_epoch, 4);
+
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"chunks":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(load_local_sync_meta(&state).key_epoch, 4);
+    }
 
     /// Audit C-2: the sync server is untrusted, and replaying an older
     /// ciphertext for a chunk used to be invisible — deleted credentials

@@ -34,6 +34,8 @@ pub struct RotateSummary {
     pub chunks_rekeyed: usize,
     /// Devices the new seed was capsule-sealed to (including this one).
     pub devices_sealed: usize,
+    /// Rotation invalidates every recovery share derived from the old RMS.
+    pub recovery_setup_required: bool,
 }
 
 fn accept_new_token(state: &AppState, token: &mut String, refreshed: Option<String>) {
@@ -46,6 +48,14 @@ fn accept_new_token(state: &AppState, token: &mut String, refreshed: Option<Stri
 /// Rotate the account's Root Master Seed.
 pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, String> {
     super::vault::require_unlocked(state)?;
+    let state_for_confirmation = state.clone();
+    tokio::task::spawn_blocking(move || {
+        state_for_confirmation.confirm_with_human(
+            "Rotate this vault's master key? Existing recovery shares and backups will stop working. You must set up all recovery methods again after rotation.",
+        )
+    })
+    .await
+    .map_err(|e| format!("Confirmation task panicked: {e}"))??;
     let generation = state.session_generation();
     // Rotation and sync both rewrite the local secret store and touch the same
     // server chunks. Serialize them so neither can observe half-migrated files.
@@ -306,6 +316,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         to_epoch: new_epoch,
         chunks_rekeyed: uploaded,
         devices_sealed,
+        recovery_setup_required: true,
     };
 
     crate::audit::record_audit_event(

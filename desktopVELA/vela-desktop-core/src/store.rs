@@ -15,6 +15,7 @@ const RMS_FILE: &str = "rms.enc";
 const SETTINGS_FILE: &str = "settings.json";
 const DEVICE_ID_FILE: &str = "device_id.json";
 const IDENTITY_KEYS_FILE: &str = "identity_keys.enc";
+const KEY_EPOCH_FILE: &str = "key_epoch.enc";
 const DEVICE_KEY_CONTEXT: &str = "vela device rms protection v1";
 const IDENTITY_KEY_FILE_CONTEXT: &str = "vela desktop identity key file v1";
 
@@ -144,6 +145,7 @@ impl Store {
             "shares.enc",
             "sync_conflicts.enc",
             "recovery_setup.enc",
+            KEY_EPOCH_FILE,
         ] {
             let path = self.store_path.join(file);
             if !path.exists() {
@@ -328,6 +330,7 @@ impl Store {
             "sync_conflicts.enc",
             "recovery_setup.enc",
             IDENTITY_KEYS_FILE,
+            KEY_EPOCH_FILE,
             "sync_meta.json",
         ] {
             let consumer = self.store_path.join(file);
@@ -343,6 +346,27 @@ impl Store {
         #[cfg(unix)]
         fs::File::open(&self.store_path)?.sync_all()?;
         Ok(())
+    }
+
+    /// Persist the adopted key epoch under the RMS itself. `sync_meta.json` is
+    /// useful merge metadata but is not an authority boundary: if it is lost
+    /// or corrupt, this redundant authenticated marker lets a device prove
+    /// that its current RMS already belongs to the server's epoch.
+    pub(crate) fn save_key_epoch(&self, crypto: &Crypto, epoch: i64) -> anyhow::Result<()> {
+        let plaintext = serde_json::to_vec(&epoch)?;
+        let ciphertext = crypto.encrypt_vault(&plaintext)?;
+        write_secret_file(&self.store_path.join(KEY_EPOCH_FILE), &ciphertext)
+    }
+
+    pub(crate) fn load_key_epoch(&self, crypto: &Crypto) -> anyhow::Result<Option<i64>> {
+        let path = self.store_path.join(KEY_EPOCH_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let plaintext = crypto.decrypt_vault(&fs::read(path)?)?;
+        let epoch: i64 = serde_json::from_slice(&plaintext)?;
+        anyhow::ensure!(epoch >= 1, "invalid local key epoch");
+        Ok(Some(epoch))
     }
 
     pub fn save_vault(&self, vault: &VaultStore, crypto: &Crypto) -> anyhow::Result<()> {
@@ -1045,5 +1069,17 @@ mod tests {
 
         store.finish_rms_migration().unwrap();
         assert!(store.load_rms_migration(&new_rms).unwrap().is_none());
+    }
+
+    #[test]
+    fn key_epoch_marker_is_authenticated_by_the_current_rms() {
+        let (_dir, store) = test_store();
+        let current = Crypto::new(&[8u8; 32]);
+        let wrong = Crypto::new(&[9u8; 32]);
+
+        assert_eq!(store.load_key_epoch(&current).unwrap(), None);
+        store.save_key_epoch(&current, 6).unwrap();
+        assert_eq!(store.load_key_epoch(&current).unwrap(), Some(6));
+        assert!(store.load_key_epoch(&wrong).is_err());
     }
 }

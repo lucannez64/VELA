@@ -19,6 +19,17 @@ use crate::AppState;
 
 const RECOVERY_SETUP_FILE: &str = "recovery_setup.enc";
 
+/// A new RMS makes every previously generated recovery share obsolete.
+/// Remove both cached shares and delivery flags so the UI requires a complete
+/// fresh setup and `ensure_shares_split` cannot redistribute old material.
+pub(crate) fn retire_recovery_setup(state: &AppState) -> Result<(), String> {
+    let path = state.store.store_path().join(RECOVERY_SETUP_FILE);
+    if path.exists() {
+        std::fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PendingRecoveryShares {
     share1: Option<Vec<u8>>,
@@ -67,7 +78,9 @@ fn save_pending(state: &AppState, pending: &PendingRecoveryShares) -> Result<(),
     let crypto = crypto.as_ref().ok_or("Vault is locked")?;
 
     let plaintext = serde_json::to_vec(pending).map_err(|e| e.to_string())?;
-    let ciphertext = crypto.encrypt_vault(&plaintext).map_err(|e| e.to_string())?;
+    let ciphertext = crypto
+        .encrypt_vault(&plaintext)
+        .map_err(|e| e.to_string())?;
 
     let path = state.store.store_path().join(RECOVERY_SETUP_FILE);
     if let Some(parent) = path.parent() {
@@ -91,8 +104,12 @@ pub(crate) fn ensure_shares_split(state: &AppState) -> Result<(), String> {
 
     let shares = {
         let crypto = state.crypto.read();
-        let crypto = crypto.as_ref().ok_or("Vault must be unlocked to set up recovery")?;
-        crypto.split_recovery(2, 3).map_err(|e| format!("Failed to split recovery shares: {e}"))?
+        let crypto = crypto
+            .as_ref()
+            .ok_or("Vault must be unlocked to set up recovery")?;
+        crypto
+            .split_recovery(2, 3)
+            .map_err(|e| format!("Failed to split recovery shares: {e}"))?
     };
     if shares.len() != 3 {
         return Err("Unexpected share count from split".to_string());
@@ -115,11 +132,17 @@ pub(crate) fn ensure_shares_split(state: &AppState) -> Result<(), String> {
 /// share slot, gated by that passkey at release time. Registering the
 /// credential without ever storing a share behind it would leave "security
 /// key recovery" enabled in the UI but functionally inert.
-pub(crate) async fn deliver_security_key_share(state: &AppState, token: &str) -> Result<(), String> {
+pub(crate) async fn deliver_security_key_share(
+    state: &AppState,
+    token: &str,
+) -> Result<(), String> {
     ensure_shares_split(state)?;
     let share2 = {
         let pending = load_pending(state);
-        pending.share2.clone().ok_or("Recovery share was not generated")?
+        pending
+            .share2
+            .clone()
+            .ok_or("Recovery share was not generated")?
     };
 
     let server_url = state.server_url.read().clone();
@@ -405,11 +428,10 @@ pub async fn fetch_cloud_recovery_shares(
     // exotic remote), fall back to the two known locations instead of
     // refusing to recover at all.
     let remote_for_list = remote.clone();
-    let listed = tokio::task::spawn_blocking(move || {
-        crate::rclone::list_files(&remote_for_list, "VELA")
-    })
-    .await
-    .map_err(|e| format!("Listing task panicked: {e}"))?;
+    let listed =
+        tokio::task::spawn_blocking(move || crate::rclone::list_files(&remote_for_list, "VELA"))
+            .await
+            .map_err(|e| format!("Listing task panicked: {e}"))?;
     let candidates: Vec<String> = match listed {
         Ok(entries) => {
             let mut paths: Vec<String> = entries
@@ -493,11 +515,23 @@ pub async fn complete_account_recovery_with_credential(
     let client = ApiClient::with_url(server_url);
 
     let recover_resp = client
-        .recover_account(&RecoveryRecoverRequest { user_id: user_id.clone(), recovery_id, credential })
+        .recover_account(&RecoveryRecoverRequest {
+            user_id: user_id.clone(),
+            recovery_id,
+            credential,
+        })
         .await
         .map_err(|e| format!("Account recovery failed: {e}"))?;
 
-    complete_account_recovery(state, user_id, share1_b64, recover_resp, password, device_name).await
+    complete_account_recovery(
+        state,
+        user_id,
+        share1_b64,
+        recover_resp,
+        password,
+        device_name,
+    )
+    .await
 }
 
 pub async fn complete_account_recovery(

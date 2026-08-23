@@ -764,7 +764,7 @@ impl SettingsScreen {
                     Ok(Ok(summary)) => {
                         this.rotate_status = Some(
                             format!(
-                                "Vault re-keyed: epoch {} → {}, {} chunks, {} devices sealed.",
+                                "Vault re-keyed: epoch {} → {}, {} chunks, {} devices sealed. Recovery shares were retired—set up every recovery method again now.",
                                 summary.from_epoch,
                                 summary.to_epoch,
                                 summary.chunks_rekeyed,
@@ -772,6 +772,10 @@ impl SettingsScreen {
                             )
                             .into(),
                         );
+                        if summary.recovery_setup_required {
+                            let app_state = this.app_state.clone();
+                            Self::load_recovery_status(&app_state, cx);
+                        }
                     }
                     Ok(Err(e)) => this.rotate_status = Some(format!("Rotation failed: {e}").into()),
                     Err(e) => this.rotate_status = Some(format!("Task failed: {e}").into()),
