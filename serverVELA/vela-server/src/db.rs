@@ -30,7 +30,9 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             recovery_auth_hash TEXT,
             created_at      TIMESTAMP NOT NULL,
             recovery_webauthn_credential TEXT,
-            key_epoch       INTEGER NOT NULL DEFAULT 1
+            key_epoch       INTEGER NOT NULL DEFAULT 1,
+            last_rekey_id   TEXT,
+            last_rekey_epoch INTEGER
         )",
         (),
     )?;
@@ -211,6 +213,8 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
         "ALTER TABLE users ADD COLUMN rekey_started_at TIMESTAMP",
         "ALTER TABLE users ADD COLUMN rekey_starter TEXT",
         "ALTER TABLE users ADD COLUMN rekey_id TEXT",
+        "ALTER TABLE users ADD COLUMN last_rekey_id TEXT",
+        "ALTER TABLE users ADD COLUMN last_rekey_epoch INTEGER",
         "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
@@ -840,7 +844,11 @@ mod tests {
 
         init_schema(&db).expect("epoch columns must be added before epoch indexes");
         db.query("SELECT epoch FROM vault_chunks LIMIT 0", ()).unwrap();
-        db.query("SELECT key_epoch, rekey_state, rekey_id FROM users LIMIT 0", ())
+        db.query(
+            "SELECT key_epoch, rekey_state, rekey_id, last_rekey_id, last_rekey_epoch
+             FROM users LIMIT 0",
+            (),
+        )
             .unwrap();
     }
 

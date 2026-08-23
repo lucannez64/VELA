@@ -1163,6 +1163,7 @@ impl ApiClient {
         capsule_b64: &str,
         ttl_secs: i64,
         link_nonce: &str,
+        key_epoch: i64,
     ) -> Result<String> {
         #[derive(Serialize)]
         struct GrantBody<'a> {
@@ -1170,6 +1171,7 @@ impl ApiClient {
             capsule: &'a str,
             ttl_secs: i64,
             link_nonce: &'a str,
+            key_epoch: i64,
         }
         let resp = self
             .send_request(false, |client| {
@@ -1181,6 +1183,7 @@ impl ApiClient {
                         capsule: capsule_b64,
                         ttl_secs,
                         link_nonce,
+                        key_epoch,
                     })
             })
             .await?;

@@ -89,13 +89,16 @@ struct KeyState {
     started_at: Option<String>,
     starter: Option<String>,
     rotation_id: Option<String>,
+    last_rekey_id: Option<String>,
+    last_rekey_epoch: Option<i64>,
 }
 
 async fn load_key_state(state: &AppState, user_id: &str) -> Result<KeyState> {
     let rows = state
         .sqldb
         .query(
-            "SELECT key_epoch, rekey_state, rekey_started_at, rekey_starter, rekey_id
+            "SELECT key_epoch, rekey_state, rekey_started_at, rekey_starter, rekey_id,
+                    last_rekey_id, last_rekey_epoch
              FROM users WHERE id = ?",
             vec![TursoValue::Text(user_id.to_string())],
         )
@@ -116,6 +119,8 @@ async fn load_key_state(state: &AppState, user_id: &str) -> Result<KeyState> {
         started_at: text(2),
         starter: text(3),
         rotation_id: text(4),
+        last_rekey_id: text(5),
+        last_rekey_epoch: row.i64(6),
     })
 }
 
@@ -130,6 +135,8 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
             started_at: ks.started_at.clone(),
             starter: ks.starter.clone(),
             rotation_id: ks.rotation_id.clone(),
+            last_rekey_id: ks.last_rekey_id.clone(),
+            last_rekey_epoch: ks.last_rekey_epoch,
         });
     }
     let expired = ks
@@ -154,6 +161,8 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
         started_at: None,
         starter: None,
         rotation_id: None,
+        last_rekey_id: ks.last_rekey_id.clone(),
+        last_rekey_epoch: ks.last_rekey_epoch,
     })
 }
 
@@ -165,6 +174,8 @@ impl KeyState {
             started_at: self.started_at.clone(),
             starter: self.starter.clone(),
             rotation_id: self.rotation_id.clone(),
+            last_rekey_id: self.last_rekey_id.clone(),
+            last_rekey_epoch: self.last_rekey_epoch,
         }
     }
 }
@@ -631,12 +642,17 @@ pub async fn post_commit(
         // commit already succeeded and only the response was lost. Answer
         // success instead of an error indistinguishable from "your rotation
         // failed", so crash recovery is unambiguous.
-        if headers
+        let target_epoch = headers
             .get("X-Vela-Epoch")
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<i64>().ok())
-            .map(|target| target == ks.epoch && ks.rotation_id.is_none())
-            .unwrap_or(false)
+            .and_then(|v| v.parse::<i64>().ok());
+        let replay_id = headers
+            .get("X-Vela-Rekey-Id")
+            .and_then(|v| v.to_str().ok());
+        if target_epoch == Some(ks.epoch)
+            && ks.last_rekey_epoch == Some(ks.epoch)
+            && replay_id.is_some()
+            && replay_id == ks.last_rekey_id.as_deref()
         {
             tracing::info!(
                 user_id = %user_id,
@@ -708,6 +724,7 @@ pub async fn post_commit(
         .execute(
             "UPDATE users SET key_epoch = ?, rekey_state = NULL,
              rekey_started_at = NULL, rekey_starter = NULL, rekey_id = NULL,
+             last_rekey_id = ?, last_rekey_epoch = ?,
              recovery_share = NULL, recovery_auth_hash = NULL
          WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
            AND rekey_starter = ? AND rekey_id = ?
@@ -726,6 +743,8 @@ pub async fn post_commit(
                AND (rekey_capable = 0 OR rms_capsule IS NULL OR rms_capsule_epoch != ?)
            )",
             vec![
+                TursoValue::Integer(new_epoch),
+                TursoValue::Text(rotation_id.to_string()),
                 TursoValue::Integer(new_epoch),
                 TursoValue::Text(user_id.clone()),
                 TursoValue::Integer(ks.epoch),

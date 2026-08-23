@@ -269,13 +269,30 @@ pub async fn post_complete(
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
     let grant = authorize_grant(&state, grant_id, &session)?;
 
+    let user_rows = state
+        .sqldb
+        .query(
+            "SELECT rekey_state FROM users WHERE id = ?",
+            vec![TursoValue::Text(grant.user_id.clone())],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if user_rows.first().and_then(|row| row.text(0)).is_some() {
+        return Err(AppError::Conflict(
+            "device enrollment is paused during vault key rotation".into(),
+        ));
+    }
+
     // Take both together. A replayed completion finds nothing, and a grant that
     // failed midway cannot be retried with a different claim.
     let claim_bytes = state
         .store
         .get_del(&claim_key(grant_id))?
         .ok_or_else(|| AppError::NotFound("no device has claimed this code yet".into()))?;
-    let _ = state.store.get_del(&grant_key(grant_id))?;
+    let grant_bytes = state
+        .store
+        .get_del(&grant_key(grant_id))?
+        .ok_or_else(|| AppError::NotFound("enrollment grant not found or expired".into()))?;
 
     let claim: Claim = serde_json::from_slice(&claim_bytes)
         .map_err(|e| AppError::Internal(format!("stored claim is unreadable: {e}")))?;
@@ -330,6 +347,15 @@ pub async fn post_complete(
         ],
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
     if inserted == 0 {
+        // A rotation may have started after the fast check but before the
+        // guarded insert. Restore the exact consumed claim and grant so the
+        // already-confirmed pairing can be retried once rotation completes.
+        state
+            .store
+            .set_ex(&claim_key(grant_id), &claim_bytes, GRANT_TTL_SECS)?;
+        state
+            .store
+            .set_ex(&grant_key(grant_id), &grant_bytes, GRANT_TTL_SECS)?;
         return Err(AppError::Conflict(
             "device enrollment is paused during vault key rotation".into(),
         ));

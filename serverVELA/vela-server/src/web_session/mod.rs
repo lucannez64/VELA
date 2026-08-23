@@ -421,6 +421,9 @@ pub struct GrantRequest {
     /// Anti-phishing binding: the 32-byte link nonce (b64) the browser showed in
     /// the QR. Must match the nonce registered at `/web-session/start`.
     pub link_nonce: String,
+    /// Exact vault-key epoch used to seal the capsule. The grant CAS binds this
+    /// to the account so a concurrent rotation cannot mislabel old key material.
+    pub key_epoch: i64,
     /// Requested lifetime in seconds; defaults to 30 min, capped at 24 h.
     #[serde(default)]
     pub ttl_secs: Option<i64>,
@@ -442,6 +445,9 @@ pub async fn post_grant(
         "ro" | "rw" => body.mode.as_str(),
         _ => return Err(AppError::BadRequest("mode must be 'ro' or 'rw'".into())),
     };
+    if body.key_epoch < 1 {
+        return Err(AppError::BadRequest("key_epoch must be positive".into()));
+    }
 
     let capsule_bytes = B64
         .decode(body.capsule.as_bytes())
@@ -508,11 +514,11 @@ pub async fn post_grant(
             "UPDATE web_sessions
              SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
                  approved_by = ?, expires_at = ?,
-                 key_epoch = (SELECT key_epoch FROM users WHERE id = ?)
+                 key_epoch = ?
              WHERE id = ? AND status = 'pending' AND approver_user_id = ?
                AND EXISTS (
                    SELECT 1 FROM users
-                   WHERE id = ? AND rekey_state IS NULL
+                   WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?
                )",
             vec![
                 TursoValue::Text(session.user_id.to_string()),
@@ -520,16 +526,19 @@ pub async fn post_grant(
                 TursoValue::Text(body.capsule),
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(expires_at.to_rfc3339()),
-                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(body.key_epoch),
                 TursoValue::Text(id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(body.key_epoch),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     if n == 0 {
-        return Err(AppError::Conflict("web session was not pending".into()));
+        return Err(AppError::Conflict(
+            "web session was not pending or its vault key epoch changed".into(),
+        ));
     }
 
     tracing::info!(session_id = %id, user_id = %session.user_id, mode, ttl, "web session granted");

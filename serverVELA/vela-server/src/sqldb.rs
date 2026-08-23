@@ -126,6 +126,8 @@ impl TursoDb {
             "ALTER TABLE users ADD COLUMN rekey_started_at TEXT",
             "ALTER TABLE users ADD COLUMN rekey_starter TEXT",
             "ALTER TABLE users ADD COLUMN rekey_id TEXT",
+            "ALTER TABLE users ADD COLUMN last_rekey_id TEXT",
+            "ALTER TABLE users ADD COLUMN last_rekey_epoch INTEGER",
             "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
@@ -283,7 +285,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL, recovery_webauthn_credential TEXT,
     share_ek TEXT, recovery_webauthn_cred_id TEXT,
     key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
-    rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT);
+    rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT,
+    last_rekey_id TEXT, last_rekey_epoch INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_webauthn_cred_id ON users(recovery_webauthn_cred_id);
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
@@ -462,7 +465,10 @@ mod tests {
         db.query("SELECT key_epoch FROM users LIMIT 0", vec![])
             .await
             .unwrap();
-        db.query("SELECT rekey_id FROM users LIMIT 0", vec![])
+        db.query(
+            "SELECT rekey_id, last_rekey_id, last_rekey_epoch FROM users LIMIT 0",
+            vec![],
+        )
             .await
             .unwrap();
 

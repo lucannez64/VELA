@@ -84,6 +84,10 @@ fn load_local_sync_meta(state: &AppState) -> LocalSyncMeta {
     }
 }
 
+pub(crate) fn local_key_epoch(state: &AppState) -> i64 {
+    load_local_sync_meta(state).key_epoch
+}
+
 fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), String> {
     let store = &state.store;
     let meta_path = store.store_path().join("sync_meta.json");

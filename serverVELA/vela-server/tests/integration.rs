@@ -517,6 +517,8 @@ async fn enroll_device_without_grant_returns_401() {
 
 #[tokio::test]
 async fn enroll_device_redeems_grant_exactly_once() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
     let state = helpers::test_state().await;
 
     // Create the account this recovery grant is scoped to.
@@ -564,6 +566,39 @@ async fn enroll_device_redeems_grant_exactly_once() {
         "device_name": "Recovered Laptop",
     }))
     .unwrap();
+
+    // A rotation conflict is retryable and must not spend the one-shot grant.
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.clone())],
+        )
+        .await
+        .unwrap();
+    let paused_req = Request::builder()
+        .method("POST")
+        .uri("/recovery/enroll-device")
+        .header("content-type", "application/json")
+        .body(Body::from(enroll_body.clone()))
+        .unwrap();
+    let paused_resp = vela_server::routes::build(state.clone())
+        .oneshot(paused_req)
+        .await
+        .unwrap();
+    assert_eq!(paused_resp.status(), StatusCode::CONFLICT);
+    assert!(state
+        .store
+        .exists(&format!("recovery:enroll_grant:{user_id}:{grant}"))
+        .unwrap());
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.clone())],
+        )
+        .await
+        .unwrap();
 
     let first_req = Request::builder()
         .method("POST")
@@ -710,6 +745,7 @@ async fn web_session_grant_requires_auth() {
                         "mode": "ro",
                         "capsule": B64.encode(vec![0u8; 64]),
                         "link_nonce": B64.encode(vec![0u8; 32]),
+                        "key_epoch": 1,
                     })).unwrap(),
                 ))
                 .unwrap(),
@@ -815,6 +851,7 @@ async fn web_session_grant_rejects_wrong_link_nonce() {
                     "mode": "ro",
                     "capsule": B64.encode(vec![0u8; 64]),
                     "link_nonce": nonce,
+                    "key_epoch": 1,
                 }))
                 .unwrap(),
             ))
@@ -842,6 +879,61 @@ async fn web_session_grant_rejects_wrong_link_nonce() {
     // Correct nonce → grant succeeds.
     let resp = app.oneshot(grant(link_nonce)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn web_session_grant_rejects_a_capsule_from_an_old_key_epoch() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let (user_id, token) = seed_user_with_device(&state).await;
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET key_epoch = 2 WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+
+    let link_nonce = B64.encode(vec![7u8; 32]);
+    let resp = app
+        .clone()
+        .oneshot(web_session_start_req(user_id, &link_nonce))
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let session_id = body["session_id"].as_str().unwrap();
+
+    let grant = |epoch| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/web-session/{session_id}/grant"))
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(
+                json!({
+                    "mode": "ro",
+                    "capsule": B64.encode(vec![0u8; 64]),
+                    "link_nonce": link_nonce,
+                    "key_epoch": epoch,
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    assert_eq!(
+        app.clone().oneshot(grant(1)).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        app.oneshot(grant(2)).await.unwrap().status(),
+        StatusCode::OK,
+        "an epoch mismatch must leave the session pending and retryable"
+    );
 }
 
 /// Audit S-1/S-4: the session is bound to the account the browser named at
@@ -884,6 +976,7 @@ async fn web_session_is_bound_to_the_committed_approver() {
                     "mode": "rw",
                     "capsule": B64.encode(vec![0u8; 64]),
                     "link_nonce": link_nonce,
+                    "key_epoch": 1,
                 }))
                 .unwrap(),
             ))
@@ -989,6 +1082,7 @@ async fn web_session_poll_requires_the_browsers_secret() {
                         "mode": "ro",
                         "capsule": capsule,
                         "link_nonce": link_nonce,
+                        "key_epoch": 1,
                     }))
                     .unwrap(),
                 ))
@@ -1101,6 +1195,7 @@ async fn committed_approver_can_decline_a_pending_session() {
                         "mode": "ro",
                         "capsule": B64.encode(vec![0u8; 64]),
                         "link_nonce": link_nonce,
+                        "key_epoch": 1,
                     }))
                     .unwrap(),
                 ))
@@ -1232,7 +1327,7 @@ async fn web_session_token_is_refused_on_permanent_power_routes() {
         (
             "POST",
             "/web-session/00000000-0000-0000-0000-000000000000/grant",
-            Some(json!({ "mode": "rw", "capsule": B64.encode([0u8; 64]), "link_nonce": B64.encode([0u8; 32]) })),
+            Some(json!({ "mode": "rw", "capsule": B64.encode([0u8; 64]), "link_nonce": B64.encode([0u8; 32]), "key_epoch": 1 })),
         ),
         // The rest of the session-management surface, same class.
         ("GET", "/web-session/00000000-0000-0000-0000-000000000000/keys", None),
@@ -1607,6 +1702,7 @@ async fn the_capsule_is_delivered_once_even_under_concurrent_polls() {
                         "mode": "ro",
                         "capsule": capsule,
                         "link_nonce": link_nonce,
+                        "key_epoch": 1,
                     }))
                     .unwrap(),
                 ))
@@ -1761,6 +1857,56 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
 }
 
 // ── Vault re-keying (docs/VAULT_REKEYING_DESIGN.md) ────────────────────────────
+
+#[tokio::test]
+async fn rekey_commit_replay_is_bound_to_the_completed_attempt() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let (user_id, token) = seed_user_with_device(&state).await;
+    let completed_attempt = Uuid::new_v4().to_string();
+    let stale_attempt = Uuid::new_v4().to_string();
+
+    // This is the durable state after attempt A was aborted and a second
+    // N -> N+1 attempt B committed. Only B may replay a lost commit response.
+    state
+        .sqldb
+        .execute(
+            "UPDATE users
+             SET key_epoch = 2, last_rekey_id = ?, last_rekey_epoch = 2
+             WHERE id = ?",
+            vec![
+                TursoValue::Text(completed_attempt.clone()),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let commit = |rotation_id: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/vault/rekey/commit")
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-vela-epoch", "2")
+            .header("x-vela-rekey-id", rotation_id)
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(commit(&stale_attempt))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        app.oneshot(commit(&completed_attempt)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+}
 
 /// One device drives a full rotation while a second device's stale write is
 /// refused. Pins the whole epoch lifecycle: active → freezing → committed,
