@@ -89,8 +89,8 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         (),
     )?;
     db.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk
-         ON vault_chunks(user_id, chunk_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
+         ON vault_chunks(user_id, chunk_id, epoch)",
         (),
     )?;
     db.execute(
@@ -145,10 +145,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_webauthn_cred_id
          ON users(recovery_webauthn_cred_id)",
-        (),
-    )?;
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id)",
         (),
     )?;
     db.execute(
@@ -282,13 +278,18 @@ fn migrate_vault_chunks_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     db.execute("DROP TABLE vault_chunks", ())?;
     db.execute("ALTER TABLE vault_chunks_v2 RENAME TO vault_chunks", ())?;
+    // Epoch-aware indexes, matching the rekey schema (§5): shadow rows make
+    // uniqueness per (user, chunk, epoch), and readers filter by (user,
+    // epoch). The legacy names are gone — migrate_rekey_schema only drops
+    // them for databases indexed before this file was aligned.
     db.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk
-         ON vault_chunks(user_id, chunk_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
+         ON vault_chunks(user_id, chunk_id, epoch)",
         (),
     )?;
     db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
+         ON vault_chunks(user_id, epoch)",
         (),
     )?;
     Ok(())

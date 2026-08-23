@@ -4,6 +4,7 @@
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
+use std::sync::Arc;
 use tempfile::TempDir;
 use vela_desktop_core::api::{ApiClient, RegisterRequest};
 use vela_desktop_core::commands::devices::generate_enrollment_code;
@@ -13,7 +14,7 @@ use vela_desktop_core::vault::{VaultItem, VaultMeta};
 use vela_desktop_core::AppState;
 
 pub struct DesktopClient {
-    pub state: AppState,
+    pub state: Arc<AppState>,
     pub device_id: String,
     pub user_id: String,
     _dir: TempDir,
@@ -24,7 +25,7 @@ impl DesktopClient {
     /// device against the server, persist the identity keys.
     pub async fn new(rms: [u8; 32], server_url: &str) -> Result<Self, String> {
         let dir = TempDir::new().map_err(|e| format!("tempdir: {e}"))?;
-        let state = AppState::for_test(dir.path());
+        let state = Arc::new(AppState::for_test(dir.path()));
         *state.server_url.write() = server_url.to_string();
         state.unlock_for_test(&rms);
 

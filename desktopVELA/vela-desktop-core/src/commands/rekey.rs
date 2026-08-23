@@ -35,6 +35,9 @@ pub struct RotateSummary {
     /// Devices the new seed was capsule-sealed to (including this one).
     pub devices_sealed: usize,
     /// Rotation invalidates every recovery share derived from the old RMS.
+    /// Fresh shares of the new RMS are re-minted (and verified) automatically,
+    /// but each delivery channel — cloud backup, security key, trusted
+    /// contact — must still be redone by the user.
     pub recovery_setup_required: bool,
 }
 
@@ -115,7 +118,15 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         let rms = crypto.as_ref().ok_or("Vault is locked")?.rms();
         crate::crypto::Crypto::new(&rms)
     };
-    let rekey_password = crate::sync::password_for_rekey(state, &old_crypto_snapshot.rms())?;
+    // `password_for_rekey` runs the platform credential check (blocking
+    // process I/O) — keep it off the async runtime.
+    let rekey_password = {
+        let state = state.clone();
+        let current_rms = old_crypto_snapshot.rms();
+        tokio::task::spawn_blocking(move || crate::sync::password_for_rekey(&state, &current_rms))
+            .await
+            .map_err(|e| format!("Password proof task panicked: {e}"))??
+    };
 
     // 0. Probe: refuse politely when another rotation is already running.
     let (current_epoch, rotation_state, new_token) = client
@@ -297,23 +308,58 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     // 6. Now adopt locally using the same all-or-old migration as every other
     // device. Failure is recoverable: the server is already authoritative at
     // N+1 and retains this device's capsule until a later sync succeeds.
+    // The migration is synchronous fs + platform-credential I/O, so it runs
+    // on the blocking pool.
     state.ensure_unlocked_since(generation).map_err(|e| {
         format!(
             "The server committed epoch {new_epoch}, but this device locked before local adoption: {e}. Unlock and sync to adopt from its retained capsule."
         )
     })?;
-    crate::sync::migrate_local_rms(
-        state,
-        &old_crypto_snapshot,
-        new_crypto,
-        new_epoch,
-        rekey_password.as_ref().map(|p| p.as_str()),
-    )
+    let migration = tokio::task::spawn_blocking({
+        let state = state.clone();
+        let password = rekey_password.clone();
+        move || {
+            crate::sync::migrate_local_rms(
+                &state,
+                &old_crypto_snapshot,
+                new_crypto,
+                new_epoch,
+                password.as_ref().map(|p| p.as_str()),
+            )
+        }
+    })
+    .await
+    .map_err(|e| {
+        format!(
+            "The server committed epoch {new_epoch}, but this device could not adopt it (task failed): {e}. Lock, unlock, and sync to retry from its retained capsule."
+        )
+    })?
     .map_err(|e| {
         format!(
             "The server committed epoch {new_epoch}, but this device could not adopt it: {e}. Lock, unlock, and sync to retry from its retained capsule."
         )
     })?;
+
+    // 7. Recovery shares of the OLD seed are worthless by construction — they
+    //    reconstruct only the retired value. Re-mint shares of the new seed
+    //    now, verified against the RMS this session unlocked before anything
+    //    is delivered, so re-doing recovery setup starts from a proven split.
+    //    The channels themselves (rclone upload, WebAuthn registration,
+    //    trusted-contact handoff) still need their own ceremonies; the
+    //    summary's `recovery_setup_required` keeps driving that prompt. A
+    //    failed re-mint must not fail the rotation — it is already committed
+    //    server-side and adopted locally — so log and surface it via the
+    //    existing setup-required flag instead.
+    if let Err(e) = tokio::task::spawn_blocking({
+        let state = state.clone();
+        move || crate::recovery::remint_recovery_setup(&state)
+    })
+    .await
+    .map_err(|e| format!("Recovery share re-mint task panicked: {e}"))
+    .and_then(|inner| inner)
+    {
+        tracing::warn!("Recovery share re-mint after rotation failed: {e}");
+    }
 
     // The initiator's capsule has served its crash-recovery purpose. Clear it
     // only after files, every RMS wrapper, and the local epoch are durable.
@@ -324,14 +370,6 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
             tracing::warn!("Re-key committed locally, but self-capsule acknowledgement failed: {e}")
         }
     }
-
-    // 7. Recovery shares of the OLD seed are worthless by construction — they
-    //    reconstruct only the retired value. Minting fresh shares of the new
-    //    seed and uploading them over the cloud backup rides on the existing
-    //    rclone recovery flow and is wired at the UI layer as a follow-up
-    //    prompt ("your backup shares were retired — re-back them up now");
-    //    until that runs, the audit entry plus this summary tell the user
-    //    exactly what state their backup is in.
 
     let summary = RotateSummary {
         from_epoch: current_epoch,

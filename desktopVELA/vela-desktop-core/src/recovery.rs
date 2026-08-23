@@ -171,6 +171,54 @@ pub fn get_recovery_setup_status(state: &AppState) -> Result<RecoveryStatus, Str
     })
 }
 
+/// Mint fresh shares of the CURRENT seed immediately after a key rotation.
+///
+/// Rotation retires every old share by construction (they reconstruct only
+/// the retired RMS), but until now nothing re-minted replacements: the local
+/// split was deleted and every channel had to be redone from scratch against
+/// a lazily-created split nobody had verified. This runs right after local
+/// adoption so all three channels can be re-delivered against one split that
+/// is *proven* to reconstruct the new seed — checked here, before any share
+/// is overwritten or handed out. A split that fails verification is deleted,
+/// never delivered (verify-before-overwrite; `vela_crypto::rekey::
+/// shares_reconstruct_to`).
+///
+/// The channels still need their own ceremonies afterwards (WebAuthn
+/// registration for the security key, an out-of-band handoff for the trusted
+/// contact) — this only guarantees the cached split is good.
+pub(crate) fn remint_recovery_setup(state: &AppState) -> Result<(), String> {
+    if !state.is_unlocked() {
+        return Err("Vault is locked".to_string());
+    }
+    ensure_shares_split(state)?;
+    let expected = {
+        let crypto = state.crypto.read();
+        let crypto = crypto.as_ref().ok_or("Vault is locked")?;
+        crypto.rms()
+    };
+    let pending = load_pending(state);
+    let mut shares = Vec::with_capacity(3);
+    for raw in [&pending.share1, &pending.share2, &pending.share3] {
+        let bytes = raw.as_deref().ok_or("Recovery shares were not generated")?;
+        let share = vela_crypto::shamir::Share::from_bytes(bytes)
+            .map_err(|e| format!("Fresh recovery share is malformed: {e}"))?;
+        shares.push(share);
+    }
+    if !vela_crypto::rekey::shares_reconstruct_to(&shares, &expected) {
+        // Fail closed: a split that does not reconstruct the unlocked seed
+        // must never reach a delivery channel. Drop it so the UI starts a
+        // clean setup instead of distributing something useless.
+        retire_recovery_setup(state)?;
+        return Err(
+            "Fresh recovery shares failed verification against the rotated key; \
+             recovery setup was reset and must be redone"
+                .to_string(),
+        );
+    }
+    tracing::info!("Recovery shares re-minted after key rotation (verified 2-of-3)");
+    Ok(())
+}
+
 /// Share 3, base64, for the user to hand to their trusted contact.
 ///
 /// Splitting on demand (rather than at account creation) is what lets the
@@ -749,6 +797,7 @@ fn cleanup_legacy_cloud_backup(remote: &str, user_id: &str) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn per_account_path_contains_the_user_id() {
@@ -785,5 +834,51 @@ mod tests {
     fn envelope_rejects_garbage() {
         assert!(parse_cloud_backup_envelope(b"not json").is_err());
         assert!(parse_cloud_backup_envelope(b"{}").is_err());
+    }
+
+    /// The re-mint must produce a cached split that provably reconstructs the
+    /// currently-unlocked seed — the verify-before-overwrite property, checked
+    /// end to end against a real AppState.
+    #[test]
+    fn remint_produces_shares_that_reconstruct_the_unlocked_seed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        let rms = [9u8; 32];
+        state.unlock_for_test(&rms);
+
+        remint_recovery_setup(&state).expect("re-mint succeeds on an unlocked vault");
+
+        // Any 2 of the 3 cached shares reconstruct exactly the unlocked RMS.
+        let pending = load_pending(&state);
+        let shares: Vec<vela_crypto::shamir::Share> = [&pending.share1, &pending.share2]
+            .iter()
+            .map(|s| vela_crypto::shamir::Share::from_bytes(s.as_deref().unwrap()).unwrap())
+            .collect();
+        assert!(vela_crypto::rekey::shares_reconstruct_to(&shares, &rms));
+    }
+
+    /// A tampered split must fail closed: no delivery from it, and the bad
+    /// cache is dropped so the UI starts clean instead of distributing junk.
+    #[test]
+    fn remint_fails_closed_and_resets_on_a_corrupt_split() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        let rms = [11u8; 32];
+        state.unlock_for_test(&rms);
+
+        ensure_shares_split(&state).expect("initial split");
+        let mut pending = load_pending(&state);
+        // Byte 3 sits inside the share's y payload ([marker, version, x, y…]),
+        // so the tamper keeps the wire format parseable and must be caught by
+        // the reconstruction check, not by deserialization.
+        pending.share2.as_mut().unwrap()[3] ^= 0xff;
+        save_pending(&state, &pending).expect("save tampered split");
+
+        let err = remint_recovery_setup(&state).expect_err("verification must refuse");
+        assert!(err.contains("failed verification"), "unexpected error: {err}");
+        assert!(
+            !state.store.store_path().join(RECOVERY_SETUP_FILE).exists(),
+            "the unverified split must be deleted, not kept for delivery"
+        );
     }
 }

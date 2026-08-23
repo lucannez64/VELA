@@ -254,7 +254,7 @@ pub(crate) fn recover_pending_rms_migration(
 /// is opened with the current identity key, then every local RMS-derived file
 /// and the platform RMS are moved together to the new seed.
 async fn adopt_server_epoch(
-    state: &AppState,
+    state: &Arc<AppState>,
     client: &ApiClient,
     token: &mut String,
 ) -> Result<i64, String> {
@@ -299,7 +299,14 @@ async fn adopt_server_epoch(
     if hybrid_dk.is_empty() {
         return Err("This device has no capsule decryption key; re-enrollment is required".into());
     }
-    let password = password_for_rekey(state, &old_crypto.rms())?;
+    // Blocking platform-credential check — off the async runtime.
+    let password = {
+        let state = state.clone();
+        let current_rms = old_crypto.rms();
+        tokio::task::spawn_blocking(move || password_for_rekey(&state, &current_rms))
+            .await
+            .map_err(|e| format!("Password proof task panicked: {e}"))??
+    };
 
     let (capsule, new_token) = client
         .get_capsule(token)
@@ -323,13 +330,21 @@ async fn adopt_server_epoch(
     let new_crypto = crate::crypto::Crypto::new(&new_rms);
 
     state.ensure_unlocked_since(generation)?;
-    migrate_local_rms(
-        state,
-        &old_crypto,
-        new_crypto,
-        server_epoch,
-        password.as_ref().map(|p| p.as_str()),
-    )?;
+    // Synchronous fs + platform-credential I/O — run it on the blocking pool
+    // so a slow disk cannot stall the reactor.
+    let state_for_migration = state.clone();
+    let password_ref = password.clone();
+    tokio::task::spawn_blocking(move || {
+        migrate_local_rms(
+            &state_for_migration,
+            &old_crypto,
+            new_crypto,
+            server_epoch,
+            password_ref.as_ref().map(|p| p.as_str()),
+        )
+    })
+    .await
+    .map_err(|e| format!("Epoch adoption task failed: {e}"))??;
     match client.acknowledge_rekey_capsule(token, server_epoch).await {
         Ok(Some(refreshed)) => {
             state.session.write().set_server_token(refreshed.clone());
@@ -1180,7 +1195,7 @@ async fn sync_audit_chunk(
     }
 }
 
-pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
+pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
     // Serialize sync runs: local writes and merges must not interleave.
     let _sync_guard = state.sync_mutex.lock().await;
 
@@ -1468,7 +1483,7 @@ pub async fn get_sync_status(state: &AppState) -> Result<SyncStatus, String> {
 }
 
 pub async fn resolve_conflict(
-    state: &AppState,
+    state: &Arc<AppState>,
     item_id: String,
     use_local: bool,
 ) -> Result<(), String> {
