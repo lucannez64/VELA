@@ -776,6 +776,20 @@ async fn health() -> Response {
     ok_json(serde_json::json!({ "status": "ok" }))
 }
 
+async fn get_epoch(State(db): State<MockDb>, headers: HeaderMap) -> Response {
+    if let Err(resp) = auth_device(&db, &headers) {
+        return resp;
+    }
+    ok_json(serde_json::json!({ "epoch": 1, "state": "active" }))
+}
+
+async fn mark_rekey_capable(State(db): State<MockDb>, headers: HeaderMap) -> Response {
+    if let Err(resp) = auth_device(&db, &headers) {
+        return resp;
+    }
+    Response::builder().status(StatusCode::NO_CONTENT).body(Body::empty()).unwrap()
+}
+
 fn header_int(headers: &HeaderMap, name: &str) -> Option<i64> {
     headers.get(name).and_then(|v| v.to_str().ok()).and_then(|s| s.parse().ok())
 }
@@ -803,8 +817,10 @@ impl MockServer {
             .route("/device/enrollment-grant/:id/complete", post(post_enrollment_complete))
             .route("/device/enrollment-grant/:id/result", post(post_enrollment_result))
             .route("/device/capsule", get(get_capsule))
+            .route("/device/rekey-capable", post(mark_rekey_capable))
             .route("/share/my-ek", put(put_my_share_ek))
             .route("/vault/sync", get(get_sync_manifest))
+            .route("/vault/epoch", get(get_epoch))
             .route("/vault/chunk/:chunk_id", get(get_chunk).put(put_chunk).delete(delete_chunk))
             .with_state(db.clone());
 

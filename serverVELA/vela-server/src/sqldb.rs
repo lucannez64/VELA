@@ -127,6 +127,7 @@ impl TursoDb {
             "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
+            "ALTER TABLE devices ADD COLUMN rekey_capable INTEGER NOT NULL DEFAULT 0",
         ];
         for sql in ALTERS {
             if let Err(e) = self.conn().execute(sql, ()).await {
@@ -155,6 +156,7 @@ impl TursoDb {
             finished: false,
         })
     }
+
 }
 
 /// An in-progress transaction: owns a locked turso connection and runs
@@ -246,7 +248,8 @@ CREATE TABLE IF NOT EXISTS devices (
     id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
     device_name TEXT NOT NULL DEFAULT 'Desktop Device', device_type TEXT NOT NULL DEFAULT 'desktop',
     last_active TEXT, hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL, enrolled_by TEXT,
-    rms_capsule TEXT, rms_capsule_epoch INTEGER, revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
+    rms_capsule TEXT, rms_capsule_epoch INTEGER, rekey_capable INTEGER NOT NULL DEFAULT 0,
+    revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
     created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE TABLE IF NOT EXISTS vault_chunks (

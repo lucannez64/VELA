@@ -1663,7 +1663,7 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
 
     // The seeded device really exists; this id does not.
     let real = {
-        use vela_server::sqldb::{Db as _, TursoValue};
+        use vela_server::sqldb::Db as _;
         let rows = state.sqldb.query("SELECT id FROM devices", vec![]).await.unwrap();
         rows.first()
             .and_then(|r| r.text(0))
@@ -1806,6 +1806,19 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     let token_initiator = issue_token(&state, user, initiator);
     let token_other = issue_token(&state, user, other_device);
 
+    let attest = |token: &String| {
+        Request::builder()
+            .method("POST")
+            .uri("/device/rekey-capable")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone().oneshot(attest(&token_initiator)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+
     // Seed one chunk at the current epoch.
     let put = |token: &String, epoch: Option<i64>, if_match: &str| {
         let mut b = Request::builder()
@@ -1822,6 +1835,26 @@ async fn rekey_rotation_lifecycle_end_to_end() {
 
     let resp = app.clone().oneshot(put(&token_initiator, None, "0")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+
+    // Rotation is unavailable until every active device has positively
+    // attested that it retained its capsule private key.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/start")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        app.clone().oneshot(attest(&token_other)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
 
     // Start: returns the next epoch plus the inventory.
     let resp = app
@@ -1875,6 +1908,42 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     // ...and even without an epoch header at all.
     let resp = app.clone().oneshot(put(&token_other, None, "1")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/vault/chunk/vault-main")
+                .header("authorization", format!("Bearer {token_other}"))
+                .header("if-match", "1")
+                .header("x-vela-epoch", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "freeze rejects deletes");
+
+    // Knowing the target epoch does not authorize a sibling device to poison
+    // the starter's shadow rows.
+    let resp = app
+        .clone()
+        .oneshot(put(&token_other, Some(2), "0"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Nor may the temporary web-session authority rotation is intended to
+    // retire populate a candidate row with attacker-chosen ciphertext.
+    let web = token_for(
+        &state,
+        user,
+        Uuid::new_v4(),
+        vela_server::auth::token::TokenScope::WebSession,
+    );
+    let resp = app.clone().oneshot(put(&web, Some(2), "0")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // The initiator's re-keyed copy lands as a shadow row at epoch 2. Replays
     // must be tolerated (crash-resume).
@@ -2003,8 +2072,24 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     .unwrap();
     assert_eq!(err["error"], "vault_rekeyed");
 
+    // Deletes are writes too: a stale headerless client must not be able to
+    // delete the new epoch merely because its cached version happens to match.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/vault/chunk/vault-main")
+                .header("authorization", format!("Bearer {token_other}"))
+                .header("if-match", "2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
     // Exactly ONE row survives per chunk — the epoch-2 re-keyed copy.
-    use vela_server::sqldb::Db as _;
     let rows = state
         .sqldb
         .query(
@@ -2049,8 +2134,114 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-    let resp = app.oneshot(capsule_req()).await.unwrap();
+    let resp = app.clone().oneshot(capsule_req()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // A concurrent abort and commit must have exactly one winner. In
+    // particular, the loser must never sweep the epoch the winner made live.
+    let start = Request::builder()
+        .method("POST")
+        .uri("/vault/rekey/start")
+        .header("authorization", format!("Bearer {token_initiator}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(start).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(put(&token_initiator, Some(3), "0"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let capsules3 = json!({
+        "capsules": {
+            initiator.to_string(): "Y2Fwc3VsZS0zLWluaXQ=",
+            other_device.to_string(): "Y2Fwc3VsZS0zLW90aGVy",
+        }
+    });
+    assert_eq!(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/vault/rekey/capsules")
+                    .header("authorization", format!("Bearer {token_initiator}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(capsules3.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    let commit = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/vault/rekey/commit")
+            .header("authorization", format!("Bearer {token_initiator}"))
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let abort = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/vault/rekey/abort")
+            .header("authorization", format!("Bearer {token_initiator}"))
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let (commit, abort) = tokio::join!(commit, abort);
+    let commit = commit.unwrap();
+    let abort = abort.unwrap();
+    let statuses = [commit.status(), abort.status()];
+    let details = [
+        String::from_utf8_lossy(
+            &axum::body::to_bytes(commit.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned(),
+        String::from_utf8_lossy(
+            &axum::body::to_bytes(abort.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned(),
+    ];
+    assert_eq!(
+        statuses.iter().filter(|&&s| s == StatusCode::NO_CONTENT).count(),
+        1,
+        "exactly one state transition wins: {statuses:?} {details:?}"
+    );
+    assert_eq!(
+        statuses.iter().filter(|&&s| s == StatusCode::CONFLICT).count(),
+        1,
+        "the losing transition reports a conflict"
+    );
+    let user_state = state
+        .sqldb
+        .query(
+            "SELECT key_epoch FROM users WHERE id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    let winning_epoch = user_state[0].i64(0).unwrap();
+    let chunks = state
+        .sqldb
+        .query(
+            "SELECT epoch FROM vault_chunks WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].i64(0), Some(winning_epoch));
 }
 
 #[tokio::test]

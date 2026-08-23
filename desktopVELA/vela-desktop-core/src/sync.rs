@@ -103,6 +103,7 @@ async fn adopt_server_epoch(
         .await
         .map_err(|e| format!("Failed to read server key epoch: {e}"))?;
     if let Some(t) = new_token {
+        state.session.write().set_server_token(t.clone());
         *token = t;
     }
     let local_epoch = load_local_sync_meta(state).key_epoch;
@@ -138,6 +139,7 @@ async fn adopt_server_epoch(
         .await
         .map_err(|e| format!("Failed to fetch the epoch adoption capsule: {e}"))?;
     if let Some(t) = new_token {
+        state.session.write().set_server_token(t.clone());
         *token = t;
     }
     if capsule.epoch != Some(server_epoch) {
@@ -165,10 +167,20 @@ async fn adopt_server_epoch(
     }
     *state.crypto.write() = Some(new_crypto);
     set_local_key_epoch(state, server_epoch)?;
-    if let Err(e) = client.acknowledge_rekey_capsule(token, server_epoch).await {
-        // Adoption is already durable; retaining an encrypted retry capsule is
-        // harmless and a later rotation overwrites it.
-        tracing::warn!("Adopted epoch {server_epoch}, but capsule acknowledgement failed: {e}");
+    match client.acknowledge_rekey_capsule(token, server_epoch).await {
+        Ok(Some(refreshed)) => {
+            state
+                .session
+                .write()
+                .set_server_token(refreshed.clone());
+            *token = refreshed;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            // Adoption is already durable; retaining an encrypted retry
+            // capsule is harmless and a later rotation overwrites it.
+            tracing::warn!("Adopted epoch {server_epoch}, but capsule acknowledgement failed: {e}");
+        }
     }
     Ok(server_epoch)
 }
@@ -202,6 +214,34 @@ fn chunk_key_bytes(state: &AppState, chunk_id: &str) -> Result<[u8; 32], String>
     let crypto_guard = state.crypto.read();
     let crypto = crypto_guard.as_ref().ok_or_else(|| "Crypto not initialized".to_string())?;
     Ok(*crypto.chunk_key(chunk_id.as_bytes()).as_bytes())
+}
+
+/// Epoch 1 remains wire-compatible with mobile/web clients which have not yet
+/// shipped epoch-tagged AAD. Once an account rotates, the capability gate has
+/// proved every active device understands the new format, so later epochs are
+/// bound explicitly.
+fn seal_sync_chunk(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    key_epoch: i64,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Vec<u8>, vela_crypto::VelaError> {
+    if key_epoch == 1 {
+        vela_crypto::aead::seal(
+            key,
+            plaintext,
+            &vela_crypto::aead::vault_chunk_aad(chunk_id, lamport_clock),
+        )
+    } else {
+        vela_crypto::rekey::seal_epoch_chunk(
+            key,
+            plaintext,
+            key_epoch as u64,
+            chunk_id,
+            lamport_clock,
+        )
+    }
 }
 
 fn log_sync_audit(state: &AppState, chunk_count: usize) {
@@ -343,6 +383,34 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
         tracing::warn!("Share key backfill: failed to persist keys: {}", e);
     } else {
         tracing::info!("Share key backfilled for existing identity");
+    }
+}
+
+/// Advertise capsule-adoption support only when this installation actually
+/// retained the matching private key. Best-effort during ordinary sync; the
+/// explicit rotation path repeats it and treats failure as fatal.
+async fn advertise_rekey_capability(state: &AppState, client: &ApiClient, token: &mut String) {
+    let capable = {
+        let crypto = state.crypto.read();
+        crypto
+            .as_ref()
+            .and_then(|crypto| state.store.load_identity_keys(crypto).ok().flatten())
+            .map(|identity| !identity.hybrid_dk.is_empty())
+            .unwrap_or(false)
+    };
+    if !capable {
+        return;
+    }
+    match client.mark_rekey_capable(token).await {
+        Ok(Some(refreshed)) => {
+            state
+                .session
+                .write()
+                .set_server_token(refreshed.clone());
+            *token = refreshed;
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!("Could not advertise re-key capability: {e}"),
     }
 }
 
@@ -693,10 +761,10 @@ async fn upload_vault_chunks(
         // Sealed against this chunk's id and the clock it is about to be stored
         // under, so the server cannot hand any of it back later as if it were
         // current (audit C-2).
-        let ciphertext = vela_crypto::rekey::seal_epoch_chunk(
+        let ciphertext = seal_sync_chunk(
             &key,
             chunk,
-            key_epoch as u64,
+            key_epoch,
             &chunk_id,
             chunk_lamport,
         )
@@ -756,7 +824,10 @@ async fn upload_vault_chunks(
         let _ = tokio::spawn(async move {
             for (chunk_id, version) in stale_chunks {
                 let t = delete_token.lock().await.clone();
-                match delete_client.delete_chunk(&t, &chunk_id, version).await {
+                match delete_client
+                    .delete_chunk_with_epoch(&t, &chunk_id, version, Some(key_epoch))
+                    .await
+                {
                     Ok(new_tok) => {
                         if let Some(new_t) = new_tok {
                             *delete_token.lock().await = new_t;
@@ -823,10 +894,10 @@ async fn sync_audit_chunk(
                 // server cannot replay an older audit log — which is exactly the
                 // record a user consults after a compromise (audit C-2).
                 let next_clock = entry.lamport_clock + 1;
-                match vela_crypto::rekey::seal_epoch_chunk(
+                match seal_sync_chunk(
                     &key,
                     &updated_plaintext,
-                    key_epoch as u64,
+                    key_epoch,
                     audit::AUDIT_CHUNK_ID,
                     next_clock,
                 ) {
@@ -853,10 +924,10 @@ async fn sync_audit_chunk(
             }
         }
     } else if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
-        match vela_crypto::rekey::seal_epoch_chunk(
+        match seal_sync_chunk(
             &key,
             &plaintext,
-            key_epoch as u64,
+            key_epoch,
             audit::AUDIT_CHUNK_ID,
             1,
         ) {
@@ -941,6 +1012,8 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
 
     // Backfill a share keypair for identities created before sharing existed.
     ensure_share_key(state, &client, &token).await;
+    state.ensure_unlocked_since(generation)?;
+    advertise_rekey_capability(state, &client, &mut token).await;
     state.ensure_unlocked_since(generation)?;
 
     // Epoch adoption must happen before even fetching the manifest: otherwise

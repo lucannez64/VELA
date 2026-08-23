@@ -105,7 +105,7 @@ pub async fn post_capsule_ack(
     State(state): State<AppState>,
     session: DeviceSession,
     Json(body): Json<CapsuleAck>,
-) -> Result<axum::http::StatusCode> {
+) -> Result<(HeaderMap, axum::http::StatusCode)> {
     let updated = state
         .sqldb
         .execute(
@@ -124,5 +124,7 @@ pub async fn post_capsule_ack(
             "no matching re-key capsule is awaiting acknowledgement".into(),
         ));
     }
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, &session);
+    Ok((headers, axum::http::StatusCode::NO_CONTENT))
 }

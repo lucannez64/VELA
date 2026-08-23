@@ -116,8 +116,10 @@ Re-keyed chunks are written as NEW rows (`epoch = N+1`) alongside the old ones
 until commit. This costs temporary storage (bounded by vault size) and buys
 the two properties that make crash safety boring:
 
-- **Commit is one transaction** (flip epoch, sweep old rows) — no mixed state
-  is ever observable at `ACTIVE`.
+- **Commit is one atomic compare-and-swap** (validate completeness and flip the
+  served epoch together), followed by best-effort cleanup of old rows. Reads
+  filter by the served epoch, so cleanup can be retried without exposing a
+  mixed state.
 - **Abort/timeout is trivially safe** — drop the shadows, nothing else changed.
   A crashed initiator leaves the account exactly as it was.
 
@@ -130,6 +132,10 @@ Preconditions: unlocked session, full vault locally (or fetched first).
 
 1. `GET /vault/epoch` — refuse if already `FREEZING` (another rotation in
    flight; retry later).
+   Before starting, a client attests `/device/rekey-capable` only after it has
+   loaded the private half matching its registered `hybrid_ek`. The server
+   refuses rotation while any active device has not attested, preventing
+   pre-v3 or adoption-unaware clients from being stranded.
 2. `POST /vault/rekey/start` → `N+1`, inventory.
 3. Generate `RMS₂ ← rekey::rotate()`.
 4. Re-encrypt the inventory chunk-by-chunk: download, open under the
@@ -211,6 +217,7 @@ ALTER TABLE users   ADD COLUMN rekey_started_at TIMESTAMP;
 ALTER TABLE users   ADD COLUMN rekey_starter    TEXT;                -- device id
 
 ALTER TABLE vault_chunks ADD COLUMN epoch       INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE devices ADD COLUMN rekey_capable INTEGER NOT NULL DEFAULT 0;
 
 DROP INDEX IF EXISTS idx_vault_chunks_user_chunk;
 CREATE UNIQUE INDEX idx_vault_chunks_user_chunk_epoch

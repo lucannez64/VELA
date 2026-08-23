@@ -109,6 +109,10 @@ pub fn build(state: AppState) -> Router {
             post(crate::device::capsule::post_capsule_ack),
         )
         .route("/devices", get(crate::device::list::list_devices))
+        .route(
+            "/device/rekey-capable",
+            post(crate::device::list::post_rekey_capable),
+        )
         .route("/vault/sync", get(crate::vault::sync::get_sync))
         .route("/vault/epoch", get(crate::vault::rekey::get_epoch))
         .route("/vault/rekey/start", post(crate::vault::rekey::post_start))

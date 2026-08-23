@@ -383,6 +383,12 @@ impl ApiClient {
                     .header("Authorization", format!("Bearer {}", token))
             })
             .await?;
+        // Rolling-upgrade compatibility: servers predating key epochs have no
+        // endpoint and can only contain epoch-1 data. A client which has ever
+        // adopted a later epoch still rejects this as a rollback in sync.rs.
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok((1, "active".to_string(), None));
+        }
         if !resp.status().is_success() {
             anyhow::bail!("epoch request failed: {}", resp.status());
         }
@@ -473,7 +479,7 @@ impl ApiClient {
     }
 
     /// Abort an in-flight rotation and discard its shadow rows.
-    pub async fn rekey_abort(&self, token: &str) -> Result<()> {
+    pub async fn rekey_abort(&self, token: &str) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
@@ -484,21 +490,26 @@ impl ApiClient {
         if !resp.status().is_success() {
             anyhow::bail!("re-key abort failed: {}", resp.status());
         }
-        Ok(())
+        Ok(extract_new_token(&resp))
     }
 
-    pub async fn delete_chunk(
+    pub async fn delete_chunk_with_epoch(
         &self,
         token: &str,
         chunk_id: &str,
         version: i64,
+        epoch: Option<i64>,
     ) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
-                client
+                let mut request = client
                     .delete(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
                     .header("Authorization", format!("Bearer {}", token))
-                    .header("If-Match", format!("{}", version))
+                    .header("If-Match", format!("{}", version));
+                if let Some(epoch) = epoch {
+                    request = request.header("X-Vela-Epoch", epoch.to_string());
+                }
+                request
             })
             .await?;
 
@@ -506,6 +517,26 @@ impl ApiClient {
             anyhow::bail!("Chunk delete failed: {}", resp.status());
         }
 
+        Ok(extract_new_token(&resp))
+    }
+
+    /// Attest that this device retained the private capsule key and has an
+    /// implementation capable of adopting future RMS rotations.
+    pub async fn mark_rekey_capable(&self, token: &str) -> Result<Option<String>> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/device/rekey-capable", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            // Older servers neither rotate keys nor track this capability.
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            anyhow::bail!("Re-key capability update failed: {}", resp.status());
+        }
         Ok(extract_new_token(&resp))
     }
 
@@ -871,7 +902,11 @@ impl ApiClient {
         Ok((result, new_token))
     }
 
-    pub async fn acknowledge_rekey_capsule(&self, token: &str, epoch: i64) -> Result<()> {
+    pub async fn acknowledge_rekey_capsule(
+        &self,
+        token: &str,
+        epoch: i64,
+    ) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
@@ -883,7 +918,7 @@ impl ApiClient {
         if !resp.status().is_success() {
             anyhow::bail!("Capsule acknowledgement failed: {}", resp.status());
         }
-        Ok(())
+        Ok(extract_new_token(&resp))
     }
 
     pub async fn get_inbox(&self, token: &str) -> Result<(Vec<InboxItem>, Option<String>)> {
@@ -1451,6 +1486,8 @@ pub struct DeviceInfo {
     /// client keeps working against an older deployment.
     #[serde(default)]
     pub hybrid_ek: Option<String>,
+    #[serde(default)]
+    pub rekey_capable: bool,
 }
 
 /// The rotation work order returned by `POST /vault/rekey/start`.
@@ -1818,6 +1855,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(version, 1);
+    }
+
+    #[tokio::test]
+    async fn chunk_delete_declares_the_ciphertext_epoch() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/vault/chunk/c1"))
+            .and(header("If-Match", "4"))
+            .and(header("X-Vela-Epoch", "3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({ "deleted": true, "version": 4 }),
+            ))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        client
+            .delete_chunk_with_epoch("t", "c1", 4, Some(3))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_epoch_endpoint_is_treated_as_legacy_epoch_one() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/epoch"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let (epoch, state, refreshed) = client.get_key_epoch("t").await.unwrap();
+        assert_eq!(epoch, 1);
+        assert_eq!(state, "active");
+        assert!(refreshed.is_none());
     }
 
     #[tokio::test]

@@ -110,6 +110,7 @@ pub async fn put_chunk(
     let (write_epoch, read_epoch) =
         crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared_epoch)
             .await?;
+    crate::vault::rekey::ensure_shadow_writer(&state, &session, write_epoch, read_epoch).await?;
 
     if if_match == 0 {
         // Shadow writes (epoch above the served one, i.e. a rotation in
@@ -117,10 +118,12 @@ pub async fn put_chunk(
         // re-uploads the same chunks. Upsert instead of create-or-conflict.
         let is_shadow = write_epoch != read_epoch;
         if is_shadow {
-            state.sqldb.execute(
+            let written = state.sqldb.execute(
                 "INSERT INTO vault_chunks
                  (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
-                 VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+                 SELECT ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
+                 WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
+                   AND rekey_starter = ?
                  ON CONFLICT(user_id, chunk_id, epoch) DO UPDATE SET
                      version       = version + 1,
                      lamport_clock = excluded.lamport_clock,
@@ -136,8 +139,16 @@ pub async fn put_chunk(
                     TursoValue::Integer(write_epoch),
                     TursoValue::Text(now.clone()),
                     TursoValue::Text(now),
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Integer(read_epoch),
+                    TursoValue::Text(session.device_id.to_string()),
                 ],
             ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+            if written != 1 {
+                return Err(AppError::Conflict(
+                    "re-key was aborted or committed before the shadow write".into(),
+                ));
+            }
         } else {
         let existing = state
             .sqldb
@@ -267,9 +278,22 @@ pub async fn delete_chunk(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
-    // Deletes target the currently-served epoch only — never a rotation's
-    // shadow rows, which belong to the in-flight re-key.
-    let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
+    let declared_epoch: Option<i64> = headers_in
+        .get("x-vela-epoch")
+        .or_else(|| headers_in.get("X-Vela-Epoch"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok());
+    let (write_epoch, read_epoch) = crate::vault::rekey::resolve_write_epoch(
+        &state,
+        &session.user_id.to_string(),
+        declared_epoch,
+    )
+    .await?;
+    if write_epoch != read_epoch {
+        return Err(AppError::Rekeyed(
+            "chunk deletes are unavailable while a re-key is in progress".into(),
+        ));
+    }
 
     let rows = state
         .sqldb
@@ -278,7 +302,7 @@ pub async fn delete_chunk(
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(read_epoch),
+                TursoValue::Integer(write_epoch),
             ],
         )
         .await
@@ -302,7 +326,7 @@ pub async fn delete_chunk(
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(read_epoch),
+                TursoValue::Integer(write_epoch),
             ],
         )
         .await

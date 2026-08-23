@@ -46,6 +46,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             enrolled_by TEXT,
             rms_capsule TEXT,
             rms_capsule_epoch INTEGER,
+            rekey_capable BOOLEAN NOT NULL DEFAULT FALSE,
             revoked     BOOLEAN NOT NULL DEFAULT FALSE,
             revoked_at  TIMESTAMP,
             revoked_by  TEXT,
@@ -219,6 +220,10 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
     let _ = db.execute("ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
     let _ = db.execute("ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
     let _ = db.execute("ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER", ());
+    let _ = db.execute(
+        "ALTER TABLE devices ADD COLUMN rekey_capable BOOLEAN NOT NULL DEFAULT FALSE",
+        (),
+    );
 
     // Shadow rows during a rotation coexist with the current-epoch rows for the
     // same chunk, so uniqueness moves from (user, chunk) to (user, chunk,
@@ -308,6 +313,8 @@ fn migrate_devices_schema(db: &Database) -> anyhow::Result<()> {
             hybrid_vk   TEXT NOT NULL,
             enrolled_by TEXT,
             rms_capsule TEXT,
+            rms_capsule_epoch INTEGER,
+            rekey_capable BOOLEAN NOT NULL DEFAULT FALSE,
             revoked     BOOLEAN NOT NULL DEFAULT FALSE,
             revoked_at  TIMESTAMP,
             revoked_by  TEXT,

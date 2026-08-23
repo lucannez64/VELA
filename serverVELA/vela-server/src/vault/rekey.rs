@@ -23,8 +23,9 @@
 //! While `FREEZING`, writes are accepted only at epoch N+1 (the initiator's
 //! re-keyed copies landing as shadow rows alongside the untouched epoch-N
 //! rows); reads keep serving epoch N, because nobody has adopted yet. Commit
-//! flips the epoch and sweeps in one transaction; abort/timeout drops the
-//! shadows. Either way the account is never observable mid-mixed.
+//! flips the epoch with an atomic completeness-checked compare-and-swap, then
+//! sweeps rows which immediately became unreachable; abort/timeout uses the
+//! competing CAS. Either way the account is never observable mid-mixed.
 
 use axum::{
     extract::{State},
@@ -134,8 +135,12 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
         return Ok(ks.clone_state());
     }
     tracing::warn!(user_id = %user_id, "re-key timed out; rolling back to epoch {}", ks.epoch);
-    drop_shadow_rows(state, user_id, ks.epoch).await?;
-    clear_rekey_state(state, user_id).await?;
+    let started_at = ks.started_at.as_deref().unwrap_or_default();
+    if !rollback_rekey(state, user_id, ks.epoch, None, Some(started_at)).await? {
+        // A commit or explicit abort won the transition while this request was
+        // deciding the timeout. Return the state which actually won.
+        return load_key_state(state, user_id).await;
+    }
     Ok(KeyState {
         epoch: ks.epoch,
         freezing: false,
@@ -155,32 +160,56 @@ impl KeyState {
     }
 }
 
-async fn drop_shadow_rows(state: &AppState, user_id: &str, epoch: i64) -> Result<()> {
-    state
+/// Atomically win the transition out of FREEZING before deleting shadows.
+/// This is shared by explicit abort and lazy timeout rollback so neither can
+/// race a successful commit and delete the newly-authoritative epoch.
+async fn rollback_rekey(
+    state: &AppState,
+    user_id: &str,
+    epoch: i64,
+    starter: Option<&str>,
+    started_at: Option<&str>,
+) -> Result<bool> {
+    let (condition, discriminator) = if let Some(starter) = starter {
+        ("rekey_starter = ?", starter)
+    } else {
+        ("rekey_started_at = ?", started_at.unwrap_or_default())
+    };
+    let updated = state
         .sqldb
         .execute(
-            "DELETE FROM vault_chunks WHERE user_id = ? AND epoch > ?",
+            &format!(
+                "UPDATE users SET rekey_state = NULL, rekey_started_at = NULL, rekey_starter = NULL
+                 WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing' AND {condition}"
+            ),
             vec![
                 TursoValue::Text(user_id.to_string()),
                 TursoValue::Integer(epoch),
+                TursoValue::Text(discriminator.to_string()),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(())
-}
-
-async fn clear_rekey_state(state: &AppState, user_id: &str) -> Result<()> {
-    state
-        .sqldb
-        .execute(
-            "UPDATE users SET rekey_state = NULL, rekey_started_at = NULL, rekey_starter = NULL
-             WHERE id = ?",
-            vec![TursoValue::Text(user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(())
+    if updated == 1 {
+        // Once the CAS cleared FREEZING, these rows are unreachable. Cleanup
+        // is best-effort so a storage hiccup cannot turn a completed abort
+        // into an ambiguous client-visible failure; the next start overwrites
+        // the same epoch shadows idempotently.
+        if let Err(e) = state
+            .sqldb
+            .execute(
+                "DELETE FROM vault_chunks WHERE user_id = ? AND epoch > ?",
+                vec![
+                    TursoValue::Text(user_id.to_string()),
+                    TursoValue::Integer(epoch),
+                ],
+            )
+            .await
+        {
+            tracing::warn!(user_id = %user_id, "failed to clean aborted re-key shadows: {e}");
+        }
+    }
+    Ok(updated == 1)
 }
 
 /// The write-side guard (`PUT /vault/chunk`, ORAM writes): resolve which epoch
@@ -221,6 +250,36 @@ pub async fn resolve_write_epoch(
             ))),
         }
     }
+}
+
+/// Shadow ciphertext is account-authority work, not ordinary vault access.
+/// Only the real device which started the freeze may populate or replace it;
+/// in particular, an outstanding RW web-session token must not be able to
+/// poison rows which commit will make authoritative.
+pub async fn ensure_shadow_writer(
+    state: &AppState,
+    session: &AuthSession,
+    write_epoch: i64,
+    read_epoch: i64,
+) -> Result<()> {
+    if write_epoch == read_epoch {
+        return Ok(());
+    }
+    if session.scope != crate::auth::token::TokenScope::Device {
+        return Err(AppError::Forbidden(
+            "temporary web sessions cannot write re-key shadows".into(),
+        ));
+    }
+    let ks = load_key_state(state, &session.user_id.to_string()).await?;
+    if !ks.freezing
+        || ks.epoch + 1 != write_epoch
+        || ks.starter.as_deref() != Some(session.device_id.to_string().as_str())
+    {
+        return Err(AppError::Forbidden(
+            "only the device which started this re-key may write shadows".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The read-side filter: chunks at or below the served epoch exist; callers
@@ -292,6 +351,39 @@ pub async fn post_start(
         ));
     }
 
+    // A capsule is useful only when its target retained the matching private
+    // key and has an adoption implementation. Unknown/legacy devices default
+    // false and block rotation rather than being permanently stranded.
+    let incapable = state
+        .sqldb
+        .query(
+            "SELECT 1 FROM devices
+             WHERE user_id = ? AND revoked = 0 AND rekey_capable = 0 LIMIT 1",
+            vec![TursoValue::Text(user_id.clone())],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if !incapable.is_empty() {
+        return Err(AppError::Conflict(
+            "vault key rotation requires every active device to sync once with a re-key-capable client; re-enroll legacy devices first".into(),
+        ));
+    }
+
+    // Finish best-effort cleanup from an earlier committed/aborted rotation
+    // before taking a new inventory. Only the current epoch is reachable while
+    // ACTIVE, so every other row is stale protocol debris.
+    state
+        .sqldb
+        .execute(
+            "DELETE FROM vault_chunks WHERE user_id = ? AND epoch != ?",
+            vec![
+                TursoValue::Text(user_id.clone()),
+                TursoValue::Integer(ks.epoch),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
     let next = ks.epoch + 1;
     let inventory = state
         .sqldb
@@ -357,7 +449,7 @@ pub async fn post_capsules(
     State(state): State<AppState>,
     session: DeviceSession,
     Json(body): Json<CapsulesRequest>,
-) -> Result<StatusCode> {
+) -> Result<(HeaderMap, StatusCode)> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
 
@@ -406,12 +498,15 @@ pub async fn post_capsules(
         capsules = body.capsules.len(),
         "re-key capsules stored"
     );
-    Ok(StatusCode::NO_CONTENT)
+    Ok(no_content(&session))
 }
 
 // ── POST /vault/rekey/commit ───────────────────────────────────────────────────
 
-pub async fn post_commit(State(state): State<AppState>, session: DeviceSession) -> Result<StatusCode> {
+pub async fn post_commit(
+    State(state): State<AppState>,
+    session: DeviceSession,
+) -> Result<(HeaderMap, StatusCode)> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
 
@@ -455,7 +550,7 @@ pub async fn post_commit(State(state): State<AppState>, session: DeviceSession) 
         .query(
             "SELECT 1 FROM devices
              WHERE user_id = ? AND revoked = 0
-               AND (rms_capsule IS NULL OR rms_capsule_epoch != ?)
+               AND (rekey_capable = 0 OR rms_capsule IS NULL OR rms_capsule_epoch != ?)
              LIMIT 1",
             vec![
                 TursoValue::Text(user_id.clone()),
@@ -470,45 +565,72 @@ pub async fn post_commit(State(state): State<AppState>, session: DeviceSession) 
         ));
     }
 
-    // One transaction: flip the epoch and sweep the superseded rows together,
-    // so no reader ever observes the mixed state the sweep prevents.
-    let tx = state
-        .sqldb
-        .tx()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    tx.execute(
+    // One atomic compare-and-swap both validates completeness and flips the
+    // served epoch. A concurrent abort can only win or lose this statement;
+    // it can never clear the state between validation and the flip.
+    let updated = state.sqldb.execute(
         "UPDATE users SET key_epoch = ?, rekey_state = NULL,
              rekey_started_at = NULL, rekey_starter = NULL
-         WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'",
+         WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
+           AND rekey_starter = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM vault_chunks old
+             WHERE old.user_id = users.id AND old.epoch = ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM vault_chunks new
+                 WHERE new.user_id = old.user_id
+                   AND new.chunk_id = old.chunk_id AND new.epoch = ?
+               )
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM devices
+             WHERE user_id = users.id AND revoked = 0
+               AND (rekey_capable = 0 OR rms_capsule IS NULL OR rms_capsule_epoch != ?)
+           )",
         vec![
             TursoValue::Integer(new_epoch),
             TursoValue::Text(user_id.clone()),
             TursoValue::Integer(ks.epoch),
-        ],
-    )
-    .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
-    tx.execute(
-        "DELETE FROM vault_chunks WHERE user_id = ? AND epoch < ?",
-        vec![
-            TursoValue::Text(user_id.clone()),
+            TursoValue::Text(session.device_id.to_string()),
+            TursoValue::Integer(ks.epoch),
+            TursoValue::Integer(new_epoch),
             TursoValue::Integer(new_epoch),
         ],
     )
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
-    tx.commit()
+    if updated != 1 {
+        return Err(AppError::Conflict(
+            "re-key was aborted or committed concurrently".into(),
+        ));
+    }
+    // Readers filter by users.key_epoch, so old rows became unreachable at the
+    // CAS above. Cleanup is best-effort; failure wastes space but cannot expose
+    // mixed epochs or make a successful commit look failed to the client.
+    if let Err(e) = state
+        .sqldb
+        .execute(
+            "DELETE FROM vault_chunks WHERE user_id = ? AND epoch < ?",
+            vec![
+                TursoValue::Text(user_id.clone()),
+                TursoValue::Integer(new_epoch),
+            ],
+        )
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    {
+        tracing::warn!(user_id = %user_id, epoch = new_epoch, "failed to sweep superseded re-key rows: {e}");
+    }
 
     tracing::info!(user_id = %user_id, epoch = new_epoch, "re-key committed");
-    Ok(StatusCode::NO_CONTENT)
+    Ok(no_content(&session))
 }
 
 // ── POST /vault/rekey/abort ────────────────────────────────────────────────────
 
-pub async fn post_abort(State(state): State<AppState>, session: DeviceSession) -> Result<StatusCode> {
+pub async fn post_abort(
+    State(state): State<AppState>,
+    session: DeviceSession,
+) -> Result<(HeaderMap, StatusCode)> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
 
@@ -518,11 +640,22 @@ pub async fn post_abort(State(state): State<AppState>, session: DeviceSession) -
     }
     ensure_starter(&ks, &session)?;
 
-    drop_shadow_rows(&state, &user_id, ks.epoch).await?;
-    clear_rekey_state(&state, &user_id).await?;
+    if !rollback_rekey(
+        &state,
+        &user_id,
+        ks.epoch,
+        Some(&session.device_id.to_string()),
+        None,
+    )
+    .await?
+    {
+        return Err(AppError::Conflict(
+            "re-key was committed or aborted concurrently".into(),
+        ));
+    }
 
     tracing::info!(user_id = %user_id, epoch = ks.epoch, "re-key aborted");
-    Ok(StatusCode::NO_CONTENT)
+    Ok(no_content(&session))
 }
 
 /// Modest per-account pacing for the rotation endpoints themselves. The heavy
@@ -530,4 +663,10 @@ pub async fn post_abort(State(state): State<AppState>, session: DeviceSession) -
 /// limits; these calls are cheap but must not be free to spam.
 fn rate_limit(state: &AppState, user_id: &str) -> Result<()> {
     crate::rate_limit::check(&state.store, &format!("rl:rekey:{user_id}"), 30, 3600)
+}
+
+fn no_content(session: &AuthSession) -> (HeaderMap, StatusCode) {
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, session);
+    (headers, StatusCode::NO_CONTENT)
 }
