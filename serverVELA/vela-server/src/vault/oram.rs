@@ -174,9 +174,14 @@ pub async fn put_path(
     // vault chunks can. Rather than risk a mixed-epoch tree, writes are simply
     // refused for the (bounded) freeze window; clients retry after adopting.
     let declared = body.epoch;
-    let (write_epoch, _read_epoch) =
+    let (write_epoch, read_epoch) =
         crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared)
             .await?;
+    if write_epoch != read_epoch {
+        return Err(AppError::Rekeyed(
+            "ORAM writes are unavailable while a re-key is in progress".into(),
+        ));
+    }
 
     let incoming: u64 = body
         .buckets

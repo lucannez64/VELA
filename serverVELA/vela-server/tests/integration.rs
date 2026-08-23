@@ -1950,6 +1950,45 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     let resp = app.clone().oneshot(put(&web, Some(2), "0", Some(&rotation_id))).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
+    // ORAM has no shadow migration protocol. Even a caller that knows the
+    // target epoch must not create buckets which become authoritative at
+    // commit without participating in the chunk completeness checks.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/vault/oram/tree/path/0")
+                .header("authorization", format!("Bearer {web}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "height": 0,
+                        "epoch": 2,
+                        "buckets": [{
+                            "bucket_index": 1,
+                            "if_match": 0,
+                            "lamport_clock": 1,
+                            "ciphertext": B64.encode([1u8, 2, 3]),
+                        }],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let oram_rows = state
+        .sqldb
+        .query(
+            "SELECT 1 FROM oram_buckets WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert!(oram_rows.is_empty(), "freeze must not create ORAM rows");
+
     // The initiator's re-keyed copy lands as a shadow row at epoch 2. Replays
     // must be tolerated (crash-resume), and successful progress refreshes the
     // inactivity deadline instead of imposing a fixed 15-minute wall clock.
