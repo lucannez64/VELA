@@ -75,7 +75,7 @@ class VaultSyncManager(
 
     fun localVaultEpoch(): Long = settingsStore.settings.value.keyEpoch
 
-    fun enrollWithCode(serverUrl: String, enrollmentCode: String): ByteArray {
+    fun enrollWithCode(serverUrl: String, enrollmentCode: String) {
         val payload = EnrollmentCodePayload.fromCode(serverUrl, enrollmentCode)
         val effectiveServerUrl = serverUrl.ifBlank { payload.serverUrl }
         if (effectiveServerUrl.isBlank()) {
@@ -95,11 +95,9 @@ class VaultSyncManager(
 
         val token = authenticateOrRegister(client)
         val capsule = client.getCapsule(token)
-        capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
         val rms = NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
-        persistAdoptedEpoch(client, capsule.newToken ?: token)
-        return rms
+        adoptRmsAtCurrentEpoch(client, capsule.newToken ?: token, rms)
     }
 
     // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
@@ -155,22 +153,20 @@ class VaultSyncManager(
         return client.collectEnrollmentResult(session.grantId, signature)
     }
 
-    /// Authenticate as the newly enrolled device and open the capsule sealed to
-    /// it. Returns the RMS.
-    fun finishV3Join(session: V3JoinSession, deviceId: String): ByteArray {
+    /// Authenticate as the newly enrolled device, open its capsule, and adopt
+    /// the RMS together with the server epoch it belongs to.
+    fun finishV3Join(session: V3JoinSession, deviceId: String) {
         val identity = identityStore.load() ?: error("This device has no identity")
         identityStore.save(identity.copy(deviceId = deviceId))
 
         val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
         val token = authenticateOrRegister(client)
         val capsule = client.getCapsule(token)
-        capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
 
         val handle = identityStore.handle() ?: error("This device has no identity")
         val rms = NativeVelaCore.identityOpenEnrollmentCapsule(handle, capsule.capsuleB64)
             ?: error("The vault key was not sealed to this device — enrollment aborted")
-        persistAdoptedEpoch(client, capsule.newToken ?: token)
-        return rms
+        adoptRmsAtCurrentEpoch(client, capsule.newToken ?: token, rms)
     }
 
     /// Split the RMS into recovery shares (SPEC.md §4.3), register a WebAuthn
@@ -222,16 +218,15 @@ class VaultSyncManager(
     /// the WebAuthn assertion run by `performAssertion`), then register this
     /// device against the existing account — mirrors `enrollWithCode`'s
     /// bootstrap sequence, minus the RMS-capsule step since the RMS is
-    /// already in hand once the two shares are combined. Returns the
-    /// reconstructed RMS for the caller to adopt via
-    /// `SecureVaultManager.adoptRms` and protect locally.
+    /// already in hand once the two shares are combined. The reconstructed
+    /// RMS is adopted before its authenticated server epoch is persisted.
     suspend fun recoverAccount(
         serverUrl: String,
         userId: String,
         share1B64: String,
         deviceName: String?,
         performAssertion: suspend (JSONObject) -> JSONObject
-    ): ByteArray {
+    ) {
         val effectiveServerUrl = serverUrl.ifBlank { settingsStore.settings.value.serverUrl }
         require(effectiveServerUrl.isNotBlank()) { "Recovery requires a server URL" }
         updateServer(effectiveServerUrl, "")
@@ -259,9 +254,7 @@ class VaultSyncManager(
         identityStore.save(identity.copy(userId = userId, deviceId = deviceId))
 
         val token = authenticateOrRegister(client)
-        updateServer(effectiveServerUrl, token)
-        persistAdoptedEpoch(client, token)
-        return rms
+        adoptRmsAtCurrentEpoch(client, token, rms)
     }
 
     // suspend, not a runBlocking-wrapped plain fun: the previous version
@@ -510,14 +503,25 @@ class VaultSyncManager(
         return verified.token
     }
 
-    /** Record an epoch only after this flow has successfully opened/rebuilt its RMS. */
-    private fun persistAdoptedEpoch(client: AndroidVelaApiClient, token: String) {
-        val epoch = client.getVaultEpoch(token)
-        check(epoch.state == "active") {
-            "Vault key rotation started during enrollment; retry after it completes."
+    /** Install the RMS before advancing its epoch marker; the reverse can authorize stale keys. */
+    private fun adoptRmsAtCurrentEpoch(
+        client: AndroidVelaApiClient,
+        token: String,
+        rms: ByteArray,
+    ) {
+        try {
+            val epoch = client.getVaultEpoch(token)
+            check(epoch.state == "active") {
+                "Vault key rotation started during enrollment; retry after it completes."
+            }
+            security.adoptRms(rms)
+            settingsStore.updateKeyEpoch(epoch.epoch)
+            acceptRefreshedToken(epoch.newToken ?: token)
+        } finally {
+            // adoptRms also clears its input, but failures before adoption must
+            // not leave recovered key material waiting for garbage collection.
+            rms.fill(0)
         }
-        settingsStore.updateKeyEpoch(epoch.epoch)
-        acceptRefreshedToken(epoch.newToken ?: token)
     }
 
     private fun authenticatedToken(client: AndroidVelaApiClient, cachedToken: String): String =
