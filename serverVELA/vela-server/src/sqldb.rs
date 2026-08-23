@@ -126,6 +126,7 @@ impl TursoDb {
             "ALTER TABLE users ADD COLUMN rekey_starter TEXT",
             "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
         ];
         for sql in ALTERS {
             if let Err(e) = self.conn().execute(sql, ()).await {
@@ -245,7 +246,7 @@ CREATE TABLE IF NOT EXISTS devices (
     id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
     device_name TEXT NOT NULL DEFAULT 'Desktop Device', device_type TEXT NOT NULL DEFAULT 'desktop',
     last_active TEXT, hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL, enrolled_by TEXT,
-    rms_capsule TEXT, revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
+    rms_capsule TEXT, rms_capsule_epoch INTEGER, revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
     created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE TABLE IF NOT EXISTS vault_chunks (
@@ -264,6 +265,9 @@ CREATE TABLE IF NOT EXISTS oram_buckets (
     version INTEGER NOT NULL DEFAULT 1, lamport_clock INTEGER NOT NULL DEFAULT 0,
     last_writer TEXT, ciphertext TEXT NOT NULL, epoch INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+DROP INDEX IF EXISTS idx_oram_buckets_user_tree_bucket;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
+    ON oram_buckets(user_id, tree_id, bucket_index, epoch);
 CREATE TABLE IF NOT EXISTS share_inbox (
     id TEXT UNIQUE NOT NULL, sender_user_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL,
     capsule TEXT NOT NULL, created_at TEXT NOT NULL);

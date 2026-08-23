@@ -158,10 +158,11 @@ Preconditions: unlocked session, full vault locally (or fetched first).
 ### 7.1 Normal case
 
 Next sync: the device probes `GET /vault/epoch` (cheap, cached per sync run),
-sees `epoch ≠ own`, then: `GET /device/capsule` (read-and-clear — the capsule
-is sealed to THIS device's `hybrid_ek`, opened with its own secret key),
-migrates its local store exactly like step 5 above, sets its epoch, retries
-sync. Chunks arrive as ordinary sync data.
+sees `epoch ≠ own`, then: `GET /device/capsule` (the capsule is sealed to THIS
+device's `hybrid_ek`, opened with its own secret key), migrates its local store
+exactly like step 5 above, durably stores the new RMS and epoch, then
+`POST /device/capsule/ack` clears the retryable capsule. Chunks arrive as
+ordinary sync data.
 
 ### 7.2 Offline-with-new-items (the race that shaped the design)
 
@@ -225,9 +226,9 @@ CREATE INDEX idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
 2. ✅ **Server** — schema migration + endpoints + epoch write rules + lazy
    rollback; covered by the `rekey_rotation_lifecycle_end_to_end` integration
    test.
-3. **Desktop core** — `commands/rekey::rotate_vault_keys` orchestrating §6
-   (shipped), settings UI action ("Rotate keys", gpui shipped; webview port
-   pending), adoption hook in the sync loop (§7.1, follow-up).
+3. ✅ **Desktop core** — `commands/rekey::rotate_vault_keys` orchestrating §6,
+   restart-safe platform RMS persistence, and the §7.1 adoption hook before any
+   sync read/write (settings UI action shipped in gpui; webview port pending).
 4. **Follow-ups** — recovery-share re-mint prompt after rotation (§6.8),
-   mobile adoption-only support (needs no new crypto).
-
+   mobile adoption-only support (needs no new crypto), and ORAM shadow migration
+   (the server currently refuses rotation while an account has ORAM buckets).

@@ -104,6 +104,10 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/device/revoke", post(crate::device::revoke::post_revoke))
         .route("/device/capsule", get(crate::device::capsule::get_capsule))
+        .route(
+            "/device/capsule/ack",
+            post(crate::device::capsule::post_capsule_ack),
+        )
         .route("/devices", get(crate::device::list::list_devices))
         .route("/vault/sync", get(crate::vault::sync::get_sync))
         .route("/vault/epoch", get(crate::vault::rekey::get_epoch))

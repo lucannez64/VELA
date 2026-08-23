@@ -133,9 +133,18 @@ impl Store {
 
         let old_rms = old.rms();
         let new_rms = new.rms();
+        let mut rewrites: Vec<(PathBuf, Vec<u8>, Vec<u8>)> = Vec::new();
 
-        // vault.enc / audit.enc / shares.enc all use the vault envelope.
-        for file in [VAULT_FILE, "audit.enc", "shares.enc"] {
+        // These files all use the vault envelope. Build every replacement
+        // before touching disk so a corrupt late file cannot leave an earlier
+        // file stranded under the new seed.
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+        ] {
             let path = self.store_path.join(file);
             if !path.exists() {
                 continue;
@@ -147,7 +156,7 @@ impl Store {
                 kdf::contexts::VAULT_ENCRYPTION,
                 &ct,
             )?;
-            write_secret_file(&path, &rekeyed)?;
+            rewrites.push((path, ct, rekeyed));
         }
 
         // identity_keys.enc has its own derivation context off the identity key.
@@ -159,7 +168,30 @@ impl Store {
             let plaintext = crate::crypto::Crypto::decrypt_with_key(&old_key, &ct)?;
             let rekeyed = crate::crypto::Crypto::encrypt_with_key(&new_key, &plaintext)?;
             drop(plaintext);
-            write_secret_file(&identity_path, &rekeyed)?;
+            rewrites.push((identity_path, ct, rekeyed));
+        }
+
+        // Each individual write is temp+rename atomic. If a later rename or
+        // permission update fails, restore every file already replaced before
+        // returning. This gives the caller an all-old or all-new local store.
+        let mut replaced = 0usize;
+        for (path, _, rekeyed) in &rewrites {
+            if let Err(write_err) = write_secret_file(path, rekeyed) {
+                let mut rollback_errors = Vec::new();
+                for (rollback_path, original, _) in rewrites[..replaced].iter().rev() {
+                    if let Err(e) = write_secret_file(rollback_path, original) {
+                        rollback_errors.push(format!("{}: {e}", rollback_path.display()));
+                    }
+                }
+                if rollback_errors.is_empty() {
+                    return Err(write_err);
+                }
+                anyhow::bail!(
+                    "{write_err}; rollback also failed for {}",
+                    rollback_errors.join(", ")
+                );
+            }
+            replaced += 1;
         }
 
         Ok(())
@@ -766,5 +798,49 @@ mod tests {
             let mode = fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn rekey_migrates_every_rms_derived_file() {
+        let (_dir, store) = test_store();
+        let old = Crypto::new(&[1u8; 32]);
+        let new = Crypto::new(&[2u8; 32]);
+
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+        ] {
+            let ciphertext = old.encrypt_vault(file.as_bytes()).unwrap();
+            write_secret_file(&store.store_path().join(file), &ciphertext).unwrap();
+        }
+        store
+            .save_identity_keys_full(&test_identity_keys(b"share-secret"), &old)
+            .unwrap();
+
+        store.rekey_secret_files(&old, &new).unwrap();
+
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+        ] {
+            let ciphertext = fs::read(store.store_path().join(file)).unwrap();
+            assert_eq!(new.decrypt_vault(&ciphertext).unwrap().as_slice(), file.as_bytes());
+            assert!(old.decrypt_vault(&ciphertext).is_err(), "{file} still opens under old RMS");
+        }
+        assert_eq!(
+            store
+                .load_identity_keys(&new)
+                .unwrap()
+                .unwrap()
+                .hybrid_dk,
+            b"hybrid-dk"
+        );
+        assert!(store.load_identity_keys(&old).is_err());
     }
 }

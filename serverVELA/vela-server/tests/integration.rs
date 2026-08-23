@@ -1845,6 +1845,22 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     assert_eq!(body["chunks"].as_array().unwrap().len(), 1);
     assert_eq!(body["chunks"][0]["chunk_id"], "vault-main");
 
+    // Commit is structurally gated: the old row may not be swept until its
+    // epoch-2 shadow exists.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/commit")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
     // While freezing: a stale-epoch write from the offline device is refused
     // with the dedicated code — this is the guard that keeps an old-key blob
     // out of the new vault.
@@ -1866,6 +1882,22 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         let resp = app.clone().oneshot(put(&token_initiator, Some(2), "0")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
+
+    // Shadows alone are insufficient: every active device needs a capsule
+    // minted for this exact target epoch before commit can strand nobody.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/commit")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
 
     // Reads still serve the pre-rotation world until commit.
     let resp = app
@@ -1955,6 +1987,22 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     assert_eq!(body["epoch"], 2);
     assert_eq!(body["state"], "active");
 
+    // A legacy/offline client that omits X-Vela-Epoch must not have its
+    // old-RMS ciphertext silently labelled as epoch 2 after commit.
+    let resp = app
+        .clone()
+        .oneshot(put(&token_other, None, "2"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let err: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(err["error"], "vault_rekeyed");
+
     // Exactly ONE row survives per chunk — the epoch-2 re-keyed copy.
     use vela_server::sqldb::Db as _;
     let rows = state
@@ -1967,17 +2015,103 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         .unwrap();
     assert_eq!(rows.len(), 1, "superseded rows must be swept at commit");
 
-    // Capsule relayed to the adopting device via the read-and-clear path.
+    let capsule_req = || {
+        Request::builder()
+            .uri("/device/capsule")
+            .header("authorization", format!("Bearer {}", token_other))
+            .body(Body::empty())
+            .unwrap()
+    };
+    // Rekey capsules remain retryable until the device durably adopts and
+    // explicitly acknowledges them.
+    for _ in 0..2 {
+        let resp = app.clone().oneshot(capsule_req()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["epoch"], 2);
+    }
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/device/capsule")
+                .method("POST")
+                .uri("/device/capsule/ack")
                 .header("authorization", format!("Bearer {}", token_other))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 2 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = app.oneshot(capsule_req()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn rekey_start_refuses_accounts_with_oram_buckets() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user = Uuid::new_v4();
+    let device = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at) VALUES (?, ?)",
+            vec![TursoValue::Text(user.to_string()), TursoValue::Text(now.clone())],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO devices
+             (id, user_id, hybrid_ek, hybrid_vk, revoked, created_at)
+             VALUES (?, ?, ?, ?, 0, ?)",
+            vec![
+                TursoValue::Text(device.to_string()),
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(vec![0u8; 2624])),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO oram_buckets
+             (user_id, tree_id, bucket_index, version, ciphertext, epoch, created_at, updated_at)
+             VALUES (?, 'tree', 1, 1, 'Y3Q=', 1, ?, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(now.clone()),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let token = issue_token(&state, user, device);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/start")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
 }

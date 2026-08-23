@@ -370,7 +370,7 @@ impl ApiClient {
     }
 
     /// Current key epoch and rotation state (`"active"` | `"freezing"`).
-    pub async fn get_key_epoch(&self, token: &str) -> Result<(i64, String)> {
+    pub async fn get_key_epoch(&self, token: &str) -> Result<(i64, String, Option<String>)> {
         #[derive(Deserialize)]
         struct EpochResponse {
             epoch: i64,
@@ -386,8 +386,9 @@ impl ApiClient {
         if !resp.status().is_success() {
             anyhow::bail!("epoch request failed: {}", resp.status());
         }
+        let new_token = extract_new_token(&resp);
         let body: EpochResponse = resp.json().await?;
-        Ok((body.epoch, body.state))
+        Ok((body.epoch, body.state, new_token))
     }
 
     /// Begin a rotation: freeze the account and fetch the re-encryption work.
@@ -469,6 +470,21 @@ impl ApiClient {
             anyhow::bail!("re-key commit failed: {}", resp.status());
         }
         Ok(extract_new_token(&resp))
+    }
+
+    /// Abort an in-flight rotation and discard its shadow rows.
+    pub async fn rekey_abort(&self, token: &str) -> Result<()> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/vault/rekey/abort", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("re-key abort failed: {}", resp.status());
+        }
+        Ok(())
     }
 
     pub async fn delete_chunk(
@@ -853,6 +869,21 @@ impl ApiClient {
         let new_token = extract_new_token(&resp);
         let result: CapsuleResponse = resp.json().await?;
         Ok((result, new_token))
+    }
+
+    pub async fn acknowledge_rekey_capsule(&self, token: &str, epoch: i64) -> Result<()> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/device/capsule/ack", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({ "epoch": epoch }))
+            })
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("Capsule acknowledgement failed: {}", resp.status());
+        }
+        Ok(())
     }
 
     pub async fn get_inbox(&self, token: &str) -> Result<(Vec<InboxItem>, Option<String>)> {
@@ -1472,6 +1503,8 @@ pub struct NewDevicePayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapsuleResponse {
     pub capsule: String,
+    #[serde(default)]
+    pub epoch: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1764,6 +1797,27 @@ mod tests {
         let client = ApiClient::new(&server.uri());
         let (version, _token) = client.put_chunk("t", "c1", 5, vec![9u8; 4], 77).await.unwrap();
         assert_eq!(version, 6);
+    }
+
+    #[tokio::test]
+    async fn shadow_chunk_upload_declares_epoch_and_create_semantics() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/vault/chunk/c1"))
+            .and(header("If-Match", "0"))
+            .and(header("X-Vela-Epoch", "2"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "version": 1 })),
+            )
+            .mount(&server)
+            .await;
+        let client = ApiClient::new(&server.uri());
+        let (version, _) = client
+            .put_chunk_with_epoch("t", "c1", 0, vec![9u8; 4], 77, Some(2))
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
     }
 
     #[tokio::test]

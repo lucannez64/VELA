@@ -73,13 +73,6 @@ pub fn rekey_blob(
     crate::aead::encrypt(new_key.as_bytes(), &plaintext)
 }
 
-/// Length-prefix `bytes` into the canonical AAD encoding (`aead::vault_chunk_aad`
-/// uses the same shape).
-fn lp(bytes: &[u8], out: &mut Vec<u8>) {
-    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-    out.extend_from_slice(bytes);
-}
-
 /// Canonical associated data binding a chunk to the account's **key epoch**.
 ///
 /// Wraps the C-2 chunk AAD (chunk id + revision) in an epoch prefix. A chunk

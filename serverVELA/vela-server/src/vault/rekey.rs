@@ -29,7 +29,6 @@
 use axum::{
     extract::{State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
     Json,
 };
 use chrono::Utc;
@@ -211,7 +210,11 @@ pub async fn resolve_write_epoch(
     } else {
         match declared {
             Some(e) if e == ks.epoch => Ok((ks.epoch, ks.epoch)),
-            None => Ok((ks.epoch, ks.epoch)),
+            // Headerless writes are tolerated only for pre-rekey accounts.
+            // After epoch 1 they are indistinguishable from an offline client
+            // encrypting with a retired RMS, so accepting them would let stale
+            // ciphertext overwrite the rotated vault.
+            None if ks.epoch == 1 => Ok((ks.epoch, ks.epoch)),
             _ => Err(AppError::Rekeyed(format!(
                 "epoch mismatch: account is at {}; re-sync and adopt before writing",
                 ks.epoch
@@ -271,6 +274,24 @@ pub async fn post_start(
         ));
     }
 
+    // This implementation rotates chunked vault data only. Existing ORAM
+    // buckets are RMS-derived too, so advancing the account epoch without
+    // migrating them would make every bucket disappear from reads. Refuse the
+    // operation until an ORAM shadow/migration protocol exists.
+    let oram = state
+        .sqldb
+        .query(
+            "SELECT 1 FROM oram_buckets WHERE user_id = ? LIMIT 1",
+            vec![TursoValue::Text(user_id.clone())],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if !oram.is_empty() {
+        return Err(AppError::Conflict(
+            "vault key rotation is unavailable while ORAM buckets exist".into(),
+        ));
+    }
+
     let next = ks.epoch + 1;
     let inventory = state
         .sqldb
@@ -297,11 +318,11 @@ pub async fn post_start(
         });
     }
 
-    state
+    let updated = state
         .sqldb
         .execute(
             "UPDATE users SET rekey_state = 'freezing', rekey_started_at = ?, rekey_starter = ?
-             WHERE id = ? AND key_epoch = ?",
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
             vec![
                 TursoValue::Text(Utc::now().to_rfc3339()),
                 TursoValue::Text(session.device_id.to_string()),
@@ -311,6 +332,11 @@ pub async fn post_start(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    if updated != 1 {
+        return Err(AppError::Conflict(
+            "a re-key was started concurrently for this account".into(),
+        ));
+    }
 
     tracing::info!(
         user_id = %user_id,
@@ -345,13 +371,20 @@ pub async fn post_capsules(
     }
 
     for (device_id, capsule_b64) in &body.capsules {
+        let capsule = crate::db::decode_b64(capsule_b64)?;
+        if capsule.is_empty() || capsule.len() > 64 * 1024 {
+            return Err(AppError::BadRequest(format!(
+                "capsule for {device_id} has an invalid size"
+            )));
+        }
         let rows = state
             .sqldb
             .execute(
-                "UPDATE devices SET rms_capsule = ?
+                "UPDATE devices SET rms_capsule = ?, rms_capsule_epoch = ?
                  WHERE id = ? AND user_id = ? AND revoked = 0",
                 vec![
                     TursoValue::Text(capsule_b64.clone()),
+                    TursoValue::Integer(ks.epoch + 1),
                     TursoValue::Text(device_id.clone()),
                     TursoValue::Text(user_id.clone()),
                 ],
@@ -388,6 +421,54 @@ pub async fn post_commit(State(state): State<AppState>, session: DeviceSession) 
     }
     ensure_starter(&ks, &session)?;
     let new_epoch = ks.epoch + 1;
+
+    // Never make N+1 authoritative unless it contains exactly one replacement
+    // for every live N chunk and every active device has a capsule. The server
+    // is blind to plaintext but can still enforce completeness structurally.
+    let missing_chunks = state
+        .sqldb
+        .query(
+            "SELECT 1 FROM vault_chunks old
+             WHERE old.user_id = ? AND old.epoch = ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM vault_chunks new
+                 WHERE new.user_id = old.user_id
+                   AND new.chunk_id = old.chunk_id
+                   AND new.epoch = ?
+               )
+             LIMIT 1",
+            vec![
+                TursoValue::Text(user_id.clone()),
+                TursoValue::Integer(ks.epoch),
+                TursoValue::Integer(new_epoch),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if !missing_chunks.is_empty() {
+        return Err(AppError::Conflict(
+            "cannot commit re-key: one or more chunk shadows are missing".into(),
+        ));
+    }
+    let missing_capsules = state
+        .sqldb
+        .query(
+            "SELECT 1 FROM devices
+             WHERE user_id = ? AND revoked = 0
+               AND (rms_capsule IS NULL OR rms_capsule_epoch != ?)
+             LIMIT 1",
+            vec![
+                TursoValue::Text(user_id.clone()),
+                TursoValue::Integer(new_epoch),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if !missing_capsules.is_empty() {
+        return Err(AppError::Conflict(
+            "cannot commit re-key: one or more active devices has no capsule".into(),
+        ));
+    }
 
     // One transaction: flip the epoch and sweep the superseded rows together,
     // so no reader ever observes the mixed state the sweep prevents.
