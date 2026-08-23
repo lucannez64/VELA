@@ -1946,11 +1946,33 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // The initiator's re-keyed copy lands as a shadow row at epoch 2. Replays
-    // must be tolerated (crash-resume).
+    // must be tolerated (crash-resume), and successful progress refreshes the
+    // inactivity deadline instead of imposing a fixed 15-minute wall clock.
+    let old_activity = (chrono::Utc::now() - chrono::Duration::minutes(14)).to_rfc3339();
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_started_at = ? WHERE id = ?",
+            vec![
+                TursoValue::Text(old_activity.clone()),
+                TursoValue::Text(user.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
     for _ in 0..2 {
         let resp = app.clone().oneshot(put(&token_initiator, Some(2), "0")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
+    let activity = state
+        .sqldb
+        .query(
+            "SELECT rekey_started_at FROM users WHERE id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_ne!(activity[0].text(0), Some(old_activity.as_str()));
 
     // Shadows alone are insufficient: every active device needs a capsule
     // minted for this exact target epoch before commit can strand nobody.

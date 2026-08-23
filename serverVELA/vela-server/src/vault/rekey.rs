@@ -28,7 +28,7 @@
 //! competing CAS. Either way the account is never observable mid-mixed.
 
 use axum::{
-    extract::{State},
+    extract::State,
     http::{HeaderMap, StatusCode},
     Json,
 };
@@ -175,8 +175,15 @@ async fn rollback_rekey(
     } else {
         ("rekey_started_at = ?", started_at.unwrap_or_default())
     };
-    let updated = state
+    // Keep the state transition and shadow cleanup on one pinned transaction.
+    // Otherwise a new `start` can enter FREEZING after the UPDATE and have its
+    // fresh N+1 shadows deleted by the previous abort's cleanup statement.
+    let tx = state
         .sqldb
+        .tx()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let updated = tx
         .execute(
             &format!(
                 "UPDATE users SET rekey_state = NULL, rekey_started_at = NULL, rekey_starter = NULL
@@ -191,24 +198,19 @@ async fn rollback_rekey(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     if updated == 1 {
-        // Once the CAS cleared FREEZING, these rows are unreachable. Cleanup
-        // is best-effort so a storage hiccup cannot turn a completed abort
-        // into an ambiguous client-visible failure; the next start overwrites
-        // the same epoch shadows idempotently.
-        if let Err(e) = state
-            .sqldb
-            .execute(
-                "DELETE FROM vault_chunks WHERE user_id = ? AND epoch > ?",
-                vec![
-                    TursoValue::Text(user_id.to_string()),
-                    TursoValue::Integer(epoch),
-                ],
-            )
-            .await
-        {
-            tracing::warn!(user_id = %user_id, "failed to clean aborted re-key shadows: {e}");
-        }
+        tx.execute(
+            "DELETE FROM vault_chunks WHERE user_id = ? AND epoch > ?",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Integer(epoch),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     }
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(updated == 1)
 }
 
@@ -278,6 +280,41 @@ pub async fn ensure_shadow_writer(
         return Err(AppError::Forbidden(
             "only the device which started this re-key may write shadows".into(),
         ));
+    }
+    Ok(())
+}
+
+/// Refresh the inactivity deadline after a shadow write actually succeeded.
+/// Failed or deliberately malformed requests must not keep an account frozen.
+pub async fn record_shadow_activity(
+    state: &AppState,
+    session: &AuthSession,
+    write_epoch: i64,
+    read_epoch: i64,
+) -> Result<()> {
+    if write_epoch == read_epoch {
+        return Ok(());
+    }
+    let refreshed = state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_started_at = ?
+             WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
+               AND rekey_starter = ?",
+            vec![
+                TursoValue::Text(Utc::now().to_rfc3339()),
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(read_epoch),
+                TursoValue::Text(session.device_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if refreshed != 1 {
+        tracing::debug!(
+            user_id = %session.user_id,
+            "shadow write completed as the re-key transition ended"
+        );
     }
     Ok(())
 }
@@ -440,7 +477,13 @@ pub async fn post_start(
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(StartResponse { epoch: next, chunks })))
+    Ok((
+        headers,
+        Json(StartResponse {
+            epoch: next,
+            chunks,
+        }),
+    ))
 }
 
 // ── POST /vault/rekey/capsules ─────────────────────────────────────────────────
@@ -568,8 +611,10 @@ pub async fn post_commit(
     // One atomic compare-and-swap both validates completeness and flips the
     // served epoch. A concurrent abort can only win or lose this statement;
     // it can never clear the state between validation and the flip.
-    let updated = state.sqldb.execute(
-        "UPDATE users SET key_epoch = ?, rekey_state = NULL,
+    let updated = state
+        .sqldb
+        .execute(
+            "UPDATE users SET key_epoch = ?, rekey_state = NULL,
              rekey_started_at = NULL, rekey_starter = NULL
          WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
            AND rekey_starter = ?
@@ -587,18 +632,18 @@ pub async fn post_commit(
              WHERE user_id = users.id AND revoked = 0
                AND (rekey_capable = 0 OR rms_capsule IS NULL OR rms_capsule_epoch != ?)
            )",
-        vec![
-            TursoValue::Integer(new_epoch),
-            TursoValue::Text(user_id.clone()),
-            TursoValue::Integer(ks.epoch),
-            TursoValue::Text(session.device_id.to_string()),
-            TursoValue::Integer(ks.epoch),
-            TursoValue::Integer(new_epoch),
-            TursoValue::Integer(new_epoch),
-        ],
-    )
-    .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
+            vec![
+                TursoValue::Integer(new_epoch),
+                TursoValue::Text(user_id.clone()),
+                TursoValue::Integer(ks.epoch),
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Integer(ks.epoch),
+                TursoValue::Integer(new_epoch),
+                TursoValue::Integer(new_epoch),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     if updated != 1 {
         return Err(AppError::Conflict(
             "re-key was aborted or committed concurrently".into(),

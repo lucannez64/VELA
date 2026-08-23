@@ -150,12 +150,15 @@ impl Store {
                 continue;
             }
             let ct = fs::read(&path)?;
-            let rekeyed = rekey::rekey_blob(
-                &old_rms,
-                &new_rms,
-                kdf::contexts::VAULT_ENCRYPTION,
-                &ct,
-            )?;
+            // A process may have died after replacing this file but before the
+            // rest of the migration completed. Treat an already-new file as a
+            // successful no-op so the durable RMS migration journal can resume
+            // a mixed on-disk state safely.
+            if new.decrypt_vault(&ct).is_ok() {
+                continue;
+            }
+            let rekeyed =
+                rekey::rekey_blob(&old_rms, &new_rms, kdf::contexts::VAULT_ENCRYPTION, &ct)?;
             rewrites.push((path, ct, rekeyed));
         }
 
@@ -165,12 +168,21 @@ impl Store {
             let ct = fs::read(&identity_path)?;
             let old_key = Self::derive_identity_file_key(old);
             let new_key = Self::derive_identity_file_key(new);
-            let plaintext = crate::crypto::Crypto::decrypt_with_key(&old_key, &ct)?;
-            let rekeyed = crate::crypto::Crypto::encrypt_with_key(&new_key, &plaintext)?;
-            drop(plaintext);
-            rewrites.push((identity_path, ct, rekeyed));
+            if crate::crypto::Crypto::decrypt_with_key(&new_key, &ct).is_err() {
+                let plaintext = crate::crypto::Crypto::decrypt_with_key(&old_key, &ct)?;
+                let rekeyed = crate::crypto::Crypto::encrypt_with_key(&new_key, &plaintext)?;
+                drop(plaintext);
+                rewrites.push((identity_path, ct, rekeyed));
+            }
         }
 
+        self.apply_rekey_rewrites(rewrites)
+    }
+
+    fn apply_rekey_rewrites(
+        &self,
+        rewrites: Vec<(PathBuf, Vec<u8>, Vec<u8>)>,
+    ) -> anyhow::Result<()> {
         // Each individual write is temp+rename atomic. If a later rename or
         // permission update fails, restore every file already replaced before
         // returning. This gives the caller an all-old or all-new local store.
@@ -194,6 +206,142 @@ impl Store {
             replaced += 1;
         }
 
+        Ok(())
+    }
+
+    const RMS_MIGRATION_FILE: &'static str = "rms_migration.json";
+    const RMS_MIGRATION_CONTEXT: &'static str = "vela rms migration journal v1";
+
+    /// Persist a two-way, encrypted bridge between the old and new RMS before
+    /// changing any consumer. Whichever RMS the OS/password store yields after
+    /// a crash can open exactly one side and recover the other.
+    pub(crate) fn begin_rms_migration(
+        &self,
+        old_rms: &[u8; 32],
+        new_rms: &[u8; 32],
+        new_epoch: i64,
+    ) -> anyhow::Result<()> {
+        #[derive(serde::Serialize)]
+        struct Journal<'a> {
+            version: u8,
+            new_epoch: i64,
+            new_under_old: &'a [u8],
+            old_under_new: &'a [u8],
+        }
+
+        let old_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, old_rms);
+        let new_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, new_rms);
+        let new_under_old = crate::crypto::Crypto::encrypt_with_key(old_key.as_bytes(), new_rms)?;
+        let old_under_new = crate::crypto::Crypto::encrypt_with_key(new_key.as_bytes(), old_rms)?;
+        let bytes = serde_json::to_vec(&Journal {
+            version: 1,
+            new_epoch,
+            new_under_old: &new_under_old,
+            old_under_new: &old_under_new,
+        })?;
+        let path = self.store_path.join(Self::RMS_MIGRATION_FILE);
+        write_secret_file(&path, &bytes)?;
+        // Ordering is the safety property: the journal must reach stable
+        // storage before any file can reach the new key. Rename alone is
+        // atomic but does not guarantee persistence across power loss.
+        fs::File::open(&path)?.sync_all()?;
+        #[cfg(unix)]
+        fs::File::open(&self.store_path)?.sync_all()?;
+        Ok(())
+    }
+
+    /// Open a pending migration journal with either endpoint RMS. Returns the
+    /// complete `(old, new, epoch)` tuple after cross-checking both capsules.
+    pub(crate) fn load_rms_migration(
+        &self,
+        current_rms: &[u8; 32],
+    ) -> anyhow::Result<Option<([u8; 32], [u8; 32], i64)>> {
+        #[derive(serde::Deserialize)]
+        struct Journal {
+            version: u8,
+            new_epoch: i64,
+            new_under_old: Vec<u8>,
+            old_under_new: Vec<u8>,
+        }
+
+        let path = self.store_path.join(Self::RMS_MIGRATION_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
+        anyhow::ensure!(
+            journal.version == 1,
+            "unsupported RMS migration journal version"
+        );
+        let current_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, current_rms);
+
+        let (old, new) = if let Ok(opened) =
+            crate::crypto::Crypto::decrypt_with_key(current_key.as_bytes(), &journal.new_under_old)
+        {
+            let new: [u8; 32] = opened
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid new RMS in migration journal"))?;
+            (*current_rms, new)
+        } else {
+            let opened = crate::crypto::Crypto::decrypt_with_key(
+                current_key.as_bytes(),
+                &journal.old_under_new,
+            )?;
+            let old: [u8; 32] = opened
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid old RMS in migration journal"))?;
+            (old, *current_rms)
+        };
+
+        // Authenticate the opposite direction too. This detects a corrupt or
+        // mismatched journal before any file is rewritten during recovery.
+        let old_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, &old);
+        let check_new =
+            crate::crypto::Crypto::decrypt_with_key(old_key.as_bytes(), &journal.new_under_old)?;
+        anyhow::ensure!(
+            check_new.as_slice() == new,
+            "RMS migration journal mismatch"
+        );
+        let new_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, &new);
+        let check_old =
+            crate::crypto::Crypto::decrypt_with_key(new_key.as_bytes(), &journal.old_under_new)?;
+        anyhow::ensure!(
+            check_old.as_slice() == old,
+            "RMS migration journal mismatch"
+        );
+
+        Ok(Some((old, new, journal.new_epoch)))
+    }
+
+    pub(crate) fn finish_rms_migration(&self) -> anyhow::Result<()> {
+        let path = self.store_path.join(Self::RMS_MIGRATION_FILE);
+        // Do not let the journal deletion become durable ahead of any consumer
+        // rewrite or the epoch marker. If power fails before this barrier, the
+        // journal remains the recovery authority; after it, every local file is
+        // guaranteed to match the new RMS.
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+            IDENTITY_KEYS_FILE,
+            "sync_meta.json",
+        ] {
+            let consumer = self.store_path.join(file);
+            if consumer.exists() {
+                fs::File::open(consumer)?.sync_all()?;
+            }
+        }
+        #[cfg(unix)]
+        fs::File::open(&self.store_path)?.sync_all()?;
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        #[cfg(unix)]
+        fs::File::open(&self.store_path)?.sync_all()?;
         Ok(())
     }
 
@@ -275,10 +423,7 @@ impl Store {
         self.store_path.join(RMS_FILE).exists() || self.store_path.join(VAULT_FILE).exists()
     }
 
-    pub fn save_settings(
-        &self,
-        settings: &crate::settings::Settings,
-    ) -> anyhow::Result<()> {
+    pub fn save_settings(&self, settings: &crate::settings::Settings) -> anyhow::Result<()> {
         let settings_path = self.store_path.join(SETTINGS_FILE);
 
         if let Some(parent) = settings_path.parent() {
@@ -658,7 +803,9 @@ mod tests {
         let second = store.load_device_id().unwrap();
         assert_eq!(first, second, "device id must persist across loads");
 
-        store.save_device_id_with_user_id("dev-x", "user-y").unwrap();
+        store
+            .save_device_id_with_user_id("dev-x", "user-y")
+            .unwrap();
         assert_eq!(store.load_device_id().unwrap(), "dev-x");
         assert_eq!(store.load_user_id().unwrap(), "user-y");
     }
@@ -672,7 +819,11 @@ mod tests {
             .unwrap();
 
         let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
-        assert_ne!(raw.first(), Some(&b'{'), "identity keys must not be plaintext");
+        assert_ne!(
+            raw.first(),
+            Some(&b'{'),
+            "identity keys must not be plaintext"
+        );
 
         let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();
         assert_eq!(loaded.hybrid_ek, b"ek");
@@ -690,7 +841,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new_at(dir.path().to_path_buf()).unwrap();
 
-        assert!(!store.take_plaintext_identity_migration(), "nothing migrated yet");
+        assert!(
+            !store.take_plaintext_identity_migration(),
+            "nothing migrated yet"
+        );
         store
             .plaintext_identity_migrated
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -724,7 +878,10 @@ mod tests {
                 break;
             }
             attempts += 1;
-            assert!(attempts < 10_000, "never produced a nonce starting with '{{'");
+            assert!(
+                attempts < 10_000,
+                "never produced a nonce starting with '{{'"
+            );
         }
 
         let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();
@@ -778,7 +935,11 @@ mod tests {
             "file still parses as the plaintext format"
         );
         assert_eq!(
-            store.load_identity_keys(&crypto).unwrap().unwrap().hybrid_sk,
+            store
+                .load_identity_keys(&crypto)
+                .unwrap()
+                .unwrap()
+                .hybrid_sk,
             SECRET,
             "the migrated file must still load"
         );
@@ -830,17 +991,59 @@ mod tests {
             "recovery_setup.enc",
         ] {
             let ciphertext = fs::read(store.store_path().join(file)).unwrap();
-            assert_eq!(new.decrypt_vault(&ciphertext).unwrap().as_slice(), file.as_bytes());
-            assert!(old.decrypt_vault(&ciphertext).is_err(), "{file} still opens under old RMS");
+            assert_eq!(
+                new.decrypt_vault(&ciphertext).unwrap().as_slice(),
+                file.as_bytes()
+            );
+            assert!(
+                old.decrypt_vault(&ciphertext).is_err(),
+                "{file} still opens under old RMS"
+            );
         }
         assert_eq!(
-            store
-                .load_identity_keys(&new)
-                .unwrap()
-                .unwrap()
-                .hybrid_dk,
+            store.load_identity_keys(&new).unwrap().unwrap().hybrid_dk,
             b"hybrid-dk"
         );
         assert!(store.load_identity_keys(&old).is_err());
+    }
+
+    #[test]
+    fn rms_migration_journal_recovers_from_either_key_and_mixed_files() {
+        let (_dir, store) = test_store();
+        let old_rms = [3u8; 32];
+        let new_rms = [4u8; 32];
+        let old = Crypto::new(&old_rms);
+        let new = Crypto::new(&new_rms);
+
+        store.begin_rms_migration(&old_rms, &new_rms, 7).unwrap();
+        assert_eq!(
+            store.load_rms_migration(&old_rms).unwrap(),
+            Some((old_rms, new_rms, 7))
+        );
+        assert_eq!(
+            store.load_rms_migration(&new_rms).unwrap(),
+            Some((old_rms, new_rms, 7))
+        );
+
+        // Model a crash after only the first file reached the new key.
+        write_secret_file(
+            &store.store_path().join(VAULT_FILE),
+            &new.encrypt_vault(b"vault").unwrap(),
+        )
+        .unwrap();
+        write_secret_file(
+            &store.store_path().join("audit.enc"),
+            &old.encrypt_vault(b"audit").unwrap(),
+        )
+        .unwrap();
+
+        store.rekey_secret_files(&old, &new).unwrap();
+        for (file, expected) in [(VAULT_FILE, b"vault".as_slice()), ("audit.enc", b"audit")] {
+            let ciphertext = fs::read(store.store_path().join(file)).unwrap();
+            assert_eq!(new.decrypt_vault(&ciphertext).unwrap().as_slice(), expected);
+        }
+
+        store.finish_rms_migration().unwrap();
+        assert!(store.load_rms_migration(&new_rms).unwrap().is_none());
     }
 }

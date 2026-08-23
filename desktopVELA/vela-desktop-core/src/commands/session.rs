@@ -341,6 +341,7 @@ pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, Stri
             biometric::get_cached_rms().ok_or_else(|| "Failed to retrieve vault key".to_string())?
         };
 
+        let rms = crate::sync::recover_pending_rms_migration(&app_state2, rms, None)?;
         let crypto = Crypto::new(&rms);
 
         let vault = app_state2
@@ -430,6 +431,9 @@ pub async fn unlock_session_with_password(
         let Some(rms) = biometric::authenticate_with_password(&password) else {
             return Err("Invalid password".to_string());
         };
+
+        let rms =
+            crate::sync::recover_pending_rms_migration(&app_state2, rms, Some(password.as_str()))?;
 
         // The password just proved who this is, which is the one moment it is
         // safe to touch a pre-ACL platform key: re-store it under the OS's

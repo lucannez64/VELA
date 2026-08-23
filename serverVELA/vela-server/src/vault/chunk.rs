@@ -96,7 +96,8 @@ pub async fn put_chunk(
         .ok_or_else(|| AppError::BadRequest("X-Lamport-Clock header is required".into()))?;
 
     let ciphertext = body.to_vec();
-    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), body.len() as u64).await?;
+    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), body.len() as u64)
+        .await?;
     let now = Utc::now().to_rfc3339();
 
     // Which epoch this ciphertext claims to belong to. Absent header = the
@@ -107,9 +108,12 @@ pub async fn put_chunk(
         .or_else(|| headers_in.get("X-Vela-Epoch"))
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse().ok());
-    let (write_epoch, read_epoch) =
-        crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared_epoch)
-            .await?;
+    let (write_epoch, read_epoch) = crate::vault::rekey::resolve_write_epoch(
+        &state,
+        &session.user_id.to_string(),
+        declared_epoch,
+    )
+    .await?;
     crate::vault::rekey::ensure_shadow_writer(&state, &session, write_epoch, read_epoch).await?;
 
     if if_match == 0 {
@@ -150,26 +154,26 @@ pub async fn put_chunk(
                 ));
             }
         } else {
-        let existing = state
-            .sqldb
-            .query(
-                "SELECT 1 FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
-                vec![
-                    TursoValue::Text(id.clone()),
-                    TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Integer(write_epoch),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            let existing = state
+                .sqldb
+                .query(
+                    "SELECT 1 FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
+                    vec![
+                        TursoValue::Text(id.clone()),
+                        TursoValue::Text(session.user_id.to_string()),
+                        TursoValue::Integer(write_epoch),
+                    ],
+                )
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        if existing.first().is_some() {
-            return Err(AppError::Conflict(
-                "chunk already exists; use If-Match with current version to update".into(),
-            ));
-        }
+            if existing.first().is_some() {
+                return Err(AppError::Conflict(
+                    "chunk already exists; use If-Match with current version to update".into(),
+                ));
+            }
 
-        state.sqldb.execute(
+            state.sqldb.execute(
             "INSERT INTO vault_chunks
              (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
              VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
@@ -252,6 +256,8 @@ pub async fn put_chunk(
         .first()
         .and_then(|r| r.i64(0))
         .ok_or_else(|| AppError::Internal("failed to read new version".into()))?;
+
+    crate::vault::rekey::record_shadow_activity(&state, &session, write_epoch, read_epoch).await?;
 
     let mut resp_headers = HeaderMap::new();
     maybe_append_new_token(&mut resp_headers, &session);

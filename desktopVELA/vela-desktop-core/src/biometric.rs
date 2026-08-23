@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use vela_crypto::{aead::decrypt, kdf, password_kdf};
+use zeroize::Zeroize;
 
 static CACHED_RMS: Mutex<Option<[u8; 32]>> = Mutex::new(None);
 
@@ -1267,6 +1268,15 @@ pub fn delete_stored_rms() -> anyhow::Result<()> {
 
 pub fn get_cached_rms() -> Option<[u8; 32]> {
     CACHED_RMS.lock().ok().and_then(|guard| *guard)
+}
+
+pub(crate) fn set_cached_rms(rms: [u8; 32]) {
+    if let Ok(mut guard) = CACHED_RMS.lock() {
+        if let Some(ref mut previous) = *guard {
+            previous.zeroize();
+        }
+        *guard = Some(rms);
+    }
 }
 
 pub fn clear_cached_rms() {

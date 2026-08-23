@@ -131,70 +131,101 @@ pub(crate) fn migrate_local_rms(
         return Err("No durable RMS store is available for the rotated key".into());
     }
 
+    // This journal is written before the first consumer changes. It bridges
+    // old<->new in both directions, so startup can finish after a process or
+    // power failure regardless of which files/wrappers reached the new RMS.
+    state
+        .store
+        .begin_rms_migration(&old_rms, &new_rms, new_epoch)
+        .map_err(|e| format!("Failed to create the RMS migration journal: {e}"))?;
+
     state
         .store
         .rekey_secret_files(old_crypto, &new_crypto)
         .map_err(|e| format!("Failed to migrate local vault files: {e}"))?;
 
     if has_platform_rms {
-        if let Err(e) = crate::biometric::store_rms(&new_rms) {
-            let rollback = state.store.rekey_secret_files(&new_crypto, old_crypto);
-            return Err(match rollback {
-                Ok(()) => format!("Failed to persist the rotated vault key: {e}"),
-                Err(rb) => format!(
-                    "Failed to persist the rotated vault key: {e}; local file rollback failed: {rb}"
-                ),
-            });
-        }
+        crate::biometric::store_rms(&new_rms)
+            .map_err(|e| format!("Failed to persist the rotated vault key: {e}"))?;
     }
 
     if let Some(password) = password {
-        if let Err(e) = crate::biometric::store_password_encrypted(&new_rms, password) {
-            let file_rollback = state.store.rekey_secret_files(&new_crypto, old_crypto);
-            let platform_rollback = has_platform_rms.then(|| crate::biometric::store_rms(&old_rms));
-            let password_rollback = crate::biometric::store_password_encrypted(&old_rms, password);
-            let mut detail = format!("Failed to update the master-password vault key: {e}");
-            if let Err(rb) = file_rollback {
-                detail.push_str(&format!("; local file rollback failed: {rb}"));
-            }
-            if let Some(Err(rb)) = platform_rollback {
-                detail.push_str(&format!("; platform RMS rollback failed: {rb}"));
-            }
-            if let Err(rb) = password_rollback {
-                detail.push_str(&format!("; password RMS rollback failed: {rb}"));
-            }
-            return Err(detail);
-        }
+        crate::biometric::store_password_encrypted(&new_rms, password)
+            .map_err(|e| format!("Failed to update the master-password vault key: {e}"))?;
     }
 
     *state.crypto.write() = Some(new_crypto);
-    if let Err(epoch_err) = set_local_key_epoch(state, new_epoch) {
-        let current = state
-            .crypto
-            .read()
-            .as_ref()
-            .map(|crypto| crate::crypto::Crypto::new(&crypto.rms()))
-            .ok_or("Vault locked while persisting the new key epoch")?;
-        let file_rollback = state.store.rekey_secret_files(&current, old_crypto);
-        let platform_rollback = has_platform_rms.then(|| crate::biometric::store_rms(&old_rms));
-        let password_rollback =
-            password.map(|p| crate::biometric::store_password_encrypted(&old_rms, p));
-        *state.crypto.write() = Some(crate::crypto::Crypto::new(&old_rms));
+    crate::biometric::set_cached_rms(new_rms);
+    set_local_key_epoch(state, new_epoch)
+        .map_err(|e| format!("Failed to persist the new key epoch: {e}"))?;
 
-        let mut detail = format!("Failed to persist the new key epoch: {epoch_err}");
-        if let Err(rb) = file_rollback {
-            detail.push_str(&format!("; local file rollback failed: {rb}"));
-        }
-        if let Some(Err(rb)) = platform_rollback {
-            detail.push_str(&format!("; platform RMS rollback failed: {rb}"));
-        }
-        if let Some(Err(rb)) = password_rollback {
-            detail.push_str(&format!("; password RMS rollback failed: {rb}"));
-        }
-        return Err(detail);
-    }
+    state
+        .store
+        .finish_rms_migration()
+        .map_err(|e| format!("Migration completed but its journal could not be removed: {e}"))?;
 
     Ok(())
+}
+
+/// Complete a migration interrupted between any two local writes. Called by
+/// both unlock paths before loading `vault.enc`, because that file may already
+/// be under the new RMS even while the platform/password wrapper is still old.
+pub(crate) fn recover_pending_rms_migration(
+    state: &AppState,
+    current_rms: [u8; 32],
+    password: Option<&str>,
+) -> Result<[u8; 32], String> {
+    let Some((old_rms, new_rms, new_epoch)) = state
+        .store
+        .load_rms_migration(&current_rms)
+        .map_err(|e| format!("Failed to open the pending RMS migration: {e}"))?
+    else {
+        return Ok(current_rms);
+    };
+
+    let old_crypto = crate::crypto::Crypto::new(&old_rms);
+    let new_crypto = crate::crypto::Crypto::new(&new_rms);
+    state
+        .store
+        .rekey_secret_files(&old_crypto, &new_crypto)
+        .map_err(|e| format!("Failed to resume local vault migration: {e}"))?;
+
+    let has_platform_rms = crate::biometric::has_platform_stored_rms();
+    let has_password_rms = crate::biometric::has_password_encrypted_rms();
+    if has_platform_rms {
+        crate::biometric::store_rms(&new_rms)
+            .map_err(|e| format!("Failed to finish platform RMS migration: {e}"))?;
+    }
+    let password_pending = if has_password_rms {
+        if let Some(password) = password {
+            crate::biometric::store_password_encrypted(&new_rms, password)
+                .map_err(|e| format!("Failed to finish password RMS migration: {e}"))?;
+            false
+        } else {
+            true
+        }
+    } else {
+        false
+    };
+    if !has_platform_rms && password_pending {
+        return Err("The interrupted key migration requires the master password to finish".into());
+    }
+
+    set_local_key_epoch(state, new_epoch)
+        .map_err(|e| format!("Failed to persist the recovered key epoch: {e}"))?;
+    crate::biometric::set_cached_rms(new_rms);
+
+    // A biometric unlock cannot rewrite an independent password wrapper. Keep
+    // the two-way journal until the next password unlock; meanwhile the new
+    // platform RMS and all local files are already usable.
+    if !password_pending {
+        state
+            .store
+            .finish_rms_migration()
+            .map_err(|e| format!("Failed to remove the completed migration journal: {e}"))?;
+    }
+
+    Ok(new_rms)
 }
 
 /// Adopt a server epoch before fetching or writing any vault data. The capsule

@@ -117,108 +117,123 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     accept_new_token(state, &mut token, new_token);
     let new_epoch = start.epoch;
 
-    // 2. Fresh seed, locally generated.
-    let new_rms = zeroize::Zeroizing::new(
-        vela_crypto::rekey::rotate().map_err(|e| format!("Failed to generate a new seed: {e}"))?,
-    );
-    let new_crypto = crate::crypto::Crypto::new(&new_rms);
-    // `new_rms` is zeroized when this scope ends; the Crypto owns the value.
+    // Everything before commit runs inside one error boundary. Once `start`
+    // has frozen writes, any ordinary preparation failure must explicitly
+    // abort instead of leaving the account read-only until timeout.
+    let preparation = async {
+        // 2. Fresh seed, locally generated.
+        let new_rms = zeroize::Zeroizing::new(
+            vela_crypto::rekey::rotate()
+                .map_err(|e| format!("Failed to generate a new seed: {e}"))?,
+        );
+        let new_crypto = crate::crypto::Crypto::new(&new_rms);
 
-    // 3. Re-encrypt every chunk into a shadow row at the new epoch. Sequential
-    //    and bounded-memory; replays are idempotent server-side.
-    let mut uploaded = 0usize;
-    for chunk in &start.chunks {
-        let key_old = old_crypto_snapshot.chunk_key(chunk.chunk_id.as_bytes());
-        let (ciphertext, version, lamport, tok) =
-            client
+        // 3. Re-encrypt every chunk into a shadow row at the new epoch.
+        let mut uploaded = 0usize;
+        for chunk in &start.chunks {
+            let key_old = old_crypto_snapshot.chunk_key(chunk.chunk_id.as_bytes());
+            let (ciphertext, version, lamport, tok) = client
                 .get_chunk(&token, &chunk.chunk_id)
                 .await
                 .map_err(|e| format!("Failed to download chunk {}: {e}", chunk.chunk_id))?;
-        if let Some(t) = tok {
-            accept_new_token(state, &mut token, Some(t));
-        }
-        let (_, plaintext) = vela_crypto::rekey::open_epoch_chunk(
-            key_old.as_bytes(),
-            &ciphertext,
-            current_epoch as u64,
-            &chunk.chunk_id,
-            lamport,
-        )
-        .map_err(|e| {
-            format!(
-                "Chunk {} cannot be decrypted under the current key: {e}",
-                chunk.chunk_id
-            )
-        })?;
-        let _ = version;
-
-        let key_new = new_crypto.chunk_key(chunk.chunk_id.as_bytes());
-        let sealed = vela_crypto::rekey::seal_epoch_chunk(
-            key_new.as_bytes(),
-            &plaintext,
-            new_epoch as u64,
-            &chunk.chunk_id,
-            lamport.max(chunk.lamport_clock),
-        )
-        .map_err(|e| format!("Failed to re-seal chunk {}: {e}", chunk.chunk_id))?;
-
-        let (_, tok) = client
-            .put_chunk_with_epoch(
-                &token,
+            if let Some(t) = tok {
+                accept_new_token(state, &mut token, Some(t));
+            }
+            let (_, plaintext) = vela_crypto::rekey::open_epoch_chunk(
+                key_old.as_bytes(),
+                &ciphertext,
+                current_epoch as u64,
                 &chunk.chunk_id,
-                // A shadow row does not exist yet. Its old-epoch version is
-                // inventory metadata, not an If-Match value for epoch N+1.
-                // Zero selects the server's idempotent shadow upsert path.
-                0,
-                sealed,
-                lamport.max(chunk.lamport_clock),
-                Some(new_epoch),
+                lamport,
             )
+            .map_err(|e| {
+                format!(
+                    "Chunk {} cannot be decrypted under the current key: {e}",
+                    chunk.chunk_id
+                )
+            })?;
+            let _ = version;
+
+            let key_new = new_crypto.chunk_key(chunk.chunk_id.as_bytes());
+            let sealed = vela_crypto::rekey::seal_epoch_chunk(
+                key_new.as_bytes(),
+                &plaintext,
+                new_epoch as u64,
+                &chunk.chunk_id,
+                lamport.max(chunk.lamport_clock),
+            )
+            .map_err(|e| format!("Failed to re-seal chunk {}: {e}", chunk.chunk_id))?;
+
+            let (_, tok) = client
+                .put_chunk_with_epoch(
+                    &token,
+                    &chunk.chunk_id,
+                    // The N+1 shadow has no prior version; zero selects the
+                    // server's idempotent create/replay path.
+                    0,
+                    sealed,
+                    lamport.max(chunk.lamport_clock),
+                    Some(new_epoch),
+                )
+                .await
+                .map_err(|e| format!("Failed to upload re-keyed chunk {}: {e}", chunk.chunk_id))?;
+            if let Some(t) = tok {
+                accept_new_token(state, &mut token, Some(t));
+            }
+            uploaded += 1;
+        }
+
+        // 4. Capsule fan-out before commit.
+        let (devices, refreshed) = client
+            .get_devices(&token)
             .await
-            .map_err(|e| format!("Failed to upload re-keyed chunk {}: {e}", chunk.chunk_id))?;
-        if let Some(t) = tok {
+            .map_err(|e| format!("Failed to list devices for capsule sealing: {e}"))?;
+        accept_new_token(state, &mut token, refreshed);
+        let mut capsules = std::collections::HashMap::new();
+        for device in &devices {
+            if device.revoked {
+                continue;
+            }
+            if !device.rekey_capable {
+                return Err(format!(
+                    "Device {} has not confirmed that it can adopt rotated keys; sync or re-enroll it first",
+                    device.id
+                ));
+            }
+            let ek_b64 = device.hybrid_ek.as_deref().ok_or(format!(
+                "Device {} did not report its KEM public key; server may be older than this feature",
+                device.id
+            ))?;
+            let ek = B64
+                .decode(ek_b64)
+                .map_err(|e| format!("Device {} has a malformed KEM key: {e}", device.id))?;
+            let capsule = crate::crypto::seal_rms_to_device(&ek, &new_crypto.rms())
+                .map_err(|e| format!("Failed to seal the new seed for {}: {e}", device.id))?;
+            capsules.insert(device.id.to_string(), B64.encode(capsule));
+        }
+        if let Some(t) = client
+            .rekey_store_capsules(&token, &capsules)
+            .await
+            .map_err(|e| format!("Failed to store the new-seed capsules: {e}"))?
+        {
             accept_new_token(state, &mut token, Some(t));
         }
-        uploaded += 1;
-    }
 
-    // 4. Capsule fan-out BEFORE touching local state: once every device has its
-    //    sealed copy of the new seed, the rotation can always be completed by
-    //    anyone who has adopted — including this device later.
-    let (devices, refreshed) = client
-        .get_devices(&token)
-        .await
-        .map_err(|e| format!("Failed to list devices for capsule sealing: {e}"))?;
-    accept_new_token(state, &mut token, refreshed);
-    let mut capsules = std::collections::HashMap::new();
-    for device in &devices {
-        if device.revoked {
-            continue;
-        }
-        if !device.rekey_capable {
-            return Err(format!(
-                "Device {} has not confirmed that it can adopt rotated keys; sync or re-enroll it first",
-                device.id
-            ));
-        }
-        let ek_b64 = device.hybrid_ek.as_deref().ok_or(format!(
-            "Device {} did not report its KEM public key; server may be older than this feature",
-            device.id
-        ))?;
-        let ek = B64
-            .decode(ek_b64)
-            .map_err(|e| format!("Device {} has a malformed KEM key: {e}", device.id))?;
-        let capsule = crate::crypto::seal_rms_to_device(&ek, &new_crypto.rms())
-            .map_err(|e| format!("Failed to seal the new seed for {}: {e}", device.id))?;
-        capsules.insert(device.id.to_string(), B64.encode(capsule));
+        Ok::<_, String>((new_crypto, uploaded, capsules.len()))
     }
-    if let Some(t) = client
-        .rekey_store_capsules(&token, &capsules)
-        .await
-        .map_err(|e| format!("Failed to store the new-seed capsules: {e}"))?
-    {
-        accept_new_token(state, &mut token, Some(t));
-    }
+    .await;
+
+    let (new_crypto, uploaded, devices_sealed) = match preparation {
+        Ok(prepared) => prepared,
+        Err(preparation_err) => {
+            let abort = client.rekey_abort(&token).await;
+            let mut detail = preparation_err;
+            if let Err(e) = abort {
+                detail.push_str(&format!("; server abort also failed: {e}"));
+            }
+            return Err(detail);
+        }
+    };
 
     // Do not commit on behalf of a session which auto-locked while the network
     // work was running. The account is still at N, so abort is sufficient.
@@ -291,7 +306,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         from_epoch: current_epoch,
         to_epoch: new_epoch,
         chunks_rekeyed: uploaded,
-        devices_sealed: capsules.len(),
+        devices_sealed,
     };
 
     crate::audit::record_audit_event(
