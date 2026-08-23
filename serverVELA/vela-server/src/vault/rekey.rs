@@ -486,7 +486,10 @@ pub async fn post_start(
         .execute(
             "UPDATE users SET rekey_state = 'freezing', rekey_started_at = ?,
                 rekey_starter = ?, rekey_id = ?
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM oram_buckets WHERE user_id = users.id
+               )",
             vec![
                 TursoValue::Text(Utc::now().to_rfc3339()),
                 TursoValue::Text(session.device_id.to_string()),

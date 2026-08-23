@@ -226,10 +226,11 @@ pub async fn put_path(
                 )));
             }
 
-            state.sqldb.execute(
+            let inserted = state.sqldb.execute(
                 "INSERT INTO oram_buckets
                  (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
-                 VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
+                 SELECT ?, ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
+                 WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
                 vec![
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Text(tree_id.clone()),
@@ -240,8 +241,15 @@ pub async fn put_path(
                     TursoValue::Integer(write_epoch),
                     TursoValue::Text(now.clone()),
                     TursoValue::Text(now.clone()),
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Integer(write_epoch),
                 ],
             ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+            if inserted != 1 {
+                return Err(AppError::Rekeyed(
+                    "vault epoch changed before the ORAM write completed".into(),
+                ));
+            }
             1
         } else {
             let n = state
@@ -257,7 +265,12 @@ pub async fn put_path(
                    AND tree_id = ?
                    AND bucket_index = ?
                    AND version = ?
-                   AND epoch = ?",
+                   AND epoch = ?
+                   AND EXISTS (
+                     SELECT 1 FROM users
+                     WHERE users.id = oram_buckets.user_id
+                       AND users.key_epoch = ? AND users.rekey_state IS NULL
+                   )",
                     vec![
                         TursoValue::Integer(bucket.lamport_clock),
                         TursoValue::Text(session.device_id.to_string()),
@@ -267,6 +280,7 @@ pub async fn put_path(
                         TursoValue::Text(tree_id.clone()),
                         TursoValue::Integer(bucket_index_i64),
                         TursoValue::Integer(bucket.if_match),
+                        TursoValue::Integer(write_epoch),
                         TursoValue::Integer(write_epoch),
                     ],
                 )

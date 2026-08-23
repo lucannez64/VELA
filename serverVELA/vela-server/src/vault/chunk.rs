@@ -199,10 +199,11 @@ pub async fn put_chunk(
                 ));
             }
 
-            state.sqldb.execute(
+            let inserted = state.sqldb.execute(
             "INSERT INTO vault_chunks
              (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
-             VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
+             SELECT ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
@@ -212,6 +213,8 @@ pub async fn put_chunk(
                 TursoValue::Integer(write_epoch),
                 TursoValue::Text(now.clone()),
                 TursoValue::Text(now),
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(write_epoch),
             ],
         ).await.map_err(|e| {
             // A concurrent If-Match:0 request can win the race between the
@@ -229,6 +232,11 @@ pub async fn put_chunk(
                 AppError::Internal(e.to_string())
             }
         })?;
+            if inserted != 1 {
+                return Err(AppError::Rekeyed(
+                    "vault epoch changed before the chunk write completed".into(),
+                ));
+            }
         }
     } else {
         let n = state
@@ -243,7 +251,12 @@ pub async fn put_chunk(
              WHERE chunk_id = ?
                AND user_id  = ?
                AND version  = ?
-               AND epoch    = ?",
+               AND epoch    = ?
+               AND EXISTS (
+                 SELECT 1 FROM users
+                 WHERE users.id = vault_chunks.user_id
+                   AND users.key_epoch = ? AND users.rekey_state IS NULL
+               )",
                 vec![
                     TursoValue::Integer(lamport_clock),
                     TursoValue::Text(session.device_id.to_string()),
@@ -252,6 +265,7 @@ pub async fn put_chunk(
                     TursoValue::Text(id.clone()),
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Integer(if_match),
+                    TursoValue::Integer(write_epoch),
                     TursoValue::Integer(write_epoch),
                 ],
             )
@@ -358,18 +372,30 @@ pub async fn delete_chunk(
         ));
     }
 
-    state
+    let deleted = state
         .sqldb
         .execute(
-            "DELETE FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
+            "DELETE FROM vault_chunks
+             WHERE chunk_id = ? AND user_id = ? AND epoch = ?
+               AND EXISTS (
+                 SELECT 1 FROM users
+                 WHERE users.id = vault_chunks.user_id
+                   AND users.key_epoch = ? AND users.rekey_state IS NULL
+               )",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(write_epoch),
                 TursoValue::Integer(write_epoch),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    if deleted != 1 {
+        return Err(AppError::Rekeyed(
+            "vault epoch changed before the chunk delete completed".into(),
+        ));
+    }
 
     tracing::info!(
         chunk_id = %id,
