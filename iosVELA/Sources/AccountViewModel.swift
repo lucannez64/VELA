@@ -202,6 +202,9 @@ final class AccountViewModel: ObservableObject {
                 throw Failure("A vault key rotation is in progress; approve web access after it completes.")
             }
             let (ephemeralPK, webVK) = try await client.getWebSessionKeys(sessionID: sessionID)
+            // The fingerprint/capsule checks below can return early. Persist a
+            // token renewed by the keys request before any of those exits.
+            await persistRenewedToken(from: client)
 
             // Verify the fingerprint to detect server-side key substitution.
             guard let keyData = Data(base64Encoded: ephemeralPK) else {

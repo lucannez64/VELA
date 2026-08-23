@@ -681,6 +681,17 @@ async fn recovery_enrollment_grant_is_invalid_after_key_rotation() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body["message"],
+        "recovery grant was invalidated by vault key rotation",
+        "the request must reach the grant-epoch check"
+    );
     let devices = state
         .sqldb
         .query(

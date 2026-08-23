@@ -383,6 +383,23 @@ async fn adopt_server_epoch(
     })
     .await
     .map_err(|e| format!("Epoch adoption task failed: {e}"))??;
+
+    // Migration retires the cached split of the old RMS. Immediately create
+    // and verify a replacement split so an adopting device has the same
+    // recovery-setup state as the rotation initiator. Delivery ceremonies are
+    // still required, and a re-mint failure must not undo an already-durable
+    // epoch adoption.
+    if let Err(e) = tokio::task::spawn_blocking({
+        let state = state.clone();
+        move || crate::recovery::remint_recovery_setup(&state)
+    })
+    .await
+    .map_err(|e| format!("Recovery share re-mint task panicked: {e}"))
+    .and_then(|inner| inner)
+    {
+        tracing::warn!("Recovery share re-mint after epoch adoption failed: {e}");
+    }
+
     match client.acknowledge_rekey_capsule(token, server_epoch).await {
         Ok(Some(refreshed)) => {
             state.session.write().set_server_token(refreshed.clone());

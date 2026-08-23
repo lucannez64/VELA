@@ -676,6 +676,15 @@ pub async fn delete_session(
         return Err(AppError::NotFound("web session not found".into()));
     }
 
+    // Reject any already-issued RW token (device_id == session_id) before the
+    // SQL audit row says the session is revoked. If SQL subsequently fails,
+    // the safe partial state is locked-out-but-visible, not marked-but-live.
+    state.store.set_ex(
+        &format!("device:revoked:{}", id),
+        &[1u8],
+        MAX_TTL_SECS as u64,
+    )?;
+
     state
         .sqldb
         .execute(
@@ -684,14 +693,6 @@ pub async fn delete_session(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    // Reject any already-issued RW token (device_id == session_id) for up to the
-    // maximum possible remaining lifetime.
-    let _ = state.store.set_ex(
-        &format!("device:revoked:{}", id),
-        &[1u8],
-        MAX_TTL_SECS as u64,
-    );
 
     tracing::info!(session_id = %id, user_id = %session.user_id, "web session revoked");
 

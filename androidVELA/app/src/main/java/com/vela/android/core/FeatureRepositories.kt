@@ -142,10 +142,13 @@ class SharingRepository(
         val itemJson = VaultJson.encodeItem(item).toString(Charsets.UTF_8)
 
         sync.withAuthenticatedClient { client, token ->
-            val recipientShareEkB64 = client.getRecipientShareEk(token, recipientUserId)
+            var currentToken = token
+            val (recipientShareEkB64, recipientToken) =
+                client.getRecipientShareEk(currentToken, recipientUserId)
+            recipientToken?.let { currentToken = it }
             val capsuleB64 = NativeVelaCore.sealShare(recipientShareEkB64, itemJson)
                 ?: error("Native VELA bridge is required for sharing")
-            val response = client.sendShare(token, recipientUserId, capsuleB64)
+            val response = client.sendShare(currentToken, recipientUserId, capsuleB64)
             manifest.add(
                 SentShareRecord(
                     shareId = response.shareId,
@@ -190,9 +193,12 @@ class SharingRepository(
         if (records.isEmpty()) return
         val itemJson = VaultJson.encodeItem(item).toString(Charsets.UTF_8)
         sync.withAuthenticatedClient { client, token ->
+            var currentToken = token
             for (record in records) {
                 val newCapsule = NativeVelaCore.sealShare(record.recipientShareEkB64, itemJson) ?: continue
-                client.updateLinkedShare(token, record.shareId, newCapsule)
+                client.updateLinkedShare(currentToken, record.shareId, newCapsule)?.let {
+                    currentToken = it
+                }
             }
         }
     }
@@ -209,11 +215,22 @@ class SharingRepository(
         val (sessionId, expectedFp, linkNonce) = parseSessionId(qrJson)
 
         val expiresAt = sync.withAuthenticatedClient { client, token ->
-            val (keyEpoch, rotationState) = client.getVaultEpoch(token)
-            check(rotationState == "active") {
+            var requestToken = token
+            val epoch = client.getVaultEpoch(requestToken)
+            epoch.newToken?.let {
+                requestToken = it
+                sync.acceptRefreshedToken(it)
+            }
+            check(epoch.state == "active") {
                 "A vault key rotation is in progress; approve web access after it completes."
             }
-            val (ephemeralPk, webVk) = client.getWebSessionKeys(token, sessionId)
+            val keys = client.getWebSessionKeys(requestToken, sessionId)
+            keys.newToken?.let {
+                requestToken = it
+                sync.acceptRefreshedToken(it)
+            }
+            val ephemeralPk = keys.ephemeralPkB64
+            val webVk = keys.webVkB64
 
             // Verify the fingerprint to detect server-side key substitution.
             val keyBytes = android.util.Base64.decode(ephemeralPk, android.util.Base64.DEFAULT)
@@ -246,9 +263,11 @@ class SharingRepository(
 
             val capsuleB64 = NativeVelaCore.sealShare(ephemeralPk, envelope.toString())
                 ?: error("Native VELA bridge is required for web access")
-            client.grantWebSession(
-                token, sessionId, mode, capsuleB64, ttlSecs, linkNonce, keyEpoch
+            val granted = client.grantWebSession(
+                requestToken, sessionId, mode, capsuleB64, ttlSecs, linkNonce, epoch.epoch
             )
+            sync.acceptRefreshedToken(granted.newToken)
+            granted.expiresAt
         }
         val label = if (mode == "rw") "read-write" else "read-only"
         VelaRepositories.audit.record("web_session_granted", "$label · ${ttlSecs / 60} min")

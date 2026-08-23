@@ -54,6 +54,13 @@ data class ChallengeResponse(val challengeB64: String)
 data class VerifyResponse(val token: String, val userId: String)
 
 data class CapsuleResponse(val capsuleB64: String, val newToken: String?)
+data class VaultEpochResponse(val epoch: Long, val state: String, val newToken: String?)
+data class WebSessionKeysResponse(
+    val ephemeralPkB64: String,
+    val webVkB64: String,
+    val newToken: String?,
+)
+data class GrantWebSessionResponse(val expiresAt: String, val newToken: String?)
 data class EnrollmentPackageResponse(val ciphertext: String)
 
 data class DeviceInfo(
@@ -130,6 +137,13 @@ class AndroidVelaApiClient(
         null
     }
     @Volatile private var selectedTransport: VelaHttpTransport? = null
+    @Volatile private var latestNewToken: String? = null
+
+    fun latestSessionToken(): String? = latestNewToken
+
+    fun clearLatestSessionToken() {
+        latestNewToken = null
+    }
 
     fun registerAccount(identity: ServerIdentity): RegisterAccountResponse {
         val bodyObj = JSONObject()
@@ -194,11 +208,15 @@ class AndroidVelaApiClient(
     }
 
     /** Current vault-key epoch and rotation state ("active" or "freezing"). */
-    fun getVaultEpoch(token: String): Pair<Long, String> {
+    fun getVaultEpoch(token: String): VaultEpochResponse {
         val response = request("GET", "/vault/epoch", token)
         response.requireSuccess("Vault epoch request failed")
         val json = JSONObject(response.body.toString(Charsets.UTF_8))
-        return json.getLong("epoch") to json.getString("state")
+        return VaultEpochResponse(
+            epoch = json.getLong("epoch"),
+            state = json.getString("state"),
+            newToken = response.newToken,
+        )
     }
 
     fun getCapsule(token: String): CapsuleResponse {
@@ -424,10 +442,10 @@ class AndroidVelaApiClient(
         return response.newToken
     }
 
-    fun getRecipientShareEk(token: String, userId: String): String {
+    fun getRecipientShareEk(token: String, userId: String): Pair<String, String?> {
         val response = request("GET", "/share/recipient/$userId/ek", token)
         response.requireSuccess("Get recipient share key failed")
-        return JSONObject(response.body.toString(Charsets.UTF_8)).getString("share_ek")
+        return JSONObject(response.body.toString(Charsets.UTF_8)).getString("share_ek") to response.newToken
     }
 
     fun updateLinkedShare(token: String, shareId: String, capsuleB64: String): String? {
@@ -453,12 +471,16 @@ class AndroidVelaApiClient(
     }
 
     /// Look up a pending web session's ephemeral public keys (the QR carries only
-    /// the session id). Returns (ephemeral_pk_b64, web_vk_b64); web_vk is "" for RO.
-    fun getWebSessionKeys(token: String, sessionId: String): Pair<String, String> {
+    /// the session id). `webVkB64` is empty for read-only sessions.
+    fun getWebSessionKeys(token: String, sessionId: String): WebSessionKeysResponse {
         val response = request("GET", "/web-session/$sessionId/keys", token)
         response.requireSuccess("Fetch web session keys failed")
         val json = JSONObject(response.body.toString(Charsets.UTF_8))
-        return json.getString("ephemeral_pk") to json.optString("web_vk")
+        return WebSessionKeysResponse(
+            ephemeralPkB64 = json.getString("ephemeral_pk"),
+            webVkB64 = json.optString("web_vk"),
+            newToken = response.newToken,
+        )
     }
 
     /// Approve an ephemeral web session: deliver the sealed capsule with the
@@ -473,7 +495,7 @@ class AndroidVelaApiClient(
         ttlSecs: Long,
         linkNonce: String,
         keyEpoch: Long,
-    ): String {
+    ): GrantWebSessionResponse {
         val body = JSONObject()
             .put("mode", mode)
             .put("capsule", capsuleB64)
@@ -484,7 +506,10 @@ class AndroidVelaApiClient(
             .toByteArray(Charsets.UTF_8)
         val response = request("POST", "/web-session/$sessionId/grant", token, body, contentType = "application/json")
         response.requireSuccess("Grant web access failed")
-        return JSONObject(response.body.toString(Charsets.UTF_8)).getString("expires_at")
+        return GrantWebSessionResponse(
+            expiresAt = JSONObject(response.body.toString(Charsets.UTF_8)).getString("expires_at"),
+            newToken = response.newToken,
+        )
     }
 
     data class WebSessionInfo(
@@ -495,7 +520,7 @@ class AndroidVelaApiClient(
         val expiresAt: String?,
     )
 
-    fun listWebSessions(token: String): List<WebSessionInfo> {
+    fun listWebSessions(token: String): Pair<List<WebSessionInfo>, String?> {
         val response = request("GET", "/web-sessions", token)
         response.requireSuccess("List web sessions failed")
         val json = JSONObject(response.body.toString(Charsets.UTF_8))
@@ -509,7 +534,7 @@ class AndroidVelaApiClient(
                 createdAt = obj.getString("created_at"),
                 expiresAt = obj.optString("expires_at").takeIf { it.isNotEmpty() },
             )
-        }
+        } to response.newToken
     }
 
     fun revokeWebSession(token: String, sessionId: String) {
@@ -604,7 +629,7 @@ class AndroidVelaApiClient(
     ): HttpResponse {
         val url = "$baseUrl$path"
         val transport = selectTransport()
-        return try {
+        val response = try {
             transport.request(method, url, token, body, extraHeaders, contentType)
         } catch (e: IOException) {
             if (transport === h3Transport) {
@@ -618,6 +643,8 @@ class AndroidVelaApiClient(
                 throw e
             }
         }
+        response.newToken?.takeIf { it.isNotBlank() }?.let { latestNewToken = it }
+        return response
     }
 
     private fun selectTransport(): VelaHttpTransport {

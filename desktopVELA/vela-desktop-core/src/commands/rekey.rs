@@ -154,13 +154,13 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         .get_key_epoch(&token)
         .await
         .map_err(|e| format!("Could not read the account's key epoch: {e}"))?;
+    accept_new_token(state, &mut token, new_token);
     if rotation_state != "active" {
         return Err(
             "A key rotation is already in progress for this account. Try again in a few minutes."
                 .to_string(),
         );
     }
-    accept_new_token(state, &mut token, new_token);
 
     // 1. Start: freeze + fetch the work order.
     let (start, new_token) = client

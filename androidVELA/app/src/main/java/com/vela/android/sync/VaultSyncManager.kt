@@ -46,20 +46,31 @@ class VaultSyncManager(
         val settings = settingsStore.settings.value
         require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
         val client = AndroidVelaApiClient(settings.serverUrl, context)
-        val token = authenticatedToken(client, settings.bearerToken)
+        var token = authenticatedToken(client, settings.bearerToken)
         if (token != settings.bearerToken) {
             settingsStore.updateBearerToken(token)
         }
-        ensureShareKey(client, token)
+        ensureShareKey(client, token)?.let {
+            token = it
+            settingsStore.updateBearerToken(it)
+        }
         return try {
             block(client, token)
         } catch (e: ServerUnauthorizedException) {
             if (!e.isRecoverableTokenFailure() || settings.bearerToken.isBlank()) throw e
             settingsStore.updateBearerToken("")
+            client.clearLatestSessionToken()
             val freshToken = authenticatedToken(client, "")
             settingsStore.updateBearerToken(freshToken)
             block(client, freshToken)
+        } finally {
+            acceptRefreshedToken(client.latestSessionToken())
         }
+    }
+
+    /** Persist a replacement token before a dependent request or early return. */
+    fun acceptRefreshedToken(token: String?) {
+        token?.takeIf { it.isNotBlank() }?.let(settingsStore::updateBearerToken)
     }
 
     fun enrollWithCode(serverUrl: String, enrollmentCode: String): ByteArray {
@@ -454,12 +465,12 @@ class VaultSyncManager(
     /// Backfill a share keypair for identities created before sharing existed.
     /// Generates the keypair locally, persists it, and registers the public half
     /// with the server. A no-op once the identity already has a share key.
-    private fun ensureShareKey(client: AndroidVelaApiClient, token: String) {
-        val identity = identityStore.load() ?: return
-        if (identity.shareEkB64.isNotBlank()) return
+    private fun ensureShareKey(client: AndroidVelaApiClient, token: String): String? {
+        val identity = identityStore.load() ?: return null
+        if (identity.shareEkB64.isNotBlank()) return null
         // The new secret half stays native; only its public key comes back.
-        val shareEk = identityStore.rotateShareKey() ?: return
-        runCatching { client.putMyShareEk(token, shareEk) }
+        val shareEk = identityStore.rotateShareKey() ?: return null
+        return runCatching { client.putMyShareEk(token, shareEk) }.getOrNull()
     }
 
     private fun authenticateOrRegister(client: AndroidVelaApiClient): String {
@@ -531,10 +542,13 @@ class VaultSyncManager(
 
         val results = chunkIds.mapIndexed { index, chunkId ->
             async {
-                val token = tokenMutex.withLock { tokenRef }
-                val downloaded = client.getChunk(token, chunkId)
-                downloaded.newToken?.let { newToken ->
-                    tokenMutex.withLock { tokenRef = newToken }
+                // Keep the token read, request, and replacement atomic. Merely
+                // locking the reads lets every coroutine launch with the same
+                // token; the first renewal then revokes it under its siblings.
+                val downloaded = tokenMutex.withLock {
+                    client.getChunk(tokenRef, chunkId).also { response ->
+                        response.newToken?.let { tokenRef = it }
+                    }
                 }
                 val entry = manifest.chunks.firstOrNull { it.chunkId == chunkId }
                 val json = NativeVelaCore.decryptVaultChunkJson(
@@ -595,16 +609,16 @@ class VaultSyncManager(
             val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(rms, chunkId, chunk, chunkLamport)
                 ?: error("Native VELA bridge is required for server sync")
             async {
-                val token = tokenMutex.withLock { tokenRef }
-                val uploaded = client.putChunk(
-                    token = token,
-                    chunkId = chunkId,
-                    ifMatch = remote?.version ?: 0,
-                    lamportClock = chunkLamport,
-                    ciphertext = Base64.getDecoder().decode(ciphertextB64)
-                )
-                uploaded.newToken?.let { newToken ->
-                    tokenMutex.withLock { tokenRef = newToken }
+                val uploaded = tokenMutex.withLock {
+                    client.putChunk(
+                        token = tokenRef,
+                        chunkId = chunkId,
+                        ifMatch = remote?.version ?: 0,
+                        lamportClock = chunkLamport,
+                        ciphertext = Base64.getDecoder().decode(ciphertextB64)
+                    ).also { response ->
+                        response.newToken?.let { tokenRef = it }
+                    }
                 }
                 if (index == 0) uploaded.version else null
             }
@@ -626,11 +640,10 @@ class VaultSyncManager(
             val deleteTokenMutex = Mutex()
             staleChunks.map { (chunkId, version) ->
                 async {
-                    val t = deleteTokenMutex.withLock { deleteTokenRef }
-                    runCatching { client.deleteChunk(t, chunkId, version) }
-                        .getOrNull()?.let { newToken ->
-                            deleteTokenMutex.withLock { deleteTokenRef = newToken }
-                        }
+                    deleteTokenMutex.withLock {
+                        runCatching { client.deleteChunk(deleteTokenRef, chunkId, version) }
+                            .getOrNull()?.let { deleteTokenRef = it }
+                    }
                 }
             }.awaitAll()
             tokenMutex.withLock { tokenRef = deleteTokenMutex.withLock { deleteTokenRef } }

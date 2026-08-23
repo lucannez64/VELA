@@ -762,16 +762,19 @@ impl SettingsScreen {
                 this.rotating = false;
                 match result {
                     Ok(Ok(summary)) => {
-                        this.rotate_status = Some(
-                            format!(
-                                "Vault re-keyed: epoch {} → {}, {} chunks, {} devices sealed. Recovery shares were retired—set up every recovery method again now.",
-                                summary.from_epoch,
-                                summary.to_epoch,
-                                summary.chunks_rekeyed,
-                                summary.devices_sealed,
-                            )
-                            .into(),
+                        let mut message = format!(
+                            "Vault re-keyed: epoch {} → {}, {} chunks, {} devices sealed.",
+                            summary.from_epoch,
+                            summary.to_epoch,
+                            summary.chunks_rekeyed,
+                            summary.devices_sealed,
                         );
+                        if summary.recovery_setup_required {
+                            message.push_str(
+                                " Recovery shares were retired. Set up every recovery method again now.",
+                            );
+                        }
+                        this.rotate_status = Some(message.into());
                         if summary.recovery_setup_required {
                             let app_state = this.app_state.clone();
                             Self::load_recovery_status(&app_state, cx);

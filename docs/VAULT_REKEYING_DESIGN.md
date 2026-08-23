@@ -114,8 +114,9 @@ not an attack vector.
   the same epoch. ORAM's JSON transport carries the epoch in its request body.
 - `ACTIVE(N)`: accepts only `N`. A stale declaration gets **409
   `vault_rekeyed`** — the signal devices use to trigger adoption (§7.2).
-  Missing header is tolerated as `N` while the fleet upgrades (legacy
-  clients); rejected outright once `ALLOW_MISSING_EPOCH=false`.
+  A missing header is treated as epoch 1 only while `N == 1`, for legacy
+  clients that predate epoch tagging. It is rejected with `vault_rekeyed`
+  during `FREEZING` and at every later epoch.
 - `FREEZING(N+1)`: accepts only `N+1` — those are the initiator's re-keyed
   copies landing in shadow rows. Everything else is rejected.
 

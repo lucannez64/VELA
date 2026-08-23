@@ -28,6 +28,8 @@ const TABLES: &[Table] = &[
         cols: &[
             "id", "recovery_share", "recovery_auth_hash", "created_at",
             "recovery_webauthn_credential", "share_ek", "recovery_webauthn_cred_id",
+            "key_epoch", "rekey_state", "rekey_started_at", "rekey_starter", "rekey_id",
+            "last_rekey_id", "last_rekey_epoch",
         ],
     },
     Table {
@@ -35,21 +37,21 @@ const TABLES: &[Table] = &[
         cols: &[
             "id", "user_id", "device_name", "device_type", "last_active",
             "hybrid_ek", "hybrid_vk", "enrolled_by", "rms_capsule", "revoked",
-            "revoked_at", "revoked_by", "created_at",
+            "revoked_at", "revoked_by", "created_at", "rms_capsule_epoch", "rekey_capable",
         ],
     },
     Table {
         name: "vault_chunks",
         cols: &[
             "chunk_id", "user_id", "version", "lamport_clock", "last_writer",
-            "ciphertext", "created_at", "updated_at",
+            "ciphertext", "created_at", "updated_at", "epoch",
         ],
     },
     Table {
         name: "oram_buckets",
         cols: &[
             "user_id", "tree_id", "bucket_index", "version", "lamport_clock",
-            "last_writer", "ciphertext", "created_at", "updated_at",
+            "last_writer", "ciphertext", "created_at", "updated_at", "epoch",
         ],
     },
     Table {
@@ -68,7 +70,7 @@ const TABLES: &[Table] = &[
         cols: &[
             "id", "user_id", "approver_user_id", "poll_secret_hash", "ephemeral_pk",
             "web_vk", "link_nonce", "mode", "status", "capsule", "approved_by",
-            "created_at", "expires_at",
+            "created_at", "expires_at", "key_epoch",
         ],
     },
 ];
@@ -168,26 +170,31 @@ fn main() {
 CREATE TABLE IF NOT EXISTS users (
     id TEXT UNIQUE NOT NULL, recovery_share TEXT, recovery_auth_hash TEXT,
     created_at TEXT NOT NULL, recovery_webauthn_credential TEXT,
-    share_ek TEXT, recovery_webauthn_cred_id TEXT);
+    share_ek TEXT, recovery_webauthn_cred_id TEXT,
+    key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
+    rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT,
+    last_rekey_id TEXT, last_rekey_epoch INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_webauthn_cred_id ON users(recovery_webauthn_cred_id);
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
     device_name TEXT NOT NULL DEFAULT 'Desktop Device', device_type TEXT NOT NULL DEFAULT 'desktop',
     last_active TEXT, hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL, enrolled_by TEXT,
-    rms_capsule TEXT, revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
+    rms_capsule TEXT, rms_capsule_epoch INTEGER, rekey_capable INTEGER NOT NULL DEFAULT 0,
+    revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
     created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE TABLE IF NOT EXISTS vault_chunks (
     chunk_id TEXT NOT NULL, user_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
     lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT, ciphertext TEXT NOT NULL,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk ON vault_chunks(user_id, chunk_id);
-CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id);
+    epoch INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch ON vault_chunks(user_id, chunk_id, epoch);
+CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
 CREATE TABLE IF NOT EXISTS oram_buckets (
     user_id TEXT NOT NULL, tree_id TEXT NOT NULL, bucket_index INTEGER NOT NULL,
     version INTEGER NOT NULL DEFAULT 1, lamport_clock INTEGER NOT NULL DEFAULT 0,
-    last_writer TEXT, ciphertext TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket ON oram_buckets(user_id, tree_id, bucket_index);
+    last_writer TEXT, ciphertext TEXT NOT NULL, epoch INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch ON oram_buckets(user_id, tree_id, bucket_index, epoch);
 CREATE TABLE IF NOT EXISTS share_inbox (
     id TEXT UNIQUE NOT NULL, sender_user_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL,
     capsule TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -199,7 +206,8 @@ CREATE TABLE IF NOT EXISTS shared_items (
 CREATE TABLE IF NOT EXISTS web_sessions (
     id TEXT UNIQUE NOT NULL, user_id TEXT, approver_user_id TEXT, poll_secret_hash TEXT,
     ephemeral_pk TEXT NOT NULL, web_vk TEXT, link_nonce TEXT NOT NULL, mode TEXT,
-    status TEXT NOT NULL, capsule TEXT, approved_by TEXT, created_at TEXT NOT NULL,
+    status TEXT NOT NULL, capsule TEXT, approved_by TEXT, key_epoch INTEGER,
+    created_at TEXT NOT NULL,
     expires_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);

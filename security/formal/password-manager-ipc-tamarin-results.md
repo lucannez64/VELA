@@ -20,6 +20,10 @@ The **consume-stage residual** (a reusable secret must reach the consuming app, 
 
 All runs: `tamarin-prover --prove <file>.spthy` (locale `LC_ALL=C.UTF-8`). For an **all-traces** lemma, *verified* = property holds in every trace. For an **exists-trace** lemma, *verified* = the described trace provably **exists** — so an exists-trace "verified" on a leak lemma means **the leak is real**, not prevented.
 
+Aggregate verdict: **83 verified, 5 falsified** (88 lemmas across thirteen
+theories). The five falsifications are the intended negative results described
+below.
+
 | Model | Escapes | Lemma | Type | Verdict | Mirrors (paper) |
 |---|---|---|---|---|---|
 | **M1** in-domain | none | `secrecy` | all-traces | **falsified** (3-step attack) | **Theorem 1** — no in-domain check separates A from L |
@@ -68,10 +72,14 @@ All runs: `tamarin-prover --prove <file>.spthy` (locale `LC_ALL=C.UTF-8`). For a
 | | | `unused_credentials_stay_secret` | all-traces | **falsified** | **the edge** — verified in M9b, falsified here: the blast radius is the vault, not the working set |
 | | | `escape_takes_credentials_never_used` | exists-trace | verified (trace exists) | the adversary derives an item that was never logged into |
 | | | `escape_takes_the_master_key` | exists-trace | verified (trace exists) | the key an engine in another process never held |
+| | | `login_succeeds` | exists-trace | verified (trace exists) | the non-escape path remains live |
+| **M9d** CAPTCHA artifact | observable token + attacker-chosen cookies | `credential_never_leaks` / `used_item_still_secret` | all-traces | **verified** | an observable login artifact does not expose the credential |
+| | | `every_session_goes_through_the_vault` / `a_lifted_token_logs_in_once` | all-traces | **verified** | the artifact neither bypasses approval nor becomes replayable |
+| | | `artifact_is_adversary_observable` / `login_succeeds` | exists-trace | verified (traces exist) | the artifact is genuinely public and the approved path remains live |
 | **M10** full ladder | M7→M9a→M6 per tier | `passkey_item_never_leaks` / `plain_item_never_leaks` | all-traces | **verified** | both upper tiers leak zero, even in use |
 | | | `js_unused_item_secret` | all-traces | **verified** | the js tier keeps the working-set bound |
 | | | `released_items_are_js` / `asserted_items_are_passkey` / `authed_items_are_plain` | all-traces | **verified** | the three tiers cannot cross |
-| | | M6 agreement/injectivity/compromise, M7 presence-gate + agreement, M9a session-expiry + `no_takeover_at_hardened_sites` | all-traces | **verified** | every tier's guarantees carry over |
+| | | M6 agreement/injectivity/compromise, including `js_release_requires_client_request` / `js_request_is_single_use`; M7 presence-gate + agreement; M9a session-expiry + `no_takeover_at_hardened_sites` | all-traces | **verified** | every tier's guarantees carry over |
 | | | `passkey_auth_reachable` / `plain_login_reachable` / `js_fill_reachable` / `js_used_item_leaks` | exists-trace | verified (traces exist) | all three tiers live; only a used js item leaks |
 | | | `session_enables_persistent_takeover` | exists-trace | verified (trace exists) | plain tier inherits M9a's self-service caveat |
 
@@ -160,7 +168,7 @@ The graph is unchanged by the corrections below: it counts *credentials that rea
 ```bash
 # needs: tamarin-prover 1.12.0+, maude 3.x, a UTF-8 locale
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
-for f in m1_indomain m2_se_alone m3_de_se m4_bool_naive m5_tr_originbound m6_ipc_handshake m7_oneshot_assertion m8_hybrid m9a_in_core_login m9b_engine_login m10_full_ladder; do
+for f in m1_indomain m2_se_alone m3_de_se m4_bool_naive m5_tr_originbound m6_ipc_handshake m7_oneshot_assertion m8_hybrid m9a_in_core_login m9b_engine_login m9c_inprocess_sandbox m9d_captcha_artifact m10_full_ladder; do
   echo "== $f =="
   tamarin-prover --prove "$f.spthy" 2>/dev/null \
     | grep -E ': (verified|falsified|analysed)'

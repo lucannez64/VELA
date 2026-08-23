@@ -264,7 +264,11 @@ fn presence_modal(palette: &Palette, prompt: host::PresencePrompt) -> gpui::AnyE
     // caption always names the action actually being approved.
     let is_sign_in = prompt.prompt.starts_with("Sign in to ");
     let heading = if prompt.title.is_empty() {
-        "Approve sign in".to_string()
+        if is_sign_in {
+            "Approve sign in".to_string()
+        } else {
+            "Confirm action".to_string()
+        }
     } else {
         prompt.title.clone()
     };

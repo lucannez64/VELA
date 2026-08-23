@@ -1056,7 +1056,7 @@ credit the existing hardening:
 | server | `vault/chunk.rs`, `vault/oram.rs` | ~~`chunk_id`/`tree_id` are unvalidated-length `String` paths~~ **FIXED** — `crate::ids::validate_id` bounds length and charset at every entry point |
 | server | ~~`share/mod.rs:48-58,491-515`~~ | ~~User enumeration via distinct 404s~~ **FIXED** — one message for every case |
 | server | `web_session/mod.rs` | ~~No exponential backoff on `/web-session/:id/token` (flat 10/min; inconsistent with `/auth/verify`)~~ **FIXED** — exponential backoff on consecutive proof failures, keyed `(ip, id)` so an onlooker cannot lock the real browser out |
-| server | `device/revoke.rs:58-77` | Microsecond revocation race (middleware checks sled sentinel, not SQL `revoked` column) |
+| server | ~~`device/revoke.rs:58-77`~~ | ~~Microsecond revocation race (middleware checks sled sentinel, not SQL `revoked` column)~~ **FIXED** — revocation writes the sled sentinel and per-JTI markers before the SQL audit row, so failure leaves the device locked out rather than marked-but-live |
 | desktop | `commands/biometric.rs:42-48` | `enroll()` always returns `WindowsHello` regardless of platform |
 | desktop | `tauri.conf.json:31` | CSP permits plaintext `http://localhost:*` from renderer |
 | desktop | ~~`tauri.conf.json:60-62`~~ | ~~`shell.open` unrestricted~~ **FIXED** — `^https?://` only |
