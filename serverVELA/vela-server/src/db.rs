@@ -217,6 +217,7 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
     let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_state TEXT", ());
     let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_started_at TIMESTAMP", ());
     let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_starter TEXT", ());
+    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_id TEXT", ());
     let _ = db.execute("ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
     let _ = db.execute("ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
     let _ = db.execute("ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER", ());

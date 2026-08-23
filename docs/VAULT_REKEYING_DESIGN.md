@@ -94,15 +94,18 @@ All endpoints require device authentication unless noted.
 | Endpoint | Effect |
 |---|---|
 | `GET /vault/epoch` *(device auth)* | `{epoch, state}` — the adoption probe |
-| `POST /vault/rekey/start` | `ACTIVE(N) → FREEZING(N+1)`. Returns `{epoch: N+1, chunks: [{chunk_id, version, lamport_clock}]}` — the inventory to re-encrypt. Rejects if already `FREEZING`. |
-| `POST /vault/rekey/capsules` | Only while `FREEZING`, only from the device that started it. Body: `{capsules: {device_id: b64}}` — RMS₂ sealed to each device's `hybrid_ek`. Stored into `devices.rms_capsule` (the existing read-and-clear relay). |
-| `POST /vault/rekey/commit` | Only while `FREEZING`, same device. Atomically: set `users.key_epoch = N+1`, clear state, delete chunk rows with `epoch < N+1`. Unfreezes writes. |
-| `POST /vault/rekey/abort` | Only while `FREEZING`, same device. Delete rows with `epoch = N+1`, back to `ACTIVE(N)`. |
+| `POST /vault/rekey/start` | `ACTIVE(N) → FREEZING(N+1)`. Returns `{epoch: N+1, rotation_id, chunks: [...]}` — the inventory and unique attempt nonce. Rejects if already `FREEZING`. |
+| `POST /vault/rekey/capsules` | Only while `FREEZING`, only from the device that started it, with matching `X-Vela-Rekey-Id`. Body: `{capsules: {device_id: b64}}` — RMS₂ sealed to each device's `hybrid_ek`. Stored into `devices.rms_capsule` (the existing read-and-clear relay). |
+| `POST /vault/rekey/commit` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Atomically: set `users.key_epoch = N+1`, clear state, delete chunk rows with `epoch < N+1`. Unfreezes writes. |
+| `POST /vault/rekey/abort` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Delete rows and capsules for the attempt, back to `ACTIVE(N)`. |
 | *(automatic)* | A `FREEZING` account older than `REKEY_TIMEOUT` (15 min) rolls back lazily: the next state-observing call for that account performs the abort. No cron. |
 
 ### Write rules (`PUT /vault/chunk/:id`, `oram` writes)
 
 - Header `X-Vela-Epoch` declares the epoch the ciphertext was sealed under.
+- Shadow writes additionally carry `X-Vela-Rekey-Id`; this prevents delayed
+  traffic from an aborted attempt being accepted by a later attempt targeting
+  the same epoch. ORAM's JSON transport carries the epoch in its request body.
 - `ACTIVE(N)`: accepts only `N`. A stale declaration gets **409
   `vault_rekeyed`** — the signal devices use to trigger adoption (§7.2).
   Missing header is tolerated as `N` while the fleet upgrades (legacy
@@ -113,7 +116,9 @@ All endpoints require device authentication unless noted.
 ### Shadow rows, not in-place rewrites
 
 Re-keyed chunks are written as NEW rows (`epoch = N+1`) alongside the old ones
-until commit. This costs temporary storage (bounded by vault size) and buys
+until commit. This costs temporary physical storage (bounded by vault size),
+but quota is evaluated against the post-commit replacement epoch rather than
+double-charging both copies. It buys
 the two properties that make crash safety boring:
 
 - **Commit is one atomic compare-and-swap** (validate completeness and flip the
@@ -218,6 +223,7 @@ ALTER TABLE users   ADD COLUMN key_epoch        INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE users   ADD COLUMN rekey_state      TEXT;                -- NULL | 'freezing'
 ALTER TABLE users   ADD COLUMN rekey_started_at TIMESTAMP;
 ALTER TABLE users   ADD COLUMN rekey_starter    TEXT;                -- device id
+ALTER TABLE users   ADD COLUMN rekey_id         TEXT;                -- attempt UUID
 
 ALTER TABLE vault_chunks ADD COLUMN epoch       INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE devices ADD COLUMN rekey_capable INTEGER NOT NULL DEFAULT 0;

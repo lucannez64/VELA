@@ -42,6 +42,10 @@ pub struct OramPathResponse {
 #[derive(Deserialize)]
 pub struct PutOramPathRequest {
     pub height: u32,
+    /// Epoch under whose RMS-derived key these buckets were sealed. Optional
+    /// only for legacy epoch-1 clients.
+    #[serde(default)]
+    pub epoch: Option<i64>,
     pub buckets: Vec<PutOramBucket>,
 }
 
@@ -169,7 +173,7 @@ pub async fn put_path(
     // ORAM paths rewrite whole buckets, so they cannot be shadowed the way
     // vault chunks can. Rather than risk a mixed-epoch tree, writes are simply
     // refused for the (bounded) freeze window; clients retry after adopting.
-    let declared: Option<i64> = None; // JSON transport carries no epoch header yet.
+    let declared = body.epoch;
     let (write_epoch, _read_epoch) =
         crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared)
             .await?;

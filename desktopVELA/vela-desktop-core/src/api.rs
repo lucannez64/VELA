@@ -340,6 +340,52 @@ impl ApiClient {
         lamport_clock: i64,
         epoch: Option<i64>,
     ) -> Result<(i64, Option<String>)> {
+        self.put_chunk_with_epoch_and_rotation(
+            token,
+            chunk_id,
+            version,
+            ciphertext,
+            lamport_clock,
+            epoch,
+            None,
+        )
+        .await
+    }
+
+    /// Upload one shadow row for a specific re-key attempt. The attempt nonce
+    /// prevents a delayed upload from an aborted rotation being accepted by a
+    /// later rotation which happens to target the same epoch.
+    pub async fn put_rekey_shadow(
+        &self,
+        token: &str,
+        chunk_id: &str,
+        ciphertext: Vec<u8>,
+        lamport_clock: i64,
+        epoch: i64,
+        rotation_id: &str,
+    ) -> Result<(i64, Option<String>)> {
+        self.put_chunk_with_epoch_and_rotation(
+            token,
+            chunk_id,
+            0,
+            ciphertext,
+            lamport_clock,
+            Some(epoch),
+            Some(rotation_id),
+        )
+        .await
+    }
+
+    async fn put_chunk_with_epoch_and_rotation(
+        &self,
+        token: &str,
+        chunk_id: &str,
+        version: i64,
+        ciphertext: Vec<u8>,
+        lamport_clock: i64,
+        epoch: Option<i64>,
+        rotation_id: Option<&str>,
+    ) -> Result<(i64, Option<String>)> {
         let resp = self
             .send_request(false, |client| {
                 let mut b = client
@@ -349,6 +395,9 @@ impl ApiClient {
                     .header("X-Lamport-Clock", format!("{}", lamport_clock));
                 if let Some(e) = epoch {
                     b = b.header("X-Vela-Epoch", format!("{}", e));
+                }
+                if let Some(id) = rotation_id {
+                    b = b.header("X-Vela-Rekey-Id", id);
                 }
                 b.body(ciphertext.clone())
             })
@@ -408,6 +457,7 @@ impl ApiClient {
         #[derive(Deserialize)]
         struct StartResponse {
             epoch: i64,
+            rotation_id: String,
             chunks: Vec<RawChunk>,
         }
         let resp = self
@@ -425,6 +475,7 @@ impl ApiClient {
         Ok((
             RekeyStart {
                 epoch: body.epoch,
+                rotation_id: body.rotation_id,
                 chunks: body
                     .chunks
                     .into_iter()
@@ -443,6 +494,7 @@ impl ApiClient {
     pub async fn rekey_store_capsules(
         &self,
         token: &str,
+        rotation_id: &str,
         capsules: &std::collections::HashMap<String, String>,
     ) -> Result<Option<String>> {
         let body = serde_json::json!({ "capsules": capsules });
@@ -451,6 +503,7 @@ impl ApiClient {
                 client
                     .post(format!("{}/vault/rekey/capsules", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
+                    .header("X-Vela-Rekey-Id", rotation_id)
                     .header("Content-Type", "application/json")
                     .body(body.to_string())
             })
@@ -464,12 +517,13 @@ impl ApiClient {
     }
 
     /// Commit the rotation (flip epoch, sweep superseded rows).
-    pub async fn rekey_commit(&self, token: &str) -> Result<Option<String>> {
+    pub async fn rekey_commit(&self, token: &str, rotation_id: &str) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
                     .post(format!("{}/vault/rekey/commit", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
+                    .header("X-Vela-Rekey-Id", rotation_id)
             })
             .await?;
         if !resp.status().is_success() {
@@ -479,12 +533,13 @@ impl ApiClient {
     }
 
     /// Abort an in-flight rotation and discard its shadow rows.
-    pub async fn rekey_abort(&self, token: &str) -> Result<Option<String>> {
+    pub async fn rekey_abort(&self, token: &str, rotation_id: &str) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
                     .post(format!("{}/vault/rekey/abort", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
+                    .header("X-Vela-Rekey-Id", rotation_id)
             })
             .await?;
         if !resp.status().is_success() {
@@ -1494,6 +1549,7 @@ pub struct DeviceInfo {
 #[derive(Debug, Clone)]
 pub struct RekeyStart {
     pub epoch: i64,
+    pub rotation_id: String,
     pub chunks: Vec<RekeyChunk>,
 }
 
@@ -1652,6 +1708,9 @@ pub struct OramPathResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PutOramPathRequest {
     pub height: u32,
+    /// Epoch under whose RMS-derived ORAM key the buckets were sealed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<i64>,
     pub buckets: Vec<PutOramBucket>,
 }
 
@@ -1843,6 +1902,7 @@ mod tests {
             .and(path("/vault/chunk/c1"))
             .and(header("If-Match", "0"))
             .and(header("X-Vela-Epoch", "2"))
+            .and(header("X-Vela-Rekey-Id", "attempt-2"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_json(serde_json::json!({ "version": 1 })),
@@ -1851,7 +1911,7 @@ mod tests {
             .await;
         let client = ApiClient::new(&server.uri());
         let (version, _) = client
-            .put_chunk_with_epoch("t", "c1", 0, vec![9u8; 4], 77, Some(2))
+            .put_rekey_shadow("t", "c1", vec![9u8; 4], 77, 2, "attempt-2")
             .await
             .unwrap();
         assert_eq!(version, 1);

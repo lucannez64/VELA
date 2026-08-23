@@ -68,6 +68,10 @@ pub struct EpochResponse {
 pub struct StartResponse {
     /// The epoch the caller must seal re-keyed chunks under.
     pub epoch: i64,
+    /// Unique nonce for this particular N -> N+1 attempt. Every mutating
+    /// request must echo it so delayed traffic from an aborted attempt cannot
+    /// be accepted by a later attempt at the same epoch.
+    pub rotation_id: String,
     pub chunks: Vec<InventoryChunk>,
 }
 
@@ -84,13 +88,14 @@ struct KeyState {
     freezing: bool,
     started_at: Option<String>,
     starter: Option<String>,
+    rotation_id: Option<String>,
 }
 
 async fn load_key_state(state: &AppState, user_id: &str) -> Result<KeyState> {
     let rows = state
         .sqldb
         .query(
-            "SELECT key_epoch, rekey_state, rekey_started_at, rekey_starter
+            "SELECT key_epoch, rekey_state, rekey_started_at, rekey_starter, rekey_id
              FROM users WHERE id = ?",
             vec![TursoValue::Text(user_id.to_string())],
         )
@@ -110,6 +115,7 @@ async fn load_key_state(state: &AppState, user_id: &str) -> Result<KeyState> {
         freezing: text(1).as_deref() == Some("freezing"),
         started_at: text(2),
         starter: text(3),
+        rotation_id: text(4),
     })
 }
 
@@ -123,6 +129,7 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
             freezing: false,
             started_at: ks.started_at.clone(),
             starter: ks.starter.clone(),
+            rotation_id: ks.rotation_id.clone(),
         });
     }
     let expired = ks
@@ -135,8 +142,8 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
         return Ok(ks.clone_state());
     }
     tracing::warn!(user_id = %user_id, "re-key timed out; rolling back to epoch {}", ks.epoch);
-    let started_at = ks.started_at.as_deref().unwrap_or_default();
-    if !rollback_rekey(state, user_id, ks.epoch, None, Some(started_at)).await? {
+    let rotation_id = ks.rotation_id.as_deref().unwrap_or_default();
+    if !rollback_rekey(state, user_id, ks.epoch, rotation_id).await? {
         // A commit or explicit abort won the transition while this request was
         // deciding the timeout. Return the state which actually won.
         return load_key_state(state, user_id).await;
@@ -146,6 +153,7 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
         freezing: false,
         started_at: None,
         starter: None,
+        rotation_id: None,
     })
 }
 
@@ -156,6 +164,7 @@ impl KeyState {
             freezing: self.freezing,
             started_at: self.started_at.clone(),
             starter: self.starter.clone(),
+            rotation_id: self.rotation_id.clone(),
         }
     }
 }
@@ -167,14 +176,8 @@ async fn rollback_rekey(
     state: &AppState,
     user_id: &str,
     epoch: i64,
-    starter: Option<&str>,
-    started_at: Option<&str>,
+    rotation_id: &str,
 ) -> Result<bool> {
-    let (condition, discriminator) = if let Some(starter) = starter {
-        ("rekey_starter = ?", starter)
-    } else {
-        ("rekey_started_at = ?", started_at.unwrap_or_default())
-    };
     // Keep the state transition and shadow cleanup on one pinned transaction.
     // Otherwise a new `start` can enter FREEZING after the UPDATE and have its
     // fresh N+1 shadows deleted by the previous abort's cleanup statement.
@@ -185,14 +188,14 @@ async fn rollback_rekey(
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let updated = tx
         .execute(
-            &format!(
-                "UPDATE users SET rekey_state = NULL, rekey_started_at = NULL, rekey_starter = NULL
-                 WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing' AND {condition}"
-            ),
+            "UPDATE users SET rekey_state = NULL, rekey_started_at = NULL,
+                    rekey_starter = NULL, rekey_id = NULL
+                 WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
+                   AND rekey_id = ?",
             vec![
                 TursoValue::Text(user_id.to_string()),
                 TursoValue::Integer(epoch),
-                TursoValue::Text(discriminator.to_string()),
+                TursoValue::Text(rotation_id.to_string()),
             ],
         )
         .await
@@ -203,6 +206,19 @@ async fn rollback_rekey(
             vec![
                 TursoValue::Text(user_id.to_string()),
                 TursoValue::Integer(epoch),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        // Capsules are attempt output too. Removing them in the same
+        // transition prevents their epoch tag from satisfying the next
+        // attempt's completeness check at the same N -> N+1 boundary.
+        tx.execute(
+            "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
+             WHERE user_id = ? AND rms_capsule_epoch = ?",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Integer(epoch + 1),
             ],
         )
         .await
@@ -263,6 +279,7 @@ pub async fn ensure_shadow_writer(
     session: &AuthSession,
     write_epoch: i64,
     read_epoch: i64,
+    rotation_id: Option<&str>,
 ) -> Result<()> {
     if write_epoch == read_epoch {
         return Ok(());
@@ -276,6 +293,7 @@ pub async fn ensure_shadow_writer(
     if !ks.freezing
         || ks.epoch + 1 != write_epoch
         || ks.starter.as_deref() != Some(session.device_id.to_string().as_str())
+        || ks.rotation_id.as_deref() != rotation_id
     {
         return Err(AppError::Forbidden(
             "only the device which started this re-key may write shadows".into(),
@@ -291,6 +309,7 @@ pub async fn record_shadow_activity(
     session: &AuthSession,
     write_epoch: i64,
     read_epoch: i64,
+    rotation_id: Option<&str>,
 ) -> Result<()> {
     if write_epoch == read_epoch {
         return Ok(());
@@ -300,12 +319,13 @@ pub async fn record_shadow_activity(
         .execute(
             "UPDATE users SET rekey_started_at = ?
              WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
-               AND rekey_starter = ?",
+               AND rekey_starter = ? AND rekey_id = ?",
             vec![
                 TursoValue::Text(Utc::now().to_rfc3339()),
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Integer(read_epoch),
                 TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(rotation_id.unwrap_or_default().to_string()),
             ],
         )
         .await
@@ -333,6 +353,19 @@ fn ensure_starter(ks: &KeyState, session: &AuthSession) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn require_rotation_id<'a>(headers: &'a HeaderMap, ks: &KeyState) -> Result<&'a str> {
+    let supplied = headers
+        .get("x-vela-rekey-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AppError::BadRequest("X-Vela-Rekey-Id header is required".into()))?;
+    if ks.rotation_id.as_deref() != Some(supplied) {
+        return Err(AppError::Conflict(
+            "this request belongs to a different re-key attempt".into(),
+        ));
+    }
+    Ok(supplied)
 }
 
 // ── GET /vault/epoch ───────────────────────────────────────────────────────────
@@ -447,14 +480,17 @@ pub async fn post_start(
         });
     }
 
+    let rotation_id = uuid::Uuid::new_v4().to_string();
     let updated = state
         .sqldb
         .execute(
-            "UPDATE users SET rekey_state = 'freezing', rekey_started_at = ?, rekey_starter = ?
+            "UPDATE users SET rekey_state = 'freezing', rekey_started_at = ?,
+                rekey_starter = ?, rekey_id = ?
              WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
             vec![
                 TursoValue::Text(Utc::now().to_rfc3339()),
                 TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(rotation_id.clone()),
                 TursoValue::Text(user_id.clone()),
                 TursoValue::Integer(ks.epoch),
             ],
@@ -481,6 +517,7 @@ pub async fn post_start(
         headers,
         Json(StartResponse {
             epoch: next,
+            rotation_id,
             chunks,
         }),
     ))
@@ -491,6 +528,7 @@ pub async fn post_start(
 pub async fn post_capsules(
     State(state): State<AppState>,
     session: DeviceSession,
+    headers: HeaderMap,
     Json(body): Json<CapsulesRequest>,
 ) -> Result<(HeaderMap, StatusCode)> {
     let user_id = session.user_id.to_string();
@@ -501,6 +539,7 @@ pub async fn post_capsules(
         return Err(AppError::Conflict("no re-key is in progress".into()));
     }
     ensure_starter(&ks, &session)?;
+    require_rotation_id(&headers, &ks)?;
     if body.capsules.len() > 64 {
         return Err(AppError::BadRequest("too many capsules".into()));
     }
@@ -516,12 +555,25 @@ pub async fn post_capsules(
             .sqldb
             .execute(
                 "UPDATE devices SET rms_capsule = ?, rms_capsule_epoch = ?
-                 WHERE id = ? AND user_id = ? AND revoked = 0",
+                 WHERE id = ? AND user_id = ? AND revoked = 0
+                   AND EXISTS (
+                     SELECT 1 FROM users
+                      WHERE users.id = devices.user_id
+                        AND users.key_epoch = ?
+                        AND users.rekey_state = 'freezing'
+                        AND users.rekey_starter = ?
+                        AND users.rekey_id = ?
+                   )",
                 vec![
                     TursoValue::Text(capsule_b64.clone()),
                     TursoValue::Integer(ks.epoch + 1),
                     TursoValue::Text(device_id.clone()),
                     TursoValue::Text(user_id.clone()),
+                    TursoValue::Integer(ks.epoch),
+                    TursoValue::Text(session.device_id.to_string()),
+                    TursoValue::Text(
+                        ks.rotation_id.as_deref().unwrap_or_default().to_string(),
+                    ),
                 ],
             )
             .await
@@ -549,6 +601,7 @@ pub async fn post_capsules(
 pub async fn post_commit(
     State(state): State<AppState>,
     session: DeviceSession,
+    headers: HeaderMap,
 ) -> Result<(HeaderMap, StatusCode)> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
@@ -558,6 +611,7 @@ pub async fn post_commit(
         return Err(AppError::Conflict("no re-key is in progress".into()));
     }
     ensure_starter(&ks, &session)?;
+    let rotation_id = require_rotation_id(&headers, &ks)?;
     let new_epoch = ks.epoch + 1;
 
     // Never make N+1 authoritative unless it contains exactly one replacement
@@ -615,9 +669,9 @@ pub async fn post_commit(
         .sqldb
         .execute(
             "UPDATE users SET key_epoch = ?, rekey_state = NULL,
-             rekey_started_at = NULL, rekey_starter = NULL
+             rekey_started_at = NULL, rekey_starter = NULL, rekey_id = NULL
          WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
-           AND rekey_starter = ?
+           AND rekey_starter = ? AND rekey_id = ?
            AND NOT EXISTS (
              SELECT 1 FROM vault_chunks old
              WHERE old.user_id = users.id AND old.epoch = ?
@@ -637,6 +691,7 @@ pub async fn post_commit(
                 TursoValue::Text(user_id.clone()),
                 TursoValue::Integer(ks.epoch),
                 TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(rotation_id.to_string()),
                 TursoValue::Integer(ks.epoch),
                 TursoValue::Integer(new_epoch),
                 TursoValue::Integer(new_epoch),
@@ -675,6 +730,7 @@ pub async fn post_commit(
 pub async fn post_abort(
     State(state): State<AppState>,
     session: DeviceSession,
+    headers: HeaderMap,
 ) -> Result<(HeaderMap, StatusCode)> {
     let user_id = session.user_id.to_string();
     rate_limit(&state, &user_id)?;
@@ -684,13 +740,13 @@ pub async fn post_abort(
         return Err(AppError::Conflict("no re-key is in progress".into()));
     }
     ensure_starter(&ks, &session)?;
+    let rotation_id = require_rotation_id(&headers, &ks)?;
 
     if !rollback_rekey(
         &state,
         &user_id,
         ks.epoch,
-        Some(&session.device_id.to_string()),
-        None,
+        rotation_id,
     )
     .await?
     {

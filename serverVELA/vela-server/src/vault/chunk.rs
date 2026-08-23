@@ -96,8 +96,6 @@ pub async fn put_chunk(
         .ok_or_else(|| AppError::BadRequest("X-Lamport-Clock header is required".into()))?;
 
     let ciphertext = body.to_vec();
-    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), body.len() as u64)
-        .await?;
     let now = Utc::now().to_rfc3339();
 
     // Which epoch this ciphertext claims to belong to. Absent header = the
@@ -108,13 +106,40 @@ pub async fn put_chunk(
         .or_else(|| headers_in.get("X-Vela-Epoch"))
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse().ok());
+    let rotation_id = headers_in
+        .get("x-vela-rekey-id")
+        .and_then(|v| v.to_str().ok());
     let (write_epoch, read_epoch) = crate::vault::rekey::resolve_write_epoch(
         &state,
         &session.user_id.to_string(),
         declared_epoch,
     )
     .await?;
-    crate::vault::rekey::ensure_shadow_writer(&state, &session, write_epoch, read_epoch).await?;
+    crate::vault::rekey::ensure_shadow_writer(
+        &state,
+        &session,
+        write_epoch,
+        read_epoch,
+        rotation_id,
+    )
+    .await?;
+    if write_epoch != read_epoch {
+        crate::vault::enforce_rekey_shadow_quota(
+            &state,
+            &session.user_id.to_string(),
+            write_epoch,
+            &id,
+            crate::db::encode_b64(&ciphertext).len() as u64,
+        )
+        .await?;
+    } else {
+        crate::vault::enforce_storage_quota(
+            &state,
+            &session.user_id.to_string(),
+            body.len() as u64,
+        )
+        .await?;
+    }
 
     if if_match == 0 {
         // Shadow writes (epoch above the served one, i.e. a rotation in
@@ -127,7 +152,7 @@ pub async fn put_chunk(
                  (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
                  SELECT ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
                  WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
-                   AND rekey_starter = ?
+                   AND rekey_starter = ? AND rekey_id = ?
                  ON CONFLICT(user_id, chunk_id, epoch) DO UPDATE SET
                      version       = version + 1,
                      lamport_clock = excluded.lamport_clock,
@@ -146,6 +171,7 @@ pub async fn put_chunk(
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Integer(read_epoch),
                     TursoValue::Text(session.device_id.to_string()),
+                    TursoValue::Text(rotation_id.unwrap_or_default().to_string()),
                 ],
             ).await.map_err(|e| AppError::Internal(e.to_string()))?;
             if written != 1 {
@@ -257,7 +283,14 @@ pub async fn put_chunk(
         .and_then(|r| r.i64(0))
         .ok_or_else(|| AppError::Internal("failed to read new version".into()))?;
 
-    crate::vault::rekey::record_shadow_activity(&state, &session, write_epoch, read_epoch).await?;
+    crate::vault::rekey::record_shadow_activity(
+        &state,
+        &session,
+        write_epoch,
+        read_epoch,
+        rotation_id,
+    )
+    .await?;
 
     let mut resp_headers = HeaderMap::new();
     maybe_append_new_token(&mut resp_headers, &session);

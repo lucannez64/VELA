@@ -1820,7 +1820,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     );
 
     // Seed one chunk at the current epoch.
-    let put = |token: &String, epoch: Option<i64>, if_match: &str| {
+    let put = |token: &String, epoch: Option<i64>, if_match: &str, rotation_id: Option<&str>| {
         let mut b = Request::builder()
             .method("PUT")
             .uri("/vault/chunk/vault-main")
@@ -1830,10 +1830,13 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         if let Some(e) = epoch {
             b = b.header("x-vela-epoch", e.to_string());
         }
+        if let Some(id) = rotation_id {
+            b = b.header("x-vela-rekey-id", id);
+        }
         b.body(Body::from(vec![1u8, 2, 3])).unwrap()
     };
 
-    let resp = app.clone().oneshot(put(&token_initiator, None, "0")).await.unwrap();
+    let resp = app.clone().oneshot(put(&token_initiator, None, "0", None)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Rotation is unavailable until every active device has positively
@@ -1875,6 +1878,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     )
     .unwrap();
     assert_eq!(body["epoch"], 2);
+    let rotation_id = body["rotation_id"].as_str().unwrap().to_string();
     assert_eq!(body["chunks"].as_array().unwrap().len(), 1);
     assert_eq!(body["chunks"][0]["chunk_id"], "vault-main");
 
@@ -1887,6 +1891,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
                 .method("POST")
                 .uri("/vault/rekey/commit")
                 .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1897,7 +1902,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     // While freezing: a stale-epoch write from the offline device is refused
     // with the dedicated code — this is the guard that keeps an old-key blob
     // out of the new vault.
-    let resp = app.clone().oneshot(put(&token_other, Some(1), "1")).await.unwrap();
+    let resp = app.clone().oneshot(put(&token_other, Some(1), "1", None)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
     let err: serde_json::Value = serde_json::from_slice(
         &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap(),
@@ -1906,7 +1911,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     assert_eq!(err["error"], "vault_rekeyed");
 
     // ...and even without an epoch header at all.
-    let resp = app.clone().oneshot(put(&token_other, None, "1")).await.unwrap();
+    let resp = app.clone().oneshot(put(&token_other, None, "1", None)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 
     let resp = app
@@ -1929,7 +1934,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     // the starter's shadow rows.
     let resp = app
         .clone()
-        .oneshot(put(&token_other, Some(2), "0"))
+        .oneshot(put(&token_other, Some(2), "0", Some(&rotation_id)))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
@@ -1942,7 +1947,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         Uuid::new_v4(),
         vela_server::auth::token::TokenScope::WebSession,
     );
-    let resp = app.clone().oneshot(put(&web, Some(2), "0")).await.unwrap();
+    let resp = app.clone().oneshot(put(&web, Some(2), "0", Some(&rotation_id))).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // The initiator's re-keyed copy lands as a shadow row at epoch 2. Replays
@@ -1961,7 +1966,12 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         .await
         .unwrap();
     for _ in 0..2 {
-        let resp = app.clone().oneshot(put(&token_initiator, Some(2), "0")).await.unwrap();
+        let resp = app.clone().oneshot(put(
+            &token_initiator,
+            Some(2),
+            "0",
+            Some(&rotation_id),
+        )).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
     let activity = state
@@ -1983,6 +1993,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
                 .method("POST")
                 .uri("/vault/rekey/commit")
                 .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1997,6 +2008,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
             Request::builder()
                 .uri("/vault/sync")
                 .header("authorization", format!("Bearer {}", token_other))
+                .header("x-vela-rekey-id", &rotation_id)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2037,6 +2049,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
                 .method("POST")
                 .uri("/vault/rekey/capsules")
                 .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
                 .header("content-type", "application/json")
                 .body(Body::from(capsules.to_string()))
                 .unwrap(),
@@ -2053,6 +2066,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
                 .method("POST")
                 .uri("/vault/rekey/commit")
                 .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2082,7 +2096,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     // old-RMS ciphertext silently labelled as epoch 2 after commit.
     let resp = app
         .clone()
-        .oneshot(put(&token_other, None, "2"))
+        .oneshot(put(&token_other, None, "2", None))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
@@ -2167,13 +2181,39 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         .header("authorization", format!("Bearer {token_initiator}"))
         .body(Body::empty())
         .unwrap();
+    let start = app.clone().oneshot(start).await.unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(start.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let rotation_id3 = start_body["rotation_id"].as_str().unwrap().to_string();
+
+    // A delayed upload from the previous N -> N+1 attempt must not be accepted
+    // by this new attempt merely because it came from the same device.
     assert_eq!(
-        app.clone().oneshot(start).await.unwrap().status(),
-        StatusCode::OK
+        app.clone()
+            .oneshot(put(
+                &token_initiator,
+                Some(3),
+                "0",
+                Some(&rotation_id),
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
     );
     assert_eq!(
         app.clone()
-            .oneshot(put(&token_initiator, Some(3), "0"))
+            .oneshot(put(
+                &token_initiator,
+                Some(3),
+                "0",
+                Some(&rotation_id3),
+            ))
             .await
             .unwrap()
             .status(),
@@ -2185,6 +2225,19 @@ async fn rekey_rotation_lifecycle_end_to_end() {
             other_device.to_string(): "Y2Fwc3VsZS0zLW90aGVy",
         }
     });
+    let stale_capsules = Request::builder()
+        .method("POST")
+        .uri("/vault/rekey/capsules")
+        .header("authorization", format!("Bearer {token_initiator}"))
+        .header("x-vela-rekey-id", &rotation_id)
+        .header("content-type", "application/json")
+        .body(Body::from(capsules3.to_string()))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(stale_capsules).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "capsules from a prior attempt must not overwrite the current attempt"
+    );
     assert_eq!(
         app.clone()
             .oneshot(
@@ -2192,6 +2245,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
                     .method("POST")
                     .uri("/vault/rekey/capsules")
                     .header("authorization", format!("Bearer {token_initiator}"))
+                    .header("x-vela-rekey-id", &rotation_id3)
                     .header("content-type", "application/json")
                     .body(Body::from(capsules3.to_string()))
                     .unwrap(),
@@ -2206,6 +2260,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
             .method("POST")
             .uri("/vault/rekey/commit")
             .header("authorization", format!("Bearer {token_initiator}"))
+            .header("x-vela-rekey-id", &rotation_id3)
             .body(Body::empty())
             .unwrap(),
     );
@@ -2214,6 +2269,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
             .method("POST")
             .uri("/vault/rekey/abort")
             .header("authorization", format!("Bearer {token_initiator}"))
+            .header("x-vela-rekey-id", &rotation_id3)
             .body(Body::empty())
             .unwrap(),
     );
@@ -2327,4 +2383,75 @@ async fn rekey_start_refuses_accounts_with_oram_buckets() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn oram_writes_declare_and_accept_post_rotation_epoch() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user = Uuid::new_v4();
+    let device = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at, key_epoch) VALUES (?, ?, 2)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO devices
+             (id, user_id, hybrid_ek, hybrid_vk, revoked, created_at)
+             VALUES (?, ?, ?, ?, 0, ?)",
+            vec![
+                TursoValue::Text(device.to_string()),
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(vec![0u8; 2624])),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+    let token = issue_token(&state, user, device);
+    let body = |epoch: Option<i64>| {
+        json!({
+            "height": 0,
+            "epoch": epoch,
+            "buckets": [{
+                "bucket_index": 1,
+                "if_match": 0,
+                "lamport_clock": 1,
+                "ciphertext": B64.encode([1u8, 2, 3]),
+            }],
+        })
+    };
+    let request = |body: serde_json::Value| {
+        Request::builder()
+            .method("PUT")
+            .uri("/vault/oram/tree/path/0")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+
+    assert_eq!(
+        app.clone().oneshot(request(body(None))).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "headerless legacy writes remain forbidden after epoch 1"
+    );
+    assert_eq!(
+        app.oneshot(request(body(Some(2)))).await.unwrap().status(),
+        StatusCode::OK,
+        "an ORAM write sealed for the active post-rotation epoch succeeds"
+    );
 }

@@ -116,6 +116,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         .map_err(|e| format!("Could not start the rotation: {e}"))?;
     accept_new_token(state, &mut token, new_token);
     let new_epoch = start.epoch;
+    let rotation_id = start.rotation_id.clone();
 
     // Everything before commit runs inside one error boundary. Once `start`
     // has frozen writes, any ordinary preparation failure must explicitly
@@ -165,15 +166,13 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
             .map_err(|e| format!("Failed to re-seal chunk {}: {e}", chunk.chunk_id))?;
 
             let (_, tok) = client
-                .put_chunk_with_epoch(
+                .put_rekey_shadow(
                     &token,
                     &chunk.chunk_id,
-                    // The N+1 shadow has no prior version; zero selects the
-                    // server's idempotent create/replay path.
-                    0,
                     sealed,
                     lamport.max(chunk.lamport_clock),
-                    Some(new_epoch),
+                    new_epoch,
+                    &rotation_id,
                 )
                 .await
                 .map_err(|e| format!("Failed to upload re-keyed chunk {}: {e}", chunk.chunk_id))?;
@@ -212,7 +211,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
             capsules.insert(device.id.to_string(), B64.encode(capsule));
         }
         if let Some(t) = client
-            .rekey_store_capsules(&token, &capsules)
+            .rekey_store_capsules(&token, &rotation_id, &capsules)
             .await
             .map_err(|e| format!("Failed to store the new-seed capsules: {e}"))?
         {
@@ -226,7 +225,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     let (new_crypto, uploaded, devices_sealed) = match preparation {
         Ok(prepared) => prepared,
         Err(preparation_err) => {
-            let abort = client.rekey_abort(&token).await;
+            let abort = client.rekey_abort(&token, &rotation_id).await;
             let mut detail = preparation_err;
             if let Err(e) = abort {
                 detail.push_str(&format!("; server abort also failed: {e}"));
@@ -238,7 +237,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     // Do not commit on behalf of a session which auto-locked while the network
     // work was running. The account is still at N, so abort is sufficient.
     if let Err(e) = state.ensure_unlocked_since(generation) {
-        let _ = client.rekey_abort(&token).await;
+        let _ = client.rekey_abort(&token, &rotation_id).await;
         return Err(e);
     }
 
@@ -247,13 +246,13 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     // N. If it dies after commit, the retryable self-capsule lets ordinary sync
     // adopt N+1. There is no state in which the only local key is ahead of a
     // server that can roll back behind it.
-    let commit_token = match client.rekey_commit(&token).await {
+    let commit_token = match client.rekey_commit(&token, &rotation_id).await {
         Ok(refreshed) => refreshed,
         Err(commit_err) => {
             // A lost response can mean commit actually won. Leave local state
             // at N either way: if abort wins it already matches; if commit won,
             // the next sync adopts the retained N+1 capsule.
-            let abort = client.rekey_abort(&token).await;
+            let abort = client.rekey_abort(&token, &rotation_id).await;
             let mut detail = format!("Failed to commit the rotation: {commit_err}");
             if let Err(e) = abort {
                 detail.push_str(&format!("; server abort failed: {e}"));
