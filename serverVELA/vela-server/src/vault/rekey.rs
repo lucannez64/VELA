@@ -707,7 +707,8 @@ pub async fn post_commit(
         .sqldb
         .execute(
             "UPDATE users SET key_epoch = ?, rekey_state = NULL,
-             rekey_started_at = NULL, rekey_starter = NULL, rekey_id = NULL
+             rekey_started_at = NULL, rekey_starter = NULL, rekey_id = NULL,
+             recovery_share = NULL, recovery_auth_hash = NULL
          WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
            AND rekey_starter = ? AND rekey_id = ?
            AND NOT EXISTS (

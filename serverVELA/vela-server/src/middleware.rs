@@ -88,18 +88,24 @@ impl FromRequestParts<AppState> for AuthSession {
         // Web-session RW tokens use session_id as device_id and carry no
         // devices row, so device-revocation alone cannot kill them when the
         // account is deleted. One indexed lookup per request closes that gap.
-        let user_exists = state
+        let user_rows = state
             .sqldb
             .query(
-                "SELECT 1 FROM users WHERE id = ?",
+                "SELECT key_epoch FROM users WHERE id = ?",
                 vec![TursoValue::Text(claims.user_id.to_string())],
             )
             .await
-            .map_err(|e| AppError::Internal(e.to_string()))?
-            .first()
-            .is_some();
-        if !user_exists {
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let Some(user_row) = user_rows.first() else {
             return Err(AppError::Unauthorized("account no longer exists".into()));
+        };
+        let current_key_epoch = user_row.i64(0).unwrap_or(1).max(1);
+        if claims.scope == TokenScope::WebSession
+            && claims.key_epoch.unwrap_or(1) != current_key_epoch
+        {
+            return Err(AppError::Unauthorized(
+                "web session expired after vault key rotation".into(),
+            ));
         }
 
         // ── 6. Token renewal (if expiry is ≤5 min away) ──────────────────────
@@ -121,11 +127,12 @@ impl FromRequestParts<AppState> for AuthSession {
                 // `issue_scoped`, not `issue`: renewing with the default scope
                 // would launder an ephemeral web-session token into a device
                 // token every 10 minutes, quietly undoing the RT-4 boundary.
-                let (refreshed, new_jti) = ts.issue_scoped(
+                let (refreshed, new_jti) = ts.issue_scoped_at_epoch(
                     claims.user_id,
                     claims.device_id,
                     Some(claims.hard_cap),
                     claims.scope,
+                    claims.key_epoch,
                 )?;
                 let _ =
                     rate_limit::track_device_jti(store, &claims.device_id.to_string(), &new_jti);

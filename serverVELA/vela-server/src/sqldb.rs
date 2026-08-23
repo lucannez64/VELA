@@ -130,6 +130,7 @@ impl TursoDb {
             "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
             "ALTER TABLE devices ADD COLUMN rekey_capable INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
         ];
         for sql in ALTERS {
             if let Err(e) = self.conn().execute(sql, ()).await {
@@ -203,22 +204,24 @@ impl TxGuard {
     /// COMMIT and release the connection back to the tx pool.
     pub async fn commit(mut self) -> anyhow::Result<()> {
         self.guard
-            .take()
+            .as_ref()
             .expect("tx guard taken while finishing")
             .execute("COMMIT", ())
             .await?;
         self.finished = true;
+        self.guard.take();
         Ok(())
     }
 
     /// ROLLBACK and release the connection back to the tx pool.
     pub async fn rollback(mut self) -> anyhow::Result<()> {
         self.guard
-            .take()
+            .as_ref()
             .expect("tx guard taken while finishing")
             .execute("ROLLBACK", ())
             .await?;
         self.finished = true;
+        self.guard.take();
         Ok(())
     }
 }
@@ -311,7 +314,8 @@ CREATE TABLE IF NOT EXISTS shared_items (
 CREATE TABLE IF NOT EXISTS web_sessions (
     id TEXT UNIQUE NOT NULL, user_id TEXT, approver_user_id TEXT, poll_secret_hash TEXT,
     ephemeral_pk TEXT NOT NULL, web_vk TEXT, link_nonce TEXT NOT NULL, mode TEXT,
-    status TEXT NOT NULL, capsule TEXT, approved_by TEXT, created_at TEXT NOT NULL,
+    status TEXT NOT NULL, capsule TEXT, approved_by TEXT, key_epoch INTEGER,
+    created_at TEXT NOT NULL,
     expires_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);

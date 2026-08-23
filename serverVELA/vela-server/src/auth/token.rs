@@ -41,6 +41,8 @@ pub struct VelaClaims {
     pub exp: DateTime<Utc>,
     pub hard_cap: DateTime<Utc>,
     pub scope: TokenScope,
+    /// Account key epoch at which an ephemeral web session was granted.
+    pub key_epoch: Option<i64>,
 }
 
 /// What kind of caller a token speaks for (red-team RT-4).
@@ -123,6 +125,20 @@ impl TokenService {
         hard_cap: Option<DateTime<Utc>>,
         scope: TokenScope,
     ) -> Result<(String, String)> {
+        self.issue_scoped_at_epoch(user_id, device_id, hard_cap, scope, None)
+    }
+
+    /// Issue a scoped token bound to the account key epoch at which its
+    /// authority was granted. Web sessions use this so RMS rotation also
+    /// retires their server-side write and delete authority.
+    pub fn issue_scoped_at_epoch(
+        &self,
+        user_id: Uuid,
+        device_id: Uuid,
+        hard_cap: Option<DateTime<Utc>>,
+        scope: TokenScope,
+        key_epoch: Option<i64>,
+    ) -> Result<(String, String)> {
         let now = Utc::now();
         let hcap = hard_cap.unwrap_or_else(|| now + Duration::seconds(HARD_CAP_SECS));
         // Never let a token outlive its session ceiling. For permanent devices the
@@ -161,6 +177,14 @@ impl TokenService {
         claims
             .add_additional("scope", serde_json::json!(scope.as_str()))
             .map_err(|e| AppError::Internal(format!("scope claim: {e:?}")))?;
+        if let Some(epoch) = key_epoch {
+            if epoch < 1 {
+                return Err(AppError::Internal("invalid key epoch for token".into()));
+            }
+            claims
+                .add_additional("key_epoch", serde_json::json!(epoch))
+                .map_err(|e| AppError::Internal(format!("key_epoch claim: {e:?}")))?;
+        }
 
         let token = public::sign(&self.sk, &claims, None, None)
             .map_err(|e| AppError::Internal(format!("PASETO sign: {e:?}")))?;
@@ -216,6 +240,10 @@ impl TokenService {
             .ok_or_else(|| AppError::Unauthorized("missing hard_cap claim".into()))?;
 
         let scope = TokenScope::from_claim(p.get_claim("scope").and_then(|v| v.as_str()));
+        let key_epoch = p
+            .get_claim("key_epoch")
+            .and_then(|v| v.as_i64())
+            .filter(|epoch| *epoch >= 1);
 
         Ok(VelaClaims {
             user_id,
@@ -224,6 +252,7 @@ impl TokenService {
             exp,
             hard_cap,
             scope,
+            key_epoch,
         })
     }
 }

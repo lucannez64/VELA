@@ -1314,25 +1314,25 @@ async fn renewing_a_web_session_token_keeps_it_a_web_session_token() {
     let session_id = Uuid::new_v4();
 
     let (web, _) = ts
-        .issue_scoped(user_id, session_id, None, TokenScope::WebSession)
+        .issue_scoped_at_epoch(user_id, session_id, None, TokenScope::WebSession, Some(7))
         .unwrap();
     let claims = ts.verify(&web).unwrap();
     assert_eq!(claims.scope, TokenScope::WebSession);
+    assert_eq!(claims.key_epoch, Some(7));
 
     // What `AuthSession::from_request_parts` does on renewal.
     let (renewed, _) = ts
-        .issue_scoped(
+        .issue_scoped_at_epoch(
             claims.user_id,
             claims.device_id,
             Some(claims.hard_cap),
             claims.scope,
+            claims.key_epoch,
         )
         .unwrap();
-    assert_eq!(
-        ts.verify(&renewed).unwrap().scope,
-        TokenScope::WebSession,
-        "renewal must not promote a web session to a device"
-    );
+    let renewed = ts.verify(&renewed).unwrap();
+    assert_eq!(renewed.scope, TokenScope::WebSession);
+    assert_eq!(renewed.key_epoch, Some(7));
 }
 
 /// A token minted before the scope claim existed reads as a device token.
@@ -1780,8 +1780,12 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     state
         .sqldb
         .execute(
-            "INSERT INTO users (id, created_at) VALUES (?, ?)",
-            vec![TursoValue::Text(user.to_string()), TursoValue::Text(now.to_rfc3339())],
+            "INSERT INTO users (id, recovery_share, created_at) VALUES (?, ?, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text("retired-share".into()),
+                TursoValue::Text(now.to_rfc3339()),
+            ],
         )
         .await
         .unwrap();
@@ -2131,6 +2135,27 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Commit retires both old recovery shares and outstanding browser grants.
+    let recovery = state
+        .sqldb
+        .query(
+            "SELECT recovery_share FROM users WHERE id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(recovery[0].get(0), None | Some(TursoValue::Null)));
+    let resp = app
+        .clone()
+        .oneshot(put(&web, Some(2), "2", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "a pre-rotation web grant must lose write authority"
+    );
 
     let resp = app
         .clone()

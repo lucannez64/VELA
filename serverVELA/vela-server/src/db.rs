@@ -171,6 +171,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             status            TEXT NOT NULL,
             capsule           TEXT,
             approved_by       TEXT,
+            key_epoch         INTEGER,
             created_at        TIMESTAMP NOT NULL,
             expires_at        TIMESTAMP
         )",
@@ -214,6 +215,7 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
         "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
         "ALTER TABLE devices ADD COLUMN rekey_capable BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
     ];
     for sql in ALTERS {
         if let Err(e) = db.execute(sql, ()) {

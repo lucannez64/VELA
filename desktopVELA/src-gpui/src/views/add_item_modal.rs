@@ -210,19 +210,25 @@ impl AddItemModal {
             },
         };
         let item = match self.kind {
-            ItemKind::Login => VaultItem::Login {
-                meta,
-                url: self.url.read(cx).as_str().to_string(),
-                username: self.username.read(cx).as_str().to_string(),
-                pass: self.password.read(cx).as_str().to_string(),
-                totp: {
+            ItemKind::Login => {
+                let totp = {
                     let t = self.totp.read(cx).as_str().to_string();
                     (!t.trim().is_empty()).then_some(t)
-                },
-                app_ids: Vec::new(),
-                credential_change_needs_reauth: Some(self.needs_reauth),
-                allow_second_factor_downgrade: Some(self.allow_downgrade),
-            },
+                };
+                // A user can enable the switch and then clear the TOTP field.
+                // Do not persist a hidden downgrade opt-in with no code.
+                let allow_downgrade = totp.is_some() && self.allow_downgrade;
+                VaultItem::Login {
+                    meta,
+                    url: self.url.read(cx).as_str().to_string(),
+                    username: self.username.read(cx).as_str().to_string(),
+                    pass: self.password.read(cx).as_str().to_string(),
+                    totp,
+                    app_ids: Vec::new(),
+                    credential_change_needs_reauth: Some(self.needs_reauth),
+                    allow_second_factor_downgrade: Some(allow_downgrade),
+                }
+            }
             ItemKind::CreditCard => VaultItem::CreditCard {
                 meta,
                 number: self.card_number.read(cx).as_str().to_string(),
