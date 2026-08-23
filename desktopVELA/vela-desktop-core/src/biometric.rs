@@ -385,6 +385,27 @@ pub mod windows_biometric {
         crate::device::tpm::is_tpm_key_available() || check_availability().enrolled
     }
 
+    pub fn has_platform_rms() -> bool {
+        if crate::device::tpm::is_tpm_key_available() {
+            return true;
+        }
+        unsafe {
+            let target = to_wide_string(CREDENTIAL_NAME);
+            let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
+            let found = CredReadW(
+                PCWSTR(target.as_ptr()),
+                CRED_TYPE_GENERIC,
+                0,
+                &mut credential,
+            )
+            .is_ok();
+            if !credential.is_null() {
+                CredFree(credential as *mut _);
+            }
+            found
+        }
+    }
+
     pub fn delete_stored_rms() -> anyhow::Result<()> {
         if crate::device::tpm::is_tpm_available() {
             let _ = crate::device::tpm::delete_tpm_key();
@@ -674,6 +695,10 @@ pub mod linux_biometric {
             || tpm::fallback::is_fallback_available()
     }
 
+    pub fn has_platform_rms() -> bool {
+        tpm::is_tpm_key_available() || secret_service_has_stored_item()
+    }
+
     pub fn delete_stored_rms() -> anyhow::Result<()> {
         let _ = tpm::delete_tpm_key();
 
@@ -746,9 +771,9 @@ pub mod linux_password {
         // replaces: those installs unlocked for anyone, silently, at launch.
         let rms = linux_biometric::retrieve_rms_from_any_source()?;
         match tpm::fallback::store_with_password(&rms, password) {
-            Ok(()) => tracing::info!(
-                "Vault key re-sealed under the master password (one-time migration)"
-            ),
+            Ok(()) => {
+                tracing::info!("Vault key re-sealed under the master password (one-time migration)")
+            }
             Err(e) => tracing::warn!(
                 "Password verification blob could not be written; \
                  the next unlock will migrate again: {}",
@@ -806,7 +831,6 @@ fn check_enrollment_inner() -> BiometricEnrollmentStatus {
         }
     }
 }
-
 
 /// macOS: Touch ID / Face ID through LocalAuthentication.
 ///
@@ -1117,15 +1141,17 @@ pub mod macos_biometric {
 }
 
 pub fn authenticate() -> BiometricAuthResult {
-    guard("authentication", authenticate_inner, || BiometricAuthResult {
-        success: false,
-        error_message: Some(
-            "Biometric authentication is unavailable on this system. Please use your master \
+    guard("authentication", authenticate_inner, || {
+        BiometricAuthResult {
+            success: false,
+            error_message: Some(
+                "Biometric authentication is unavailable on this system. Please use your master \
              password."
-                .to_string(),
-        ),
-        retry_count: None,
-        uses_password: false,
+                    .to_string(),
+            ),
+            retry_count: None,
+            uses_password: false,
+        }
     })
 }
 
@@ -1341,7 +1367,6 @@ pub mod windows_password {
         to_wide_string(s)
     }
 
-
     pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Result<()> {
         let blob = seal_rms_with_password(rms, password)?;
 
@@ -1366,6 +1391,24 @@ pub mod windows_password {
 
             CredWriteW(&cred, 0)?;
             Ok(())
+        }
+    }
+
+    pub fn has_stored_blob() -> bool {
+        unsafe {
+            let target = to_wide_string(PASSWORD_CREDENTIAL_NAME);
+            let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
+            let found = CredReadW(
+                PCWSTR(target.as_ptr()),
+                CRED_TYPE_GENERIC,
+                0,
+                &mut credential,
+            )
+            .is_ok();
+            if !credential.is_null() {
+                CredFree(credential as *mut _);
+            }
+            found
         }
     }
 
@@ -1476,6 +1519,47 @@ pub fn store_password_encrypted(rms: &[u8; 32], password: &str) -> anyhow::Resul
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         default_password::store_password_encrypted(rms, password)
+    }
+}
+
+/// Whether this installation has an RMS wrapper protected by the master
+/// password. A rotation must update this wrapper as well as the OS-backed RMS,
+/// or the next password unlock would recover the retired seed.
+pub fn has_password_encrypted_rms() -> bool {
+    #[cfg(windows)]
+    {
+        windows_password::has_stored_blob()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        crate::device::tpm::fallback::is_fallback_available()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        default_password::has_stored_blob()
+    }
+}
+
+/// Whether an RMS copy exists in an OS/device-backed store independently of
+/// the master-password wrapper. Password-only Linux/macOS installations must
+/// not be made to fail rotation merely because no such optional copy exists.
+pub fn has_platform_stored_rms() -> bool {
+    #[cfg(windows)]
+    {
+        windows_biometric::has_platform_rms()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_biometric::has_platform_rms()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::device::tpm::is_tpm_key_available()
+            || crate::device::tpm::has_unprotected_stored_rms()
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        false
     }
 }
 

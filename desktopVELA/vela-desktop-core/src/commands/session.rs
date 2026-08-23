@@ -234,6 +234,7 @@ pub fn lock_session(state: &Arc<AppState>) {
     *vault = crate::vault::VaultStore::new();
 
     biometric::clear_cached_rms();
+    state.set_rekey_password(None);
     // A standing "the user confirmed a fill" grant must not outlive the unlocked
     // session it was given during (audit D-4).
     state.clear_plaintext_release();
@@ -370,6 +371,9 @@ pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, Stri
             let mut vault_state = app_state2.vault.write();
             *vault_state = vault;
         }
+        // A biometric unlock does not prove knowledge of the master password;
+        // do not let a password cached by an earlier session survive it.
+        app_state2.set_rekey_password(None);
 
         record_audit_event(&app_state2, AuditAction::VaultUnlocked);
         note_plaintext_identity_migration(&app_state2);
@@ -463,6 +467,10 @@ pub async fn unlock_session_with_password(
             let mut vault_state = app_state2.vault.write();
             *vault_state = vault;
         }
+        // Rotation/adoption must re-wrap password-backed RMS storage before
+        // retiring the old seed. Keep the password only for this unlocked
+        // session; AppState zeroizes it on lock.
+        app_state2.set_rekey_password(Some(password));
 
         record_audit_event(&app_state2, AuditAction::VaultUnlocked);
         note_plaintext_identity_migration(&app_state2);
@@ -549,8 +557,13 @@ pub async fn create_vault(state: &Arc<AppState>) -> Result<(), String> {
 
     if server_url_configured(state) {
         if let Some(identity_keys) = state.store.load_identity_keys(&crypto).ok().flatten() {
-            match authenticate_with_server(state, &device_id, &device_name, &identity_keys.hybrid_sk)
-                .await
+            match authenticate_with_server(
+                state,
+                &device_id,
+                &device_name,
+                &identity_keys.hybrid_sk,
+            )
+            .await
             {
                 Ok((token, server_user_id)) => {
                     user_id = server_user_id.clone();
@@ -584,6 +597,7 @@ pub async fn create_vault(state: &Arc<AppState>) -> Result<(), String> {
         let mut vault_state = state.vault.write();
         *vault_state = vault;
     }
+    state.set_rekey_password(None);
     state.bump_session_generation();
 
     record_audit_event(state, AuditAction::VaultCreated);
@@ -648,8 +662,13 @@ pub async fn create_vault_with_password(
 
     if server_url_configured(state) {
         if let Some(identity_keys) = state.store.load_identity_keys(&crypto).ok().flatten() {
-            match authenticate_with_server(state, &device_id, &device_name, &identity_keys.hybrid_sk)
-                .await
+            match authenticate_with_server(
+                state,
+                &device_id,
+                &device_name,
+                &identity_keys.hybrid_sk,
+            )
+            .await
             {
                 Ok((token, server_user_id)) => {
                     user_id = server_user_id.clone();
@@ -682,6 +701,7 @@ pub async fn create_vault_with_password(
         let mut vault_state = state.vault.write();
         *vault_state = vault;
     }
+    state.set_rekey_password(Some(password));
     state.bump_session_generation();
 
     record_audit_event(state, AuditAction::VaultCreated);
@@ -762,9 +782,14 @@ pub async fn reset_vault(
                 (keys, device_id)
             };
             let device_name = get_device_name();
-            authenticate_with_server(&app_state, &device_id, &device_name, &identity_keys.hybrid_sk)
-                .await
-                .map_err(|e| format!("Server re-authentication for reset failed: {}", e))?;
+            authenticate_with_server(
+                &app_state,
+                &device_id,
+                &device_name,
+                &identity_keys.hybrid_sk,
+            )
+            .await
+            .map_err(|e| format!("Server re-authentication for reset failed: {}", e))?;
             server_verified = true;
         }
 
@@ -822,6 +847,7 @@ pub async fn reset_vault(
         *vault = crate::vault::VaultStore::new();
     }
     biometric::clear_cached_rms();
+    state.set_rekey_password(None);
     state.bump_session_generation();
 
     Ok(())
@@ -862,7 +888,11 @@ mod tests {
         assert!(!state.is_unlocked());
         assert!(state.crypto.read().is_none(), "crypto context wiped");
         assert!(!state.session.read().active, "session marked locked");
-        assert_ne!(state.session_generation(), generation, "in-flight work aborts");
+        assert_ne!(
+            state.session_generation(),
+            generation,
+            "in-flight work aborts"
+        );
 
         // Idempotent: a locked session is not re-locked on the next tick.
         assert!(!auto_lock_if_expired(&state));
@@ -952,10 +982,7 @@ mod tests {
         let err = reset_vault(&state, Some("DELETE".to_string()), None)
             .await
             .expect_err("no host registered — nobody to ask");
-        assert!(
-            err.contains("No way to ask"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("No way to ask"), "unexpected error: {err}");
         assert!(vault_file.exists(), "the vault must survive the refusal");
     }
 
@@ -993,5 +1020,18 @@ mod tests {
         state
             .confirm_with_human("test prompt")
             .expect_err("a declined confirmation refuses");
+    }
+
+    #[test]
+    fn locking_zeroizes_the_password_needed_for_rekey() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[7u8; 32]);
+        state.set_rekey_password(Some("correct horse battery staple".into()));
+        assert!(state.rekey_password().is_some());
+
+        lock_session(&state);
+
+        assert!(state.rekey_password().is_none());
     }
 }

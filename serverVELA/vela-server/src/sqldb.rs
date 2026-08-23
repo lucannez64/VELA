@@ -15,8 +15,8 @@
 //! until every call site is migrated. Sync `stoolap::params!` sites become
 //! `Vec<turso::Value>` here.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// A row buffered out of turso's streaming `Rows` into plain values.
 #[derive(Debug)]
@@ -111,6 +111,7 @@ impl TursoDb {
         };
         this.execute_batch(SCHEMA).await?;
         this.backfill_rekey_columns().await?;
+        this.execute_batch(REKEY_INDEXES).await?;
         Ok(this)
     }
 
@@ -156,7 +157,6 @@ impl TursoDb {
             finished: false,
         })
     }
-
 }
 
 /// An in-progress transaction: owns a locked turso connection and runs
@@ -168,7 +168,11 @@ pub struct TxGuard {
 }
 
 impl TxGuard {
-    pub async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>> {
+    pub async fn query(
+        &self,
+        sql: &str,
+        params: Vec<turso::Value>,
+    ) -> anyhow::Result<Vec<VelaRow>> {
         let mut stream = self.guard.query(sql, params).await?;
         let mut out = Vec::new();
         while let Some(row) = stream.next().await? {
@@ -257,20 +261,11 @@ CREATE TABLE IF NOT EXISTS vault_chunks (
     lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT, ciphertext TEXT NOT NULL,
     epoch INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch ON vault_chunks(user_id, chunk_id, epoch);
-CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
--- Re-keying (docs/VAULT_REKEYING_DESIGN.md §5): rotation shadow rows share a
--- chunk_id with the live row, so chunk uniqueness includes the epoch. Drop the
--- older two-column form wherever it still exists.
-DROP INDEX IF EXISTS idx_vault_chunks_user_chunk;
 CREATE TABLE IF NOT EXISTS oram_buckets (
     user_id TEXT NOT NULL, tree_id TEXT NOT NULL, bucket_index INTEGER NOT NULL,
     version INTEGER NOT NULL DEFAULT 1, lamport_clock INTEGER NOT NULL DEFAULT 0,
     last_writer TEXT, ciphertext TEXT NOT NULL, epoch INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-DROP INDEX IF EXISTS idx_oram_buckets_user_tree_bucket;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
-    ON oram_buckets(user_id, tree_id, bucket_index, epoch);
 CREATE TABLE IF NOT EXISTS share_inbox (
     id TEXT UNIQUE NOT NULL, sender_user_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL,
     capsule TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -286,6 +281,21 @@ CREATE TABLE IF NOT EXISTS web_sessions (
     expires_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
+";
+
+/// Index changes which depend on columns added by `backfill_rekey_columns`.
+/// Keep these out of `SCHEMA`: on an existing database `CREATE TABLE IF NOT
+/// EXISTS` does not add `epoch`, so creating these indexes before the ALTERs
+/// would make startup fail before the migration could run.
+const REKEY_INDEXES: &str = "\
+DROP INDEX IF EXISTS idx_vault_chunks_user_chunk;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
+    ON vault_chunks(user_id, chunk_id, epoch);
+CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
+    ON vault_chunks(user_id, epoch);
+DROP INDEX IF EXISTS idx_oram_buckets_user_tree_bucket;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
+    ON oram_buckets(user_id, tree_id, bucket_index, epoch);
 ";
 
 #[cfg(test)]
@@ -356,6 +366,76 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(u, 1);
+    }
+
+    #[tokio::test]
+    async fn opens_and_upgrades_a_pre_rekey_database() {
+        let path = temp_path();
+        let _ = std::fs::remove_file(&path);
+
+        // Build the relevant part of the pre-rekey schema without going
+        // through TursoDb::open, then prove open performs the ALTERs before
+        // creating the new epoch-dependent indexes.
+        let raw = turso::Builder::new_local(&path).build().await.unwrap();
+        let conn = raw.connect().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (
+                 id TEXT UNIQUE NOT NULL, recovery_share TEXT,
+                 recovery_auth_hash TEXT, created_at TEXT NOT NULL,
+                 recovery_webauthn_credential TEXT, share_ek TEXT,
+                 recovery_webauthn_cred_id TEXT);
+             CREATE TABLE devices (
+                 id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
+                 device_name TEXT NOT NULL DEFAULT 'Desktop Device',
+                 device_type TEXT NOT NULL DEFAULT 'desktop', last_active TEXT,
+                 hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL,
+                 enrolled_by TEXT, rms_capsule TEXT,
+                 revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT,
+                 revoked_by TEXT, created_at TEXT NOT NULL);
+             CREATE TABLE vault_chunks (
+                 chunk_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                 version INTEGER NOT NULL DEFAULT 1,
+                 lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT,
+                 ciphertext TEXT NOT NULL, created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL);
+             CREATE UNIQUE INDEX idx_vault_chunks_user_chunk
+                 ON vault_chunks(user_id, chunk_id);
+             CREATE TABLE oram_buckets (
+                 user_id TEXT NOT NULL, tree_id TEXT NOT NULL,
+                 bucket_index INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+                 lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT,
+                 ciphertext TEXT NOT NULL, created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL);
+             CREATE UNIQUE INDEX idx_oram_buckets_user_tree_bucket
+                 ON oram_buckets(user_id, tree_id, bucket_index);",
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        drop(raw);
+
+        let db = TursoDb::open(&path, 1).await.unwrap();
+        db.query("SELECT epoch FROM vault_chunks LIMIT 0", vec![])
+            .await
+            .unwrap();
+        db.query("SELECT epoch FROM oram_buckets LIMIT 0", vec![])
+            .await
+            .unwrap();
+        db.query("SELECT key_epoch FROM users LIMIT 0", vec![])
+            .await
+            .unwrap();
+
+        let indexes = db
+            .query(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+                vec![turso::Value::Text(
+                    "idx_vault_chunks_user_chunk_epoch".into(),
+                )],
+            )
+            .await
+            .unwrap();
+        assert_eq!(indexes.len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

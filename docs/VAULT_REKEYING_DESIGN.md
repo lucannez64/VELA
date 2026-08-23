@@ -143,15 +143,17 @@ Preconditions: unlocked session, full vault locally (or fetched first).
    `open_epoch_chunk`'s fallback), re-seal with `seal_epoch_chunk(.., N+1, ..)`,
    upload with `X-Vela-Epoch: N+1`. Sequential, bounded memory; resumable by
    simply restarting (server-side shadows make replays idempotent upserts).
-5. Local store migration: `rekey_blob` across `vault.enc`, `audit.enc`,
-   `identity_keys.enc`, `shares.enc` (write-temp-rename semantics, same as
-   every store save). Then swap the in-memory `Crypto` context to `RMS₂`.
-6. Capsule fan-out: `GET /devices`, `seal_rms_to_device(hybrid_ekᵢ, RMS₂)`
+5. Capsule fan-out: `GET /devices`, `seal_rms_to_device(hybrid_ekᵢ, RMS₂)`
    for every non-revoked device including itself, `POST /vault/rekey/capsules`.
-   From here on the initiator is crash-safe: even if it dies before commit,
-   any device that pulled its capsule can complete the flow (§7.3), and the
-   timeout rollback still protects a nobody-completed account.
-7. `POST /vault/rekey/commit`.
+6. `POST /vault/rekey/commit` **while the initiator still holds RMS₁
+   locally**. A crash before this call leaves both sides at N and timeout aborts
+   the shadows. A crash after it leaves the server at N+1 and the retryable
+   self-capsule lets normal sync adopt.
+7. Local store migration: `rekey_blob` across `vault.enc`, `audit.enc`,
+   `identity_keys.enc`, `shares.enc` (write-temp-rename semantics, same as
+   every store save). Re-wrap both the OS-backed RMS and any independent
+   master-password RMS, persist the local epoch, then swap the in-memory
+   `Crypto` context. Only then acknowledge/clear the self-capsule.
 8. Recovery-share rotation: `rekey_recovery_shares(RMS₂, t, n)`, verify with
    `shares_reconstruct_to(.., RMS₂)` **before** overwriting the cloud backup
    (overwriting first would turn a bug into unrecoverability), upload over the
@@ -190,9 +192,10 @@ feature). Hence rule §5: stale-epoch writes are refused, not stored.
 
 - A push that races the snapshot window is refused by the freeze (§5) and
   retried after adoption — the §7.2 path.
-- If the initiator crashes between `start` and `commit`: whoever holds a
-  capsule (any device that adopted early) may drive `capsules` + `commit`
-  home; otherwise the timeout rolls the account back to `ACTIVE(N)` cleanly.
+- If the initiator crashes between `start` and `commit`, it still holds RMS₁
+  locally and timeout rolls the account back to `ACTIVE(N)` cleanly. If it
+  crashes after commit but before local migration, its retained self-capsule
+  drives the ordinary adoption path on the next sync.
 - Belt-and-braces: even if a bug landed an old-epoch blob despite both guards,
   `open_epoch_chunk` refuses it (wrong epoch ≠ legacy), and the authoring
   device still holds the item — re-fetch/re-push recovers.

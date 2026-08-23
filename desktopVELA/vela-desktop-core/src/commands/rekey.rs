@@ -10,16 +10,14 @@
 //! Crash-safety comes from ordering, not from journalling here:
 //!
 //! 1. shadow uploads are idempotent (server-side upsert), so restart replays;
-//! 2. capsules are stored *before* local migration, so from that point on any
-//!    device — this one, on its next unlock+sync — can complete adoption even
-//!    if this process dies;
-//! 3. if nothing completes within the server's timeout, the rotation rolls
-//!    back cleanly and can be retried.
+//! 2. capsules are stored before commit, including a retryable self-capsule;
+//! 3. the server commits while the initiator still retains its old local RMS.
+//!    A pre-commit crash therefore rolls back cleanly; a post-commit crash is
+//!    ordinary capsule adoption on the next sync.
 //!
-//! Before commit, the new RMS is persisted through the platform credential
-//! store and the local epoch marker is updated. A failed persistence or commit
-//! restores the old files, old RMS and old epoch, then aborts the server-side
-//! rotation, so a restart never lands between two keys.
+//! After commit, local files, platform storage, any master-password wrapper,
+//! and the epoch marker move together. A failed local migration restores the
+//! old state and leaves the capsule available for retry.
 
 use std::sync::Arc;
 
@@ -40,10 +38,7 @@ pub struct RotateSummary {
 
 fn accept_new_token(state: &AppState, token: &mut String, refreshed: Option<String>) {
     if let Some(refreshed) = refreshed {
-        state
-            .session
-            .write()
-            .set_server_token(refreshed.clone());
+        state.session.write().set_server_token(refreshed.clone());
         *token = refreshed;
     }
 }
@@ -51,6 +46,7 @@ fn accept_new_token(state: &AppState, token: &mut String, refreshed: Option<Stri
 /// Rotate the account's Root Master Seed.
 pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, String> {
     super::vault::require_unlocked(state)?;
+    let generation = state.session_generation();
     // Rotation and sync both rewrite the local secret store and touch the same
     // server chunks. Serialize them so neither can observe half-migrated files.
     let _sync_guard = state.sync_mutex.lock().await;
@@ -89,6 +85,17 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         .map_err(|e| format!("Could not register this device's re-key capability: {e}"))?;
     accept_new_token(state, &mut token, refreshed);
 
+    // Capture the current RMS and, for password-backed vaults, prove this
+    // session was unlocked with that password before freezing the account.
+    // The password wrapper is an independent persistence path and must move
+    // with the platform RMS or password unlock would recover the retired key.
+    let old_crypto_snapshot = {
+        let crypto = state.crypto.read();
+        let rms = crypto.as_ref().ok_or("Vault is locked")?.rms();
+        crate::crypto::Crypto::new(&rms)
+    };
+    let rekey_password = crate::sync::password_for_rekey(state, &old_crypto_snapshot.rms())?;
+
     // 0. Probe: refuse politely when another rotation is already running.
     let (current_epoch, rotation_state, new_token) = client
         .get_key_epoch(&token)
@@ -111,13 +118,9 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     let new_epoch = start.epoch;
 
     // 2. Fresh seed, locally generated.
-    let old_crypto_snapshot = {
-        let crypto = state.crypto.read();
-        let rms = crypto.as_ref().ok_or("Vault is locked")?.rms();
-        crate::crypto::Crypto::new(&rms)
-    };
-    let new_rms = vela_crypto::rekey::rotate()
-        .map_err(|e| format!("Failed to generate a new seed: {e}"))?;
+    let new_rms = zeroize::Zeroizing::new(
+        vela_crypto::rekey::rotate().map_err(|e| format!("Failed to generate a new seed: {e}"))?,
+    );
     let new_crypto = crate::crypto::Crypto::new(&new_rms);
     // `new_rms` is zeroized when this scope ends; the Crypto owns the value.
 
@@ -126,10 +129,11 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     let mut uploaded = 0usize;
     for chunk in &start.chunks {
         let key_old = old_crypto_snapshot.chunk_key(chunk.chunk_id.as_bytes());
-        let (ciphertext, version, lamport, tok) = client
-            .get_chunk(&token, &chunk.chunk_id)
-            .await
-            .map_err(|e| format!("Failed to download chunk {}: {e}", chunk.chunk_id))?;
+        let (ciphertext, version, lamport, tok) =
+            client
+                .get_chunk(&token, &chunk.chunk_id)
+                .await
+                .map_err(|e| format!("Failed to download chunk {}: {e}", chunk.chunk_id))?;
         if let Some(t) = tok {
             accept_new_token(state, &mut token, Some(t));
         }
@@ -140,7 +144,12 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
             &chunk.chunk_id,
             lamport,
         )
-        .map_err(|e| format!("Chunk {} cannot be decrypted under the current key: {e}", chunk.chunk_id))?;
+        .map_err(|e| {
+            format!(
+                "Chunk {} cannot be decrypted under the current key: {e}",
+                chunk.chunk_id
+            )
+        })?;
         let _ = version;
 
         let key_new = new_crypto.chunk_key(chunk.chunk_id.as_bytes());
@@ -199,9 +208,8 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         let ek = B64
             .decode(ek_b64)
             .map_err(|e| format!("Device {} has a malformed KEM key: {e}", device.id))?;
-        let capsule =
-            crate::crypto::seal_rms_to_device(&ek, &new_crypto.rms())
-                .map_err(|e| format!("Failed to seal the new seed for {}: {e}", device.id))?;
+        let capsule = crate::crypto::seal_rms_to_device(&ek, &new_crypto.rms())
+            .map_err(|e| format!("Failed to seal the new seed for {}: {e}", device.id))?;
         capsules.insert(device.id.to_string(), B64.encode(capsule));
     }
     if let Some(t) = client
@@ -212,89 +220,26 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         accept_new_token(state, &mut token, Some(t));
     }
 
-    // 5. Local migration: rewrite every RMS-derived file under the new seed,
-    //    then swap the live crypto context.
-    state
-        .store
-        .rekey_secret_files(&old_crypto_snapshot, &new_crypto)
-        .map_err(|e| format!("Failed to migrate the local vault files: {e}"))?;
-
-    // The new seed must survive a restart before the server is allowed to make
-    // the new epoch authoritative. If platform persistence fails, restore the
-    // files immediately while both seeds are still in memory.
-    if let Err(persist_err) = crate::biometric::store_rms(&new_rms) {
-        let rollback = state
-            .store
-            .rekey_secret_files(&new_crypto, &old_crypto_snapshot);
+    // Do not commit on behalf of a session which auto-locked while the network
+    // work was running. The account is still at N, so abort is sufficient.
+    if let Err(e) = state.ensure_unlocked_since(generation) {
         let _ = client.rekey_abort(&token).await;
-        return Err(match rollback {
-            Ok(()) => format!("Failed to persist the rotated vault key: {persist_err}"),
-            Err(e) => format!(
-                "Failed to persist the rotated vault key: {persist_err}; local rollback failed: {e}"
-            ),
-        });
-    }
-    {
-        let mut crypto = state.crypto.write();
-        *crypto = Some(new_crypto);
+        return Err(e);
     }
 
-    if let Err(epoch_err) = crate::sync::set_local_key_epoch(state, new_epoch) {
-        let current_crypto = {
-            let current = state.crypto.read();
-            current
-                .as_ref()
-                .map(|current| crate::crypto::Crypto::new(&current.rms()))
-        };
-        let file_rollback = current_crypto.as_ref().map(|current| {
-            state
-                .store
-                .rekey_secret_files(current, &old_crypto_snapshot)
-        });
-        let rms_rollback = crate::biometric::store_rms(&old_crypto_snapshot.rms());
-        *state.crypto.write() = Some(crate::crypto::Crypto::new(&old_crypto_snapshot.rms()));
-        let _ = client.rekey_abort(&token).await;
-        let mut detail = format!("Failed to persist the new key epoch: {epoch_err}");
-        if let Some(Err(e)) = file_rollback {
-            detail.push_str(&format!("; local file rollback failed: {e}"));
-        }
-        if let Err(e) = rms_rollback {
-            detail.push_str(&format!("; platform RMS rollback failed: {e}"));
-        }
-        return Err(detail);
-    }
-
-    // 6. Commit: flip the account epoch, sweep superseded rows, unfreeze.
+    // 5. Commit while this device still retains RMS1 locally. If the process
+    // dies before this call, timeout rollback leaves both server and client at
+    // N. If it dies after commit, the retryable self-capsule lets ordinary sync
+    // adopt N+1. There is no state in which the only local key is ahead of a
+    // server that can roll back behind it.
     let commit_token = match client.rekey_commit(&token).await {
         Ok(refreshed) => refreshed,
         Err(commit_err) => {
-            // Until commit succeeds the old epoch remains authoritative. Put
-            // local state back, then abort rather than waiting for timeout.
-            let rollback_crypto = crate::crypto::Crypto::new(&old_crypto_snapshot.rms());
-            let current_crypto = {
-                let current = state.crypto.read();
-                current
-                    .as_ref()
-                    .map(|current| crate::crypto::Crypto::new(&current.rms()))
-            };
-            let current_crypto = current_crypto.ok_or("Vault locked during rotation rollback")?;
-            let file_rollback = state
-                .store
-                .rekey_secret_files(&current_crypto, &rollback_crypto);
-            let rms_rollback = crate::biometric::store_rms(&old_crypto_snapshot.rms());
-            *state.crypto.write() = Some(rollback_crypto);
-            let epoch_rollback = crate::sync::set_local_key_epoch(state, current_epoch);
+            // A lost response can mean commit actually won. Leave local state
+            // at N either way: if abort wins it already matches; if commit won,
+            // the next sync adopts the retained N+1 capsule.
             let abort = client.rekey_abort(&token).await;
             let mut detail = format!("Failed to commit the rotation: {commit_err}");
-            if let Err(e) = file_rollback {
-                detail.push_str(&format!("; local file rollback failed: {e}"));
-            }
-            if let Err(e) = rms_rollback {
-                detail.push_str(&format!("; platform RMS rollback failed: {e}"));
-            }
-            if let Err(e) = epoch_rollback {
-                detail.push_str(&format!("; local epoch rollback failed: {e}"));
-            }
             if let Err(e) = abort {
                 detail.push_str(&format!("; server abort failed: {e}"));
             }
@@ -302,6 +247,37 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         }
     };
     accept_new_token(state, &mut token, commit_token);
+
+    // 6. Now adopt locally using the same all-or-old migration as every other
+    // device. Failure is recoverable: the server is already authoritative at
+    // N+1 and retains this device's capsule until a later sync succeeds.
+    state.ensure_unlocked_since(generation).map_err(|e| {
+        format!(
+            "The server committed epoch {new_epoch}, but this device locked before local adoption: {e}. Unlock and sync to adopt from its retained capsule."
+        )
+    })?;
+    crate::sync::migrate_local_rms(
+        state,
+        &old_crypto_snapshot,
+        new_crypto,
+        new_epoch,
+        rekey_password.as_ref().map(|p| p.as_str()),
+    )
+    .map_err(|e| {
+        format!(
+            "The server committed epoch {new_epoch}, but this device could not adopt it: {e}. Lock, unlock, and sync to retry from its retained capsule."
+        )
+    })?;
+
+    // The initiator's capsule has served its crash-recovery purpose. Clear it
+    // only after files, every RMS wrapper, and the local epoch are durable.
+    match client.acknowledge_rekey_capsule(&token, new_epoch).await {
+        Ok(Some(refreshed)) => accept_new_token(state, &mut token, Some(refreshed)),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!("Re-key committed locally, but self-capsule acknowledgement failed: {e}")
+        }
+    }
 
     // 7. Recovery shares of the OLD seed are worthless by construction — they
     //    reconstruct only the retired value. Minting fresh shares of the new
