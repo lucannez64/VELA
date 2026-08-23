@@ -33,17 +33,9 @@ pub fn require_unlocked(state: &AppState) -> Result<(), String> {
 }
 
 fn save_vault(state: &AppState) -> Result<(), String> {
-    let vault = state.vault.read();
-    let crypto = state.crypto.read();
-
-    if let Some(crypto) = crypto.as_ref() {
-        state
-            .store
-            .save_vault(&vault, crypto)
-            .map_err(|e| format!("Failed to save vault: {}", e))?;
-    }
-
-    Ok(())
+    state
+        .persist_current_vault()
+        .map_err(|e| format!("Failed to save vault: {e}"))
 }
 
 pub async fn add_item(state: &Arc<AppState>, item: VaultItem) -> Result<VaultItem, String> {

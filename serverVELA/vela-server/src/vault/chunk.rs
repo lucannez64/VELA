@@ -14,6 +14,33 @@ use crate::{
     state::AppState,
 };
 
+fn parse_declared_epoch(headers: &HeaderMap) -> Result<Option<i64>> {
+    let Some(raw) = headers.get("x-vela-epoch") else {
+        return Ok(None);
+    };
+    let raw = raw
+        .to_str()
+        .map_err(|_| AppError::BadRequest("X-Vela-Epoch must be an integer".into()))?;
+    raw.parse::<i64>()
+        .map(Some)
+        .map_err(|_| AppError::BadRequest("X-Vela-Epoch must be an integer".into()))
+}
+
+async fn ensure_write_state_unchanged(
+    state: &AppState,
+    user_id: &str,
+    declared_epoch: Option<i64>,
+    expected: (i64, i64),
+) -> Result<()> {
+    let current = crate::vault::rekey::resolve_write_epoch(state, user_id, declared_epoch).await?;
+    if current != expected {
+        return Err(AppError::Rekeyed(
+            "vault epoch changed before the write completed".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn get_chunk(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -101,11 +128,7 @@ pub async fn put_chunk(
     // Which epoch this ciphertext claims to belong to. Absent header = the
     // current epoch (legacy-client tolerance, docs/VAULT_REKEYING_DESIGN.md §5);
     // anything else is resolved — or refused — by the re-key guard.
-    let declared_epoch: Option<i64> = headers_in
-        .get("x-vela-epoch")
-        .or_else(|| headers_in.get("X-Vela-Epoch"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok());
+    let declared_epoch = parse_declared_epoch(&headers_in)?;
     let rotation_id = headers_in
         .get("x-vela-rekey-id")
         .and_then(|v| v.to_str().ok());
@@ -273,6 +296,13 @@ pub async fn put_chunk(
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
         if n == 0 {
+            ensure_write_state_unchanged(
+                &state,
+                &session.user_id.to_string(),
+                declared_epoch,
+                (write_epoch, read_epoch),
+            )
+            .await?;
             return Err(AppError::Conflict(
                 "version mismatch — re-sync before retrying".into(),
             ));
@@ -331,11 +361,7 @@ pub async fn delete_chunk(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
-    let declared_epoch: Option<i64> = headers_in
-        .get("x-vela-epoch")
-        .or_else(|| headers_in.get("X-Vela-Epoch"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok());
+    let declared_epoch = parse_declared_epoch(&headers_in)?;
     let (write_epoch, read_epoch) = crate::vault::rekey::resolve_write_epoch(
         &state,
         &session.user_id.to_string(),

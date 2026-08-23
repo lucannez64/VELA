@@ -1839,6 +1839,24 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     let resp = app.clone().oneshot(put(&token_initiator, None, "0", None)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
+    // A malformed declaration must not silently become legacy/headerless.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/vault/chunk/bad-epoch")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .header("if-match", "0")
+                .header("x-lamport-clock", "1")
+                .header("x-vela-epoch", "not-an-integer")
+                .body(Body::from(vec![1u8]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
     // Rotation is unavailable until every active device has positively
     // attested that it retained its capsule private key.
     let resp = app
@@ -2057,6 +2075,7 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap(),
     )
     .unwrap();
+    assert_eq!(manifest["epoch"], 1);
     assert_eq!(manifest["chunks"].as_array().unwrap().len(), 1);
 
     // Capsules: only the starter may store them, and only for real devices.
@@ -2130,6 +2149,24 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     .unwrap();
     assert_eq!(body["epoch"], 2);
     assert_eq!(body["state"], "active");
+
+    // A commit response may be lost after the CAS succeeds. Replaying with
+    // the target epoch must report success rather than an ambiguous conflict.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/commit")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .header("x-vela-rekey-id", &rotation_id)
+                .header("x-vela-epoch", "2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     // A legacy/offline client that omits X-Vela-Epoch must not have its
     // old-RMS ciphertext silently labelled as epoch 2 after commit.

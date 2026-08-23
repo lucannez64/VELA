@@ -1,8 +1,7 @@
 # Vault Re-keying Design — RMS rotation ("rotate keys")
 
-Status: **design + crypto primitive shipped** (`libVELA/vela-crypto/src/rekey.rs`);
-server endpoints and desktop orchestration specified here, implemented per the
-rollout order in §10.
+Status: **crypto, server, and desktop orchestration shipped**; the remaining
+platform follow-ups are tracked in §10.
 
 Companion to `EPHEMERAL_WEB_ACCESS_DESIGN.md` §9 (which deferred this feature),
 `SECURITY_AUDIT.md` S-1/D-2 residual, and `SPEC.md`.
@@ -96,7 +95,7 @@ All endpoints require device authentication unless noted.
 | `GET /vault/epoch` *(device auth)* | `{epoch, state}` — the adoption probe |
 | `POST /vault/rekey/start` | `ACTIVE(N) → FREEZING(N+1)`. Returns `{epoch: N+1, rotation_id, chunks: [...]}` — the inventory and unique attempt nonce. Rejects if already `FREEZING`. |
 | `POST /vault/rekey/capsules` | Only while `FREEZING`, only from the device that started it, with matching `X-Vela-Rekey-Id`. Body: `{capsules: {device_id: b64}}` — RMS₂ sealed to each device's `hybrid_ek`. Stored into `devices.rms_capsule` (the existing read-and-clear relay). |
-| `POST /vault/rekey/commit` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Atomically: set `users.key_epoch = N+1`, clear state, delete chunk rows with `epoch < N+1`. Unfreezes writes. A replay after a lost commit response carries the target epoch in `X-Vela-Epoch` and is answered with success when the account already sits at that epoch — so crash recovery never has to guess between "committed" and "failed". |
+| `POST /vault/rekey/commit` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Atomically validate completeness, set `users.key_epoch = N+1`, and clear state; then best-effort delete chunk rows with `epoch < N+1`. Unfreezes writes. A replay after a lost commit response carries the target epoch in `X-Vela-Epoch` and is answered with success when the account already sits at that epoch — so crash recovery never has to guess between "committed" and "failed". |
 | `POST /vault/rekey/abort` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Delete rows and capsules for the attempt, back to `ACTIVE(N)`. |
 | *(automatic)* | A `FREEZING` account older than `REKEY_TIMEOUT` (15 min) rolls back lazily: the next state-observing call for that account performs the abort. No cron. |
 

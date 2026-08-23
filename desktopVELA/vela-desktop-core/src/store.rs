@@ -130,6 +130,26 @@ impl Store {
     /// skipped; a corrupt one is an error, because silently leaving a file on
     /// the old key would strand it after the rotation completes.
     pub fn rekey_secret_files(&self, old: &Crypto, new: &Crypto) -> anyhow::Result<()> {
+        self.rekey_secret_files_inner(old, new, false)
+    }
+
+    /// Resume an already-journaled migration during unlock. Corruption in
+    /// non-authority caches must not permanently prevent access to the vault;
+    /// quarantine those files while keeping vault and identity corruption fatal.
+    pub(crate) fn recover_rekey_secret_files(
+        &self,
+        old: &Crypto,
+        new: &Crypto,
+    ) -> anyhow::Result<()> {
+        self.rekey_secret_files_inner(old, new, true)
+    }
+
+    fn rekey_secret_files_inner(
+        &self,
+        old: &Crypto,
+        new: &Crypto,
+        quarantine_non_authority: bool,
+    ) -> anyhow::Result<()> {
         use vela_crypto::rekey;
 
         // Held in `Zeroizing` so the retired seed does not linger in a plain
@@ -137,6 +157,7 @@ impl Store {
         let old_rms = zeroize::Zeroizing::new(old.rms());
         let new_rms = zeroize::Zeroizing::new(new.rms());
         let mut rewrites: Vec<(PathBuf, Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut quarantines = Vec::new();
 
         // These files all use the vault envelope. Build every replacement
         // before touching disk so a corrupt late file cannot leave an earlier
@@ -161,9 +182,19 @@ impl Store {
             if new.decrypt_vault(&ct).is_ok() {
                 continue;
             }
-            let rekeyed =
-                rekey::rekey_blob(&old_rms, &new_rms, kdf::contexts::VAULT_ENCRYPTION, &ct)?;
-            rewrites.push((path, ct, rekeyed));
+            match rekey::rekey_blob(&old_rms, &new_rms, kdf::contexts::VAULT_ENCRYPTION, &ct) {
+                Ok(rekeyed) => rewrites.push((path, ct, rekeyed)),
+                Err(_)
+                    if quarantine_non_authority
+                        && matches!(
+                            file,
+                            "audit.enc" | "sync_conflicts.enc" | "recovery_setup.enc"
+                        ) =>
+                {
+                    quarantines.push(path)
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
 
         // identity_keys.enc has its own derivation context off the identity key.
@@ -173,15 +204,32 @@ impl Store {
             let old_key = Self::derive_identity_file_key(old);
             let new_key = Self::derive_identity_file_key(new);
             if crate::crypto::Crypto::decrypt_with_key(new_key.as_bytes(), &ct).is_err() {
-                let plaintext =
-                    crate::crypto::Crypto::decrypt_with_key(old_key.as_bytes(), &ct)?;
-                let rekeyed = crate::crypto::Crypto::encrypt_with_key(new_key.as_bytes(), &plaintext)?;
+                let plaintext = crate::crypto::Crypto::decrypt_with_key(old_key.as_bytes(), &ct)?;
+                let rekeyed =
+                    crate::crypto::Crypto::encrypt_with_key(new_key.as_bytes(), &plaintext)?;
                 drop(plaintext);
                 rewrites.push((identity_path, ct, rekeyed));
             }
         }
 
-        self.apply_rekey_rewrites(rewrites)
+        self.apply_rekey_rewrites(rewrites)?;
+        for path in quarantines {
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("secret-file");
+            let quarantine = path.with_file_name(format!(
+                "{file_name}.corrupt-{}",
+                chrono::Utc::now().timestamp_millis()
+            ));
+            fs::rename(&path, &quarantine)?;
+            tracing::warn!(
+                path = %path.display(),
+                quarantine = %quarantine.display(),
+                "quarantined corrupt non-authority file during RMS migration recovery"
+            );
+        }
+        Ok(())
     }
 
     fn apply_rekey_rewrites(
@@ -1072,6 +1120,46 @@ mod tests {
 
         store.finish_rms_migration().unwrap();
         assert!(store.load_rms_migration(&new_rms).unwrap().is_none());
+    }
+
+    #[test]
+    fn migration_recovery_quarantines_non_authority_corruption() {
+        let (_dir, store) = test_store();
+        let old = Crypto::new(&[3u8; 32]);
+        let new = Crypto::new(&[4u8; 32]);
+        write_secret_file(
+            &store.store_path().join(VAULT_FILE),
+            &old.encrypt_vault(b"vault").unwrap(),
+        )
+        .unwrap();
+        write_secret_file(&store.store_path().join("audit.enc"), b"truncated").unwrap();
+
+        store.recover_rekey_secret_files(&old, &new).unwrap();
+
+        let vault = fs::read(store.store_path().join(VAULT_FILE)).unwrap();
+        assert_eq!(new.decrypt_vault(&vault).unwrap().as_slice(), b"vault");
+        assert!(!store.store_path().join("audit.enc").exists());
+        assert!(fs::read_dir(store.store_path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("audit.enc.corrupt-")
+        }));
+    }
+
+    #[test]
+    fn migration_recovery_keeps_authority_corruption_fatal() {
+        let (_dir, store) = test_store();
+        let old = Crypto::new(&[3u8; 32]);
+        let new = Crypto::new(&[4u8; 32]);
+        write_secret_file(&store.store_path().join(VAULT_FILE), b"truncated").unwrap();
+
+        assert!(store.recover_rekey_secret_files(&old, &new).is_err());
+        assert_eq!(
+            fs::read(store.store_path().join(VAULT_FILE)).unwrap(),
+            b"truncated"
+        );
     }
 
     #[test]

@@ -89,11 +89,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         (),
     )?;
     db.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
-         ON vault_chunks(user_id, chunk_id, epoch)",
-        (),
-    )?;
-    db.execute(
         "CREATE TABLE IF NOT EXISTS share_inbox (
             id                TEXT UNIQUE NOT NULL,
             sender_user_id    TEXT NOT NULL,
@@ -209,18 +204,25 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
 /// has the columns from `CREATE TABLE` (the `let _ =` absorbs the duplicate-
 /// column error), an upgraded one gets them here.
 fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
-    let _ = db.execute("ALTER TABLE users ADD COLUMN key_epoch INTEGER NOT NULL DEFAULT 1", ());
-    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_state TEXT", ());
-    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_started_at TIMESTAMP", ());
-    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_starter TEXT", ());
-    let _ = db.execute("ALTER TABLE users ADD COLUMN rekey_id TEXT", ());
-    let _ = db.execute("ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
-    let _ = db.execute("ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1", ());
-    let _ = db.execute("ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER", ());
-    let _ = db.execute(
+    const ALTERS: &[&str] = &[
+        "ALTER TABLE users ADD COLUMN key_epoch INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN rekey_state TEXT",
+        "ALTER TABLE users ADD COLUMN rekey_started_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN rekey_starter TEXT",
+        "ALTER TABLE users ADD COLUMN rekey_id TEXT",
+        "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
         "ALTER TABLE devices ADD COLUMN rekey_capable BOOLEAN NOT NULL DEFAULT FALSE",
-        (),
-    );
+    ];
+    for sql in ALTERS {
+        if let Err(e) = db.execute(sql, ()) {
+            let message = e.to_string().to_lowercase();
+            if !message.contains("duplicate") && !message.contains("exists") {
+                return Err(e.into());
+            }
+        }
+    }
 
     // Shadow rows during a rotation coexist with the current-epoch rows for the
     // same chunk, so uniqueness moves from (user, chunk) to (user, chunk,
@@ -264,6 +266,7 @@ fn migrate_vault_chunks_schema(db: &Database) -> anyhow::Result<()> {
             lamport_clock INTEGER NOT NULL DEFAULT 0,
             last_writer   TEXT,
             ciphertext    TEXT NOT NULL,
+            epoch         INTEGER NOT NULL DEFAULT 1,
             created_at    TIMESTAMP NOT NULL,
             updated_at    TIMESTAMP NOT NULL
         )",
@@ -811,6 +814,33 @@ pub fn parse_chunk_manifest_row_turso(row: &crate::sqldb::VelaRow) -> Result<Chu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upgrades_a_pre_rekey_stoolap_schema_before_creating_epoch_indexes() {
+        let db = Database::open(&format!("memory://{}", Uuid::new_v4())).unwrap();
+        db.execute(
+            "CREATE TABLE vault_chunks (
+                chunk_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT,
+                ciphertext TEXT NOT NULL, created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "CREATE UNIQUE INDEX idx_vault_chunks_user_chunk
+             ON vault_chunks(user_id, chunk_id)",
+            (),
+        )
+        .unwrap();
+
+        init_schema(&db).expect("epoch columns must be added before epoch indexes");
+        db.query("SELECT epoch FROM vault_chunks LIMIT 0", ()).unwrap();
+        db.query("SELECT key_epoch, rekey_state, rekey_id FROM users LIMIT 0", ())
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn bootstrap_stoolap_into_turso_copies_once_and_is_idempotent() {

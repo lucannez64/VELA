@@ -162,7 +162,18 @@ pub fn rekey_recovery_shares(
 /// whether the shares it was handed are pre-rotation relics.
 pub fn shares_reconstruct_to(shares: &[shamir::Share], expected: &[u8; 32]) -> bool {
     shamir::reconstruct(shares, expected.len())
-        .map(|secret| secret.as_slice() == expected.as_slice())
+        .map(|secret| {
+            if secret.len() != expected.len() {
+                return false;
+            }
+            secret
+                .iter()
+                .zip(expected.iter())
+                .fold(0u8, |different, (actual, wanted)| {
+                    different | (actual ^ wanted)
+                })
+                == 0
+        })
         .unwrap_or(false)
 }
 
@@ -199,15 +210,17 @@ mod tests {
         let rekeyed = rekey_blob(&old, &new, ctx, &ct).unwrap();
 
         // Opens under the new derivation, to the original bytes.
-        let opened =
-            crate::aead::decrypt(kdf::derive(ctx, &*new).as_bytes(), &rekeyed).unwrap();
+        let opened = crate::aead::decrypt(kdf::derive(ctx, &*new).as_bytes(), &rekeyed).unwrap();
         assert_eq!(&opened[..], plaintext);
         // And no longer under the old one.
         assert!(crate::aead::decrypt(kdf::derive(ctx, &old).as_bytes(), &rekeyed).is_err());
 
         // Fresh nonce: re-keying the same blob twice yields different bytes.
         let again = rekey_blob(&old, &new, ctx, &ct).unwrap();
-        assert_ne!(rekeyed, again, "nonce reuse across epochs is pointless risk");
+        assert_ne!(
+            rekeyed, again,
+            "nonce reuse across epochs is pointless risk"
+        );
     }
 
     #[test]
@@ -215,8 +228,7 @@ mod tests {
         let old = seed(1);
         let new = rotate().unwrap();
         let ctx = kdf::contexts::AUDIT_LOG;
-        let ct =
-            crate::aead::encrypt(kdf::derive(ctx, &old).as_bytes(), b"audit").unwrap();
+        let ct = crate::aead::encrypt(kdf::derive(ctx, &old).as_bytes(), b"audit").unwrap();
 
         let mut wrong = old;
         wrong[0] ^= 1;
@@ -229,8 +241,7 @@ mod tests {
     fn epoch_binding_refuses_the_wrong_epoch_and_survives_roundtrip() {
         let key = kdf::derive(kdf::contexts::CHUNK_KEY, &seed(7));
         let pt = b"chunk body";
-        let blob = seal_epoch_chunk(key.as_bytes(), pt, 5, "vault-main", 12)
-            .unwrap();
+        let blob = seal_epoch_chunk(key.as_bytes(), pt, 5, "vault-main", 12).unwrap();
 
         let (got_epoch, opened) =
             open_epoch_chunk(key.as_bytes(), &blob, 5, "vault-main", 12).unwrap();

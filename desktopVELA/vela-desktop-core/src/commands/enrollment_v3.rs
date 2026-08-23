@@ -649,12 +649,17 @@ pub async fn finish_enrollment_join(
         )
         .map_err(|e| format!("Failed to save identity keys: {e}"))?;
 
-    let vault =
+    let (vault, key_epoch) =
         super::devices::download_vault_after_enrollment(&crypto_obj, &client, &token).await?;
     state
         .store
         .save_vault(&vault, &crypto_obj)
         .map_err(|e| format!("Failed to save vault locally: {e}"))?;
+    state
+        .store
+        .save_key_epoch(&crypto_obj, key_epoch)
+        .map_err(|e| format!("Failed to save the vault epoch: {e}"))?;
+    crate::sync::set_local_key_epoch(state, key_epoch)?;
     state
         .store
         .save_device_id_with_user_id(&device_id, &user_id)

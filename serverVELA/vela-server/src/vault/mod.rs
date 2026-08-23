@@ -29,10 +29,9 @@ pub fn max_user_storage_bytes() -> u64 {
 /// buckets (base64-encoded ciphertext length, as stored).
 async fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
     let mut total: u64 = 0;
-    // Only rows at or below the account's served epoch are reachable by any
-    // reader. Superseded rows left behind by a failed commit sweep (or shadow
-    // rows of a rotation in progress) must not count against the user while
-    // they wait for the next start-of-rotation cleanup.
+    // Only rows at the account's served epoch are reachable by readers.
+    // Superseded rows left behind by a failed commit sweep and future shadow
+    // rows must not count against the user.
     for table in ["vault_chunks", "oram_buckets"] {
         let rows = state
             .sqldb
@@ -40,7 +39,7 @@ async fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
                 &format!(
                     "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM {table} t
                      JOIN users u ON u.id = t.user_id
-                     WHERE t.user_id = ? AND t.epoch <= u.key_epoch"
+                     WHERE t.user_id = ? AND t.epoch = u.key_epoch"
                 ),
                 vec![TursoValue::Text(user_id.to_string())],
             )
@@ -94,11 +93,7 @@ pub(crate) async fn enforce_rekey_shadow_quota(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let projected = rows
-        .first()
-        .and_then(|row| row.i64(0))
-        .unwrap_or(0)
-        .max(0) as u64;
+    let projected = rows.first().and_then(|row| row.i64(0)).unwrap_or(0).max(0) as u64;
     let quota = max_user_storage_bytes();
     if projected.saturating_add(incoming_stored) > quota {
         return Err(AppError::PayloadTooLarge(format!(

@@ -681,13 +681,18 @@ pub async fn complete_account_recovery(
         )
         .map_err(|e| format!("Failed to save identity keys: {e}"))?;
 
-    let vault =
+    let (vault, key_epoch) =
         crate::commands::devices::download_vault_after_enrollment(&crypto_obj, &client, &token)
             .await?;
     state
         .store
         .save_vault(&vault, &crypto_obj)
         .map_err(|e| format!("Failed to save vault locally: {e}"))?;
+    state
+        .store
+        .save_key_epoch(&crypto_obj, key_epoch)
+        .map_err(|e| format!("Failed to save the recovered vault epoch: {e}"))?;
+    crate::sync::set_local_key_epoch(state, key_epoch)?;
 
     // ── unlock session ───────────────────────────────────────────────────────
     {

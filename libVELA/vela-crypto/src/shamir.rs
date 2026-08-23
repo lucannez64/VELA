@@ -79,7 +79,7 @@ fn gf_div(a: u8, b: u8) -> u8 {
 // ── Share type ─────────────────────────────────────────────────────────────────
 
 /// A single Shamir share: an x-coordinate and one y-value per secret byte.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Share {
     /// Non-zero evaluation point (1..=255).
     pub x: u8,
@@ -88,6 +88,16 @@ pub struct Share {
     /// Authentication tag over this share, keyed by the secret it belongs to.
     /// `None` for shares written before the tag existed.
     pub mac: Option<[u8; MAC_LEN]>,
+}
+
+impl std::fmt::Debug for Share {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Share")
+            .field("x", &self.x)
+            .field("y", &"[REDACTED]")
+            .field("mac", &self.mac.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 /// Truncated BLAKE3 tag length. 16 bytes is far past what a share-swapping
@@ -151,7 +161,9 @@ impl Share {
 
         if bytes[0] == AUTHENTICATED_MARKER {
             if bytes.len() < 3 + 1 + MAC_LEN {
-                return Err(VelaError::ShamirError("authenticated share too short".into()));
+                return Err(VelaError::ShamirError(
+                    "authenticated share too short".into(),
+                ));
             }
             if bytes[1] != AUTHENTICATED_VERSION {
                 return Err(VelaError::ShamirError(format!(
@@ -392,6 +404,20 @@ mod tests {
     }
 
     #[test]
+    fn debug_redacts_share_material() {
+        let share = Share {
+            x: 7,
+            y: vec![11, 22, 33],
+            mac: Some([44; MAC_LEN]),
+        };
+        let debug = format!("{share:?}");
+        assert!(debug.contains("x: 7"));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("11"));
+        assert!(!debug.contains("44"));
+    }
+
+    #[test]
     fn split_3of5() {
         let shares = split(RMS, 3, 5).unwrap();
         // 3 shares → success
@@ -416,7 +442,10 @@ mod tests {
         let mut tampered = shares.clone();
         tampered[0].y[0] ^= 0x01;
         let error = reconstruct(&tampered[0..2], RMS.len()).expect_err("must not succeed");
-        assert!(format!("{error}").contains("failed authentication"), "{error}");
+        assert!(
+            format!("{error}").contains("failed authentication"),
+            "{error}"
+        );
 
         // A swapped tag is caught too, not just altered data.
         let mut retagged = shares.clone();

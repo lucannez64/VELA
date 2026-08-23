@@ -160,6 +160,7 @@ pub fn record_audit_event_checked(
 }
 
 pub fn load_audit_log(state: &AppState) -> Option<AuditLog> {
+    let _transition = state.key_transition_lock.read().ok()?;
     let crypto = state.crypto.read();
     let crypto = crypto.as_ref()?;
 
@@ -174,6 +175,10 @@ pub fn load_audit_log(state: &AppState) -> Option<AuditLog> {
 }
 
 pub fn save_audit_log(state: &AppState, log: &AuditLog) -> Result<(), String> {
+    let _transition = state
+        .key_transition_lock
+        .read()
+        .map_err(|_| "Key transition lock is unavailable".to_string())?;
     let crypto = state.crypto.read();
     let crypto = crypto.as_ref().ok_or("Crypto not initialized")?;
 

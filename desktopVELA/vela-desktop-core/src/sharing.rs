@@ -209,10 +209,7 @@ fn sync_received_linked_items(state: &AppState, store: &ShareStore) -> Result<()
     drop(vault);
 
     if changed {
-        if let Some(crypto) = state.crypto.read().as_ref() {
-            let vault_snapshot = state.vault.read().clone();
-            state.store.save_vault(&vault_snapshot, crypto).map_err(|e| e.to_string())?;
-        }
+        state.persist_current_vault().map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -395,10 +392,7 @@ pub async fn send_share(
             vault.update_item(marked);
         }
     }
-    if let Some(crypto) = state.crypto.read().as_ref() {
-        let vault_snapshot = state.vault.read().clone();
-        let _ = state.store.save_vault(&vault_snapshot, crypto);
-    }
+    let _ = state.persist_current_vault();
 
     store.add_sent_share(share.clone());
     save_share_store(state, &store)?;
@@ -448,10 +442,7 @@ pub async fn accept_share(state: &AppState, share_id: &str) -> Result<(), String
             let mut vault = state.vault.write();
             vault.add_item(received_item);
         }
-        if let Some(crypto) = state.crypto.read().as_ref() {
-            let vault_store = state.vault.read();
-            state.store.save_vault(&vault_store, crypto).map_err(|e| e.to_string())?;
-        }
+        state.persist_current_vault().map_err(|e| e.to_string())?;
     }
 
     let server_url = state.server_url.read().clone();
@@ -563,10 +554,7 @@ pub async fn delete_share(state: &AppState, share_id: &str) -> Result<(), String
         }
 
         drop(vault);
-        if let Some(crypto) = state.crypto.read().as_ref() {
-            let vault_snapshot = state.vault.read().clone();
-            let _ = state.store.save_vault(&vault_snapshot, crypto);
-        }
+        let _ = state.persist_current_vault();
     }
 
     store.remove_share(share_id);

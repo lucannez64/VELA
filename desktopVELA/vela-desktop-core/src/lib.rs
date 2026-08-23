@@ -106,6 +106,10 @@ pub struct AppState {
     pub extension_connected: Arc<AtomicBool>,
     /// Serializes sync runs so local edits and merges cannot interleave.
     pub sync_mutex: tokio::sync::Mutex<()>,
+    /// Coordinates synchronous secret-file writers with an RMS transition.
+    /// Ordinary writers take a read guard before choosing the active crypto;
+    /// migration takes the write guard through file rewrite + in-memory swap.
+    pub(crate) key_transition_lock: std::sync::RwLock<()>,
     /// Allows only one disposable-browser login ceremony at a time. Both
     /// desktop frontends share this core state, and the owned guard acquired
     /// by `browser::login` releases on return, error, cancellation, or panic.
@@ -269,6 +273,7 @@ impl AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),
@@ -329,6 +334,25 @@ impl AppState {
             Some(false) => Err("You declined this action.".to_string()),
             None => Err("No way to ask for confirmation; action refused".to_string()),
         }
+    }
+
+    /// Persist the current in-memory vault under whichever RMS is authoritative
+    /// when this write actually runs. Holding the transition read guard before
+    /// reading `crypto` prevents a writer from retaining RMS1 across the RMS2
+    /// migration and stranding `vault.enc` after the journal is removed.
+    pub(crate) fn persist_current_vault(&self) -> anyhow::Result<()> {
+        let _transition = self
+            .key_transition_lock
+            .read()
+            .map_err(|_| anyhow::anyhow!("key transition lock poisoned"))?;
+        let crypto = self.crypto.read();
+        let crypto = crypto
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("vault is locked"))?;
+        // Match `lock_session`'s crypto -> vault order so a concurrent lock
+        // cannot hold crypto while waiting on the vault snapshot we own.
+        let vault = self.vault.read();
+        self.store.save_vault(&vault, crypto)
     }
 }
 
@@ -495,6 +519,7 @@ impl Default for AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),

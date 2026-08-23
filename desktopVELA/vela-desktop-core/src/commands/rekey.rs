@@ -61,6 +61,24 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     {
         return Err("Not signed in to a server — rotation needs an account".into());
     }
+    // Refuse legacy installations before asking the human to approve an
+    // operation this device cannot complete.
+    let has_capsule_key = {
+        let crypto = state.crypto.read();
+        let crypto = crypto.as_ref().ok_or("Vault is locked")?;
+        state
+            .store
+            .load_identity_keys(crypto)
+            .map_err(|e| format!("Failed to inspect this device's re-key capability: {e}"))?
+            .map(|identity| !identity.hybrid_dk.is_empty())
+            .unwrap_or(false)
+    };
+    if !has_capsule_key {
+        return Err(
+            "This legacy device cannot adopt rotated keys; re-enroll it before rotating the vault."
+                .into(),
+        );
+    }
     let state_for_confirmation = state.clone();
     tokio::task::spawn_blocking(move || {
         state_for_confirmation.confirm_with_human(
@@ -87,22 +105,6 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     // Only attest after proving this installation retained the private half
     // required to open a future capsule. Legacy pre-v3 devices fail here and
     // cannot trick the server into rotating them out of the account.
-    let has_capsule_key = {
-        let crypto = state.crypto.read();
-        let crypto = crypto.as_ref().ok_or("Vault is locked")?;
-        state
-            .store
-            .load_identity_keys(crypto)
-            .map_err(|e| format!("Failed to inspect this device's re-key capability: {e}"))?
-            .map(|identity| !identity.hybrid_dk.is_empty())
-            .unwrap_or(false)
-    };
-    if !has_capsule_key {
-        return Err(
-            "This legacy device cannot adopt rotated keys; re-enroll it before rotating the vault."
-                .into(),
-        );
-    }
     let refreshed = client
         .mark_rekey_capable(&token)
         .await
@@ -170,7 +172,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
             if let Some(t) = tok {
                 accept_new_token(state, &mut token, Some(t));
             }
-            let (_, plaintext) = vela_crypto::rekey::open_epoch_chunk(
+            let (bound_epoch, plaintext) = vela_crypto::rekey::open_epoch_chunk(
                 key_old.as_bytes(),
                 &ciphertext,
                 current_epoch as u64,
@@ -183,6 +185,12 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
                     chunk.chunk_id
                 )
             })?;
+            if current_epoch > 1 && bound_epoch != Some(current_epoch as u64) {
+                return Err(format!(
+                    "Chunk {} is legacy ciphertext at epoch {current_epoch}",
+                    chunk.chunk_id
+                ));
+            }
             let _ = version;
 
             let key_new = new_crypto.chunk_key(chunk.chunk_id.as_bytes());
@@ -315,7 +323,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
             "The server committed epoch {new_epoch}, but this device locked before local adoption: {e}. Unlock and sync to adopt from its retained capsule."
         )
     })?;
-    let migration = tokio::task::spawn_blocking({
+    tokio::task::spawn_blocking({
         let state = state.clone();
         let password = rekey_password.clone();
         move || {
@@ -325,6 +333,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
                 new_crypto,
                 new_epoch,
                 password.as_ref().map(|p| p.as_str()),
+                generation,
             )
         }
     })

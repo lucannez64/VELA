@@ -183,11 +183,7 @@ pub async fn put_path(
         ));
     }
 
-    let incoming: u64 = body
-        .buckets
-        .iter()
-        .map(|b| b.ciphertext.len() as u64)
-        .sum();
+    let incoming: u64 = body.buckets.iter().map(|b| b.ciphertext.len() as u64).sum();
     crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), incoming).await?;
 
     for bucket in body.buckets {
@@ -288,6 +284,20 @@ pub async fn put_path(
                 .map_err(|e| AppError::Internal(e.to_string()))?;
 
             if n == 0 {
+                // Distinguish a genuine If-Match miss from a rotation which
+                // froze or advanced the account after the initial epoch probe.
+                // The latter must drive adoption, not a fruitless version retry.
+                let current = crate::vault::rekey::resolve_write_epoch(
+                    &state,
+                    &session.user_id.to_string(),
+                    declared,
+                )
+                .await?;
+                if current != (write_epoch, read_epoch) {
+                    return Err(AppError::Rekeyed(
+                        "vault epoch changed before the ORAM write completed".into(),
+                    ));
+                }
                 return Err(AppError::Conflict(format!(
                     "ORAM bucket {} version mismatch",
                     bucket.bucket_index

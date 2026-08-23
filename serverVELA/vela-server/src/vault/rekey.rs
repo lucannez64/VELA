@@ -289,6 +289,11 @@ pub async fn ensure_shadow_writer(
             "temporary web sessions cannot write re-key shadows".into(),
         ));
     }
+    if rotation_id.is_none() {
+        return Err(AppError::BadRequest(
+            "X-Vela-Rekey-Id header is required for shadow writes".into(),
+        ));
+    }
     let ks = load_key_state(state, &session.user_id.to_string()).await?;
     if !ks.freezing
         || ks.epoch + 1 != write_epoch
@@ -439,21 +444,6 @@ pub async fn post_start(
         ));
     }
 
-    // Finish best-effort cleanup from an earlier committed/aborted rotation
-    // before taking a new inventory. Only the current epoch is reachable while
-    // ACTIVE, so every other row is stale protocol debris.
-    state
-        .sqldb
-        .execute(
-            "DELETE FROM vault_chunks WHERE user_id = ? AND epoch != ?",
-            vec![
-                TursoValue::Text(user_id.clone()),
-                TursoValue::Integer(ks.epoch),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
     let next = ks.epoch + 1;
 
     // The inventory must be captured inside the same transaction as the
@@ -515,6 +505,18 @@ pub async fn post_start(
             "a re-key was started concurrently for this account".into(),
         ));
     }
+    // Cleanup must happen only after this transaction wins the freeze CAS.
+    // A pre-CAS delete based on stale state can race a concurrent commit and
+    // erase the epoch that just became authoritative.
+    tx.execute(
+        "DELETE FROM vault_chunks WHERE user_id = ? AND epoch != ?",
+        vec![
+            TursoValue::Text(user_id.clone()),
+            TursoValue::Integer(ks.epoch),
+        ],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
     tx.commit()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;

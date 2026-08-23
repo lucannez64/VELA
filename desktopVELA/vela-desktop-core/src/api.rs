@@ -405,8 +405,7 @@ impl ApiClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let detail = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Chunk upload failed: {} ({})", status, detail.trim());
+            anyhow::bail!("Chunk upload failed: {status}");
         }
 
         let new_token = extract_new_token(&resp);

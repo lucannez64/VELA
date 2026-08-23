@@ -19,6 +19,10 @@ pub struct ChunkMeta {
 
 #[derive(Serialize)]
 pub struct SyncManifest {
+    /// Epoch whose rows are represented by this manifest. Web sessions cannot
+    /// call the device-only epoch endpoint, so this is their authenticated
+    /// source of truth for ciphertext AAD and write headers.
+    pub epoch: i64,
     pub chunks: Vec<ChunkMeta>,
 }
 
@@ -61,5 +65,11 @@ pub async fn get_sync(
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
 
-    Ok((headers, Json(SyncManifest { chunks })))
+    Ok((
+        headers,
+        Json(SyncManifest {
+            epoch: read_epoch,
+            chunks,
+        }),
+    ))
 }

@@ -989,15 +989,9 @@ pub mod server {
         }
 
         // Persist the encrypted vault to disk.
-        {
-            let vault = state.vault.read();
-            let crypto = state.crypto.read();
-            if let Some(crypto) = crypto.as_ref() {
-                if let Err(e) = state.store.save_vault(&vault, crypto) {
-                    error!("Failed to persist vault after save: {}", e);
-                    return save_response(false, None, Some("Failed to save vault".to_string()));
-                }
-            }
+        if let Err(e) = state.persist_current_vault() {
+            error!("Failed to persist vault after save: {}", e);
+            return save_response(false, None, Some("Failed to save vault".to_string()));
         }
 
         crate::audit::record_audit_event(

@@ -309,10 +309,13 @@ pub async fn post_complete(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-    state.sqldb.execute(
+    let inserted = state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
-         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+         SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
+         WHERE EXISTS (
+             SELECT 1 FROM users WHERE id = ? AND rekey_state IS NULL
+         )",
         vec![
             TursoValue::Text(new_device_id.to_string()),
             TursoValue::Text(grant.user_id.clone()),
@@ -323,8 +326,14 @@ pub async fn post_complete(
             TursoValue::Text(grant.device_id.clone()),
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
+            TursoValue::Text(grant.user_id.clone()),
         ],
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+    if inserted == 0 {
+        return Err(AppError::Conflict(
+            "device enrollment is paused during vault key rotation".into(),
+        ));
+    }
 
     // Only now that the row exists: the joining device is holding a keypair and
     // waiting to be told which device it became. Written after the insert so a

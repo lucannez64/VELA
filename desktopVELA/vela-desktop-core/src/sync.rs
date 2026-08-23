@@ -121,17 +121,44 @@ pub(crate) fn password_for_rekey(
     Ok(Some(password))
 }
 
+fn install_migrated_session_crypto(
+    state: &AppState,
+    new_crypto: crate::crypto::Crypto,
+    new_rms: &[u8; 32],
+    expected_generation: u64,
+) -> Result<(), String> {
+    // Hold the session read lock across the crypto/cache install. `lock_session`
+    // takes these locks in the same order, so it either happens wholly before
+    // this operation (and fails the checks) or wholly afterwards (and clears
+    // the freshly installed values).
+    let session = state.session.read();
+    if state.session_generation() != expected_generation || !session.active || session.is_expired()
+    {
+        return Err(
+            "Vault locked during key migration; unlock again to finish adoption".to_string(),
+        );
+    }
+    *state.crypto.write() = Some(new_crypto);
+    crate::biometric::set_cached_rms(*new_rms);
+    Ok(())
+}
+
 /// Move all local RMS consumers together. This includes the platform key and,
 /// when present, the independent master-password wrapper. Any persistence
-/// failure restores the old files and wrappers so the server capsule remains a
-/// retry path instead of leaving password unlock tied to a retired seed.
+/// failure leaves the journal in place so the next unlock can finish or safely
+/// recover the migration while the server capsule remains a retry path.
 pub(crate) fn migrate_local_rms(
     state: &AppState,
     old_crypto: &crate::crypto::Crypto,
     new_crypto: crate::crypto::Crypto,
     new_epoch: i64,
     password: Option<&str>,
+    expected_generation: u64,
 ) -> Result<(), String> {
+    let _transition = state
+        .key_transition_lock
+        .write()
+        .map_err(|_| "Key transition lock is unavailable".to_string())?;
     // Held in `Zeroizing` so the seeds do not linger in plain stack arrays
     // after the migration completes.
     let old_rms = zeroize::Zeroizing::new(old_crypto.rms());
@@ -170,8 +197,10 @@ pub(crate) fn migrate_local_rms(
         .map_err(|e| format!("Failed to persist the authenticated key epoch: {e}"))?;
     crate::recovery::retire_recovery_setup(state)
         .map_err(|e| format!("Failed to retire old recovery shares: {e}"))?;
-    *state.crypto.write() = Some(new_crypto);
-    crate::biometric::set_cached_rms(*new_rms);
+    // Auto-lock does not take sync_mutex and may win while the blocking file /
+    // credential migration is running. If it already won, leave the durable
+    // journal in place and let the next real unlock finish.
+    install_migrated_session_crypto(state, new_crypto, &new_rms, expected_generation)?;
     set_local_key_epoch(state, new_epoch)
         .map_err(|e| format!("Failed to persist the new key epoch: {e}"))?;
 
@@ -191,6 +220,10 @@ pub(crate) fn recover_pending_rms_migration(
     current_rms: [u8; 32],
     password: Option<&str>,
 ) -> Result<[u8; 32], String> {
+    let _transition = state
+        .key_transition_lock
+        .write()
+        .map_err(|_| "Key transition lock is unavailable".to_string())?;
     let Some((old_rms, new_rms, new_epoch)) = state
         .store
         .load_rms_migration(&current_rms)
@@ -203,7 +236,7 @@ pub(crate) fn recover_pending_rms_migration(
     let new_crypto = crate::crypto::Crypto::new(&new_rms);
     state
         .store
-        .rekey_secret_files(&old_crypto, &new_crypto)
+        .recover_rekey_secret_files(&old_crypto, &new_crypto)
         .map_err(|e| format!("Failed to resume local vault migration: {e}"))?;
 
     let has_platform_rms = crate::biometric::has_platform_stored_rms();
@@ -341,6 +374,7 @@ async fn adopt_server_epoch(
             new_crypto,
             server_epoch,
             password_ref.as_ref().map(|p| p.as_str()),
+            generation,
         )
     })
     .await
@@ -917,7 +951,15 @@ async fn download_vault_from_manifest(
                 &chunk_id,
                 lamport,
             ) {
-                Ok((_, chunk)) => Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport)),
+                Ok((bound_epoch, chunk)) => {
+                    if key_epoch > 1 && bound_epoch != Some(key_epoch as u64) {
+                        return Ok::<_, String>(ChunkOutcome::Corrupt(
+                            idx,
+                            format!("chunk {chunk_id}: legacy ciphertext at epoch {key_epoch}"),
+                        ));
+                    }
+                    Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport))
+                }
                 Err(e) => {
                     Ok::<_, String>(ChunkOutcome::Corrupt(idx, format!("chunk {chunk_id}: {e}")))
                 }
@@ -1119,16 +1161,24 @@ async fn sync_audit_chunk(
                     // sealed chunk skips the merge, which is what it already
                     // does on any decrypt failure.
                     let entry_clock = entry.lamport_clock;
-                    if let Ok((_, server_plaintext)) = vela_crypto::rekey::open_epoch_chunk(
-                        &key,
-                        &ciphertext,
-                        key_epoch as u64,
-                        audit::AUDIT_CHUNK_ID,
-                        entry_clock,
-                    ) {
-                        // Merge server events into the local log (union by
-                        // event id) — never replace local history.
-                        let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
+                    if let Ok((bound_epoch, server_plaintext)) =
+                        vela_crypto::rekey::open_epoch_chunk(
+                            &key,
+                            &ciphertext,
+                            key_epoch as u64,
+                            audit::AUDIT_CHUNK_ID,
+                            entry_clock,
+                        )
+                    {
+                        if key_epoch > 1 && bound_epoch != Some(key_epoch as u64) {
+                            tracing::warn!(
+                                "Refusing legacy audit ciphertext after rotation to epoch {key_epoch}"
+                            );
+                        } else {
+                            // Merge server events into the local log (union by
+                            // event id) — never replace local history.
+                            let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
+                        }
                     }
                 }
                 Err(e) => tracing::warn!("Failed to pull audit chunk: {}", e),
@@ -1620,6 +1670,29 @@ pub fn set_server_url(state: &AppState, url: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn completed_migration_cannot_resurrect_a_locked_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(crate::AppState::for_test(dir.path()));
+        let old_rms = [11u8; 32];
+        let new_rms = [12u8; 32];
+        state.unlock_for_test(&old_rms);
+        let generation = state.session_generation();
+
+        crate::commands::session::lock_session(&state);
+        let error = install_migrated_session_crypto(
+            &state,
+            crate::crypto::Crypto::new(&new_rms),
+            &new_rms,
+            generation,
+        )
+        .expect_err("migration tail must not reinstall secrets after auto-lock");
+
+        assert!(error.contains("locked during key migration"));
+        assert!(state.crypto.read().is_none());
+        assert!(!state.session.read().active);
+    }
 
     #[test]
     fn authenticated_epoch_survives_missing_or_legacy_sync_metadata() {

@@ -455,7 +455,13 @@ async function loadReadWrite(expiresAt?: string) {
   for (const id of readIds) {
     const ct = await authed.getChunk(id);
     if (!ct) continue;
-    json += decryptVaultChunk(chunkKeyFor(id), bytesToB64(ct), id, man.get(id)?.lamport ?? 0);
+    json += decryptVaultChunk(
+      chunkKeyFor(id),
+      bytesToB64(ct),
+      id,
+      man.get(id)?.lamport ?? 0,
+      authed.epoch,
+    );
   }
   items = json ? ((JSON.parse(json) as { items?: Record<string, unknown>[] }).items ?? []) : [];
   showVault({ editable: true, expiresAt });
@@ -473,7 +479,7 @@ async function saveVault() {
     // ciphertext, so numbering afterwards would upload something unreadable.
     const existing = man.get(id);
     lamport = Math.max(lamport, existing?.lamport ?? 0) + 1;
-    const ct = b64ToBytes(encryptVaultChunk(chunkKeyFor(id), pieces[i], id, lamport));
+    const ct = b64ToBytes(encryptVaultChunk(chunkKeyFor(id), pieces[i], id, lamport, authed.epoch));
     await authed.putChunk(id, ct, existing?.version ?? 0, lamport);
   }
 

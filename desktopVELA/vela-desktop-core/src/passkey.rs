@@ -440,15 +440,11 @@ fn bump_sign_count(state: &AppState, item_id: &str, next: u32) {
 }
 
 fn persist(state: &AppState) {
-    let vault = state.vault.read();
-    let crypto = state.crypto.read();
-    if let Some(crypto) = crypto.as_ref() {
-        if let Err(e) = state.store.save_vault(&vault, crypto) {
-            // Not fatal to the ceremony in flight — the assertion is already
-            // signed and the relying party will accept it. A counter that fails
-            // to persist can only cause a future "cloned authenticator" warning,
-            // which is far better than refusing a login the user asked for.
-            warn!("Failed to persist vault after passkey ceremony: {}", e);
-        }
+    if let Err(e) = state.persist_current_vault() {
+        // Not fatal to the ceremony in flight — the assertion is already
+        // signed and the relying party will accept it. A counter that fails
+        // to persist can only cause a future "cloned authenticator" warning,
+        // which is far better than refusing a login the user asked for.
+        warn!("Failed to persist vault after passkey ceremony: {}", e);
     }
 }

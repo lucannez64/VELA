@@ -17,6 +17,7 @@ use crate::state::AppState;
 
 static IF_MATCH: HeaderName = HeaderName::from_static("if-match");
 static X_LAMPORT_CLOCK: HeaderName = HeaderName::from_static("x-lamport-clock");
+static X_VELA_EPOCH: HeaderName = HeaderName::from_static("x-vela-epoch");
 static X_NEW_TOKEN: HeaderName = HeaderName::from_static("x-new-token");
 
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +29,7 @@ pub fn build(state: AppState) -> Router {
         CONTENT_TYPE,
         IF_MATCH.clone(),
         X_LAMPORT_CLOCK.clone(),
+        X_VELA_EPOCH.clone(),
     ];
 
     let cors = if state.config.cors_origins == ["*"] && state.config.allow_wildcard_cors {

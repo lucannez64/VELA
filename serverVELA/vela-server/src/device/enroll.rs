@@ -176,10 +176,13 @@ pub async fn post_enroll(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "desktop".to_string());
 
-    state.sqldb.execute(
+    let inserted = state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
-         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+         SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
+         WHERE EXISTS (
+             SELECT 1 FROM users WHERE id = ? AND rekey_state IS NULL
+         )",
         vec![
             TursoValue::Text(new_device_id.to_string()),
             TursoValue::Text(device_a.user_id.to_string()),
@@ -190,8 +193,14 @@ pub async fn post_enroll(
             TursoValue::Text(enrolling_device_id_str),
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
+            TursoValue::Text(device_a.user_id.to_string()),
         ],
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+    if inserted == 0 {
+        return Err(AppError::Conflict(
+            "device enrollment is paused during vault key rotation".into(),
+        ));
+    }
 
     tracing::info!(
         new_device_id = %new_device_id,

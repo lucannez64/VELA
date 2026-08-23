@@ -13,7 +13,7 @@ use crate::api::{ApiClient, EnrollDeviceRequest, NewDevicePayload, VerifyRequest
 use crate::audit::{record_audit_event, AuditAction};
 use crate::crypto;
 use crate::AppState;
-use vela_crypto::aead::{decrypt, encrypt, open_vault_chunk};
+use vela_crypto::aead::{decrypt, encrypt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -331,21 +331,38 @@ async fn try_download_chunk(
     client: &ApiClient,
     token: &str,
     chunk_id: &str,
+    key_epoch: i64,
 ) -> Option<crate::vault::VaultStore> {
     let chunk_key_bytes: [u8; 32] = *crypto.chunk_key(chunk_id.as_bytes()).as_bytes();
     match client.get_chunk(token, chunk_id).await {
         Ok((ciphertext, _, lamport, _)) => {
-            match open_vault_chunk(&chunk_key_bytes, &ciphertext, chunk_id, lamport) {
-                Ok(plaintext) => match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
-                    Ok(v) => {
-                        tracing::info!("Vault downloaded from chunk '{}'", chunk_id);
-                        Some(v)
+            match vela_crypto::rekey::open_epoch_chunk(
+                &chunk_key_bytes,
+                &ciphertext,
+                key_epoch as u64,
+                chunk_id,
+                lamport,
+            ) {
+                Ok((bound_epoch, plaintext)) => {
+                    if key_epoch > 1 && bound_epoch != Some(key_epoch as u64) {
+                        tracing::warn!(
+                            "Refusing legacy ciphertext for chunk '{}' after rotation to epoch {}",
+                            chunk_id,
+                            key_epoch
+                        );
+                        return None;
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse vault JSON from chunk '{}': {}", chunk_id, e);
-                        None
+                    match serde_json::from_slice::<crate::vault::VaultStore>(&plaintext) {
+                        Ok(v) => {
+                            tracing::info!("Vault downloaded from chunk '{}'", chunk_id);
+                            Some(v)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse vault JSON from chunk '{}': {}", chunk_id, e);
+                            None
+                        }
                     }
-                },
+                }
                 Err(e) => {
                     tracing::warn!("Failed to decrypt chunk '{}': {}", chunk_id, e);
                     None
@@ -365,6 +382,7 @@ async fn try_download_fallback_chunk(
     crypto: &crate::crypto::Crypto,
     client: &ApiClient,
     token: &str,
+    key_epoch: i64,
 ) -> Option<crate::vault::VaultStore> {
     let manifest = match client.get_sync_manifest(token).await {
         Ok((m, _)) => m,
@@ -379,7 +397,7 @@ async fn try_download_fallback_chunk(
         .find(|c| c.chunk_id.starts_with(VAULT_DATA_PREFIX))
         .map(|c| c.chunk_id.clone());
     match fallback_id {
-        Some(id) => try_download_chunk(crypto, client, token, &id).await,
+        Some(id) => try_download_chunk(crypto, client, token, &id, key_epoch).await,
         None => None,
     }
 }
@@ -388,16 +406,25 @@ pub(crate) async fn download_vault_after_enrollment(
     crypto_obj: &crate::crypto::Crypto,
     client: &ApiClient,
     token: &str,
-) -> Result<crate::vault::VaultStore, String> {
-    if let Some(v) = try_download_chunk(crypto_obj, client, token, VAULT_MAIN_CHUNK_ID).await {
-        return Ok(v);
+) -> Result<(crate::vault::VaultStore, i64), String> {
+    let (key_epoch, rotation_state, _) = client
+        .get_key_epoch(token)
+        .await
+        .map_err(|e| format!("Failed to read the enrolled vault epoch: {e}"))?;
+    if rotation_state != "active" {
+        return Err("A vault key rotation is in progress; retry enrollment shortly.".into());
+    }
+    if let Some(v) =
+        try_download_chunk(crypto_obj, client, token, VAULT_MAIN_CHUNK_ID, key_epoch).await
+    {
+        return Ok((v, key_epoch));
     }
     tracing::info!(
         "No '{}' chunk found, trying vault-data-* fallback from manifest",
         VAULT_MAIN_CHUNK_ID
     );
-    if let Some(v) = try_download_fallback_chunk(crypto_obj, client, token).await {
-        return Ok(v);
+    if let Some(v) = try_download_fallback_chunk(crypto_obj, client, token, key_epoch).await {
+        return Ok((v, key_epoch));
     }
     let (manifest, _) = client
         .get_sync_manifest(token)
@@ -415,7 +442,7 @@ pub(crate) async fn download_vault_after_enrollment(
         );
     }
     tracing::info!("No vault chunk found on server, starting empty");
-    Ok(crate::vault::VaultStore::new())
+    Ok((crate::vault::VaultStore::new(), key_epoch))
 }
 
 async fn resolve_enrollment_code_json(state: &AppState, code: &str) -> Result<Vec<u8>, String> {
@@ -567,12 +594,17 @@ pub async fn import_enrollment_code(
 
     // Download the vault chunk from the server.  Try the canonical name first,
     // then fall back to an ORAM-style vault-data-* chunk from the manifest.
-    let vault = download_vault_after_enrollment(&crypto_obj, &client, &token).await?;
+    let (vault, key_epoch) = download_vault_after_enrollment(&crypto_obj, &client, &token).await?;
 
     state
         .store
         .save_vault(&vault, &crypto_obj)
         .map_err(|e| format!("Failed to save vault locally: {e}"))?;
+    state
+        .store
+        .save_key_epoch(&crypto_obj, key_epoch)
+        .map_err(|e| format!("Failed to save the vault epoch: {e}"))?;
+    crate::sync::set_local_key_epoch(state, key_epoch)?;
     state
         .store
         .save_device_id_with_user_id(&payload.device_id, &user_id)

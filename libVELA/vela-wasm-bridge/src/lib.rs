@@ -13,7 +13,6 @@ use wasm_bindgen::prelude::*;
 use vela_core::calculate_password_strength;
 use vela_crypto::{aead, kem, signing};
 
-
 // ── Response plumbing ───────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -82,6 +81,10 @@ struct EncryptChunkRequest {
     /// the server cannot replay an older revision (audit C-2).
     chunk_id: String,
     lamport_clock: i64,
+    /// Current account key epoch. Absent only for legacy callers during the
+    /// rollout; new web sessions learn it from the sync manifest.
+    #[serde(default)]
+    epoch: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -100,6 +103,8 @@ struct DecryptChunkRequest {
     chunk_id: String,
     #[serde(default)]
     lamport_clock: i64,
+    #[serde(default)]
+    epoch: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -160,10 +165,15 @@ fn generate_signing_keypair_impl() -> Result<SigningKeypairResponse, String> {
 /// Sign a server auth challenge with our ephemeral signing key, binding it to the
 /// session id (used as `device_id`). Request `{ sk_b64, device_id, challenge_b64 }`.
 fn create_auth_signature_impl(request_json: &str) -> Result<AuthSignatureResponse, String> {
-    let req: AuthSignatureRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
-    let sk_bytes = B64.decode(req.sk_b64.as_bytes()).map_err(|e| e.to_string())?;
+    let req: AuthSignatureRequest =
+        serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let sk_bytes = B64
+        .decode(req.sk_b64.as_bytes())
+        .map_err(|e| e.to_string())?;
     let sk = signing::HybridSigningKey::from_bytes(&sk_bytes).map_err(|e| e.to_string())?;
-    let challenge = B64.decode(req.challenge_b64.as_bytes()).map_err(|e| e.to_string())?;
+    let challenge = B64
+        .decode(req.challenge_b64.as_bytes())
+        .map_err(|e| e.to_string())?;
     let message = signing::auth_message(&req.device_id, &challenge);
     let signature = signing::sign(&sk, &message).map_err(|e| e.to_string())?;
     Ok(AuthSignatureResponse {
@@ -173,9 +183,13 @@ fn create_auth_signature_impl(request_json: &str) -> Result<AuthSignatureRespons
 
 fn open_share_impl(request_json: &str) -> Result<OpenShareResponse, String> {
     let req: OpenShareRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
-    let dk_bytes = B64.decode(req.share_dk_b64.as_bytes()).map_err(|e| e.to_string())?;
+    let dk_bytes = B64
+        .decode(req.share_dk_b64.as_bytes())
+        .map_err(|e| e.to_string())?;
     let sk = kem::HybridSecretKey::from_bytes(&dk_bytes).map_err(|e| e.to_string())?;
-    let capsule = B64.decode(req.capsule_b64.as_bytes()).map_err(|e| e.to_string())?;
+    let capsule = B64
+        .decode(req.capsule_b64.as_bytes())
+        .map_err(|e| e.to_string())?;
     let plaintext = kem::open_share(&sk, &capsule).map_err(|e| e.to_string())?;
     Ok(OpenShareResponse {
         item_json: String::from_utf8(plaintext).map_err(|e| e.to_string())?,
@@ -185,11 +199,20 @@ fn open_share_impl(request_json: &str) -> Result<OpenShareResponse, String> {
 fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, String> {
     let req: EncryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
-    let ciphertext = aead::seal(
-        &key,
-        req.vault_json.as_bytes(),
-        &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
-    )
+    let ciphertext = match req.epoch {
+        Some(epoch) => vela_crypto::rekey::seal_epoch_chunk(
+            &key,
+            req.vault_json.as_bytes(),
+            epoch,
+            &req.chunk_id,
+            req.lamport_clock,
+        ),
+        None => aead::seal(
+            &key,
+            req.vault_json.as_bytes(),
+            &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
+        ),
+    }
     .map_err(|e| e.to_string())?;
     Ok(EncryptChunkResponse {
         ciphertext_b64: B64.encode(ciphertext),
@@ -198,11 +221,28 @@ fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, 
 
 fn decrypt_vault_chunk_impl(request_json: &str) -> Result<DecryptChunkResponse, String> {
     let req: DecryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
-    let ciphertext = B64.decode(req.ciphertext_b64.as_bytes()).map_err(|e| e.to_string())?;
+    let ciphertext = B64
+        .decode(req.ciphertext_b64.as_bytes())
+        .map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
-    let plaintext =
-        aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)
+    let plaintext = match req.epoch {
+        Some(epoch) => {
+            let (bound_epoch, plaintext) = vela_crypto::rekey::open_epoch_chunk(
+                &key,
+                &ciphertext,
+                epoch,
+                &req.chunk_id,
+                req.lamport_clock,
+            )
             .map_err(|e| e.to_string())?;
+            if epoch > 1 && bound_epoch != Some(epoch) {
+                return Err("legacy ciphertext refused after key rotation".to_string());
+            }
+            plaintext
+        }
+        None => aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)
+            .map_err(|e| e.to_string())?,
+    };
     Ok(DecryptChunkResponse {
         vault_json: String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?,
     })
@@ -350,7 +390,59 @@ mod tests {
             })
             .to_string(),
         );
-        assert!(replayed.contains("error"), "clock must bind the ciphertext: {replayed}");
+        assert!(
+            replayed.contains("error"),
+            "clock must bind the ciphertext: {replayed}"
+        );
+    }
+
+    #[test]
+    fn epoch_chunk_roundtrip_rejects_wrong_or_legacy_epoch() {
+        let key_b64 = B64.encode(kdf::chunk_key(&[7u8; 32], b"vault-data-000000").as_bytes());
+        let request = |epoch: Option<u64>| {
+            serde_json::json!({
+                "chunk_key_b64": key_b64,
+                "vault_json": "{}",
+                "chunk_id": "vault-data-000000",
+                "lamport_clock": 4,
+                "epoch": epoch,
+            })
+            .to_string()
+        };
+        let ct = field(
+            &encrypt_vault_chunk_json(&request(Some(2))),
+            "ciphertext_b64",
+        );
+        let decrypt = |epoch| {
+            decrypt_vault_chunk_json(
+                &serde_json::json!({
+                    "chunk_key_b64": key_b64,
+                    "ciphertext_b64": ct,
+                    "chunk_id": "vault-data-000000",
+                    "lamport_clock": 4,
+                    "epoch": epoch,
+                })
+                .to_string(),
+            )
+        };
+        assert_eq!(field(&decrypt(2), "vault_json"), "{}");
+        assert!(!field(&decrypt(3), "error").is_empty());
+
+        let legacy = field(
+            &encrypt_vault_chunk_json(&request(None)),
+            "ciphertext_b64",
+        );
+        let refused = decrypt_vault_chunk_json(
+            &serde_json::json!({
+                "chunk_key_b64": key_b64,
+                "ciphertext_b64": legacy,
+                "chunk_id": "vault-data-000000",
+                "lamport_clock": 4,
+                "epoch": 2,
+            })
+            .to_string(),
+        );
+        assert!(refused.contains("legacy ciphertext refused"));
     }
 
     /// The granted keys are per chunk id: a key for one chunk cannot open
@@ -382,11 +474,12 @@ mod tests {
     fn granted_keys_match_the_approver_derivation() {
         let rms = [7u8; 32];
         for (id, key) in kdf::web_session_chunk_keys(&rms) {
-            assert_eq!(key.as_bytes(), kdf::chunk_key(&rms, id.as_bytes()).as_bytes());
+            assert_eq!(
+                key.as_bytes(),
+                kdf::chunk_key(&rms, id.as_bytes()).as_bytes()
+            );
         }
     }
-
-
 
     #[test]
     fn signing_keypair_sign_and_verify() {
@@ -418,7 +511,8 @@ mod tests {
                 let sig_bytes: [u8; signing::HYBRID_SIG_LEN] =
                     B64.decode(&sig_b64).unwrap().try_into().unwrap();
                 let sig = signing::HybridSignature::from_bytes(&sig_bytes).unwrap();
-                let message = signing::auth_message(device_id, &B64.decode(&challenge_b64).unwrap());
+                let message =
+                    signing::auth_message(device_id, &B64.decode(&challenge_b64).unwrap());
                 assert!(signing::verify(&vk, &message, &sig).unwrap());
             })
             .unwrap()
@@ -428,7 +522,9 @@ mod tests {
 
     #[test]
     fn password_strength_scores() {
-        let out = password_strength_json(&serde_json::json!({ "password": "Tr0ub4dor&3xtra!" }).to_string());
+        let out = password_strength_json(
+            &serde_json::json!({ "password": "Tr0ub4dor&3xtra!" }).to_string(),
+        );
         assert!(!field(&out, "score").is_empty());
     }
 }
