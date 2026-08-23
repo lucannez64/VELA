@@ -193,6 +193,14 @@ class AndroidVelaApiClient(
         return SyncManifest(chunks) to response.newToken
     }
 
+    /** Current vault-key epoch and rotation state ("active" or "freezing"). */
+    fun getVaultEpoch(token: String): Pair<Long, String> {
+        val response = request("GET", "/vault/epoch", token)
+        response.requireSuccess("Vault epoch request failed")
+        val json = JSONObject(response.body.toString(Charsets.UTF_8))
+        return json.getLong("epoch") to json.getString("state")
+    }
+
     fun getCapsule(token: String): CapsuleResponse {
         val response = request("GET", "/device/capsule", token)
         response.requireSuccess("RMS capsule download failed")
@@ -464,12 +472,14 @@ class AndroidVelaApiClient(
         capsuleB64: String,
         ttlSecs: Long,
         linkNonce: String,
+        keyEpoch: Long,
     ): String {
         val body = JSONObject()
             .put("mode", mode)
             .put("capsule", capsuleB64)
             .put("ttl_secs", ttlSecs)
             .put("link_nonce", linkNonce)
+            .put("key_epoch", keyEpoch)
             .toString()
             .toByteArray(Charsets.UTF_8)
         val response = request("POST", "/web-session/$sessionId/grant", token, body, contentType = "application/json")

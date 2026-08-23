@@ -136,6 +136,16 @@ actor VelaClient {
         try await request("GET", "/vault/sync", auth: true)
     }
 
+    struct VaultEpoch: Decodable {
+        let epoch: Int
+        let state: String
+    }
+
+    /// Fetch the epoch whose key material must be used for new capsules.
+    func vaultEpoch() async throws -> VaultEpoch {
+        try await request("GET", "/vault/epoch", auth: true)
+    }
+
     /// A fetched chunk: the base64 ciphertext (ready for `decryptVaultChunk`) and its version.
     struct FetchedChunk {
         let ciphertextBase64: String
@@ -261,9 +271,10 @@ actor VelaClient {
     /// Returns the server-clamped expiry (RFC3339).
     func grantWebSession(sessionID: String, mode: String,
                          capsuleBase64: String, ttlSecs: Int,
-                         linkNonce: String) async throws -> String {
+                         linkNonce: String, keyEpoch: Int) async throws -> String {
         let json: [String: Any] = [
             "mode": mode, "capsule": capsuleBase64, "ttl_secs": ttlSecs, "link_nonce": linkNonce,
+            "key_epoch": keyEpoch,
         ]
         let resp: GrantWebResponse = try await request(
             "POST", "/web-session/\(Self.pathComponent(sessionID))/grant",

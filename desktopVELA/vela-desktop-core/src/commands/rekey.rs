@@ -25,6 +25,25 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
 use crate::AppState;
 
+const REKEY_CAPSULE_BATCH_SIZE: usize = 64;
+
+fn into_capsule_batches(
+    capsules: std::collections::HashMap<String, String>,
+) -> Vec<std::collections::HashMap<String, String>> {
+    let mut capsules = capsules.into_iter();
+    let mut batches = Vec::new();
+    loop {
+        let batch = capsules
+            .by_ref()
+            .take(REKEY_CAPSULE_BATCH_SIZE)
+            .collect::<std::collections::HashMap<_, _>>();
+        if batch.is_empty() {
+            return batches;
+        }
+        batches.push(batch);
+    }
+}
+
 /// Everything succeeded; reported to the UI and written to the audit log.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RotateSummary {
@@ -248,15 +267,18 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
                 .map_err(|e| format!("Failed to seal the new seed for {}: {e}", device.id))?;
             capsules.insert(device.id.to_string(), B64.encode(capsule));
         }
-        if let Some(t) = client
-            .rekey_store_capsules(&token, &rotation_id, &capsules)
-            .await
-            .map_err(|e| format!("Failed to store the new-seed capsules: {e}"))?
-        {
-            accept_new_token(state, &mut token, Some(t));
+        let devices_sealed = capsules.len();
+        for batch in into_capsule_batches(capsules) {
+            if let Some(t) = client
+                .rekey_store_capsules(&token, &rotation_id, &batch)
+                .await
+                .map_err(|e| format!("Failed to store the new-seed capsules: {e}"))?
+            {
+                accept_new_token(state, &mut token, Some(t));
+            }
         }
 
-        Ok::<_, String>((new_crypto, uploaded, capsules.len()))
+        Ok::<_, String>((new_crypto, uploaded, devices_sealed))
     }
     .await;
 
@@ -397,4 +419,30 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     );
 
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capsule_fanout_is_split_at_the_server_request_limit() {
+        let capsules = (0..129)
+            .map(|index| (format!("device-{index}"), format!("capsule-{index}")))
+            .collect();
+
+        let batches = into_capsule_batches(capsules);
+
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.len())
+                .collect::<Vec<_>>(),
+            [64, 64, 1]
+        );
+        assert_eq!(
+            batches.iter().flat_map(|batch| batch.keys()).count(),
+            129
+        );
+    }
 }

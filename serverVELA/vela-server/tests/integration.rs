@@ -634,6 +634,65 @@ async fn enroll_device_redeems_grant_exactly_once() {
 }
 
 #[tokio::test]
+async fn recovery_enrollment_grant_is_invalid_after_key_rotation() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    let grant = Uuid::new_v4();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at, key_epoch) VALUES (?, ?, 2)",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(chrono::Utc::now().to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+    // This grant was minted while the account was still at epoch 1.
+    state
+        .store
+        .set_ex(
+            &format!("recovery:enroll_grant:{user_id}:{grant}"),
+            b"1",
+            600,
+        )
+        .unwrap();
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/recovery/enroll-device")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "user_id": user_id,
+                "recovery_grant": grant,
+                "hybrid_ek": B64.encode(vec![1u8; 1600]),
+                "hybrid_vk": B64.encode(vec![1u8; 2624]),
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = vela_server::routes::build(state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let devices = state
+        .sqldb
+        .query(
+            "SELECT id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert!(devices.is_empty(), "a stale grant must not enroll a device");
+}
+
+#[tokio::test]
 async fn account_delete_without_token_returns_401() {
     let app = app().await;
 

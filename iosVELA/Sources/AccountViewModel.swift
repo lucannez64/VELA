@@ -196,6 +196,11 @@ final class AccountViewModel: ObservableObject {
             // to scan).
             let (sessionID, expectedFP, linkNonce) = try parseWebSessionID(codeJSON)
             let client = client()
+            let epoch = try await client.vaultEpoch()
+            await persistRenewedToken(from: client)
+            guard epoch.state == "active" else {
+                throw Failure("A vault key rotation is in progress; approve web access after it completes.")
+            }
             let (ephemeralPK, webVK) = try await client.getWebSessionKeys(sessionID: sessionID)
 
             // Verify the fingerprint to detect server-side key substitution.
@@ -233,7 +238,7 @@ final class AccountViewModel: ObservableObject {
             }
             let expiresAt = try await client.grantWebSession(
                 sessionID: sessionID, mode: mode, capsuleBase64: capsuleB64,
-                ttlSecs: ttlSecs, linkNonce: linkNonce)
+                ttlSecs: ttlSecs, linkNonce: linkNonce, keyEpoch: epoch.epoch)
             await persistRenewedToken(from: client)
             AuditLog.shared.record(
                 "web_session_granted",

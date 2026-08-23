@@ -209,6 +209,10 @@ class SharingRepository(
         val (sessionId, expectedFp, linkNonce) = parseSessionId(qrJson)
 
         val expiresAt = sync.withAuthenticatedClient { client, token ->
+            val (keyEpoch, rotationState) = client.getVaultEpoch(token)
+            check(rotationState == "active") {
+                "A vault key rotation is in progress; approve web access after it completes."
+            }
             val (ephemeralPk, webVk) = client.getWebSessionKeys(token, sessionId)
 
             // Verify the fingerprint to detect server-side key substitution.
@@ -242,7 +246,9 @@ class SharingRepository(
 
             val capsuleB64 = NativeVelaCore.sealShare(ephemeralPk, envelope.toString())
                 ?: error("Native VELA bridge is required for web access")
-            client.grantWebSession(token, sessionId, mode, capsuleB64, ttlSecs, linkNonce)
+            client.grantWebSession(
+                token, sessionId, mode, capsuleB64, ttlSecs, linkNonce, keyEpoch
+            )
         }
         val label = if (mode == "rw") "read-write" else "read-only"
         VelaRepositories.audit.record("web_session_granted", "$label · ${ttlSecs / 60} min")
