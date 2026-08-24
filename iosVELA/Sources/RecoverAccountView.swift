@@ -18,6 +18,8 @@ struct RecoverAccountView: View {
     @State private var password = ""
     @State private var confirm = ""
     @State private var foundICloudBackup = false
+    @State private var share1Epoch: Int?
+    @State private var iCloudShare1 = ""
 
     private var canRecover: Bool {
         guard !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
@@ -51,6 +53,12 @@ struct RecoverAccountView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("recoverShare1Field")
+                        .onChange(of: share1) { value in
+                            if foundICloudBackup && value != iCloudShare1 {
+                                foundICloudBackup = false
+                                share1Epoch = nil
+                            }
+                        }
                     Text(
                         foundICloudBackup
                             ? "Backed up automatically to this iCloud account during recovery setup. Edit only if this isn't the right one."
@@ -78,6 +86,7 @@ struct RecoverAccountView: View {
                         account.restoreAccount(
                             serverURL: serverURL, userID: userID.trimmingCharacters(in: .whitespacesAndNewlines),
                             share1Base64: share1.trimmingCharacters(in: .whitespacesAndNewlines),
+                            share1Epoch: share1Epoch,
                             secure: usePassword ? .password : .biometric,
                             password: usePassword ? password : nil,
                             deviceName: deviceName)
@@ -104,10 +113,12 @@ struct RecoverAccountView: View {
                 // consent screen or network round trip, unlike Android's
                 // Drive OAuth flow — so this can just pre-fill on appear.
                 guard let storedUserID = CloudRecoveryBackup.storedUserID() else { return }
-                if let share = CloudRecoveryBackup.download(userID: storedUserID) {
+                if let backup = CloudRecoveryBackup.download(userID: storedUserID) {
                     userID = storedUserID
-                    share1 = share
+                    iCloudShare1 = backup.shareBase64
+                    share1Epoch = backup.keyEpoch
                     foundICloudBackup = true
+                    share1 = backup.shareBase64
                 }
             }
         }

@@ -219,7 +219,7 @@ const OVERVIEW = {
   cond:[
     "The Rust server speaks plain HTTP. TLS is expected to terminate in front of it; in production a request that cannot be proven HTTPS is rejected with 426.",
     "Two desktop front ends exist in parallel — React-on-Tauri is what ships, the gpui port is still being brought level. Both drive the same core; the Tauri layer is wrappers only.",
-    "RMS rotation and epoch adoption currently ship in the desktop core only. Active Android or iOS devices therefore block rotation, and enrolling either mobile client after epoch 1 is unsupported: their chunk sync does not yet bind the epoch into AEAD or send `X-Vela-Epoch`.",
+    "RMS rotation and epoch adoption currently ship in the desktop core only, so active Android or iOS devices still block a new rotation. iOS nevertheless persists the RMS epoch established by enrollment/recovery, binds post-epoch-1 chunk AEAD to it and sends `X-Vela-Epoch`; Android chunk sync remains epoch-1-only.",
     "Accounts with persisted Path ORAM buckets cannot rotate yet; `/vault/rekey/start` refuses them rather than migrate an incomplete shadow tree.",
   ],
 };
@@ -508,7 +508,7 @@ const NODES = [
   files:["iosVELA/Sources/","iosVELA/AutoFill/","libVELA/vela-apple-bridge/src/lib.rs"],
   what:["The same shape as Android: a Swift app and a credential-provider extension over a Rust bridge, so the crypto is not reimplemented a third time."],
   built:["6.6k lines of Swift over a 1,125-line C-ABI bridge with a generated header, plus a smoke harness that links it outside Xcode."],
-  cond:["The autofill extension is a separate process with its own lifetime, so session state has to be re-established rather than assumed.","The Apple chunk bridge still uses legacy AAD and sends no `X-Vela-Epoch`. Existing iOS devices block rotation; enrolling one after epoch 1 currently yields an RMS it cannot sync with."],
+  cond:["The autofill extension is a separate process with its own lifetime, so session state has to be re-established rather than assumed.","iOS persists the epoch authenticated by its adopted RMS, probes it before sync/recovery/web grants, binds rotated chunk AAD to it and sends `X-Vela-Epoch`. It can enroll or recover into the current rotated epoch, but it does not yet consume later rekey capsules, so active iOS devices still block a new rotation."],
   inside:[["vela_apple_*","C ABI surface"],["AutoFill","credential provider extension"],["Shared","state between app and extension"]] },
 
 { id:"WEB", key:"WV", label:"Web vault + wasm", group:"clients", gx:29, gy:0, w:2, d:2, h:1.4,
@@ -912,6 +912,7 @@ exactly what a browser would have hashed`,
     note:"A raw CTAP2 library has no concept of the browser's envelope, and a native app has no implicit origin. Both gaps had to be closed for the server's webauthn-rs verifier to accept the ceremony." }},
   { a:"WAN", b:"RCV", bend:"x", p:{ t:"PUT /recovery/share", kind:"http", src:"serverVELA/vela-server/src/recovery/",
     body:`share 1 → cloud /<account>/recovery-share-<epoch>.json
+          (iOS KVS: vela.recovery.share1.v2.<account>.<epoch>)
 share 2 → PUT { share, key_epoch } behind the security key
 share 3 → trusted contact, acknowledged at key_epoch`,
     note:"All delivery runs under the sync/rekey mutex and probes the active server epoch. Epoch-specific cloud names also prevent a delayed old upload from overwriting a new one." }},

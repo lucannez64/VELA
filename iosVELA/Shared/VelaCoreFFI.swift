@@ -220,12 +220,14 @@ enum VelaCoreFFI {
     /// be the clock actually sent with the upload, or the result will not
     /// decrypt.
     static func encryptVaultChunk(
-        rms: Data, chunkID: String, vaultJSON: String, lamportClock: Int
+        rms: Data, chunkID: String, vaultJSON: String, lamportClock: Int,
+        keyEpoch: Int
     ) -> String? {
         let request = json([
             "chunk_id": chunkID,
             "vault_json": vaultJSON,
             "lamport_clock": lamportClock,
+            "key_epoch": keyEpoch,
         ])
         let response = request.withCString { req in
             withRmsBytes(rms) { rmsPtr, rmsLen in
@@ -247,12 +249,14 @@ enum VelaCoreFFI {
         // silent decryption failure against any sealed chunk — which is exactly
         // what happened to this file's own test once writers started sealing
         // (audit C-2).
-        lamportClock: Int64
+        lamportClock: Int64,
+        keyEpoch: Int
     ) -> String? {
         let request = json([
             "chunk_id": chunkID,
             "ciphertext_b64": ciphertextBase64,
             "lamport_clock": lamportClock,
+            "key_epoch": keyEpoch,
         ])
         let response = request.withCString { req in
             withRmsBytes(rms) { rmsPtr, rmsLen in

@@ -163,19 +163,28 @@ actor VelaClient {
     }
 
     /// Delete a stale chunk (used when the vault shrinks or migrates chunk ids).
-    func deleteChunk(_ chunkID: String, ifMatch: Int) async throws {
+    func deleteChunk(_ chunkID: String, ifMatch: Int, keyEpoch: Int) async throws {
+        guard keyEpoch >= 1 else {
+            throw ServerError(status: 0, body: "vault epoch must be positive")
+        }
         _ = try await requestRaw("DELETE", "/vault/chunk/\(Self.pathComponent(chunkID))", body: nil,
-                                 headers: ["If-Match": String(ifMatch)])
+                                 headers: ["If-Match": String(ifMatch),
+                                           "X-Vela-Epoch": String(keyEpoch)])
     }
 
     /// Upload a chunk. `ifMatch` = 0 to insert, else the current version. Returns the new version.
-    func putChunk(_ chunkID: String, ciphertextBase64: String, ifMatch: Int, lamportClock: Int) async throws -> Int {
+    func putChunk(_ chunkID: String, ciphertextBase64: String, ifMatch: Int,
+                  lamportClock: Int, keyEpoch: Int) async throws -> Int {
+        guard keyEpoch >= 1 else {
+            throw ServerError(status: 0, body: "vault epoch must be positive")
+        }
         guard let raw = Data(base64Encoded: ciphertextBase64) else {
             throw ServerError(status: 0, body: "invalid ciphertext base64")
         }
         let (data, _) = try await requestRaw(
             "PUT", "/vault/chunk/\(Self.pathComponent(chunkID))", body: raw,
             headers: ["If-Match": String(ifMatch), "X-Lamport-Clock": String(lamportClock),
+                      "X-Vela-Epoch": String(keyEpoch),
                       "Content-Type": "application/octet-stream"]
         )
         struct PutResp: Decodable { let version: Int }
@@ -449,6 +458,7 @@ actor VelaClient {
     struct RecoveryRecoverResult {
         let shareBase64: String
         let recoveryGrant: String
+        let keyEpoch: Int
     }
 
     /// Submits the WebAuthn assertion; the server releases Share 2 plus a
@@ -460,9 +470,14 @@ actor VelaClient {
         let (data, _) = try await requestRaw(
             "POST", "/recovery/recover", body: bodyData,
             headers: ["Content-Type": "application/json"], auth: false)
-        struct Resp: Decodable { let share: String; let recovery_grant: String }
+        struct Resp: Decodable { let share: String; let recovery_grant: String; let key_epoch: Int }
         let resp = try JSONDecoder().decode(Resp.self, from: data)
-        return RecoveryRecoverResult(shareBase64: resp.share, recoveryGrant: resp.recovery_grant)
+        guard resp.key_epoch >= 1 else {
+            throw ServerError(status: 0, body: "server returned an invalid recovery epoch")
+        }
+        return RecoveryRecoverResult(
+            shareBase64: resp.share, recoveryGrant: resp.recovery_grant,
+            keyEpoch: resp.key_epoch)
     }
 
     /// Registers this device's identity key against an existing account once

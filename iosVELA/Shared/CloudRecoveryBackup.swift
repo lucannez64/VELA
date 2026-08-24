@@ -6,50 +6,81 @@ import Foundation
 /// Drive-style file management, just the iCloud (Key-Value storage)
 /// capability enabled for the app (see `iosVELA.entitlements`).
 enum CloudRecoveryBackup {
-    private static let storageKey = "vela.recovery.share1.v1"
+    private static let legacyStorageKey = "vela.recovery.share1.v1"
+    private static let storageKeyPrefix = "vela.recovery.share1.v2."
+
+    struct Backup: Equatable {
+        let userID: String
+        let shareBase64: String
+        let keyEpoch: Int
+    }
 
     private struct Envelope: Codable {
         let version: Int
         let userID: String
         let shareB64: String
+        let keyEpoch: Int?
 
         enum CodingKeys: String, CodingKey {
             case version
             case userID = "user_id"
             case shareB64 = "share_b64"
+            case keyEpoch = "key_epoch"
+        }
+
+        var backup: Backup? {
+            let epoch = keyEpoch ?? (version == 1 ? 1 : 0)
+            guard epoch >= 1 else { return nil }
+            return Backup(userID: userID, shareBase64: shareB64, keyEpoch: epoch)
         }
     }
 
-    /// Backs up Share 1, keyed by account — if this device's iCloud account
-    /// is later used to set up a *different* VELA account, `upload` simply
-    /// overwrites the previous backup (there is only ever one recovery in
-    /// flight per iCloud account by design).
-    static func upload(userID: String, shareBase64: String) {
-        let envelope = Envelope(version: 1, userID: userID, shareB64: shareBase64)
-        guard let data = try? JSONEncoder().encode(envelope) else { return }
+    /// Backs up Share 1 under an epoch-specific key. A delayed epoch-N device
+    /// therefore cannot overwrite the epoch-N+1 envelope in the shared iCloud
+    /// store; readers select the highest valid epoch for the account.
+    static func upload(userID: String, shareBase64: String, keyEpoch: Int) throws {
+        guard keyEpoch >= 1 else { throw BackupError.invalidEpoch }
+        let envelope = Envelope(
+            version: 2, userID: userID, shareB64: shareBase64,
+            keyEpoch: keyEpoch)
+        let data = try JSONEncoder().encode(envelope)
         let store = NSUbiquitousKeyValueStore.default
-        store.set(data, forKey: storageKey)
+        store.set(data, forKey: storageKey(userID: userID, keyEpoch: keyEpoch))
         store.synchronize()
     }
 
-    /// Downloads Share 1 for `userID`, or nil if this iCloud account has no
-    /// backup, or its backup belongs to a different account.
-    static func download(userID: String) -> String? {
-        guard let envelope = currentEnvelope(), envelope.userID == userID else { return nil }
-        return envelope.shareB64
+    enum BackupError: LocalizedError {
+        case invalidEpoch
+        var errorDescription: String? { "recovery backup epoch must be positive" }
+    }
+
+    /// Downloads the newest epoch-bound Share 1 for `userID`. A legacy v1
+    /// envelope is accepted only as epoch 1.
+    static func download(userID: String) -> Backup? {
+        allBackups().filter { $0.userID == userID }.max { $0.keyEpoch < $1.keyEpoch }
     }
 
     /// The account id of whatever backup is currently stored, if any — lets
     /// the recovery screen pre-fill the account id without the user typing
     /// their UUID, mirroring desktop's cloud envelope.
     static func storedUserID() -> String? {
-        currentEnvelope()?.userID
+        allBackups().max { $0.keyEpoch < $1.keyEpoch }?.userID
     }
 
-    private static func currentEnvelope() -> Envelope? {
+    private static func storageKey(userID: String, keyEpoch: Int) -> String {
+        "\(storageKeyPrefix)\(userID).\(keyEpoch)"
+    }
+
+    private static func allBackups() -> [Backup] {
         let store = NSUbiquitousKeyValueStore.default
         store.synchronize()
-        guard let data = store.data(forKey: storageKey) else { return nil }
-        return try? JSONDecoder().decode(Envelope.self, from: data)
+        return store.dictionaryRepresentation.compactMap { key, value in
+            guard key == legacyStorageKey || key.hasPrefix(storageKeyPrefix),
+                  let data = value as? Data,
+                  let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
+                return nil
+            }
+            return envelope.backup
+        }
     }
 }

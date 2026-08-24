@@ -175,6 +175,10 @@ struct WebSessionChunkKeysResponse {
 struct EncryptChunkRequest {
     chunk_id: String,
     vault_json: String,
+    /// Epoch 1 keeps the legacy AAD for Android/web compatibility. Rotated
+    /// epochs are bound explicitly and reject legacy ciphertext.
+    #[serde(default = "default_key_epoch")]
+    key_epoch: i64,
     /// The clock this chunk will be stored under, bound into the ciphertext so
     /// the server cannot replay an older revision (audit C-2). Not defaulted:
     /// a caller that forgets it would seal against clock 0 and write something
@@ -184,11 +188,17 @@ struct EncryptChunkRequest {
 #[derive(Deserialize)]
 struct DecryptChunkRequest {
     chunk_id: String,
+    #[serde(default = "default_key_epoch")]
+    key_epoch: i64,
     /// Revision the server claimed for this chunk. Verified for sealed
     /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
     #[serde(default)]
     lamport_clock: i64,
     ciphertext_b64: String,
+}
+
+fn default_key_epoch() -> i64 {
+    1
 }
 
 #[derive(Deserialize)]
@@ -741,11 +751,24 @@ fn encrypt_vault_chunk_json(
     let rms = rms_from(rms_bytes)?;
     let _: VaultStore = serde_json::from_str(&req.vault_json)?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let ciphertext = aead::seal(
-        &key,
-        req.vault_json.as_bytes(),
-        &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
-    )?;
+    if req.key_epoch < 1 {
+        return Err("key_epoch must be positive".into());
+    }
+    let ciphertext = if req.key_epoch == 1 {
+        aead::seal(
+            &key,
+            req.vault_json.as_bytes(),
+            &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
+        )?
+    } else {
+        vela_crypto::rekey::seal_epoch_chunk(
+            &key,
+            req.vault_json.as_bytes(),
+            req.key_epoch as u64,
+            &req.chunk_id,
+            req.lamport_clock,
+        )?
+    };
     Ok(EncryptVaultResponse {
         ciphertext_b64: B64.encode(ciphertext),
     })
@@ -759,7 +782,24 @@ fn decrypt_vault_chunk_json(
     let rms = rms_from(rms_bytes)?;
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let plaintext = aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)?;
+    if req.key_epoch < 1 {
+        return Err("key_epoch must be positive".into());
+    }
+    let plaintext = if req.key_epoch == 1 {
+        aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)?
+    } else {
+        let (bound_epoch, plaintext) = vela_crypto::rekey::open_epoch_chunk(
+            &key,
+            &ciphertext,
+            req.key_epoch as u64,
+            &req.chunk_id,
+            req.lamport_clock,
+        )?;
+        if bound_epoch != Some(req.key_epoch as u64) {
+            return Err("legacy ciphertext refused after key rotation".into());
+        }
+        plaintext
+    };
     Ok(DecryptVaultResponse {
         vault_json: String::from_utf8(plaintext.to_vec())?,
     })
@@ -1212,6 +1252,45 @@ mod tests {
         assert!(
             replayed.contains("error"),
             "clock must bind the ciphertext: {replayed}"
+        );
+
+        let epoch_enc = call_rms(
+            vela_ffi_encrypt_vault_chunk_json,
+            &rms,
+            &serde_json::json!({
+                "chunk_id": "vault", "vault_json": vault_json,
+                "lamport_clock": 7, "key_epoch": 2
+            })
+            .to_string(),
+        );
+        let epoch_enc: EncryptVaultResponse = serde_json::from_str(&epoch_enc).unwrap();
+        let epoch_dec = |epoch| {
+            call_rms(
+                vela_ffi_decrypt_vault_chunk_json,
+                &rms,
+                &serde_json::json!({
+                    "chunk_id": "vault", "ciphertext_b64": epoch_enc.ciphertext_b64,
+                    "lamport_clock": 7, "key_epoch": epoch
+                })
+                .to_string(),
+            )
+        };
+        let opened: DecryptVaultResponse = serde_json::from_str(&epoch_dec(2)).unwrap();
+        assert_eq!(opened.vault_json, vault_json);
+        assert!(epoch_dec(3).contains("error"), "wrong epoch must fail");
+
+        let legacy_at_epoch_two = call_rms(
+            vela_ffi_decrypt_vault_chunk_json,
+            &rms,
+            &serde_json::json!({
+                "chunk_id": "vault", "ciphertext_b64": enc.ciphertext_b64,
+                "lamport_clock": 7, "key_epoch": 2
+            })
+            .to_string(),
+        );
+        assert!(
+            legacy_at_epoch_two.contains("legacy ciphertext refused"),
+            "rotated epochs must not accept legacy AAD: {legacy_at_epoch_two}"
         );
     }
 

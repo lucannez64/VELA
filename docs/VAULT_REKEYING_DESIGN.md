@@ -174,7 +174,10 @@ Preconditions: unlocked session, full vault locally (or fetched first).
    success. Server share writes use an epoch/state compare-and-swap. Cloud
    objects use per-account, per-epoch paths, so a delayed epoch-N upload cannot
    overwrite N+1; recovery also requires the cloud and released server share
-   epochs to match.
+   epochs to match. iOS follows the same rule with epoch-specific iCloud KVS
+   keys, persists the epoch authenticated by its adopted RMS, and refuses sync,
+   web-session grants, or recovery setup when that local epoch differs from the
+   active server epoch.
 9. Audit event `VaultRekeyed { from_epoch, to_epoch, device_id }` — written
    under the NEW audit key.
 
@@ -257,6 +260,7 @@ CREATE INDEX idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
 3. ✅ **Desktop core** — `commands/rekey::rotate_vault_keys` orchestrating §6,
    restart-safe platform RMS persistence, and the §7.1 adoption hook before any
    sync read/write (settings UI action shipped in gpui; webview port pending).
-4. **Follow-ups** — mobile adoption-only support (needs no new crypto), webview
-   rotation UI, and ORAM shadow migration (the server currently refuses
+4. **Follow-ups** — Android epoch-aware chunk sync, mobile rekey-capsule
+   adoption (iOS can already enroll/recover directly into a rotated epoch),
+   webview rotation UI, and ORAM shadow migration (the server currently refuses
    rotation while an account has ORAM buckets).

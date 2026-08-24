@@ -20,20 +20,55 @@ final class Phase4Tests: XCTestCase {
     func testVaultChunkRoundTripBindsChunkID() {
         let rms = Data(repeating: 5, count: 32)
         let vaultJSON = "{\"items\":[]}"
-        guard let cipher = VelaCoreFFI.encryptVaultChunk(rms: rms, chunkID: "vault", vaultJSON: vaultJSON, lamportClock: 1) else {
+        guard let cipher = VelaCoreFFI.encryptVaultChunk(
+            rms: rms, chunkID: "vault", vaultJSON: vaultJSON,
+            lamportClock: 1, keyEpoch: 1) else {
             return XCTFail("encrypt failed")
         }
         XCTAssertEqual(
             VelaCoreFFI.decryptVaultChunk(
-                rms: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 1),
+                rms: rms, chunkID: "vault", ciphertextBase64: cipher,
+                lamportClock: 1, keyEpoch: 1),
             vaultJSON)
         // A different chunk id derives a different key → must fail.
         XCTAssertNil(VelaCoreFFI.decryptVaultChunk(
-            rms: rms, chunkID: "other", ciphertextBase64: cipher, lamportClock: 1))
+            rms: rms, chunkID: "other", ciphertextBase64: cipher,
+            lamportClock: 1, keyEpoch: 1))
         // And an older revision of the same chunk must fail too — the rollback
         // the seal exists to stop (audit C-2).
         XCTAssertNil(VelaCoreFFI.decryptVaultChunk(
-            rms: rms, chunkID: "vault", ciphertextBase64: cipher, lamportClock: 0))
+            rms: rms, chunkID: "vault", ciphertextBase64: cipher,
+            lamportClock: 0, keyEpoch: 1))
+    }
+
+    func testRotatedVaultChunkBindsEpochAndRejectsLegacyCiphertext() {
+        let rms = Data(repeating: 6, count: 32)
+        let vaultJSON = #"{"items":[]}"#
+        let rotated = VelaCoreFFI.encryptVaultChunk(
+            rms: rms, chunkID: "vault-data-000000", vaultJSON: vaultJSON,
+            lamportClock: 8, keyEpoch: 2)
+        XCTAssertNotNil(rotated)
+        XCTAssertEqual(
+            rotated.flatMap {
+                VelaCoreFFI.decryptVaultChunk(
+                    rms: rms, chunkID: "vault-data-000000", ciphertextBase64: $0,
+                    lamportClock: 8, keyEpoch: 2)
+            },
+            vaultJSON)
+        XCTAssertNil(rotated.flatMap {
+            VelaCoreFFI.decryptVaultChunk(
+                rms: rms, chunkID: "vault-data-000000", ciphertextBase64: $0,
+                lamportClock: 8, keyEpoch: 3)
+        })
+
+        let legacy = VelaCoreFFI.encryptVaultChunk(
+            rms: rms, chunkID: "vault-data-000000", vaultJSON: vaultJSON,
+            lamportClock: 8, keyEpoch: 1)
+        XCTAssertNil(legacy.flatMap {
+            VelaCoreFFI.decryptVaultChunk(
+                rms: rms, chunkID: "vault-data-000000", ciphertextBase64: $0,
+                lamportClock: 8, keyEpoch: 2)
+        })
     }
 
     /// Audit C-1: the identity comes back as a handle plus public halves. No
@@ -151,11 +186,33 @@ final class Phase4Tests: XCTestCase {
         var state = AccountState(serverURL: "https://vault.klyt.eu", userID: "u", deviceID: "d",
                                  hybridEK: "ek", hybridVK: "vk", token: "tok")
         state.sealedIdentity = "sealed-blob"
+        state.keyEpoch = 4
         try store.save(state)
         XCTAssertEqual(store.load(), state)
 
         store.clear()
         XCTAssertNil(store.load())
+    }
+
+    func testLegacyAccountDefaultsToEpochOne() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let accountURL = dir.appendingPathComponent("account.json")
+        let legacy = #"{"serverURL":"https://vault.klyt.eu","userID":"u","deviceID":"d","hybridEK":"ek","hybridVK":"vk","token":"tok","shareEK":"","sealedIdentity":""}"#
+        try Data(legacy.utf8).write(to: accountURL)
+
+        XCTAssertEqual(AccountStore(directory: dir).load()?.keyEpoch, 1)
+    }
+
+    func testVaultEpochMarkerIsAuthenticatedByTheRMS() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let repo = VaultRepository(directory: dir)
+        let rms = Data(repeating: 0x41, count: 32)
+        XCTAssertNil(try repo.loadKeyEpoch(rms: rms))
+
+        try repo.saveKeyEpoch(5, rms: rms)
+        XCTAssertEqual(try repo.loadKeyEpoch(rms: rms), 5)
+        XCTAssertThrowsError(try repo.loadKeyEpoch(rms: Data(repeating: 0x42, count: 32)))
     }
 
     // MARK: Networking (mock URLProtocol)
@@ -259,6 +316,53 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(requestNumber, 2)
     }
 
+    func testVaultWritesDeclareTheirEpoch() async throws {
+        var requestNumber = 0
+        MockURLProtocol.handler = { req in
+            requestNumber += 1
+            XCTAssertEqual(req.value(forHTTPHeaderField: "X-Vela-Epoch"), "7")
+            XCTAssertEqual(req.value(forHTTPHeaderField: "If-Match"), "3")
+            if requestNumber == 1 {
+                XCTAssertEqual(req.httpMethod, "PUT")
+                XCTAssertEqual(req.value(forHTTPHeaderField: "X-Lamport-Clock"), "9")
+                return (Self.ok(req), Data(#"{"version":4}"#.utf8))
+            }
+            XCTAssertEqual(req.httpMethod, "DELETE")
+            return (Self.ok(req), Data())
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = VelaClient(
+            baseURL: URL(string: "https://vault.example")!, token: "TOKEN",
+            session: URLSession(configuration: config))
+
+        let version = try await client.putChunk(
+            "vault-data-000000", ciphertextBase64: Data([1, 2, 3]).base64EncodedString(),
+            ifMatch: 3, lamportClock: 9, keyEpoch: 7)
+        XCTAssertEqual(version, 4)
+        try await client.deleteChunk("vault-data-000000", ifMatch: 3, keyEpoch: 7)
+        XCTAssertEqual(requestNumber, 2)
+    }
+
+    func testRecoveryResponseCarriesEpoch() async throws {
+        MockURLProtocol.handler = { req in
+            XCTAssertEqual(req.url?.path, "/recovery/recover")
+            let json = #"{"share":"share-two","recovery_grant":"grant","key_epoch":6}"#
+            return (Self.ok(req), Data(json.utf8))
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = VelaClient(
+            baseURL: URL(string: "https://vault.example")!,
+            session: URLSession(configuration: config))
+
+        let result = try await client.recoverAccount(
+            userID: "user", recoveryID: "recovery", credentialJSON: [:])
+        XCTAssertEqual(result.shareBase64, "share-two")
+        XCTAssertEqual(result.recoveryGrant, "grant")
+        XCTAssertEqual(result.keyEpoch, 6)
+    }
+
     func testRedirectPolicyRefusesCrossHost() {
         // URLSession re-sends the Authorization header when following a
         // redirect; a cross-host hop would hand the bearer token to whatever
@@ -307,7 +411,7 @@ final class Phase4Tests: XCTestCase {
         }
         let repo = VaultRepository(
             directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
-        let engine = SyncEngine(client: mockClient(), repo: repo)
+        let engine = SyncEngine(client: mockClient(), repo: repo, keyEpoch: 1)
         do {
             _ = try await engine.sync(rms: Data(repeating: 1, count: 32), localStore: VaultStore(items: []))
             XCTFail("expected the rolled-back chunk to be rejected")

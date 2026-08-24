@@ -64,6 +64,19 @@ final class AccountViewModel: ObservableObject {
         return VelaClient(baseURL: URL(string: urlString) ?? URL(string: defaultServer)!, token: account?.token)
     }
 
+    /// Read the epoch from an envelope authenticated by the unlocked RMS.
+    /// A missing marker is the legacy epoch-1 shape; a plaintext account-file
+    /// value is never sufficient authority for epoch-bound writes.
+    private func authenticatedLocalEpoch(rms: Data) throws -> Int {
+        guard vault.currentRMS == rms else { throw Failure("vault key changed during the operation") }
+        if let epoch = try vault.loadAuthenticatedKeyEpoch() { return epoch }
+        guard (account?.keyEpoch ?? 1) == 1 else {
+            throw Failure("the authenticated vault epoch marker is missing; re-enroll this device")
+        }
+        try vault.saveAuthenticatedKeyEpoch(1)
+        return 1
+    }
+
     private func run(_ label: String, _ work: @escaping () async throws -> String) {
         // Without this guard, a user-initiated action (e.g. tapping "Sync
         // Now") firing at the same moment the periodic sync timer does would
@@ -131,8 +144,17 @@ final class AccountViewModel: ObservableObject {
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             guard account != nil else { throw Failure("register first") }
             let client = client()
+            let localEpoch = try authenticatedLocalEpoch(rms: rms)
+            let epoch = try await client.vaultEpoch()
+            await persistRenewedToken(from: client)
+            guard epoch.state == "active", epoch.epoch == localEpoch else {
+                throw Failure(
+                    "this device has vault epoch \(localEpoch), but the server is "
+                    + "\(epoch.state) at epoch \(epoch.epoch); adopt the rotated key before syncing")
+            }
             await ensureShareKey(client: client)
-            let engine = SyncEngine(client: client, repo: VaultRepository())
+            let engine = SyncEngine(
+                client: client, repo: VaultRepository(), keyEpoch: localEpoch)
             let merged = try await engine.sync(rms: rms, localStore: vault.currentStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
@@ -191,15 +213,18 @@ final class AccountViewModel: ObservableObject {
     func grantWebAccess(codeJSON: String, mode: String, ttlSecs: Int) {
         run("Approving web access") { [self] in
             guard account != nil else { throw Failure("register first") }
+            guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             // The code is `{session id}#{fingerprint}#{link_nonce}`; fetch the
             // browser's ephemeral key from the server (keeps the QR small enough
             // to scan).
             let (sessionID, expectedFP, linkNonce) = try parseWebSessionID(codeJSON)
             let client = client()
+            let localEpoch = try authenticatedLocalEpoch(rms: rms)
             let epoch = try await client.vaultEpoch()
             await persistRenewedToken(from: client)
-            guard epoch.state == "active" else {
-                throw Failure("A vault key rotation is in progress; approve web access after it completes.")
+            guard epoch.state == "active", epoch.epoch == localEpoch else {
+                throw Failure(
+                    "This device has not adopted the server's active vault key; sync it before approving web access.")
             }
             let (ephemeralPK, webVK) = try await client.getWebSessionKeys(sessionID: sessionID)
             // The fingerprint/capsule checks below can return early. Persist a
@@ -220,7 +245,6 @@ final class AccountViewModel: ObservableObject {
                 guard !webVK.isEmpty else {
                     throw Failure("This browser did not offer read-write access; choose read-only.")
                 }
-                guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
                 // Per-chunk vault keys, not the RMS: the browser can read and
                 // rewrite the vault for the session, but never holds the root of
                 // the key hierarchy (audit D-2).
@@ -241,7 +265,7 @@ final class AccountViewModel: ObservableObject {
             }
             let expiresAt = try await client.grantWebSession(
                 sessionID: sessionID, mode: mode, capsuleBase64: capsuleB64,
-                ttlSecs: ttlSecs, linkNonce: linkNonce, keyEpoch: epoch.epoch)
+                ttlSecs: ttlSecs, linkNonce: linkNonce, keyEpoch: localEpoch)
             await persistRenewedToken(from: client)
             AuditLog.shared.record(
                 "web_session_granted",
@@ -310,11 +334,19 @@ final class AccountViewModel: ObservableObject {
         run("Setting up recovery") { [self] in
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             guard let account = account else { throw Failure("register first") }
+            let client = client()
+            let localEpoch = try authenticatedLocalEpoch(rms: rms)
+            let initialEpoch = try await client.vaultEpoch()
+            await persistRenewedToken(from: client)
+            guard initialEpoch.state == "active", initialEpoch.epoch == localEpoch else {
+                throw Failure(
+                    "This device has vault epoch \(localEpoch), but the server is "
+                    + "\(initialEpoch.state) at epoch \(initialEpoch.epoch); sync before setting up recovery")
+            }
             guard let shares = VelaCoreFFI.splitRecovery(rms: rms, threshold: threshold, n: total),
                   shares.count == total else {
                 throw Failure("recovery split failed")
             }
-            let client = client()
 
             let startResp = try await client.startRecoveryWebAuthnRegistration()
             let creationOptions = WebAuthnCeremony.unwrapPublicKey(startResp)
@@ -324,17 +356,25 @@ final class AccountViewModel: ObservableObject {
 
             // Share 2 is gated by the passkey we just registered.
             let recoveryEpoch = try await client.vaultEpoch()
-            guard recoveryEpoch.state == "active" else {
-                throw Failure("vault key rotation is in progress; retry recovery setup after it completes")
-            }
-            try await client.putRecoveryShare(shares[1], keyEpoch: recoveryEpoch.epoch)
             await persistRenewedToken(from: client)
-            CloudRecoveryBackup.upload(userID: account.userID, shareBase64: shares[0])
-            let confirmedEpoch = try await client.vaultEpoch()
-            guard confirmedEpoch.state == "active", confirmedEpoch.epoch == recoveryEpoch.epoch else {
+            guard recoveryEpoch.state == "active", recoveryEpoch.epoch == localEpoch else {
                 throw Failure("vault key rotation changed during recovery setup; start again")
             }
+            try await client.putRecoveryShare(shares[1], keyEpoch: localEpoch)
             await persistRenewedToken(from: client)
+            let afterSecurityKey = try await client.vaultEpoch()
+            await persistRenewedToken(from: client)
+            guard afterSecurityKey.state == "active", afterSecurityKey.epoch == localEpoch else {
+                throw Failure("vault key rotation changed during recovery setup; start again")
+            }
+
+            try CloudRecoveryBackup.upload(
+                userID: account.userID, shareBase64: shares[0], keyEpoch: localEpoch)
+            let confirmedEpoch = try await client.vaultEpoch()
+            await persistRenewedToken(from: client)
+            guard confirmedEpoch.state == "active", confirmedEpoch.epoch == localEpoch else {
+                throw Failure("vault key rotation changed during cloud backup; start recovery setup again")
+            }
             // Share 3 (trusted contact) is shown to the user to distribute —
             // there is no automated channel for a trusted-contact handoff.
             recoveryShares = [shares[2]]
@@ -349,6 +389,7 @@ final class AccountViewModel: ObservableObject {
     /// existing account and pull the vault down — the download side of
     /// `setupRecovery`, mirroring `joinWithCode`'s bootstrap sequence.
     func restoreAccount(serverURL: String, userID: String, share1Base64: String,
+                         share1Epoch: Int?,
                          secure: VaultViewModel.UnlockMode, password: String?, deviceName: String) {
         run("Recovering account") { [self] in
             let base = try Self.validatedBase(serverURL)
@@ -359,6 +400,10 @@ final class AccountViewModel: ObservableObject {
             let credentialJSON = try await WebAuthnCeremony().assert(optionsJSON: requestOptions)
             let recoverResp = try await client.recoverAccount(
                 userID: userID, recoveryID: initiateResp.recoveryID, credentialJSON: credentialJSON)
+            if let share1Epoch, share1Epoch != recoverResp.keyEpoch {
+                throw Failure(
+                    "the iCloud recovery share belongs to epoch \(share1Epoch), but the security-key share belongs to epoch \(recoverResp.keyEpoch)")
+            }
 
             guard let rmsB64 = VelaCoreFFI.combineRecovery(sharesBase64: [share1Base64, recoverResp.shareBase64]),
                   let rms = Data(base64Encoded: rmsB64) else {
@@ -380,18 +425,23 @@ final class AccountViewModel: ObservableObject {
             let verified = try await client.verify(deviceID: deviceID, challenge: challenge,
                                                     signature: signature, deviceName: deviceName, deviceType: "ios")
 
-            try vault.adoptVault(rms: rms, mode: secure, password: password)
+            try vault.adoptVault(
+                rms: rms, keyEpoch: recoverResp.keyEpoch,
+                mode: secure, password: password)
 
             var state = AccountState(
                 serverURL: serverURL, userID: verified.user_id, deviceID: deviceID,
                 hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
-                token: await client.currentToken ?? verified.token)
+                token: await client.currentToken ?? verified.token,
+                keyEpoch: recoverResp.keyEpoch)
             state.shareEK = identity.shareEK
             state.sealedIdentity = identity.sealed
             try store.save(state)
             account = state
 
-            let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localStore: vault.currentStore)
+            let merged = try await SyncEngine(
+                client: client, repo: VaultRepository(), keyEpoch: recoverResp.keyEpoch
+            ).sync(rms: rms, localStore: vault.currentStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
             AuditLog.shared.record("account_recovered", String(deviceID.prefix(8)))
@@ -428,24 +478,38 @@ final class AccountViewModel: ObservableObject {
                                                    signature: signature, deviceType: "ios")
 
             // Download + decrypt the one-shot RMS capsule.
+            let epochBeforeCapsule = try await client.vaultEpoch()
+            guard epochBeforeCapsule.state == "active" else {
+                throw Failure("vault key rotation is in progress; retry enrollment after it completes")
+            }
             let capsule = try await client.getCapsule()
+            let epochAfterCapsule = try await client.vaultEpoch()
+            guard epochAfterCapsule.state == "active",
+                  epochAfterCapsule.epoch == epochBeforeCapsule.epoch else {
+                throw Failure("vault key rotation changed while enrolling; retry with the current vault key")
+            }
             guard let rmsB64 = VelaCoreFFI.decryptRMSCapsule(transferKeyBase64: payload.transfer_key, capsuleBase64: capsule),
                   let rms = Data(base64Encoded: rmsB64) else {
                 throw Failure("couldn't decrypt the enrollment capsule")
             }
-            try vault.adoptVault(rms: rms, mode: secure, password: password)
+            try vault.adoptVault(
+                rms: rms, keyEpoch: epochAfterCapsule.epoch,
+                mode: secure, password: password)
 
             var state = AccountState(
                 serverURL: effectiveServer, userID: verified.user_id, deviceID: payload.device_id,
                 hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
-                token: await client.currentToken ?? verified.token)
+                token: await client.currentToken ?? verified.token,
+                keyEpoch: epochAfterCapsule.epoch)
             state.shareEK = identity.shareEK
             state.sealedIdentity = identity.sealed
             try store.save(state)
             account = state
 
             // First sync pulls the vault down.
-            let merged = try await SyncEngine(client: client, repo: VaultRepository()).sync(rms: rms, localStore: vault.currentStore)
+            let merged = try await SyncEngine(
+                client: client, repo: VaultRepository(), keyEpoch: epochAfterCapsule.epoch
+            ).sync(rms: rms, localStore: vault.currentStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
             AuditLog.shared.record("device_enrolled", String(payload.device_id.prefix(8)))
@@ -529,18 +593,30 @@ final class AccountViewModel: ObservableObject {
                                                    signature: signature, deviceType: "ios")
 
             // Opens with the key generated above and nowhere else.
+            let epochBeforeCapsule = try await client.vaultEpoch()
+            guard epochBeforeCapsule.state == "active" else {
+                throw Failure("vault key rotation is in progress; retry enrollment after it completes")
+            }
             let capsule = try await client.getCapsule()
+            let epochAfterCapsule = try await client.vaultEpoch()
+            guard epochAfterCapsule.state == "active",
+                  epochAfterCapsule.epoch == epochBeforeCapsule.epoch else {
+                throw Failure("vault key rotation changed while enrolling; retry with the current vault key")
+            }
             guard let rmsB64 = VelaCoreFFI.identityOpenEnrollmentCapsule(
                 handle: identity.handle, capsuleBase64: capsule),
                   let rms = Data(base64Encoded: rmsB64) else {
                 throw Failure("the vault key was not sealed to this device")
             }
-            try vault.adoptVault(rms: rms, mode: secure, password: password)
+            try vault.adoptVault(
+                rms: rms, keyEpoch: epochAfterCapsule.epoch,
+                mode: secure, password: password)
 
             var state = AccountState(
                 serverURL: effectiveServer, userID: verified.user_id, deviceID: deviceID,
                 hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
-                token: await client.currentToken ?? verified.token)
+                token: await client.currentToken ?? verified.token,
+                keyEpoch: epochAfterCapsule.epoch)
             state.shareEK = identity.shareEK
             state.sealedIdentity = identity.sealed
             try store.save(state)
