@@ -290,8 +290,9 @@ CREATE INDEX idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
 1. ✅ **Crypto primitive** — `vela-crypto::rekey` (pure, unit-tested; no
    protocol coupling).
 2. ✅ **Server** — schema migration + endpoints + epoch write rules + lazy
-   rollback; covered by the `rekey_rotation_lifecycle_end_to_end` integration
-   test.
+   rollback; covered by lifecycle tests, an exhaustive finite-state model, all
+   24 shadow/capsule upload orderings, and commit/write/timeout races against a
+   real Turso database.
 3. ✅ **Desktop core** — `commands/rekey::rotate_vault_keys` orchestrating §6,
    restart-safe platform RMS persistence, and the §7.1 adoption hook before any
    sync read/write (settings UI action shipped in gpui; webview port pending).
@@ -299,3 +300,35 @@ CREATE INDEX idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
    enroll/recover directly into a rotated epoch and perform epoch-bound sync),
    webview rotation UI, and ORAM shadow migration (the server currently refuses
    rotation while an account has ORAM buckets).
+
+## 11. Verification and proof boundary
+
+Three Tamarin theories under `security/formal/` mechanically check the protocol
+at complementary boundaries:
+
+- `m11` checks ACTIVE → FREEZING → COMMIT/ABORT/TIMEOUT, completeness,
+  acknowledgement gating, mutual exclusion, recovery invalidation, and
+  reachability across arbitrary successor epochs.
+- `m11b` treats capsule transport as adversarial and proves that a relabelled or
+  replayed capsule cannot be adopted unless its authenticated epoch and
+  rotation id match the committed transition.
+- `m11c` checks that web-session, recovery-share, and enrollment writes require
+  current epoch authority at the atomic mutation boundary, so a staged
+  pre-commit request cannot execute after commit.
+
+The proof gate requires **31 verified, 0 falsified, 0 warnings**. It is paired
+with executable refinement tests rather than treated as a substitute for them:
+the finite model explores the reachable graph through epoch 3 with four
+rotation attempts; real-handler tests cover every ordering of two chunk shadows
+and two device capsules; and concurrency/fault tests race normal writes, commit,
+and timeout cleanup. A shared `vela-crypto` fleet-wire primitive is exercised as
+a desktop × web × Android × iOS producer/consumer matrix for legacy epoch 1 and
+epoch-bound later ciphertext.
+
+The formal claim is scoped: it proves the stated invariants of the symbolic
+models under their declared cryptographic assumptions. The handler/database
+and cross-client tests are the refinement evidence that the implementation
+matches those transitions; they do not constitute a proof that arbitrary Rust,
+Kotlin, Swift, JavaScript, storage, or operating-system code is bug-free. The
+full results and reproduction commands are in
+`security/formal/rekey-tamarin-results.md`.

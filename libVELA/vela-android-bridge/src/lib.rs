@@ -667,27 +667,16 @@ fn encrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::
     let request: EncryptChunkRequest = serde_json::from_str(request_json)?;
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let _: VaultStore = serde_json::from_str(&request.vault_json)?;
-    if request.key_epoch < 1 {
-        return Err("vault key epoch must be positive".into());
-    }
     let key = chunk_key(&rms, &request.chunk_id);
-    // Epoch 1 remains wire-compatible with clients from before key rotation.
-    // After the first rotation, epoch binding is mandatory across the fleet.
-    let ciphertext = if request.key_epoch == 1 {
-        aead::seal(
-            &key,
-            request.vault_json.as_bytes(),
-            &aead::vault_chunk_aad(&request.chunk_id, request.lamport_clock),
-        )?
-    } else {
-        rekey::seal_epoch_chunk(
-            &key,
-            request.vault_json.as_bytes(),
-            request.key_epoch as u64,
-            &request.chunk_id,
-            request.lamport_clock,
-        )?
-    };
+    let epoch = u64::try_from(request.key_epoch)
+        .map_err(|_| "vault key epoch must be positive")?;
+    let ciphertext = rekey::seal_fleet_chunk(
+        &key,
+        request.vault_json.as_bytes(),
+        epoch,
+        &request.chunk_id,
+        request.lamport_clock,
+    )?;
     Ok(EncryptVaultResponse {
         ciphertext_b64: B64.encode(ciphertext),
     })
@@ -695,22 +684,18 @@ fn encrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::
 
 fn decrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<DecryptVaultResponse> {
     let request: DecryptChunkRequest = serde_json::from_str(request_json)?;
-    if request.key_epoch < 1 {
-        return Err("vault key epoch must be positive".into());
-    }
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &request.chunk_id);
-    let (bound_epoch, plaintext) = rekey::open_epoch_chunk(
+    let epoch = u64::try_from(request.key_epoch)
+        .map_err(|_| "vault key epoch must be positive")?;
+    let plaintext = rekey::open_fleet_chunk(
         &key,
         &ciphertext,
-        request.key_epoch as u64,
+        epoch,
         &request.chunk_id,
         request.lamport_clock,
     )?;
-    if request.key_epoch > 1 && bound_epoch != Some(request.key_epoch as u64) {
-        return Err("legacy chunk ciphertext is forbidden after epoch 1".into());
-    }
     Ok(DecryptVaultResponse {
         vault_json: String::from_utf8(plaintext.to_vec())?,
     })

@@ -522,21 +522,10 @@ fn seal_sync_chunk(
     chunk_id: &str,
     lamport_clock: i64,
 ) -> Result<Vec<u8>, vela_crypto::VelaError> {
-    if key_epoch == 1 {
-        vela_crypto::aead::seal(
-            key,
-            plaintext,
-            &vela_crypto::aead::vault_chunk_aad(chunk_id, lamport_clock),
-        )
-    } else {
-        vela_crypto::rekey::seal_epoch_chunk(
-            key,
-            plaintext,
-            key_epoch as u64,
-            chunk_id,
-            lamport_clock,
-        )
-    }
+    let epoch = u64::try_from(key_epoch).map_err(|_| {
+        vela_crypto::VelaError::InvalidParameter("vault key epoch must be positive".into())
+    })?;
+    vela_crypto::rekey::seal_fleet_chunk(key, plaintext, epoch, chunk_id, lamport_clock)
 }
 
 fn log_sync_audit(state: &AppState, chunk_count: usize) {
@@ -1022,22 +1011,14 @@ async fn download_vault_from_manifest(
             // A chunk this account's key cannot open is corruption (or a
             // foreign chunk). Report it distinctly, but never turn an
             // authentication failure into permission to overwrite the server.
-            match vela_crypto::rekey::open_epoch_chunk(
+            match vela_crypto::rekey::open_fleet_chunk(
                 &key,
                 &ciphertext,
                 key_epoch as u64,
                 &chunk_id,
                 lamport,
             ) {
-                Ok((bound_epoch, chunk)) => {
-                    if key_epoch > 1 && bound_epoch != Some(key_epoch as u64) {
-                        return Ok::<_, String>(ChunkOutcome::Corrupt(
-                            idx,
-                            format!("chunk {chunk_id}: legacy ciphertext at epoch {key_epoch}"),
-                        ));
-                    }
-                    Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport))
-                }
+                Ok(chunk) => Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport)),
                 Err(e) => {
                     Ok::<_, String>(ChunkOutcome::Corrupt(idx, format!("chunk {chunk_id}: {e}")))
                 }
@@ -1239,8 +1220,8 @@ async fn sync_audit_chunk(
                     // sealed chunk skips the merge, which is what it already
                     // does on any decrypt failure.
                     let entry_clock = entry.lamport_clock;
-                    if let Ok((bound_epoch, server_plaintext)) =
-                        vela_crypto::rekey::open_epoch_chunk(
+                    if let Ok(server_plaintext) =
+                        vela_crypto::rekey::open_fleet_chunk(
                             &key,
                             &ciphertext,
                             key_epoch as u64,
@@ -1248,15 +1229,9 @@ async fn sync_audit_chunk(
                             entry_clock,
                         )
                     {
-                        if key_epoch > 1 && bound_epoch != Some(key_epoch as u64) {
-                            tracing::warn!(
-                                "Refusing legacy audit ciphertext after rotation to epoch {key_epoch}"
-                            );
-                        } else {
-                            // Merge server events into the local log (union by
-                            // event id) — never replace local history.
-                            let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
-                        }
+                        // Merge server events into the local log (union by
+                        // event id) — never replace local history.
+                        let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
                     }
                 }
                 Err(e) => tracing::warn!("Failed to pull audit chunk: {}", e),

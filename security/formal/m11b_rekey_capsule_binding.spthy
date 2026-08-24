@@ -1,0 +1,56 @@
+theory M11b_RekeyCapsuleBinding
+/*
+  Cryptographic half of M11.  `capsule/7` is a private constructor standing for
+  the versioned AEAD payload sealed under the RMS_N-derived transition key:
+
+      { account, device, old_epoch, new_epoch, rotation_id, RMS_(N+1), RMS_N }
+
+  The adversary controls Out/In, so it may retain old capsules, replay them and
+  attach arbitrary outer epoch/rotation labels.  It cannot alter authenticated
+  constructor arguments or mint a capsule without learning its secret inputs.
+  The concrete constructor is `seal_rekey_capsule` and is separately covered by
+  Rust known-negative tests for every bound field.
+*/
+begin
+
+functions: next/1, previous/1, capsule/7 [private]
+
+rule Setup:
+    [ Fr(~e), Fr(~old), Fr(~new), Fr(~device), Fr(~rid),
+      Fr(~prior), Fr(~prior_rid) ]
+  --[ CurrentTransition($U, ~device, ~e, next(~e), ~rid, ~new),
+      PriorCapsule($U, ~device, previous(~e), ~e, ~prior_rid) ]->
+    [ Active($U, next(~e), ~new), DeviceAt($U, ~device, ~e, ~old),
+      Out(<~e, ~prior_rid,
+          capsule($U, ~device, previous(~e), ~e, ~prior_rid, ~old, ~prior)>),
+      Out(<next(~e), ~rid,
+          capsule($U, ~device, ~e, next(~e), ~rid, ~new, ~old)>) ]
+
+// Outer labels are attacker supplied.  The authenticated inner arguments must
+// nevertheless agree with the active target and the device's old authority.
+rule Adopt:
+    [ Active(U, ne, new), DeviceAt(U, D, e, old),
+      In(<ne, rid, capsule(U, D, e, ne, rid, new, old)>) ]
+  --[ Adopted(U, D, e, ne, rid, new) ]->
+    [ Active(U, ne, new), DeviceAt(U, D, ne, new) ]
+
+lemma adoption_authenticates_every_inner_field:
+  "All U D e ne rid rms #a. Adopted(U, D, e, ne, rid, rms) @ a
+     ==> Ex #s. CurrentTransition(U, D, e, ne, rid, rms) @ s & #s < #a"
+
+lemma adopted_epoch_is_the_current_successor:
+  "All U D e ne rid rms #a. Adopted(U, D, e, ne, rid, rms) @ a
+     ==> ne = next(e)"
+
+lemma stale_capsule_cannot_be_relabelled_as_current:
+  "All U D pe e priorrid ne rid rms #p #s #a.
+     PriorCapsule(U, D, pe, e, priorrid) @ p
+     & CurrentTransition(U, D, e, ne, rid, rms) @ s
+     & Adopted(U, D, pe, e, priorrid, rms) @ a
+     & #p < #s & #s < #a
+     ==> F"
+
+lemma matching_capsule_adoption_reachable:
+  exists-trace "Ex U D e ne rid rms #a. Adopted(U, D, e, ne, rid, rms) @ a"
+
+end

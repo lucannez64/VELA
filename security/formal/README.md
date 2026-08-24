@@ -1,13 +1,17 @@
-# Formal models — the decide → unwrap → consume flow
+# Formal models — credential release and epoch rotation
 
-Symbolic (Dolev-Yao) models of VELA's credential-release flow, checked with
-[Tamarin](https://tamarin-prover.com/). Thirteen theories, `m1`–`m10`, building a
-ladder from "in-domain checks are impossible" up to the three-tier deployment
-the desktop should implement.
+Symbolic (Dolev-Yao) models checked with
+[Tamarin](https://tamarin-prover.com/). The directory contains two independent
+families: thirteen credential-release theories (`m1`–`m10`) and three vault
+epoch-rotation theories (`m11`, `m11b`, `m11c`). Together they contain 119
+lemmas: 114 verified and five intentionally falsified impossibility claims.
 
-**Read [`password-manager-ipc-tamarin-results.md`](password-manager-ipc-tamarin-results.md) first** — it
-states every lemma, its verdict, what each model does and does not certify, and
-the corrections made after review.
+Read the assurance record for the family being changed:
+
+- [`password-manager-ipc-tamarin-results.md`](password-manager-ipc-tamarin-results.md)
+  covers credential release.
+- [`rekey-tamarin-results.md`](rekey-tamarin-results.md) covers epoch rotation,
+  capsule binding, and mutation authority.
 
 | File | What it models |
 |---|---|
@@ -24,12 +28,15 @@ the corrections made after review.
 | `m9b_engine_login.spthy` | the same via an embedded browser engine — **falsifies**, don't do this |
 | `m9c_inprocess_sandbox.spthy` | the same via a JS runtime inside the core — keeps the credential out of the domain, but an escape takes the whole vault instead of the working set |
 | `m10_full_ladder.spthy` | the deployment: M7 → M9a → M6 per origin tier |
+| `m11_rekey_epoch_state_machine.spthy` | ACTIVE/FREEZING lifecycle, completeness, commit/abort/timeout, acknowledgements, and epoch invalidation |
+| `m11b_rekey_capsule_binding.spthy` | authenticated `{epoch, rotation_id, rms}` capsules over an adversarial transport, including relabel/replay attempts |
+| `m11c_rekey_mutation_authority.spthy` | atomic web, recovery, and enrollment authorization at the mutation boundary across epoch commits |
 
 `password-manager-ipc-leak-graph.py` produces the quantitative companion
 (`.png`): the symbolic models say *which* items can leak, the graph says *how
 many*, over time.
 
-## Re-running
+## Re-running credential-release proofs
 
 Needs `tamarin-prover` 1.12.0+, `maude` 3.x, and a UTF-8 locale.
 
@@ -50,3 +57,15 @@ results, not failures — `m1`/`m2` secrecy, `m9b`'s and `m9c`'s `credential_nev
 and `m9c`'s `unused_credentials_stay_secret`
 are the negative claims the ladder is built on. Any *other* falsification is a
 regression.
+
+## Re-running epoch-rotation proofs
+
+The checked runner rejects tool warnings, incomplete results, unexpected
+falsifications, and lemma-count drift:
+
+```bash
+./run-rekey-proofs.sh
+```
+
+Expected: **31 verified, 0 falsified, 0 warnings** across the three theories.
+The same command is a required job in `.github/workflows/security.yml`.

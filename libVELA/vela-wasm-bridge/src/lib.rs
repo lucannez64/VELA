@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use vela_core::calculate_password_strength;
-use vela_crypto::{aead, kem, signing};
+#[cfg(test)]
+use vela_crypto::aead;
+use vela_crypto::{kem, signing};
 
 // ── Response plumbing ───────────────────────────────────────────────────────────
 
@@ -199,21 +201,13 @@ fn open_share_impl(request_json: &str) -> Result<OpenShareResponse, String> {
 fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, String> {
     let req: EncryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
-    let ciphertext = match req.epoch {
-        Some(0) => return Err("epoch must be positive".to_string()),
-        None | Some(1) => aead::seal(
-            &key,
-            req.vault_json.as_bytes(),
-            &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
-        ),
-        Some(epoch) => vela_crypto::rekey::seal_epoch_chunk(
-            &key,
-            req.vault_json.as_bytes(),
-            epoch,
-            &req.chunk_id,
-            req.lamport_clock,
-        ),
-    }
+    let ciphertext = vela_crypto::rekey::seal_fleet_chunk(
+        &key,
+        req.vault_json.as_bytes(),
+        req.epoch.unwrap_or(1),
+        &req.chunk_id,
+        req.lamport_clock,
+    )
     .map_err(|e| e.to_string())?;
     Ok(EncryptChunkResponse {
         ciphertext_b64: B64.encode(ciphertext),
@@ -226,27 +220,14 @@ fn decrypt_vault_chunk_impl(request_json: &str) -> Result<DecryptChunkResponse, 
         .decode(req.ciphertext_b64.as_bytes())
         .map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
-    let plaintext = match req.epoch {
-        Some(0) => return Err("epoch must be positive".to_string()),
-        None | Some(1) => {
-            aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)
-                .map_err(|e| e.to_string())?
-        }
-        Some(epoch) => {
-            let (bound_epoch, plaintext) = vela_crypto::rekey::open_epoch_chunk(
-                &key,
-                &ciphertext,
-                epoch,
-                &req.chunk_id,
-                req.lamport_clock,
-            )
-            .map_err(|e| e.to_string())?;
-            if bound_epoch != Some(epoch) {
-                return Err("legacy ciphertext refused after key rotation".to_string());
-            }
-            plaintext
-        }
-    };
+    let plaintext = vela_crypto::rekey::open_fleet_chunk(
+        &key,
+        &ciphertext,
+        req.epoch.unwrap_or(1),
+        &req.chunk_id,
+        req.lamport_clock,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(DecryptChunkResponse {
         vault_json: String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?,
     })
@@ -432,10 +413,7 @@ mod tests {
         assert_eq!(field(&decrypt(2), "vault_json"), "{}");
         assert!(!field(&decrypt(3), "error").is_empty());
 
-        let legacy = field(
-            &encrypt_vault_chunk_json(&request(None)),
-            "ciphertext_b64",
-        );
+        let legacy = field(&encrypt_vault_chunk_json(&request(None)), "ciphertext_b64");
         let refused = decrypt_vault_chunk_json(
             &serde_json::json!({
                 "chunk_key_b64": key_b64,
@@ -446,7 +424,7 @@ mod tests {
             })
             .to_string(),
         );
-        assert!(refused.contains("legacy ciphertext refused"));
+        assert!(refused.contains("legacy chunk ciphertext is forbidden"));
     }
 
     #[test]

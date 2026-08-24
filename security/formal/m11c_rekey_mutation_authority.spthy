@@ -1,0 +1,124 @@
+theory M11c_RekeyMutationAuthority
+/*
+  Atomic mutation-boundary authority for web writes/deletes, recovery-share
+  writes/deletes and device enrollment.
+
+  Each operation may be staged while ACTIVE(E). Commit consumes that linear
+  state and produces ACTIVE(next(E)); therefore an already-extracted epoch-E
+  request cannot execute afterward. Successful mutation events record the
+  declared epoch, token/local authority epoch, database state epoch and both
+  RMS identities so their equality is machine checked. Fresh post-commit
+  authority remains reachable, proving fail-closed behavior is not blanket
+  denial.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+functions: next/1
+
+rule Setup:
+    [ Fr(~e), Fr(~old), Fr(~new), Fr(~web), Fr(~device), Fr(~join) ]
+  --[ AuthoritySetup($U, ~e, ~old) ]->
+    [ Active0($U, ~e, ~old), CanCommit($U, ~new),
+      StagedWeb0($U, ~web, ~e, ~old),
+      StagedRecovery0($U, ~device, ~e, ~old),
+      StagedEnrollment0($U, ~device, ~join, ~e, ~old) ]
+
+rule Execute_Web0:
+    [ Active0(U, e, rms), StagedWeb0(U, W, e, rms) ]
+  --[ WebMutation(U, W, e, e, e, rms, rms) ]->
+    [ WebDone0(U, e) ]
+
+rule Execute_Recovery0:
+    [ Active0(U, e, rms), StagedRecovery0(U, D, e, rms) ]
+  --[ RecoveryMutation(U, D, e, e, e, rms, rms) ]->
+    [ RecoveryDone0(U, e) ]
+
+rule Execute_Enrollment0:
+    [ Active0(U, e, rms), StagedEnrollment0(U, D, J, e, rms) ]
+  --[ EnrollmentMutation(U, D, J, e, e, e, rms, rms) ]->
+    [ EnrollmentDone0(U, e) ]
+
+rule Commit:
+    [ Active0(U, e, old), CanCommit(U, new) ]
+  --[ EpochCommitted(U, e, next(e)) ]->
+    [ Active1(U, next(e), new),
+      StagedWeb1(U, 'new-web', next(e), new),
+      StagedRecovery1(U, 'new-device', next(e), new),
+      StagedEnrollment1(U, 'new-device', 'new-join', next(e), new) ]
+
+rule Execute_Web1:
+    [ Active1(U, e, rms), StagedWeb1(U, W, e, rms) ]
+  --[ WebMutation(U, W, e, e, e, rms, rms) ]->
+    [ WebDone1(U, e) ]
+
+rule Execute_Recovery1:
+    [ Active1(U, e, rms), StagedRecovery1(U, D, e, rms) ]
+  --[ RecoveryMutation(U, D, e, e, e, rms, rms) ]->
+    [ RecoveryDone1(U, e) ]
+
+rule Execute_Enrollment1:
+    [ Active1(U, e, rms), StagedEnrollment1(U, D, J, e, rms) ]
+  --[ EnrollmentMutation(U, D, J, e, e, e, rms, rms) ]->
+    [ EnrollmentDone1(U, e) ]
+
+lemma web_mutation_authorities_agree:
+  "All U W declared token_epoch state_epoch key_rms state_rms #i.
+     WebMutation(U, W, declared, token_epoch, state_epoch, key_rms, state_rms) @ i
+     ==> declared = token_epoch & token_epoch = state_epoch & key_rms = state_rms"
+
+lemma recovery_mutation_authorities_agree:
+  "All U D declared local_epoch state_epoch key_rms state_rms #i.
+     RecoveryMutation(U, D, declared, local_epoch, state_epoch, key_rms, state_rms) @ i
+     ==> declared = local_epoch & local_epoch = state_epoch & key_rms = state_rms"
+
+lemma enrollment_mutation_authorities_agree:
+  "All U D J declared local_epoch state_epoch key_rms state_rms #i.
+     EnrollmentMutation(U, D, J, declared, local_epoch, state_epoch, key_rms, state_rms) @ i
+     ==> declared = local_epoch & local_epoch = state_epoch & key_rms = state_rms"
+
+lemma extracted_web_request_cannot_execute_after_commit:
+  "All U W e ne old #c #w.
+     EpochCommitted(U, e, ne) @ c & WebMutation(U, W, e, e, e, old, old) @ w
+     ==> #w < #c"
+
+lemma staged_recovery_cannot_execute_after_commit:
+  "All U D e ne old #c #w.
+     EpochCommitted(U, e, ne) @ c
+     & RecoveryMutation(U, D, e, e, e, old, old) @ w ==> #w < #c"
+
+lemma staged_enrollment_cannot_execute_after_commit:
+  "All U D J e ne old #c #w.
+     EpochCommitted(U, e, ne) @ c
+     & EnrollmentMutation(U, D, J, e, e, e, old, old) @ w ==> #w < #c"
+
+lemma precommit_web_reachable:
+  exists-trace "Ex U W e rms #i. WebMutation(U, W, e, e, e, rms, rms) @ i"
+
+lemma precommit_recovery_reachable:
+  exists-trace "Ex U D e rms #i. RecoveryMutation(U, D, e, e, e, rms, rms) @ i"
+
+lemma precommit_enrollment_reachable:
+  exists-trace
+  "Ex U D J e rms #i. EnrollmentMutation(U, D, J, e, e, e, rms, rms) @ i"
+
+lemma postcommit_web_reachable:
+  exists-trace
+  "Ex U W e ne rms #c #w.
+     EpochCommitted(U, e, ne) @ c & WebMutation(U, W, ne, ne, ne, rms, rms) @ w
+     & #c < #w"
+
+lemma postcommit_recovery_reachable:
+  exists-trace
+  "Ex U D e ne rms #c #w.
+     EpochCommitted(U, e, ne) @ c
+     & RecoveryMutation(U, D, ne, ne, ne, rms, rms) @ w & #c < #w"
+
+lemma postcommit_enrollment_reachable:
+  exists-trace
+  "Ex U D J e ne rms #c #w.
+     EpochCommitted(U, e, ne) @ c
+     & EnrollmentMutation(U, D, J, ne, ne, ne, rms, rms) @ w & #c < #w"
+
+end

@@ -751,24 +751,14 @@ fn encrypt_vault_chunk_json(
     let rms = rms_from(rms_bytes)?;
     let _: VaultStore = serde_json::from_str(&req.vault_json)?;
     let key = chunk_key(&rms, &req.chunk_id);
-    if req.key_epoch < 1 {
-        return Err("key_epoch must be positive".into());
-    }
-    let ciphertext = if req.key_epoch == 1 {
-        aead::seal(
-            &key,
-            req.vault_json.as_bytes(),
-            &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
-        )?
-    } else {
-        vela_crypto::rekey::seal_epoch_chunk(
-            &key,
-            req.vault_json.as_bytes(),
-            req.key_epoch as u64,
-            &req.chunk_id,
-            req.lamport_clock,
-        )?
-    };
+    let epoch = u64::try_from(req.key_epoch).map_err(|_| "key_epoch must be positive")?;
+    let ciphertext = vela_crypto::rekey::seal_fleet_chunk(
+        &key,
+        req.vault_json.as_bytes(),
+        epoch,
+        &req.chunk_id,
+        req.lamport_clock,
+    )?;
     Ok(EncryptVaultResponse {
         ciphertext_b64: B64.encode(ciphertext),
     })
@@ -782,24 +772,14 @@ fn decrypt_vault_chunk_json(
     let rms = rms_from(rms_bytes)?;
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &req.chunk_id);
-    if req.key_epoch < 1 {
-        return Err("key_epoch must be positive".into());
-    }
-    let plaintext = if req.key_epoch == 1 {
-        aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)?
-    } else {
-        let (bound_epoch, plaintext) = vela_crypto::rekey::open_epoch_chunk(
-            &key,
-            &ciphertext,
-            req.key_epoch as u64,
-            &req.chunk_id,
-            req.lamport_clock,
-        )?;
-        if bound_epoch != Some(req.key_epoch as u64) {
-            return Err("legacy ciphertext refused after key rotation".into());
-        }
-        plaintext
-    };
+    let epoch = u64::try_from(req.key_epoch).map_err(|_| "key_epoch must be positive")?;
+    let plaintext = vela_crypto::rekey::open_fleet_chunk(
+        &key,
+        &ciphertext,
+        epoch,
+        &req.chunk_id,
+        req.lamport_clock,
+    )?;
     Ok(DecryptVaultResponse {
         vault_json: String::from_utf8(plaintext.to_vec())?,
     })
@@ -1289,7 +1269,7 @@ mod tests {
             .to_string(),
         );
         assert!(
-            legacy_at_epoch_two.contains("legacy ciphertext refused"),
+            legacy_at_epoch_two.contains("legacy chunk ciphertext is forbidden"),
             "rotated epochs must not accept legacy AAD: {legacy_at_epoch_two}"
         );
     }

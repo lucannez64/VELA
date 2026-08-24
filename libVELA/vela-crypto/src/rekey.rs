@@ -33,7 +33,7 @@ use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
 
 use crate::aead::{self, OVERHEAD};
-use crate::error::Result;
+use crate::error::{Result, VelaError};
 use crate::kdf;
 use crate::shamir;
 
@@ -135,6 +135,62 @@ pub fn open_epoch_chunk(
     match aead::open_vault_chunk(key, blob, chunk_id, lamport_clock) {
         Ok(pt) => Ok((None, pt)),
         Err(e) => Err(e),
+    }
+}
+
+/// Canonical fleet wire policy for chunk encryption.
+///
+/// Epoch 1 deliberately uses the pre-rotation AAD so desktop, Android, Apple,
+/// web and older clients remain mutually readable. Every later epoch is bound
+/// explicitly. Keeping this branch in the shared crypto crate prevents bridge
+/// implementations from silently diverging again.
+pub fn seal_fleet_chunk(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    epoch: u64,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Vec<u8>> {
+    match epoch {
+        0 => Err(VelaError::InvalidParameter(
+            "vault key epoch must be positive".into(),
+        )),
+        1 => aead::seal(
+            key,
+            plaintext,
+            &aead::vault_chunk_aad(chunk_id, lamport_clock),
+        ),
+        current => seal_epoch_chunk(key, plaintext, current, chunk_id, lamport_clock),
+    }
+}
+
+/// Canonical fleet wire policy for chunk decryption.
+///
+/// Epoch 1 accepts legacy chunk AAD. Epochs above 1 require an authenticated
+/// binding to the exact requested epoch; the legacy fallback exposed by
+/// [`open_epoch_chunk`] is never accepted after rotation.
+pub fn open_fleet_chunk(
+    key: &[u8; 32],
+    blob: &[u8],
+    epoch: u64,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    match epoch {
+        0 => Err(VelaError::InvalidParameter(
+            "vault key epoch must be positive".into(),
+        )),
+        1 => aead::open_vault_chunk(key, blob, chunk_id, lamport_clock),
+        current => {
+            let (bound_epoch, plaintext) =
+                open_epoch_chunk(key, blob, current, chunk_id, lamport_clock)?;
+            if bound_epoch != Some(current) {
+                return Err(VelaError::InvalidParameter(
+                    "legacy chunk ciphertext is forbidden after epoch 1".into(),
+                ));
+            }
+            Ok(plaintext)
+        }
     }
 }
 
@@ -279,6 +335,54 @@ mod tests {
             open_epoch_chunk(key.as_bytes(), &sealed, 42, "vault-data-000002", 3).unwrap();
         assert_eq!(epoch, None);
         assert_eq!(&opened[..], b"mid world");
+    }
+
+    #[test]
+    fn fleet_wire_matrix_is_cross_client_and_epoch_compatible() {
+        let key = *kdf::derive(kdf::contexts::CHUNK_KEY, &seed(11)).as_bytes();
+        let plaintext = b"shared desktop android apple web payload";
+        let chunk_id = "vault-data-000001";
+        let clock = 17;
+
+        assert!(seal_fleet_chunk(&key, plaintext, 0, chunk_id, clock).is_err());
+        assert!(open_fleet_chunk(&key, b"not-a-chunk", 0, chunk_id, clock).is_err());
+
+        for epoch in 1..=4 {
+            // Every bridge delegates to these two functions. Treat each role as
+            // producer and every other role as consumer to pin the full matrix.
+            for producer in ["desktop", "android", "apple", "web"] {
+                let ciphertext = seal_fleet_chunk(&key, plaintext, epoch, chunk_id, clock).unwrap();
+                for consumer in ["desktop", "android", "apple", "web"] {
+                    let opened =
+                        open_fleet_chunk(&key, &ciphertext, epoch, chunk_id, clock).unwrap();
+                    assert_eq!(
+                        &opened[..],
+                        plaintext,
+                        "{producer} -> {consumer} failed at epoch {epoch}"
+                    );
+                }
+                assert!(
+                    open_fleet_chunk(&key, &ciphertext, epoch + 1, chunk_id, clock).is_err(),
+                    "{producer} ciphertext was accepted under a relabelled epoch"
+                );
+                assert!(open_fleet_chunk(&key, &ciphertext, epoch, "other", clock).is_err());
+                assert!(open_fleet_chunk(&key, &ciphertext, epoch, chunk_id, clock + 1).is_err());
+            }
+        }
+
+        // Epoch 1 is exactly the fleet's legacy C-2 wire shape in both
+        // directions. Epoch 2+ must reject the same bytes.
+        let legacy = aead::seal(&key, plaintext, &aead::vault_chunk_aad(chunk_id, clock)).unwrap();
+        assert_eq!(
+            &open_fleet_chunk(&key, &legacy, 1, chunk_id, clock).unwrap()[..],
+            plaintext
+        );
+        assert!(open_fleet_chunk(&key, &legacy, 2, chunk_id, clock).is_err());
+        let epoch_one = seal_fleet_chunk(&key, plaintext, 1, chunk_id, clock).unwrap();
+        assert_eq!(
+            &aead::open_vault_chunk(&key, &epoch_one, chunk_id, clock).unwrap()[..],
+            plaintext
+        );
     }
 
     #[test]
