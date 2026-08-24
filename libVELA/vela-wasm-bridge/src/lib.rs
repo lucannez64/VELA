@@ -81,8 +81,8 @@ struct EncryptChunkRequest {
     /// the server cannot replay an older revision (audit C-2).
     chunk_id: String,
     lamport_clock: i64,
-    /// Current account key epoch. Absent only for legacy callers during the
-    /// rollout; new web sessions learn it from the sync manifest.
+    /// Current account key epoch. Absent callers and explicit epoch 1 both use
+    /// the fleet's legacy chunk AAD; epoch binding begins at epoch 2.
     #[serde(default)]
     epoch: Option<u64>,
 }
@@ -200,17 +200,18 @@ fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, 
     let req: EncryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
     let ciphertext = match req.epoch {
+        Some(0) => return Err("epoch must be positive".to_string()),
+        None | Some(1) => aead::seal(
+            &key,
+            req.vault_json.as_bytes(),
+            &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
+        ),
         Some(epoch) => vela_crypto::rekey::seal_epoch_chunk(
             &key,
             req.vault_json.as_bytes(),
             epoch,
             &req.chunk_id,
             req.lamport_clock,
-        ),
-        None => aead::seal(
-            &key,
-            req.vault_json.as_bytes(),
-            &aead::vault_chunk_aad(&req.chunk_id, req.lamport_clock),
         ),
     }
     .map_err(|e| e.to_string())?;
@@ -226,6 +227,11 @@ fn decrypt_vault_chunk_impl(request_json: &str) -> Result<DecryptChunkResponse, 
         .map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
     let plaintext = match req.epoch {
+        Some(0) => return Err("epoch must be positive".to_string()),
+        None | Some(1) => {
+            aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)
+                .map_err(|e| e.to_string())?
+        }
         Some(epoch) => {
             let (bound_epoch, plaintext) = vela_crypto::rekey::open_epoch_chunk(
                 &key,
@@ -235,13 +241,11 @@ fn decrypt_vault_chunk_impl(request_json: &str) -> Result<DecryptChunkResponse, 
                 req.lamport_clock,
             )
             .map_err(|e| e.to_string())?;
-            if epoch > 1 && bound_epoch != Some(epoch) {
+            if bound_epoch != Some(epoch) {
                 return Err("legacy ciphertext refused after key rotation".to_string());
             }
             plaintext
         }
-        None => aead::open_vault_chunk(&key, &ciphertext, &req.chunk_id, req.lamport_clock)
-            .map_err(|e| e.to_string())?,
     };
     Ok(DecryptChunkResponse {
         vault_json: String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?,
@@ -443,6 +447,66 @@ mod tests {
             .to_string(),
         );
         assert!(refused.contains("legacy ciphertext refused"));
+    }
+
+    #[test]
+    fn epoch_one_uses_the_fleet_legacy_chunk_format() {
+        let key = [29u8; 32];
+        let key_b64 = B64.encode(key);
+        let chunk_id = "vault-data-000000";
+        let lamport_clock = 7;
+        let request = serde_json::json!({
+            "chunk_key_b64": key_b64,
+            "vault_json": "{\"items\":[]}",
+            "chunk_id": chunk_id,
+            "lamport_clock": lamport_clock,
+            "epoch": 1,
+        })
+        .to_string();
+
+        let web_ciphertext = B64
+            .decode(field(&encrypt_vault_chunk_json(&request), "ciphertext_b64"))
+            .unwrap();
+        let opened_by_legacy_client =
+            aead::open_vault_chunk(&key, &web_ciphertext, chunk_id, lamport_clock).unwrap();
+        assert_eq!(opened_by_legacy_client.as_slice(), b"{\"items\":[]}");
+
+        let legacy_ciphertext = aead::seal(
+            &key,
+            b"{\"items\":[]}",
+            &aead::vault_chunk_aad(chunk_id, lamport_clock),
+        )
+        .unwrap();
+        let opened_by_web = decrypt_vault_chunk_json(
+            &serde_json::json!({
+                "chunk_key_b64": key_b64,
+                "ciphertext_b64": B64.encode(legacy_ciphertext),
+                "chunk_id": chunk_id,
+                "lamport_clock": lamport_clock,
+                "epoch": 1,
+            })
+            .to_string(),
+        );
+        assert_eq!(field(&opened_by_web, "vault_json"), "{\"items\":[]}");
+
+        let invalid = serde_json::json!({
+            "chunk_key_b64": key_b64,
+            "vault_json": "{}",
+            "chunk_id": chunk_id,
+            "lamport_clock": lamport_clock,
+            "epoch": 0,
+        })
+        .to_string();
+        assert!(encrypt_vault_chunk_json(&invalid).contains("epoch must be positive"));
+        let invalid_open = serde_json::json!({
+            "chunk_key_b64": key_b64,
+            "ciphertext_b64": B64.encode(web_ciphertext),
+            "chunk_id": chunk_id,
+            "lamport_clock": lamport_clock,
+            "epoch": 0,
+        })
+        .to_string();
+        assert!(decrypt_vault_chunk_json(&invalid_open).contains("epoch must be positive"));
     }
 
     /// The granted keys are per chunk id: a key for one chunk cannot open

@@ -2220,6 +2220,209 @@ async fn web_session_token_still_reaches_the_vault() {
     }
 }
 
+/// Model the exact extraction/commit interleaving directly: middleware has
+/// already accepted an epoch-1 web session, then another device commits epoch
+/// 2 before the handler resolves and performs its mutation. The immutable
+/// claim carried in `AuthSession` must stop every web-writable vault surface.
+#[tokio::test]
+async fn extracted_web_session_cannot_mutate_after_a_concurrent_epoch_commit() {
+    use axum::{
+        body::Bytes,
+        extract::{Path, State},
+        http::HeaderMap,
+    };
+    use vela_server::{
+        auth::token::TokenScope,
+        error::AppError,
+        middleware::AuthSession,
+        sqldb::{Db as _, TursoValue},
+        vault::{chunk, oram},
+    };
+
+    let state = helpers::test_state().await;
+    let user = Uuid::new_v4();
+    let web_session = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, key_epoch, created_at) VALUES (?, 2, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO vault_chunks
+             (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
+             VALUES ('protected', ?, 1, 1, ?, 'b2xk', 2, ?, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(web_session.to_string()),
+                TursoValue::Text(now.clone()),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let extracted_at_epoch_one = AuthSession {
+        user_id: user,
+        device_id: web_session,
+        jti: "already-extracted".into(),
+        key_epoch: Some(1),
+        new_token: None,
+        scope: TokenScope::WebSession,
+    };
+    let chunk_headers = |if_match: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("if-match", if_match.parse().unwrap());
+        headers.insert("x-lamport-clock", "2".parse().unwrap());
+        headers.insert("x-vela-epoch", "2".parse().unwrap());
+        headers
+    };
+
+    for (id, if_match) in [("new", "0"), ("protected", "1")] {
+        let result = chunk::put_chunk(
+            State(state.clone()),
+            Path(id.to_string()),
+            extracted_at_epoch_one.clone(),
+            chunk_headers(if_match),
+            Bytes::from_static(b"retired-key ciphertext"),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::Rekeyed(_))));
+    }
+
+    let result = chunk::delete_chunk(
+        State(state.clone()),
+        Path("protected".to_string()),
+        extracted_at_epoch_one.clone(),
+        chunk_headers("1"),
+    )
+    .await;
+    assert!(matches!(result, Err(AppError::Rekeyed(_))));
+
+    let result = oram::put_path(
+        State(state.clone()),
+        Path(("tree".to_string(), 0)),
+        extracted_at_epoch_one.clone(),
+        axum::Json(oram::PutOramPathRequest {
+            height: 0,
+            epoch: Some(2),
+            buckets: vec![oram::PutOramBucket {
+                bucket_index: 1,
+                if_match: 0,
+                lamport_clock: 2,
+                ciphertext: B64.encode(b"retired-key ciphertext"),
+            }],
+        }),
+    )
+    .await;
+    assert!(matches!(result, Err(AppError::Rekeyed(_))));
+
+    let chunks = state
+        .sqldb
+        .query(
+            "SELECT chunk_id, version, ciphertext FROM vault_chunks WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].text(0), Some("protected"));
+    assert_eq!(chunks[0].i64(1), Some(1));
+    assert_eq!(chunks[0].text(2), Some("b2xk"));
+    assert!(state
+        .sqldb
+        .query(
+            "SELECT 1 FROM oram_buckets WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap()
+        .is_empty());
+
+    // The guard is epoch-specific, not a blanket web-write denial: authority
+    // granted at the current epoch still reaches every intended RW surface.
+    let current = AuthSession {
+        key_epoch: Some(2),
+        jti: "current-web-session".into(),
+        ..extracted_at_epoch_one.clone()
+    };
+    assert!(chunk::put_chunk(
+        State(state.clone()),
+        Path("current".to_string()),
+        current.clone(),
+        chunk_headers("0"),
+        Bytes::from_static(b"current ciphertext"),
+    )
+    .await
+    .is_ok());
+    assert!(chunk::put_chunk(
+        State(state.clone()),
+        Path("protected".to_string()),
+        current.clone(),
+        chunk_headers("1"),
+        Bytes::from_static(b"current ciphertext"),
+    )
+    .await
+    .is_ok());
+    assert!(chunk::delete_chunk(
+        State(state.clone()),
+        Path("current".to_string()),
+        current.clone(),
+        chunk_headers("1"),
+    )
+    .await
+    .is_ok());
+    assert!(oram::put_path(
+        State(state.clone()),
+        Path(("tree".to_string(), 0)),
+        current,
+        axum::Json(oram::PutOramPathRequest {
+            height: 0,
+            epoch: Some(2),
+            buckets: vec![oram::PutOramBucket {
+                bucket_index: 1,
+                if_match: 0,
+                lamport_clock: 2,
+                ciphertext: B64.encode(b"current ciphertext"),
+            }],
+        }),
+    )
+    .await
+    .is_ok());
+    assert_eq!(
+        state
+            .sqldb
+            .query(
+                "SELECT version FROM vault_chunks WHERE user_id = ? AND chunk_id = 'protected'",
+                vec![TursoValue::Text(user.to_string())],
+            )
+            .await
+            .unwrap()[0]
+            .i64(0),
+        Some(2)
+    );
+    assert_eq!(
+        state
+            .sqldb
+            .query(
+                "SELECT COUNT(*) FROM oram_buckets WHERE user_id = ?",
+                vec![TursoValue::Text(user.to_string())],
+            )
+            .await
+            .unwrap()[0]
+            .i64(0),
+        Some(1)
+    );
+}
+
 /// The capsule is one-shot even when polls arrive together.
 ///
 /// The sequential case was already covered. This is the concurrent one: the

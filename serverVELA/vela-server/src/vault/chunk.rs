@@ -146,6 +146,7 @@ pub async fn put_chunk(
         rotation_id,
     )
     .await?;
+    let authority_epoch = session.write_epoch_authority(write_epoch)?;
     if write_epoch != read_epoch {
         crate::vault::enforce_rekey_shadow_quota(
             &state,
@@ -237,7 +238,7 @@ pub async fn put_chunk(
                 TursoValue::Text(now.clone()),
                 TursoValue::Text(now),
                 TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(write_epoch),
+                TursoValue::Integer(authority_epoch),
             ],
         ).await.map_err(|e| {
             // A concurrent If-Match:0 request can win the race between the
@@ -289,7 +290,7 @@ pub async fn put_chunk(
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Integer(if_match),
                     TursoValue::Integer(write_epoch),
-                    TursoValue::Integer(write_epoch),
+                    TursoValue::Integer(authority_epoch),
                 ],
             )
             .await
@@ -368,6 +369,7 @@ pub async fn delete_chunk(
         declared_epoch,
     )
     .await?;
+    let authority_epoch = session.write_epoch_authority(write_epoch)?;
     if write_epoch != read_epoch {
         return Err(AppError::Rekeyed(
             "chunk deletes are unavailable while a re-key is in progress".into(),
@@ -412,7 +414,7 @@ pub async fn delete_chunk(
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Integer(write_epoch),
-                TursoValue::Integer(write_epoch),
+                TursoValue::Integer(authority_epoch),
             ],
         )
         .await

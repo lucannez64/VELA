@@ -31,6 +31,10 @@ pub struct AuthSession {
     pub user_id: uuid::Uuid,
     pub device_id: uuid::Uuid,
     pub jti: String,
+    /// Epoch at which this authority was granted. Permanent device tokens may
+    /// omit it; web-session tokens are pinned to it so rotation retires their
+    /// ability to mutate the vault even when commit races request extraction.
+    pub key_epoch: Option<i64>,
     /// Set when the token is close to expiry and has been refreshed.
     pub new_token: Option<String>,
     /// What kind of caller this is (red-team RT-4). Routes whose effects
@@ -152,9 +156,28 @@ impl FromRequestParts<AppState> for AuthSession {
             user_id: claims.user_id,
             device_id: claims.device_id,
             jti: claims.jti,
+            key_epoch: claims.key_epoch,
             new_token,
             scope: claims.scope,
         })
+    }
+}
+
+impl AuthSession {
+    /// Return the epoch which must still be current at a vault mutation's SQL
+    /// boundary. A legacy web token is epoch 1; device tokens follow the
+    /// request's already-resolved epoch (including device-only shadow writes).
+    pub fn write_epoch_authority(&self, resolved_epoch: i64) -> Result<i64, AppError> {
+        if self.scope != TokenScope::WebSession {
+            return Ok(resolved_epoch);
+        }
+        let token_epoch = self.key_epoch.unwrap_or(1);
+        if token_epoch != resolved_epoch {
+            return Err(AppError::Rekeyed(format!(
+                "web session was granted at vault epoch {token_epoch}, not write epoch {resolved_epoch}"
+            )));
+        }
+        Ok(token_epoch)
     }
 }
 

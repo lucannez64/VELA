@@ -144,6 +144,14 @@ not an attack vector.
   during `FREEZING` and at every later epoch.
 - `FREEZING(N+1)`: accepts only `N+1` — those are the initiator's re-keyed
   copies landing in shadow rows. Everything else is rejected.
+- A `web_session` token also carries the epoch at which its chunk-key capsule
+  was granted. Request extraction rejects a stale token normally, and chunk
+  create/update/delete plus ORAM writes re-check that immutable claim against
+  the resolved write epoch in the SQL mutation predicate. A request extracted
+  just before commit therefore cannot mutate epoch N+1 with epoch-N keys.
+- Epoch 1 keeps the historical chunk-id + Lamport AAD on every bridge,
+  including WASM. Epoch-aware chunk AAD is emitted and required only above 1,
+  preserving rolling compatibility with clients which predate rotation.
 
 ### Shadow rows, not in-place rewrites
 
