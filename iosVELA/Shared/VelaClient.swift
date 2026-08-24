@@ -382,8 +382,13 @@ actor VelaClient {
 
     // MARK: - Recovery share
 
-    func putRecoveryShare(_ shareBase64: String) async throws {
-        let _: EmptyResponse = try await request("PUT", "/recovery/share", json: ["share": shareBase64], auth: true)
+    func putRecoveryShare(_ shareBase64: String, keyEpoch: Int) async throws {
+        guard keyEpoch >= 1 else {
+            throw ServerError(status: 0, body: "recovery share epoch must be positive")
+        }
+        let _: EmptyResponse = try await request(
+            "PUT", "/recovery/share",
+            json: ["share": shareBase64, "key_epoch": keyEpoch], auth: true)
     }
 
     struct RecoveryShareResponse: Decodable { let share: String }
@@ -393,8 +398,13 @@ actor VelaClient {
         return resp.share
     }
 
-    func deleteRecoveryShare() async throws {
-        _ = try await requestRaw("DELETE", "/recovery/share", body: nil)
+    func deleteRecoveryShare(keyEpoch: Int) async throws {
+        guard keyEpoch >= 1 else {
+            throw ServerError(status: 0, body: "recovery share epoch must be positive")
+        }
+        _ = try await requestRaw(
+            "DELETE", "/recovery/share", body: nil,
+            headers: ["X-Vela-Epoch": String(keyEpoch)])
     }
 
     // MARK: - WebAuthn recovery credential (registration side)

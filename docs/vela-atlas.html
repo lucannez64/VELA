@@ -207,7 +207,7 @@ const OVERVIEW = {
   what:[
     "VELA is a **zero-knowledge** password vault. The whole design follows from one rule: the server may hold your data but must never be able to read it. Everything in this map is downstream of that.",
     "The **loop** across the top is the unlock path — master password → Argon2id → the Root Master Seed → a BLAKE3 fan-out of purpose-bound keys → XChaCha20-Poly1305 → the vault in memory. The RMS is the only secret; every other key in the system is derived from it with a context string, so no key can be reused for the wrong job. The seed can now rotate: every ciphertext and device capsule moves from epoch N to N+1 without revealing either seed to the server.",
-    "Below the loop is what the vault talks to: a **sync engine** that probes the account key epoch before touching chunks, an IPC socket the browser extension speaks through, device identity keys that authenticate to the server, and a 2-of-3 Shamir split that is re-minted after rotation.",
+    "Below the loop is what the vault talks to: a **sync engine** that probes the account key epoch before touching chunks, an IPC socket the browser extension speaks through, device identity keys that authenticate to the server, and a 2-of-3 Shamir split whose cache and delivery channels are bound to the RMS epoch.",
     "To the right is **serverVELA** — an Axum router in front of sled and Turso. It sees ciphertext, signatures, epochs and revocation state. It never sees a vault item, an RMS, or a private key.",
     "Nearly every hard problem here turned out to be a **trust-boundary** problem rather than a cryptography one: how a brand-new device proves it is the user's, how a browser extension proves it is the extension, how a client can tell a stale blob from a replayed one. The tall structures are the parts that decide who is allowed what.",
   ],
@@ -310,7 +310,7 @@ const NODES = [
   files:["libVELA/vela-crypto/src/rekey.rs","desktopVELA/vela-desktop-core/src/commands/rekey.rs","serverVELA/vela-server/src/vault/rekey.rs","docs/VAULT_REKEYING_DESIGN.md"],
   what:["The account-wide operation that makes a leaked Root Master Seed expire. One capable desktop creates RMS N+1, re-seals every current chunk into shadow rows, KEM-seals the new seed to every active device, then atomically advances the account epoch.",
         "The server never handles either RMS. It coordinates an **ACTIVE(N) → FREEZING(N→N+1) → ACTIVE(N+1)** state machine and verifies completeness before the compare-and-swap commit."],
-  built:["Rotation is serialized with ordinary sync and requires an explicit human confirmation. The server returns an inventory and a random rotation id, accepts only starter-authenticated shadow writes at the target epoch, requires one shadow per current chunk plus one capsule per active device, and rolls an abandoned freeze back after 15 minutes."],
+  built:["Rotation is serialized with ordinary sync and requires an explicit human confirmation. The server returns an inventory and a random rotation id, accepts only starter-authenticated shadow writes at the target epoch, requires one shadow per current chunk plus one capsule per active device, and rolls an abandoned freeze back after 15 minutes. Recovery delivery takes the same client mutex, while server share writes use an atomic epoch/state guard."],
   cond:["Every active device must have retained its capsule private key and advertised desktop re-key capability. Android/iOS do not yet advertise it.","Rotation is refused while any Path ORAM bucket exists.","Fresh recovery shares are generated and verified after adoption, but cloud upload, FIDO2 registration and trusted-contact delivery must be performed again."],
   inside:[["presence","confirm outside the requesting renderer"],["start","freeze N; inventory chunks and active devices"],["rotate","OS RNG → RMS N+1"],["shadow","re-seal every chunk with epoch N+1 AAD"],["fan-out","KEM capsule for every active capable device"],["commit","completeness check + epoch CAS"],["migrate local","durable journal, files and RMS wrappers"],["recovery","re-mint 2-of-3 shares; repeat delivery"]] },
 
@@ -397,7 +397,7 @@ const NODES = [
 { id:"SHM", key:"M", label:"Shamir 2-of-3", group:"recovery", gx:7, gy:17, w:2, d:2, h:2.8,
   files:["libVELA/vela-crypto/src/shamir.rs","libVELA/vela-crypto/src/rekey.rs"],
   what:["Losing every device must not mean losing the vault, and no single custodian may be able to restore it alone. So the 32-byte seed is split three ways: **cloud backup, the VELA server behind a FIDO2-bound key, and a trusted contact.** Any two reconstruct it; any one is nothing."],
-  built:["Sharing over GF(2^8) with the AES irreducible polynomial, byte by byte, with a degree-(t−1) polynomial. Shares serialise as `(x, y_0…y_31)` plus a 16-byte MAC so a corrupted share is caught rather than silently reconstructing garbage. After an RMS rotation, a fresh split is reconstructed and compared with RMS N+1 before delivery begins."],
+  built:["Sharing over GF(2^8) with the AES irreducible polynomial, byte by byte, with a degree-(t−1) polynomial. Shares serialise as `(x, y_0…y_31)` plus a 16-byte MAC so a corrupted share is caught rather than silently reconstructing garbage. The encrypted pending split records the authenticated RMS epoch; a cached split from another epoch is discarded, never relabelled."],
   cond:["The trusted-contact share has no delivery channel the app can verify — it is shown to the user, who says they handed it over. That acknowledgement is a claim, not a receipt.","Old shares reconstruct only RMS N and become useless when epoch N+1 commits. The replacement delivery ceremonies are still required."],
   inside:[["split","secret, threshold 2, n 3"],["verify after rotation","reconstruct fresh shares == RMS N+1"],["share 1","cloud provider backup"],["share 2","server, gated by a FIDO2 credential"],["share 3","trusted contact"],["reconstruct","any 2 shares + MAC check"]] },
 
@@ -413,9 +413,9 @@ const NODES = [
 { id:"RCV", key:"Y", label:"Recovery flow", group:"recovery", gx:15, gy:17, w:2, d:2, h:2.0,
   files:["serverVELA/vela-server/src/recovery/","desktopVELA/vela-desktop-core/src/recovery.rs"],
   what:["Initiate, recover, then enrol the replacement device — the sequence that turns two shares back into a working vault on hardware that has never seen the account."],
-  built:["Four server routes (`/recovery/initiate`, `/recovery/recover`, `/recovery/enroll-device`, plus share storage) and idempotent setup on the client. Rekey commit atomically clears the server's old share and authentication hash; the desktop then re-mints and verifies a replacement split under RMS N+1."],
-  cond:["Setup is only finished once the cached shares are dropped. Both front ends now do that explicitly, but nothing forces it: abandon setup midway and all three shares stay on the device until you come back."],
-  inside:[["initiate","prove intent, get the server share offer"],["fido2","unlock share 2 with the security key"],["reconstruct","2 of 3 → RMS"],["enroll-device","new device gets an identity at the account epoch"],["reseal","RMS re-sealed under the new password"],["after rotation","server share cleared; setup repeated for RMS N+1"]] },
+  built:["Four server routes (`/recovery/initiate`, `/recovery/recover`, `/recovery/enroll-device`, plus share storage) and idempotent setup on the client. Rekey commit atomically clears the old server share. Replacement server writes carry `key_epoch` and succeed only while that epoch is active; cloud objects are per-account and per-epoch; every delivery probes the server before it runs and before local success is recorded."],
+  cond:["Setup is only finished once the cached shares are dropped. Both front ends now do that explicitly, but nothing forces it: abandon setup midway and all three shares stay on the device until you come back.","A trusted-contact handoff cannot be recalled if another device rotates immediately afterward. Its acknowledgement is therefore revalidated against the server epoch and rejected after rotation; the old share reconstructs only the retired RMS."],
+  inside:[["initiate","prove intent, get the server share offer"],["fido2","unlock epoch-tagged share 2"],["epoch match","cloud share epoch == server share epoch"],["reconstruct","2 of 3 → RMS"],["enroll-device","new device gets an identity at the account epoch"],["after rotation","clear server share; repeat epoch-bound delivery"]] },
 
 /* ---- the server ---- */
 { id:"SRV", key:"X", label:"Axum router", group:"server", gx:25, gy:2, w:3, d:3, h:2.2,
@@ -911,21 +911,23 @@ fed to ctap-hid-fido2 AS the challenge, so the key hashes
 exactly what a browser would have hashed`,
     note:"A raw CTAP2 library has no concept of the browser's envelope, and a native app has no implicit origin. Both gaps had to be closed for the server's webauthn-rs verifier to accept the ceremony." }},
   { a:"WAN", b:"RCV", bend:"x", p:{ t:"PUT /recovery/share", kind:"http", src:"serverVELA/vela-server/src/recovery/",
-    body:`share 1 → cloud provider backup (rclone)
-share 2 → this server, behind the security key
-share 3 → trusted contact`,
-    note:"Three custodians, no one of whom can act alone. That constraint is what forced a 2-of-3 rather than an encrypted backup." }},
+    body:`share 1 → cloud /<account>/recovery-share-<epoch>.json
+share 2 → PUT { share, key_epoch } behind the security key
+share 3 → trusted contact, acknowledged at key_epoch`,
+    note:"All delivery runs under the sync/rekey mutex and probes the active server epoch. Epoch-specific cloud names also prevent a delayed old upload from overwriting a new one." }},
   { a:"RCV", b:"SDB", bend:"y", p:{ t:"Stored, gated", kind:"Turso", src:"recovery/mod.rs",
-    body:`recovery_share(user_id, blob, webauthn_cred_id)`,
-    note:"The server holds one share and the credential id that gates it. Holding one share is holding nothing." }},
+    body:`UPDATE users SET recovery_share = ?
+WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL`,
+    note:"The compare-and-swap is the authority: a device still holding RMS N cannot resurrect or delete its share after N+1 commits." }},
   { a:"SDB", b:"RCV", bend:"y", p:{ t:"…later, on new hardware", kind:"http", src:"recovery/initiate.rs · recover.rs",
     body:`POST /recovery/initiate     prove intent
 POST /recovery/recover      after the security key ceremony
 POST /recovery/enroll-device`,
     note:"" }},
   { a:"RCV", b:"SHM", bend:"x", p:{ t:"Two of three", kind:"reconstruct", src:"shamir::reconstruct",
-    body:`reconstruct([share_1, share_2], 32) → rms`,
-    note:"" }},
+    body:`require cloud.key_epoch == server.key_epoch
+reconstruct([share_1, share_2], 32) → rms`,
+    note:"A stale cloud object fails with an epoch error before incompatible shares are combined." }},
   { a:"SHM", b:"RMS", bend:"y", p:{ t:"Reseal under a new password", kind:"argon2id", src:"password_kdf::seal_with_password",
     body:`"VRMS" ‖ 3 ‖ params ‖ salt[16] ‖ ct`,
     note:"The account is back with the same seed, a new password blob and a brand-new device identity. The old devices can then be revoked." }},
@@ -936,8 +938,8 @@ POST /recovery/enroll-device`,
   shares(RMS N) can reconstruct only retired RMS N
 
 desktop mints + verifies shares(RMS N+1)
-delivery setup becomes required again`,
-    note:"Rotation removes the old server-held share transactionally. The replacement split exists locally only after verification; cloud, security-key and trusted-contact delivery are separate ceremonies." }},
+deliveries revalidate ACTIVE(N+1) before recording success`,
+    note:"Rotation removes the old server-held share transactionally. An old running setup cannot restore it: server writes are epoch-CASed, cloud names are epoch-specific, and contact/security delivery is revalidated." }},
 ]},
 
 { id:"web", name:"Open it in a browser", short:"WEB SESSION", hops:[

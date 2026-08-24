@@ -544,8 +544,13 @@ class AndroidVelaApiClient(
 
     // Recovery (SPEC.md §4.3)
 
-    fun putRecoveryShare(token: String, shareB64: String): String? {
-        val body = JSONObject().put("share", shareB64).toString().toByteArray(Charsets.UTF_8)
+    fun putRecoveryShare(token: String, shareB64: String, keyEpoch: Long): String? {
+        require(keyEpoch >= 1) { "Recovery share epoch must be positive" }
+        val body = JSONObject()
+            .put("share", shareB64)
+            .put("key_epoch", keyEpoch)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
         val response = request("PUT", "/recovery/share", token, body, contentType = "application/json")
         response.requireSuccess("Store recovery share failed")
         return response.newToken

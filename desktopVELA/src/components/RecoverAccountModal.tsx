@@ -9,6 +9,7 @@ interface Props {
 
 interface CloudRecoveryShare {
   user_id: string;
+  key_epoch: number;
   share_b64: string;
 }
 
@@ -113,6 +114,7 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
       await invoke('complete_account_recovery', {
         userId: share.user_id,
         share1B64: share.share_b64,
+        share1KeyEpoch: share.key_epoch,
         credential,
         recoveryId,
         password,
@@ -182,14 +184,14 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
             <div className="space-y-2">
               {shares.map(s => (
                 <button
-                  key={s.user_id}
+                  key={`${s.user_id}:${s.key_epoch}`}
                   onClick={() => {
                     setShare(s);
                     setStep('confirm');
                   }}
                   className="w-full text-left font-mono text-xs bg-surface-bright hover:bg-surface-container-highest rounded-lg px-4 py-3 break-all text-on-surface transition-colors"
                 >
-                  {s.user_id}
+                  {s.user_id} · epoch {s.key_epoch}
                 </button>
               ))}
             </div>
@@ -202,7 +204,7 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
               Found a recovery backup for account:
             </p>
             <div className="font-mono text-xs bg-surface-bright rounded-lg px-4 py-3 break-all text-on-surface">
-              {share.user_id}
+              {share.user_id} · epoch {share.key_epoch}
             </div>
             <p className="text-on-surface-variant text-sm">
               Next, verify with the security key (passkey) you registered for recovery.

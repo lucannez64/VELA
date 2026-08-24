@@ -32,6 +32,10 @@ pub(crate) fn retire_recovery_setup(state: &AppState) -> Result<(), String> {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PendingRecoveryShares {
+    /// Authenticated local key epoch whose RMS produced all three shares.
+    /// `None` is the pre-epoch on-disk shape and is accepted only at epoch 1.
+    #[serde(default)]
+    key_epoch: Option<i64>,
     share1: Option<Vec<u8>>,
     share2: Option<Vec<u8>>,
     share3: Option<Vec<u8>>,
@@ -41,6 +45,70 @@ struct PendingRecoveryShares {
     security_key_delivered: bool,
     #[serde(default)]
     trusted_contact_acknowledged: bool,
+}
+
+/// Epoch authenticated by the currently unlocked RMS, rather than the
+/// plaintext sync metadata. Epoch-1 vaults created before `key_epoch.enc`
+/// existed have no marker; 1 is the only safe legacy default.
+fn authenticated_local_epoch(state: &AppState) -> Result<i64, String> {
+    let crypto = state.crypto.read();
+    let crypto = crypto.as_ref().ok_or("Vault is locked")?;
+    state
+        .store
+        .load_key_epoch(crypto)
+        .map_err(|e| format!("Failed to read the authenticated vault epoch: {e}"))
+        .and_then(|epoch| {
+            let epoch = epoch.unwrap_or(1);
+            (epoch >= 1)
+                .then_some(epoch)
+                .ok_or_else(|| "Authenticated vault epoch must be positive".to_string())
+        })
+}
+
+fn require_pending_epoch(
+    pending: &PendingRecoveryShares,
+    expected_epoch: i64,
+) -> Result<(), String> {
+    if pending.key_epoch == Some(expected_epoch) {
+        Ok(())
+    } else {
+        Err(
+            "Recovery setup belongs to a retired vault epoch; sync and start recovery setup again"
+                .into(),
+        )
+    }
+}
+
+/// Confirm that an external recovery delivery still belongs to the account's
+/// active epoch. Called before a channel receives material and again before
+/// its local delivered flag is committed, catching a rotation by another
+/// device while cloud/FIDO2/human work was in progress.
+async fn revalidate_recovery_epoch(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+    expected_epoch: i64,
+    generation: u64,
+) -> Result<(), String> {
+    let (server_epoch, rotation_state, refreshed) = client
+        .get_key_epoch(token)
+        .await
+        .map_err(|e| format!("Failed to validate the recovery setup epoch: {e}"))?;
+    if let Some(refreshed) = refreshed {
+        state.session.write().set_server_token(refreshed.clone());
+        *token = refreshed;
+    }
+    state.ensure_unlocked_since(generation)?;
+    let local_epoch = authenticated_local_epoch(state)?;
+    if rotation_state != "active" || server_epoch != expected_epoch || local_epoch != expected_epoch
+    {
+        return Err(format!(
+            "Vault key rotation changed recovery setup epoch {expected_epoch} \
+             (local {local_epoch}, server {server_epoch}, state {rotation_state}); \
+             sync and start recovery setup again"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,9 +165,18 @@ fn save_pending(state: &AppState, pending: &PendingRecoveryShares) -> Result<(),
 /// the three setup steps can be completed in any order without invalidating
 /// one another's share.
 pub(crate) fn ensure_shares_split(state: &AppState) -> Result<(), String> {
+    let current_epoch = authenticated_local_epoch(state)?;
     let mut pending = load_pending(state);
     if pending.share1.is_some() && pending.share2.is_some() && pending.share3.is_some() {
-        return Ok(());
+        if pending.key_epoch == Some(current_epoch) {
+            return Ok(());
+        }
+        if pending.key_epoch.is_none() && current_epoch == 1 {
+            pending.key_epoch = Some(1);
+            return save_pending(state, &pending);
+        }
+        // Never redistribute a complete split derived from another epoch.
+        pending = PendingRecoveryShares::default();
     }
 
     let shares = {
@@ -118,6 +195,7 @@ pub(crate) fn ensure_shares_split(state: &AppState) -> Result<(), String> {
     pending.share1 = Some(shares[0].to_bytes());
     pending.share2 = Some(shares[1].to_bytes());
     pending.share3 = Some(shares[2].to_bytes());
+    pending.key_epoch = Some(current_epoch);
     // A fresh split draws a new random polynomial, so shares delivered from
     // an earlier split can no longer combine with these — every channel has
     // to be redone against the new split.
@@ -136,9 +214,16 @@ pub(crate) async fn deliver_security_key_share(
     state: &AppState,
     token: &str,
 ) -> Result<(), String> {
+    // Rotation takes the same mutex. This closes the same-device race; the
+    // epoch-CAS on PUT and the postflight probe close the other-device race.
+    let _delivery_guard = state.sync_mutex.lock().await;
+    let generation = state.session_generation();
+    state.ensure_unlocked_since(generation)?;
     ensure_shares_split(state)?;
+    let key_epoch = authenticated_local_epoch(state)?;
     let share2 = {
         let pending = load_pending(state);
+        require_pending_epoch(&pending, key_epoch)?;
         pending
             .share2
             .clone()
@@ -147,13 +232,41 @@ pub(crate) async fn deliver_security_key_share(
 
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
+    let mut current_token = token.to_string();
+    revalidate_recovery_epoch(
+        state,
+        &client,
+        &mut current_token,
+        key_epoch,
+        generation,
+    )
+    .await?;
     let share_b64 = B64.encode(&share2);
-    client
-        .put_recovery_share(token, RecoveryShareData { share: share_b64 })
+    let refreshed = client
+        .put_recovery_share(
+            &current_token,
+            RecoveryShareData {
+                share: share_b64,
+                key_epoch,
+            },
+        )
         .await
         .map_err(|e| format!("Failed to store recovery share on server: {e}"))?;
+    if let Some(refreshed) = refreshed {
+        state.session.write().set_server_token(refreshed.clone());
+        current_token = refreshed;
+    }
+    revalidate_recovery_epoch(
+        state,
+        &client,
+        &mut current_token,
+        key_epoch,
+        generation,
+    )
+    .await?;
 
     let mut pending = load_pending(state);
+    require_pending_epoch(&pending, key_epoch)?;
     pending.security_key_delivered = true;
     save_pending(state, &pending)
 }
@@ -163,6 +276,16 @@ pub fn get_recovery_setup_status(state: &AppState) -> Result<RecoveryStatus, Str
         return Err("Vault is locked".to_string());
     }
     let pending = load_pending(state);
+    let current_epoch = authenticated_local_epoch(state)?;
+    let legacy_epoch_one = pending.key_epoch.is_none() && current_epoch == 1;
+    if pending.key_epoch != Some(current_epoch) && !legacy_epoch_one {
+        return Ok(RecoveryStatus {
+            cloud_backup_delivered: false,
+            security_key_delivered: false,
+            trusted_contact_acknowledged: false,
+            setup_in_progress: false,
+        });
+    }
     Ok(RecoveryStatus {
         cloud_backup_delivered: pending.cloud_backup_delivered,
         security_key_delivered: pending.security_key_delivered,
@@ -230,11 +353,26 @@ pub(crate) fn remint_recovery_setup(state: &AppState) -> Result<(), String> {
 /// mechanism — so it is the one recovery call a UI must not log, cache, or
 /// leave on screen after the user has copied it.
 pub async fn get_trusted_contact_share(state: &AppState) -> Result<String, String> {
-    if !state.is_unlocked() {
-        return Err("Vault is locked".to_string());
-    }
+    let _delivery_guard = state.sync_mutex.lock().await;
+    let generation = state.session_generation();
+    state.ensure_unlocked_since(generation)?;
     ensure_shares_split(state)?;
+    let key_epoch = authenticated_local_epoch(state)?;
     let pending = load_pending(state);
+    require_pending_epoch(&pending, key_epoch)?;
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let mut token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+    revalidate_recovery_epoch(
+        state,
+        &client,
+        &mut token,
+        key_epoch,
+        generation,
+    )
+    .await?;
     let share3 = pending.share3.ok_or("Recovery share was not generated")?;
     Ok(B64.encode(&share3))
 }
@@ -243,10 +381,25 @@ pub async fn get_trusted_contact_share(state: &AppState) -> Result<String, Strin
 /// it actually was — there is no channel to check — so this records the
 /// user's word for it, which is what the 2-of-3 progress count reads.
 pub async fn acknowledge_trusted_contact_share(state: &AppState) -> Result<(), String> {
-    if !state.is_unlocked() {
-        return Err("Vault is locked".to_string());
-    }
+    let _delivery_guard = state.sync_mutex.lock().await;
+    let generation = state.session_generation();
+    state.ensure_unlocked_since(generation)?;
     let mut pending = load_pending(state);
+    let key_epoch = authenticated_local_epoch(state)?;
+    require_pending_epoch(&pending, key_epoch)?;
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let mut token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+    revalidate_recovery_epoch(
+        state,
+        &client,
+        &mut token,
+        key_epoch,
+        generation,
+    )
+    .await?;
     pending.trusted_contact_acknowledged = true;
     save_pending(state, &pending)
 }
@@ -258,14 +411,19 @@ pub async fn acknowledge_trusted_contact_share(state: &AppState) -> Result<(), S
 /// custodians if it were left that way. The delivered/acknowledged flags
 /// survive; only the material goes.
 pub async fn finalize_recovery_setup(state: &AppState) -> Result<(), String> {
-    if !state.is_unlocked() {
-        return Err("Vault is locked".to_string());
-    }
+    let _delivery_guard = state.sync_mutex.lock().await;
+    let generation = state.session_generation();
+    state.ensure_unlocked_since(generation)?;
     let path = state.store.store_path().join(RECOVERY_SETUP_FILE);
     if !path.exists() {
         return Ok(());
     }
     let mut pending = load_pending(state);
+    let current_epoch = authenticated_local_epoch(state)?;
+    if pending.key_epoch.is_none() && current_epoch == 1 {
+        pending.key_epoch = Some(1);
+    }
+    require_pending_epoch(&pending, current_epoch)?;
     pending.share1 = None;
     pending.share2 = None;
     pending.share3 = None;
@@ -407,11 +565,13 @@ pub async fn initiate_account_recovery(
 // meant a second VELA account backed up to the same rclone remote silently
 // overwrote the first account's Shamir share (re-onboarding *to recover*
 // could destroy the share being recovered). Shares now go to a per-account
-// directory; the legacy path is still read for backups made by older builds,
-// and cleaned up at the next setup once it's confirmed to be ours.
+// directory and epoch-specific object; both older fixed paths remain readable.
+// The pre-account global path is cleaned at the next setup once confirmed ours.
 
-/// File name of the Share 1 envelope inside its per-account directory.
-const CLOUD_BACKUP_FILE_NAME: &str = "recovery-share.json";
+/// Pre-epoch file name inside a per-account directory. It remains readable,
+/// but new writes use an epoch-specific name so a slow stale device can never
+/// overwrite the replacement uploaded after a rotation.
+const LEGACY_ACCOUNT_CLOUD_BACKUP_FILE_NAME: &str = "recovery-share.json";
 
 /// Pre-per-account path, shared by every account. Read for old backups;
 /// deleted (only when it holds this account's share) at the next setup.
@@ -434,9 +594,23 @@ fn validate_user_id_for_path(user_id: &str) -> Result<(), String> {
 }
 
 /// `<per-account dir>/<file>` under the VELA prefix on the chosen remote.
-fn cloud_backup_remote_path(user_id: &str) -> Result<String, String> {
+fn cloud_backup_remote_path(user_id: &str, key_epoch: i64) -> Result<String, String> {
     validate_user_id_for_path(user_id)?;
-    Ok(format!("VELA/{user_id}/{CLOUD_BACKUP_FILE_NAME}"))
+    if key_epoch < 1 {
+        return Err("Invalid recovery-share key epoch".to_string());
+    }
+    Ok(format!("VELA/{user_id}/recovery-share-{key_epoch}.json"))
+}
+
+fn is_cloud_backup_file(entry: &str) -> bool {
+    let Some(file_name) = entry.rsplit('/').next() else {
+        return false;
+    };
+    file_name == LEGACY_ACCOUNT_CLOUD_BACKUP_FILE_NAME
+        || file_name
+            .strip_prefix("recovery-share-")
+            .and_then(|suffix| suffix.strip_suffix(".json"))
+            .is_some_and(|epoch| !epoch.is_empty() && epoch.bytes().all(|b| b.is_ascii_digit()))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -444,12 +618,19 @@ struct CloudBackupEnvelope {
     #[allow(dead_code)]
     version: u8,
     user_id: String,
+    #[serde(default = "default_recovery_key_epoch")]
+    key_epoch: i64,
     share_b64: String,
+}
+
+fn default_recovery_key_epoch() -> i64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CloudRecoveryShare {
     pub user_id: String,
+    pub key_epoch: i64,
     pub share_b64: String,
 }
 
@@ -484,7 +665,7 @@ pub async fn fetch_cloud_recovery_shares(
         Ok(entries) => {
             let mut paths: Vec<String> = entries
                 .into_iter()
-                .filter(|entry| entry.ends_with(CLOUD_BACKUP_FILE_NAME))
+                .filter(|entry| is_cloud_backup_file(entry))
                 .map(|entry| format!("VELA/{entry}"))
                 .collect();
             if !paths.iter().any(|p| p == LEGACY_CLOUD_BACKUP_REMOTE_PATH) {
@@ -513,6 +694,12 @@ pub async fn fetch_cloud_recovery_shares(
         }
     }
 
+    // Epoch-specific paths deliberately retain older objects. Present only
+    // the newest object for each account so existing recovery UIs keep their
+    // one-row-per-account behavior; the server response is still the final
+    // authority and is checked before reconstruction below.
+    let shares = newest_cloud_shares(shares);
+
     if shares.is_empty() {
         return Err(
             "No VELA recovery backup was found on this remote. Pick the remote used during \
@@ -526,11 +713,30 @@ pub async fn fetch_cloud_recovery_shares(
 fn parse_cloud_backup_envelope(bytes: &[u8]) -> Result<CloudRecoveryShare, String> {
     let envelope: CloudBackupEnvelope =
         serde_json::from_slice(bytes).map_err(|e| format!("Invalid cloud backup file: {e}"))?;
+    if envelope.key_epoch < 1 {
+        return Err("Invalid cloud backup file: key_epoch must be positive".into());
+    }
 
     Ok(CloudRecoveryShare {
         user_id: envelope.user_id,
+        key_epoch: envelope.key_epoch,
         share_b64: envelope.share_b64,
     })
+}
+
+fn newest_cloud_shares(shares: Vec<CloudRecoveryShare>) -> Vec<CloudRecoveryShare> {
+    let mut newest_by_account = std::collections::BTreeMap::new();
+    for share in shares {
+        let replace = newest_by_account
+            .get(&share.user_id)
+            .map_or(true, |current: &CloudRecoveryShare| {
+                current.key_epoch < share.key_epoch
+            });
+        if replace {
+            newest_by_account.insert(share.user_id.clone(), share);
+        }
+    }
+    newest_by_account.into_values().collect()
 }
 
 /// Finish account recovery once Share 2 has already been released by the
@@ -554,6 +760,7 @@ pub async fn complete_account_recovery_with_credential(
     state: &AppState,
     user_id: String,
     share1_b64: String,
+    share1_key_epoch: i64,
     credential: serde_json::Value,
     recovery_id: Option<String>,
     password: String,
@@ -575,6 +782,7 @@ pub async fn complete_account_recovery_with_credential(
         state,
         user_id,
         share1_b64,
+        share1_key_epoch,
         recover_resp,
         password,
         device_name,
@@ -586,6 +794,7 @@ pub async fn complete_account_recovery(
     state: &AppState,
     user_id: String,
     share1_b64: String,
+    share1_key_epoch: i64,
     recover_resp: crate::api::RecoveryRecoverResponse,
     password: String,
     device_name: Option<String>,
@@ -594,6 +803,13 @@ pub async fn complete_account_recovery(
     use crate::audit::{record_audit_event, AuditAction};
     use crate::crypto;
     use vela_crypto::shamir::Share;
+
+    if share1_key_epoch != recover_resp.key_epoch {
+        return Err(format!(
+            "Cloud recovery share belongs to vault epoch {share1_key_epoch}, but the account is at epoch {}; choose the newest backup",
+            recover_resp.key_epoch
+        ));
+    }
 
     let share1_bytes = B64
         .decode(&share1_b64)
@@ -717,12 +933,14 @@ pub async fn complete_account_recovery(
 /// Upload Share 1 to a configured rclone remote (recovery setup, method 1).
 /// Requires an unlocked vault — the shares are derived from the RMS.
 pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Result<(), String> {
-    if !state.is_unlocked() {
-        return Err("Vault is locked".to_string());
-    }
+    let _delivery_guard = state.sync_mutex.lock().await;
+    let generation = state.session_generation();
+    state.ensure_unlocked_since(generation)?;
     ensure_shares_split(state)?;
+    let key_epoch = authenticated_local_epoch(state)?;
     let share1 = {
         let pending = load_pending(state);
+        require_pending_epoch(&pending, key_epoch)?;
         pending
             .share1
             .clone()
@@ -732,6 +950,19 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
         .store
         .load_user_id()
         .map_err(|e| format!("Failed to load account ID: {e}"))?;
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let mut token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+    revalidate_recovery_epoch(
+        state,
+        &client,
+        &mut token,
+        key_epoch,
+        generation,
+    )
+    .await?;
 
     // Deliberately not further "encrypted" beyond this envelope: a lone
     // Shamir share (below the 2-of-3 threshold) is information-theoretically
@@ -743,13 +974,14 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     // identify the account from Share 1 alone, without the user having to
     // remember/re-enter their account ID.
     let envelope = serde_json::json!({
-        "version": 1,
+        "version": 2,
         "user_id": user_id,
+        "key_epoch": key_epoch,
         "share_b64": B64.encode(&share1),
     });
     let payload = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
 
-    let remote_path = cloud_backup_remote_path(&user_id)?;
+    let remote_path = cloud_backup_remote_path(&user_id, key_epoch)?;
     let remote_for_task = remote.clone();
     let path_for_task = remote_path.clone();
     tokio::task::spawn_blocking(move || {
@@ -757,6 +989,23 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     })
     .await
     .map_err(|e| format!("Upload task panicked: {e}"))??;
+
+    // A different device can rotate while rclone is blocked on network I/O.
+    // Do not claim this upload is a live recovery method unless the account is
+    // still active at the epoch which produced it.
+    revalidate_recovery_epoch(
+        state,
+        &client,
+        &mut token,
+        key_epoch,
+        generation,
+    )
+    .await?;
+
+    let mut pending = load_pending(state);
+    require_pending_epoch(&pending, key_epoch)?;
+    pending.cloud_backup_delivered = true;
+    save_pending(state, &pending)?;
 
     // Best-effort migration off the legacy shared path: if it currently
     // holds *this* account's share, delete it so a stale copy can't be
@@ -771,10 +1020,6 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     {
         tracing::warn!("Legacy recovery-share cleanup skipped: {e}");
     }
-
-    let mut pending = load_pending(state);
-    pending.cloud_backup_delivered = true;
-    save_pending(state, &pending)?;
 
     tracing::info!(
         "Recovery Share 1 uploaded to rclone remote '{}' at '{remote_path}'",
@@ -803,42 +1048,153 @@ fn cleanup_legacy_cloud_backup(remote: &str, user_id: &str) -> Result<(), String
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn per_account_path_contains_the_user_id() {
-        let path = cloud_backup_remote_path("9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607").unwrap();
+        let path = cloud_backup_remote_path("9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607", 7).unwrap();
         assert_eq!(
             path,
-            "VELA/9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607/recovery-share.json"
+            "VELA/9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607/recovery-share-7.json"
         );
     }
 
     #[test]
     fn per_account_path_rejects_path_traversal_and_separators() {
-        assert!(cloud_backup_remote_path("..").is_err());
-        assert!(cloud_backup_remote_path("../other/recovery-share").is_err());
-        assert!(cloud_backup_remote_path("a/b").is_err());
-        assert!(cloud_backup_remote_path("a\\b").is_err());
-        assert!(cloud_backup_remote_path("").is_err());
+        assert!(cloud_backup_remote_path("..", 1).is_err());
+        assert!(cloud_backup_remote_path("../other/recovery-share", 1).is_err());
+        assert!(cloud_backup_remote_path("a/b", 1).is_err());
+        assert!(cloud_backup_remote_path("a\\b", 1).is_err());
+        assert!(cloud_backup_remote_path("", 1).is_err());
+        assert!(cloud_backup_remote_path("valid-user", 0).is_err());
+    }
+
+    #[test]
+    fn cloud_scan_accepts_only_legacy_or_epoch_named_share_files() {
+        assert!(is_cloud_backup_file("user/recovery-share.json"));
+        assert!(is_cloud_backup_file("user/recovery-share-12.json"));
+        assert!(!is_cloud_backup_file("user/recovery-share-next.json"));
+        assert!(!is_cloud_backup_file("user/not-a-recovery-share.json"));
+    }
+
+    #[tokio::test]
+    async fn recovery_refuses_cloud_and_server_shares_from_different_epochs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        let response = crate::api::RecoveryRecoverResponse {
+            share: "unused".into(),
+            key_epoch: 8,
+            recovery_grant: "unused".into(),
+        };
+
+        let error = complete_account_recovery(
+            &state,
+            "user".into(),
+            "unused".into(),
+            7,
+            response,
+            "password".into(),
+            None,
+        )
+        .await
+        .expect_err("mixed-epoch shares must fail before reconstruction");
+        assert!(error.contains("epoch 7"), "unexpected error: {error}");
+        assert!(error.contains("epoch 8"), "unexpected error: {error}");
+    }
+
+    #[tokio::test]
+    async fn delivery_epoch_probe_requires_matching_active_server_state() {
+        async fn probe(server_epoch: i64, server_state: &str) -> Result<(), String> {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let state = Arc::new(AppState::for_test(dir.path()));
+            state.unlock_for_test(&[31u8; 32]);
+            {
+                let crypto = state.crypto.read();
+                state
+                    .store
+                    .save_key_epoch(crypto.as_ref().unwrap(), 3)
+                    .expect("authenticated epoch marker");
+            }
+
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/vault/epoch"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "epoch": server_epoch,
+                    "state": server_state,
+                })))
+                .mount(&server)
+                .await;
+            let client = ApiClient::new(&server.uri());
+            let mut token = "token".to_string();
+            revalidate_recovery_epoch(
+                &state,
+                &client,
+                &mut token,
+                3,
+                state.session_generation(),
+            )
+            .await
+        }
+
+        probe(3, "active").await.expect("matching active epoch");
+        assert!(probe(3, "freezing").await.is_err());
+        assert!(probe(4, "active").await.is_err());
+        assert!(probe(2, "active").await.is_err());
     }
 
     #[test]
     fn envelope_parses_back_into_a_share() {
         let json = serde_json::json!({
-            "version": 1,
+            "version": 2,
             "user_id": "user-y",
+            "key_epoch": 7,
             "share_b64": "AAAA",
         });
         let share = parse_cloud_backup_envelope(serde_json::to_vec(&json).unwrap().as_slice())
             .expect("envelope should parse");
         assert_eq!(share.user_id, "user-y");
+        assert_eq!(share.key_epoch, 7);
         assert_eq!(share.share_b64, "AAAA");
+    }
+
+    #[test]
+    fn legacy_cloud_envelope_defaults_to_epoch_one() {
+        let json = serde_json::json!({
+            "version": 1,
+            "user_id": "legacy-user",
+            "share_b64": "AAAA",
+        });
+        let share = parse_cloud_backup_envelope(serde_json::to_vec(&json).unwrap().as_slice())
+            .expect("legacy envelope should remain recoverable");
+        assert_eq!(share.key_epoch, 1);
     }
 
     #[test]
     fn envelope_rejects_garbage() {
         assert!(parse_cloud_backup_envelope(b"not json").is_err());
         assert!(parse_cloud_backup_envelope(b"{}").is_err());
+    }
+
+    #[test]
+    fn cloud_scan_keeps_only_the_highest_epoch_per_account() {
+        let share = |user_id: &str, key_epoch: i64| CloudRecoveryShare {
+            user_id: user_id.into(),
+            key_epoch,
+            share_b64: format!("share-{key_epoch}"),
+        };
+        let shares = newest_cloud_shares(vec![
+            share("alice", 3),
+            share("bob", 2),
+            share("alice", 1),
+            share("alice", 4),
+        ]);
+        assert_eq!(shares.len(), 2);
+        assert_eq!(shares[0].user_id, "alice");
+        assert_eq!(shares[0].key_epoch, 4);
+        assert_eq!(shares[1].user_id, "bob");
+        assert_eq!(shares[1].key_epoch, 2);
     }
 
     /// The re-mint must produce a cached split that provably reconstructs the
@@ -855,11 +1211,103 @@ mod tests {
 
         // Any 2 of the 3 cached shares reconstruct exactly the unlocked RMS.
         let pending = load_pending(&state);
+        assert_eq!(pending.key_epoch, Some(1));
         let shares: Vec<vela_crypto::shamir::Share> = [&pending.share1, &pending.share2]
             .iter()
             .map(|s| vela_crypto::shamir::Share::from_bytes(s.as_deref().unwrap()).unwrap())
             .collect();
         assert!(vela_crypto::rekey::shares_reconstruct_to(&shares, &rms));
+    }
+
+    #[test]
+    fn cached_split_is_never_reused_across_key_epochs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[17u8; 32]);
+        ensure_shares_split(&state).expect("epoch-one split");
+        let first = load_pending(&state);
+        let first_share = first.share1.clone().unwrap();
+        assert_eq!(first.key_epoch, Some(1));
+
+        {
+            let crypto = state.crypto.read();
+            state
+                .store
+                .save_key_epoch(crypto.as_ref().unwrap(), 2)
+                .expect("authenticated epoch marker");
+        }
+        ensure_shares_split(&state).expect("epoch-two split");
+        let second = load_pending(&state);
+        assert_eq!(second.key_epoch, Some(2));
+        assert_ne!(
+            second.share1.as_deref(),
+            Some(first_share.as_slice()),
+            "an old-epoch split must be replaced, not relabelled"
+        );
+        assert!(!second.cloud_backup_delivered);
+        assert!(!second.security_key_delivered);
+        assert!(!second.trusted_contact_acknowledged);
+    }
+
+    #[test]
+    fn recovery_status_never_reports_delivery_from_a_retired_epoch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[23u8; 32]);
+        ensure_shares_split(&state).expect("epoch-one split");
+        let mut pending = load_pending(&state);
+        pending.cloud_backup_delivered = true;
+        pending.security_key_delivered = true;
+        pending.trusted_contact_acknowledged = true;
+        save_pending(&state, &pending).expect("save delivery flags");
+        {
+            let crypto = state.crypto.read();
+            state
+                .store
+                .save_key_epoch(crypto.as_ref().unwrap(), 2)
+                .expect("advance authenticated epoch marker");
+        }
+
+        let status = get_recovery_setup_status(&state).expect("status");
+        assert!(!status.cloud_backup_delivered);
+        assert!(!status.security_key_delivered);
+        assert!(!status.trusted_contact_acknowledged);
+        assert!(!status.setup_in_progress);
+    }
+
+    #[tokio::test]
+    async fn legacy_epoch_one_setup_can_still_be_finalized() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[29u8; 32]);
+        ensure_shares_split(&state).expect("split");
+        let mut pending = load_pending(&state);
+        pending.key_epoch = None;
+        save_pending(&state, &pending).expect("save legacy shape");
+
+        finalize_recovery_setup(&state)
+            .await
+            .expect("legacy epoch-one finalize");
+        let finalized = load_pending(&state);
+        assert_eq!(finalized.key_epoch, Some(1));
+        assert!(finalized.share1.is_none());
+        assert!(finalized.share2.is_none());
+        assert!(finalized.share3.is_none());
+    }
+
+    #[test]
+    fn invalid_authenticated_epoch_fails_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[37u8; 32]);
+        {
+            let crypto = state.crypto.read();
+            state
+                .store
+                .save_key_epoch(crypto.as_ref().unwrap(), 0)
+                .expect("write invalid authenticated marker for test");
+        }
+        assert!(ensure_shares_split(&state).is_err());
     }
 
     /// A tampered split must fail closed: no delivery from it, and the bad

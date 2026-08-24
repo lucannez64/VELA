@@ -323,9 +323,18 @@ final class AccountViewModel: ObservableObject {
             guard registered else { throw Failure("recovery passkey registration was not confirmed by the server") }
 
             // Share 2 is gated by the passkey we just registered.
-            try await client.putRecoveryShare(shares[1])
+            let recoveryEpoch = try await client.vaultEpoch()
+            guard recoveryEpoch.state == "active" else {
+                throw Failure("vault key rotation is in progress; retry recovery setup after it completes")
+            }
+            try await client.putRecoveryShare(shares[1], keyEpoch: recoveryEpoch.epoch)
             await persistRenewedToken(from: client)
             CloudRecoveryBackup.upload(userID: account.userID, shareBase64: shares[0])
+            let confirmedEpoch = try await client.vaultEpoch()
+            guard confirmedEpoch.state == "active", confirmedEpoch.epoch == recoveryEpoch.epoch else {
+                throw Failure("vault key rotation changed during recovery setup; start again")
+            }
+            await persistRenewedToken(from: client)
             // Share 3 (trusted contact) is shown to the user to distribute —
             // there is no automated channel for a trusted-contact handoff.
             recoveryShares = [shares[2]]

@@ -1377,7 +1377,11 @@ async fn web_session_token_is_refused_on_permanent_power_routes() {
     let web = token_for(&state, user_id, session_id, TokenScope::WebSession);
 
     let cases: Vec<(&str, &str, Option<serde_json::Value>)> = vec![
-        ("PUT", "/recovery/share", Some(json!({ "share": B64.encode(b"x") }))),
+        (
+            "PUT",
+            "/recovery/share",
+            Some(json!({ "share": B64.encode(b"x"), "key_epoch": 1 })),
+        ),
         ("GET", "/recovery/share", None),
         ("DELETE", "/recovery/share", None),
         (
@@ -1451,7 +1455,10 @@ async fn device_token_still_reaches_permanent_power_routes() {
                 .header("Authorization", format!("Bearer {device}"))
                 .header("Content-Type", "application/json")
                 .body(Body::from(
-                    serde_json::to_vec(&json!({ "share": B64.encode(b"share-bytes") })).unwrap(),
+                    serde_json::to_vec(
+                        &json!({ "share": B64.encode(b"share-bytes"), "key_epoch": 1 }),
+                    )
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
@@ -1462,6 +1469,196 @@ async fn device_token_still_reaches_permanent_power_routes() {
         StatusCode::FORBIDDEN,
         "a real device must not be caught by the web-session guard"
     );
+}
+
+/// Recovery delivery is authority for one RMS, so the write must be tied to
+/// the epoch which produced the share. A stale device must neither resurrect
+/// an epoch-N share after N+1 commits nor delete N+1's replacement.
+#[tokio::test]
+async fn recovery_share_writes_are_epoch_bound_and_refuse_freezing_accounts() {
+    use vela_server::auth::token::TokenScope;
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let device_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    let token = token_for(&state, user_id, device_id, TokenScope::Device);
+
+    let put = |epoch: i64, share: &'static [u8]| {
+        Request::builder()
+            .method("PUT")
+            .uri("/recovery/share")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "share": B64.encode(share),
+                    "key_epoch": epoch,
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+    let delete = |epoch: i64| {
+        Request::builder()
+            .method("DELETE")
+            .uri("/recovery/share")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("X-Vela-Epoch", epoch.to_string())
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    assert_eq!(
+        app.clone().oneshot(put(0, b"invalid")).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    let missing_delete_epoch = Request::builder()
+        .method("DELETE")
+        .uri("/recovery/share")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(missing_delete_epoch)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    assert_eq!(
+        app.clone().oneshot(put(1, b"epoch-one")).await.unwrap().status(),
+        StatusCode::OK
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET key_epoch = 2 WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(put(2, b"epoch-two")).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone().oneshot(put(1, b"stale")).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "an epoch-one device must not overwrite epoch two's share"
+    );
+    assert_eq!(
+        app.clone().oneshot(delete(1)).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "an epoch-one device must not delete epoch two's share"
+    );
+
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT recovery_share FROM users WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    let stored = match rows[0].get(0) {
+        Some(TursoValue::Text(value)) => vela_server::db::decode_b64(value).unwrap(),
+        other => panic!("expected stored recovery share, got {other:?}"),
+    };
+    assert_eq!(stored, b"epoch-two");
+
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(put(2, b"during-freeze")).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        app.clone().oneshot(delete(2)).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.oneshot(delete(2)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+}
+
+/// A write racing the epoch transition has only two legal outcomes: it lands
+/// before the transition and is cleared by commit, or it loses the epoch CAS.
+/// It must never remain attached to the new epoch.
+#[tokio::test]
+async fn recovery_share_upload_cannot_survive_a_concurrent_epoch_commit() {
+    use vela_server::auth::token::TokenScope;
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    for attempt in 0..16 {
+        let state = helpers::test_state().await;
+        let app = vela_server::routes::build(state.clone());
+        let user_id = Uuid::new_v4();
+        let device_id = Uuid::new_v4();
+        insert_user(&state, user_id).await;
+        let token = token_for(&state, user_id, device_id, TokenScope::Device);
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/recovery/share")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "share": B64.encode(format!("attempt-{attempt}")),
+                    "key_epoch": 1,
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let commit = state.sqldb.execute(
+            "UPDATE users SET key_epoch = 2, recovery_share = NULL,
+                    recovery_auth_hash = NULL
+             WHERE id = ? AND key_epoch = 1",
+            vec![TursoValue::Text(user_id.to_string())],
+        );
+        let (response, committed) = tokio::join!(app.oneshot(request), commit);
+        assert_eq!(committed.unwrap(), 1);
+        let status = response.unwrap().status();
+        assert!(
+            status == StatusCode::OK || status == StatusCode::CONFLICT,
+            "unexpected race outcome: {status}"
+        );
+
+        let rows = state
+            .sqldb
+            .query(
+                "SELECT key_epoch, recovery_share FROM users WHERE id = ?",
+                vec![TursoValue::Text(user_id.to_string())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows[0].i64(0), Some(2));
+        assert!(
+            matches!(rows[0].get(1), None | Some(TursoValue::Null)),
+            "a stale share survived commit on attempt {attempt}: {:?}",
+            rows[0].get(1)
+        );
+    }
 }
 
 /// Renewal must carry the scope across.

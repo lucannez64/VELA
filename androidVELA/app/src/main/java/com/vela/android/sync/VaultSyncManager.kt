@@ -36,6 +36,7 @@ class VaultSyncManager(
     private val vault: LocalVaultRepository
 ) {
     private val shareKeyRegistrationLock = Any()
+    private val recoverySetupMutex = Mutex()
     private val _state = MutableStateFlow(SyncState(lastSyncedAt = settingsStore.settings.value.lastSyncedAt))
     val state: StateFlow<SyncState> = _state
 
@@ -179,40 +180,59 @@ class VaultSyncManager(
     /// sync layer doesn't need an Activity context for the Credential Manager
     /// UI — it receives the already-unwrapped creation options and returns
     /// the attestation response JSON.
-    suspend fun setupRecovery(performRegistration: suspend (JSONObject) -> JSONObject): List<String> {
-        check(security.session.value.unlocked) { "Unlock VELA before setting up recovery" }
-        val rms = security.currentRmsCopy() ?: error("No unlocked vault key")
-        val shares = try {
-            NativeVelaCore.splitRecovery(rms, threshold = 2, n = 3)
-                ?: error("Native VELA bridge could not split recovery shares")
-        } finally {
-            rms.fill(0)
+    suspend fun setupRecovery(performRegistration: suspend (JSONObject) -> JSONObject): List<String> =
+        recoverySetupMutex.withLock {
+            check(security.session.value.unlocked) { "Unlock VELA before setting up recovery" }
+            val rms = security.currentRmsCopy() ?: error("No unlocked vault key")
+            val shares = try {
+                NativeVelaCore.splitRecovery(rms, threshold = 2, n = 3)
+                    ?: error("Native VELA bridge could not split recovery shares")
+            } finally {
+                rms.fill(0)
+            }
+            check(shares.size == 3) { "Unexpected share count from split" }
+
+            val settings = settingsStore.settings.value
+            require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
+            val client = AndroidVelaApiClient(settings.serverUrl, context)
+            var token = authenticatedToken(client, settings.bearerToken)
+            if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
+            val localEpoch = settingsStore.settings.value.keyEpoch
+            val before = client.getVaultEpoch(token)
+            before.newToken?.let { token = it; settingsStore.updateBearerToken(it) }
+            check(before.state == "active" && before.epoch == localEpoch) {
+                "Vault key rotation changed this device's recovery epoch; sync and retry recovery setup"
+            }
+
+            val (startJson, tokenAfterStart) = client.startRecoveryWebAuthnRegistration(token)
+            tokenAfterStart?.let { token = it; settingsStore.updateBearerToken(it) }
+
+            val requestOptions = WebAuthnCeremony.unwrapPublicKey(startJson)
+            val credentialJson = performRegistration(requestOptions)
+
+            val (registered, tokenAfterFinish) =
+                client.finishRecoveryWebAuthnRegistration(token, credentialJson)
+            tokenAfterFinish?.let { token = it; settingsStore.updateBearerToken(it) }
+            check(registered) { "Recovery passkey registration was not confirmed by the server" }
+
+            client.putRecoveryShare(token, shares[1], localEpoch)?.let {
+                token = it
+                settingsStore.updateBearerToken(it)
+            }
+
+            // Do not hand old-epoch shares to cloud/contact channels if another
+            // device committed a rotation while the WebAuthn ceremony was open.
+            val after = client.getVaultEpoch(token)
+            after.newToken?.let { settingsStore.updateBearerToken(it) }
+            check(after.state == "active" && after.epoch == localEpoch) {
+                "Vault key rotation changed during recovery setup; sync and start again"
+            }
+
+            // Share 1 (cloud) and Share 3 (trusted contact) are handed back to
+            // the caller to distribute — there is no cloud-storage integration
+            // yet, so both are shown as plain text to copy/store manually.
+            listOf(shares[0], shares[2])
         }
-        check(shares.size == 3) { "Unexpected share count from split" }
-
-        val settings = settingsStore.settings.value
-        require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
-        val client = AndroidVelaApiClient(settings.serverUrl, context)
-        var token = authenticatedToken(client, settings.bearerToken)
-        if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
-
-        val (startJson, tokenAfterStart) = client.startRecoveryWebAuthnRegistration(token)
-        tokenAfterStart?.let { token = it; settingsStore.updateBearerToken(it) }
-
-        val requestOptions = WebAuthnCeremony.unwrapPublicKey(startJson)
-        val credentialJson = performRegistration(requestOptions)
-
-        val (registered, tokenAfterFinish) = client.finishRecoveryWebAuthnRegistration(token, credentialJson)
-        tokenAfterFinish?.let { token = it; settingsStore.updateBearerToken(it) }
-        check(registered) { "Recovery passkey registration was not confirmed by the server" }
-
-        client.putRecoveryShare(token, shares[1])?.let { settingsStore.updateBearerToken(it) }
-
-        // Share 1 (cloud) and Share 3 (trusted contact) are handed back to
-        // the caller to distribute — there is no cloud-storage integration
-        // yet, so both are shown as plain text to copy/store manually.
-        return listOf(shares[0], shares[2])
-    }
 
     /// Reconstruct the RMS on a brand-new device from Share 1 (pasted from
     /// wherever the user stored it) + Share 2 (released by the server after

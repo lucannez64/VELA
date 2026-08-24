@@ -36,6 +36,9 @@ pub struct RecoverRequest {
 #[derive(Serialize)]
 pub struct RecoverResponse {
     pub share: String,
+    /// Epoch of both this server share and the RMS it reconstructs. Clients
+    /// must require their independently fetched cloud share to match it.
+    pub key_epoch: i64,
     /// Single-use proof that this caller just passed WebAuthn-gated recovery
     /// for `user_id`. Redeemable exactly once at `/recovery/enroll-device`
     /// within `ENROLL_GRANT_TTL_SECS`, since a recovering device has no prior
@@ -118,6 +121,7 @@ pub async fn post_recover(
 
     Ok(Json(RecoverResponse {
         share: B64.encode(&share_bytes),
+        key_epoch,
         recovery_grant,
     }))
 }

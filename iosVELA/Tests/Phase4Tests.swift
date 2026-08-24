@@ -217,6 +217,35 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(token, "OLD", "must not adopt X-New-Token from an error response")
     }
 
+    func testRecoveryShareWritesDeclareTheirEpoch() async throws {
+        var requestNumber = 0
+        MockURLProtocol.handler = { req in
+            requestNumber += 1
+            XCTAssertEqual(req.url?.path, "/recovery/share")
+            if requestNumber == 1 {
+                XCTAssertEqual(req.httpMethod, "PUT")
+                let body = try XCTUnwrap(req.httpBody)
+                let json = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                XCTAssertEqual(json["share"] as? String, "share-two")
+                XCTAssertEqual(json["key_epoch"] as? Int, 4)
+            } else {
+                XCTAssertEqual(req.httpMethod, "DELETE")
+                XCTAssertEqual(req.value(forHTTPHeaderField: "X-Vela-Epoch"), "4")
+            }
+            return (Self.ok(req), Data())
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = VelaClient(
+            baseURL: URL(string: "https://vault.example")!, token: "TOKEN",
+            session: URLSession(configuration: config))
+
+        try await client.putRecoveryShare("share-two", keyEpoch: 4)
+        try await client.deleteRecoveryShare(keyEpoch: 4)
+        XCTAssertEqual(requestNumber, 2)
+    }
+
     func testRedirectPolicyRefusesCrossHost() {
         // URLSession re-sends the Authorization header when following a
         // redirect; a cross-host hop would hand the bearer token to whatever

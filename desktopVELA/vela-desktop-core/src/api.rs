@@ -1512,7 +1512,10 @@ impl ApiClient {
                 client
                     .put(format!("{}/recovery/share", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({ "share": share.share }))
+                    .json(&serde_json::json!({
+                        "share": share.share,
+                        "key_epoch": share.key_epoch,
+                    }))
             })
             .await?;
 
@@ -1523,12 +1526,17 @@ impl ApiClient {
         Ok(extract_new_token(&resp))
     }
 
-    pub async fn delete_recovery_share(&self, token: &str) -> Result<Option<String>> {
+    pub async fn delete_recovery_share(
+        &self,
+        token: &str,
+        key_epoch: i64,
+    ) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
                     .delete(format!("{}/recovery/share", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
+                    .header("X-Vela-Epoch", key_epoch.to_string())
             })
             .await?;
 
@@ -1656,6 +1664,7 @@ pub struct RecoveryRecoverRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryRecoverResponse {
     pub share: String,
+    pub key_epoch: i64,
     pub recovery_grant: String,
 }
 
@@ -1682,6 +1691,7 @@ pub struct RecoveryShareResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryShareData {
     pub share: String,
+    pub key_epoch: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1748,7 +1758,7 @@ pub struct PutOramBucketResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{header, method, path};
+    use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
@@ -1946,6 +1956,41 @@ mod tests {
             .delete_chunk_with_epoch("t", "c1", 4, Some(3))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_share_writes_declare_the_source_epoch() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/recovery/share"))
+            .and(body_json(serde_json::json!({
+                "share": "c2hhcmU=",
+                "key_epoch": 4,
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({ "stored": true }),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/recovery/share"))
+            .and(header("X-Vela-Epoch", "4"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::new(&server.uri());
+        client
+            .put_recovery_share(
+                "t",
+                RecoveryShareData {
+                    share: "c2hhcmU=".into(),
+                    key_epoch: 4,
+                },
+            )
+            .await
+            .unwrap();
+        client.delete_recovery_share("t", 4).await.unwrap();
     }
 
     #[tokio::test]

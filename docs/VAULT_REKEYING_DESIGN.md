@@ -97,6 +97,7 @@ All endpoints require device authentication unless noted.
 | `POST /vault/rekey/capsules` | Only while `FREEZING`, only from the device that started it, with matching `X-Vela-Rekey-Id`. Body: `{capsules: {device_id: b64}}` — RMS₂ sealed to each device's `hybrid_ek`. Stored into `devices.rms_capsule` (the existing read-and-clear relay). |
 | `POST /vault/rekey/commit` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Atomically validate completeness, set `users.key_epoch = N+1`, and clear state; then best-effort delete chunk rows with `epoch < N+1`. Unfreezes writes. A replay after a lost commit response carries the target epoch in `X-Vela-Epoch` and is answered with success when the account already sits at that epoch — so crash recovery never has to guess between "committed" and "failed". |
 | `POST /vault/rekey/abort` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Delete rows and capsules for the attempt, back to `ACTIVE(N)`. |
+| `PUT /recovery/share` | Body carries the RMS source `key_epoch`; an atomic `key_epoch = ? AND rekey_state IS NULL` update refuses stale or mid-rotation recovery material. `DELETE /recovery/share` has the same guard via `X-Vela-Epoch`. |
 | *(automatic)* | A `FREEZING` account older than `REKEY_TIMEOUT` (15 min) rolls back lazily: the next state-observing call for that account performs the abort. No cron. |
 
 Known, accepted limitation: because every successful shadow write refreshes
@@ -167,9 +168,13 @@ Preconditions: unlocked session, full vault locally (or fetched first).
    master-password RMS, persist the local epoch, then swap the in-memory
    `Crypto` context. Only then acknowledge/clear the self-capsule.
 8. Recovery-share rotation: `rekey_recovery_shares(RMS₂, t, n)`, verify with
-   `shares_reconstruct_to(.., RMS₂)` **before** overwriting the cloud backup
-   (overwriting first would turn a bug into unrecoverability), upload over the
-   per-account rclone paths, wipe locals per the sharing protocol.
+   `shares_reconstruct_to(.., RMS₂)`, and cache the split with its authenticated
+   epoch. Cloud, security-key, and trusted-contact delivery share the sync/rekey
+   mutex, probe the server before delivery, and revalidate before recording
+   success. Server share writes use an epoch/state compare-and-swap. Cloud
+   objects use per-account, per-epoch paths, so a delayed epoch-N upload cannot
+   overwrite N+1; recovery also requires the cloud and released server share
+   epochs to match.
 9. Audit event `VaultRekeyed { from_epoch, to_epoch, device_id }` — written
    under the NEW audit key.
 
@@ -252,6 +257,6 @@ CREATE INDEX idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
 3. ✅ **Desktop core** — `commands/rekey::rotate_vault_keys` orchestrating §6,
    restart-safe platform RMS persistence, and the §7.1 adoption hook before any
    sync read/write (settings UI action shipped in gpui; webview port pending).
-4. **Follow-ups** — recovery-share re-mint prompt after rotation (§6.8),
-   mobile adoption-only support (needs no new crypto), and ORAM shadow migration
-   (the server currently refuses rotation while an account has ORAM buckets).
+4. **Follow-ups** — mobile adoption-only support (needs no new crypto), webview
+   rotation UI, and ORAM shadow migration (the server currently refuses
+   rotation while an account has ORAM buckets).
