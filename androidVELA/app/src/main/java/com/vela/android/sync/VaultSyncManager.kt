@@ -35,6 +35,7 @@ class VaultSyncManager(
     private val security: SecureVaultManager,
     private val vault: LocalVaultRepository
 ) {
+    private val shareKeyRegistrationLock = Any()
     private val _state = MutableStateFlow(SyncState(lastSyncedAt = settingsStore.settings.value.lastSyncedAt))
     val state: StateFlow<SyncState> = _state
 
@@ -463,15 +464,23 @@ class VaultSyncManager(
     }
 
     /// Backfill a share keypair for identities created before sharing existed.
-    /// Generates the keypair locally, persists it, and registers the public half
-    /// with the server. A no-op once the identity already has a share key.
-    private fun ensureShareKey(client: AndroidVelaApiClient, token: String): String? {
-        val identity = identityStore.load() ?: return null
-        if (identity.shareEkB64.isNotBlank()) return null
-        // The new secret half stays native; only its public key comes back.
-        val shareEk = identityStore.rotateShareKey() ?: return null
-        return runCatching { client.putMyShareEk(token, shareEk) }.getOrNull()
-    }
+    /// A failed server write leaves a durable pending marker, so the same key is
+    /// retried instead of being mistaken for a completed registration.
+    private fun ensureShareKey(client: AndroidVelaApiClient, token: String): String? =
+        synchronized(shareKeyRegistrationLock) {
+            val identity = identityStore.load() ?: return@synchronized null
+            val shareEk = when {
+                identity.shareEkB64.isBlank() ->
+                    // The new secret half stays native; only its public key comes back.
+                    identityStore.rotateShareKey() ?: return@synchronized null
+                identity.shareEkRegistrationPending -> identity.shareEkB64
+                else -> return@synchronized null
+            }
+
+            val registration = runCatching { client.putMyShareEk(token, shareEk) }
+            if (registration.isSuccess) identityStore.markShareKeyRegistered(shareEk)
+            registration.getOrNull()
+        }
 
     private fun authenticateOrRegister(client: AndroidVelaApiClient): String {
         var identity = identityStore.getOrCreate()

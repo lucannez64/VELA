@@ -25,7 +25,8 @@ data class ServerIdentity(
     val hybridEkB64: String,
     val hybridVkB64: String,
     val shareEkB64: String = "",
-    val sealedB64: String = ""
+    val sealedB64: String = "",
+    val shareEkRegistrationPending: Boolean = false
 )
 
 class ServerIdentityStore(context: Context) {
@@ -134,14 +135,32 @@ class ServerIdentityStore(context: Context) {
         return opened.handle
     }
 
-    /** Generate a share keypair for an account that never registered one. */
+    /** Generate a share keypair and remember that its public half still needs registration. */
     fun rotateShareKey(): String? {
         val handleId = handle() ?: return null
         val rotated = NativeVelaCore.identityRotateShareKey(sealKey(), handleId) ?: return null
         val (shareEk, sealed) = rotated
-        load()?.let { save(it.copy(shareEkB64 = shareEk, sealedB64 = sealed)) }
+        load()?.let {
+            save(
+                it.copy(
+                    shareEkB64 = shareEk,
+                    sealedB64 = sealed,
+                    shareEkRegistrationPending = true
+                )
+            )
+        }
         handle = handle?.copy(shareEkB64 = shareEk, sealedB64 = sealed)
         return shareEk
+    }
+
+    /**
+     * Clear the retry marker only if the key just acknowledged by the server
+     * is still current.
+     */
+    fun markShareKeyRegistered(shareEkB64: String) {
+        val identity = load() ?: return
+        if (identity.shareEkB64 != shareEkB64) return
+        save(identity.copy(shareEkRegistrationPending = false))
     }
 
     /** Drop the in-memory keys. Call on lock or sign-out. */
@@ -206,7 +225,8 @@ class ServerIdentityStore(context: Context) {
             hybridEkB64 = json.getString("hybrid_ek_b64"),
             hybridVkB64 = json.getString("hybrid_vk_b64"),
             shareEkB64 = json.optString("share_ek_b64"),
-            sealedB64 = json.optString("sealed_b64")
+            sealedB64 = json.optString("sealed_b64"),
+            shareEkRegistrationPending = json.optBoolean("share_ek_registration_pending", false)
         )
     }
 
@@ -218,6 +238,7 @@ class ServerIdentityStore(context: Context) {
             .put("hybrid_vk_b64", hybridVkB64)
             .put("share_ek_b64", shareEkB64)
             .put("sealed_b64", sealedB64)
+            .put("share_ek_registration_pending", shareEkRegistrationPending)
     }
 
     companion object {
