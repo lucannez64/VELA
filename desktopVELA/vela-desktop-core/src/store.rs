@@ -404,6 +404,7 @@ impl Store {
     /// or corrupt, this redundant authenticated marker lets a device prove
     /// that its current RMS already belongs to the server's epoch.
     pub(crate) fn save_key_epoch(&self, crypto: &Crypto, epoch: i64) -> anyhow::Result<()> {
+        anyhow::ensure!(epoch >= 1, "invalid local key epoch");
         let plaintext = serde_json::to_vec(&epoch)?;
         let ciphertext = crypto.encrypt_vault(&plaintext)?;
         write_secret_file(&self.store_path.join(KEY_EPOCH_FILE), &ciphertext)
@@ -1172,5 +1173,6 @@ mod tests {
         store.save_key_epoch(&current, 6).unwrap();
         assert_eq!(store.load_key_epoch(&current).unwrap(), Some(6));
         assert!(store.load_key_epoch(&wrong).is_err());
+        assert!(store.save_key_epoch(&current, 0).is_err());
     }
 }

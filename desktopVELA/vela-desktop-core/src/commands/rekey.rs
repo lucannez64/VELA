@@ -67,6 +67,25 @@ fn accept_new_token(state: &AppState, token: &mut String, refreshed: Option<Stri
     }
 }
 
+fn validate_rotation_preflight(
+    local_epoch: i64,
+    server_epoch: i64,
+    rotation_state: &str,
+) -> Result<(), String> {
+    if rotation_state != "active" {
+        return Err(
+            "A key rotation is already in progress for this account. Try again in a few minutes."
+                .to_string(),
+        );
+    }
+    if local_epoch != server_epoch {
+        return Err(format!(
+            "This device has authenticated vault key epoch {local_epoch}, but the account is at epoch {server_epoch}; sync before rotating the vault."
+        ));
+    }
+    Ok(())
+}
+
 /// Rotate the account's Root Master Seed.
 pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, String> {
     super::vault::require_unlocked(state)?;
@@ -112,6 +131,11 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
     // server chunks. Serialize them so neither can observe half-migrated files.
     let _sync_guard = state.sync_mutex.lock().await;
 
+    // Authenticate the RMS-to-epoch binding before any rotation mutation. A
+    // stale RMS must not be relabelled with the server epoch and used to
+    // produce a complete set of unreadable replacement chunks.
+    let local_epoch = crate::sync::local_key_epoch(state)?;
+
     let mut token = {
         let session = state.session.read();
         session
@@ -155,12 +179,7 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
         .await
         .map_err(|e| format!("Could not read the account's key epoch: {e}"))?;
     accept_new_token(state, &mut token, new_token);
-    if rotation_state != "active" {
-        return Err(
-            "A key rotation is already in progress for this account. Try again in a few minutes."
-                .to_string(),
-        );
-    }
+    validate_rotation_preflight(local_epoch, current_epoch, &rotation_state)?;
 
     // 1. Start: freeze + fetch the work order.
     let (start, new_token) = client
@@ -444,5 +463,20 @@ mod tests {
             batches.iter().flat_map(|batch| batch.keys()).count(),
             129
         );
+    }
+
+    #[test]
+    fn rotation_preflight_requires_active_matching_authenticated_epoch() {
+        assert!(validate_rotation_preflight(4, 4, "active").is_ok());
+
+        let stale = validate_rotation_preflight(3, 4, "active").unwrap_err();
+        assert!(stale.contains("authenticated vault key epoch 3"), "{stale}");
+        assert!(stale.contains("account is at epoch 4"), "{stale}");
+
+        let ahead = validate_rotation_preflight(5, 4, "active").unwrap_err();
+        assert!(ahead.contains("sync before rotating"), "{ahead}");
+
+        let freezing = validate_rotation_preflight(4, 4, "freezing").unwrap_err();
+        assert!(freezing.contains("already in progress"), "{freezing}");
     }
 }

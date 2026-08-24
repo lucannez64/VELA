@@ -63,29 +63,36 @@ struct LocalChunkMeta {
     lamport_clock: i64,
 }
 
-fn load_local_sync_meta(state: &AppState) -> LocalSyncMeta {
-    let durable_epoch = state
-        .crypto
-        .read()
-        .as_ref()
-        .and_then(|crypto| state.store.load_key_epoch(crypto).ok().flatten());
-    let meta_path = state.store.store_path().join("sync_meta.json");
-    if let Ok(json) = std::fs::read_to_string(&meta_path) {
-        if let Ok(mut meta) = serde_json::from_str::<LocalSyncMeta>(&json) {
-            if let Some(epoch) = durable_epoch {
-                meta.key_epoch = epoch;
-            }
-            return meta;
-        }
-    }
-    LocalSyncMeta {
-        key_epoch: durable_epoch.unwrap_or_else(default_key_epoch),
-        chunks: HashMap::new(),
-    }
+fn load_plaintext_sync_chunks(state: &AppState) -> HashMap<String, LocalChunkMeta> {
+    std::fs::read_to_string(state.store.store_path().join("sync_meta.json"))
+        .ok()
+        .and_then(|json| serde_json::from_str::<LocalSyncMeta>(&json).ok())
+        .map(|meta| meta.chunks)
+        .unwrap_or_default()
 }
 
-pub(crate) fn local_key_epoch(state: &AppState) -> i64 {
-    load_local_sync_meta(state).key_epoch
+fn load_local_sync_meta(state: &AppState) -> Result<LocalSyncMeta, String> {
+    // `key_epoch.enc` is the sole epoch authority. Authentication, I/O and
+    // parse errors must propagate: treating an unreadable marker as absent
+    // lets attacker-controlled plaintext metadata relabel a stale RMS.
+    let durable_epoch = {
+        let crypto = state.crypto.read();
+        let crypto = crypto.as_ref().ok_or("Vault is locked")?;
+        state
+            .store
+            .load_key_epoch(crypto)
+            .map_err(|e| format!("Failed to authenticate the local vault epoch: {e}"))?
+    };
+    // Absence is the one supported legacy shape and means epoch 1 exactly.
+    let authenticated_epoch = durable_epoch.unwrap_or_else(default_key_epoch);
+    Ok(LocalSyncMeta {
+        key_epoch: authenticated_epoch,
+        chunks: load_plaintext_sync_chunks(state),
+    })
+}
+
+pub(crate) fn local_key_epoch(state: &AppState) -> Result<i64, String> {
+    Ok(load_local_sync_meta(state)?.key_epoch)
 }
 
 fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), String> {
@@ -97,8 +104,18 @@ fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), St
 }
 
 pub(crate) fn set_local_key_epoch(state: &AppState, epoch: i64) -> Result<(), String> {
-    let mut meta = load_local_sync_meta(state);
-    meta.key_epoch = epoch;
+    if epoch < 1 {
+        return Err("Local key epoch must be positive".into());
+    }
+    // Preserve only the non-authoritative chunk clocks from plaintext. Do not
+    // require or rewrite the authenticated marker here: migration callers may
+    // be between old and new RMS installation. Authority is established only
+    // by Store::save_key_epoch and enforced by load_local_sync_meta.
+    let chunks = load_plaintext_sync_chunks(state);
+    let meta = LocalSyncMeta {
+        key_epoch: epoch,
+        chunks,
+    };
     save_local_sync_meta(state, &meta)
 }
 
@@ -304,7 +321,7 @@ async fn adopt_server_epoch(
         state.session.write().set_server_token(t.clone());
         *token = t;
     }
-    let local_epoch = load_local_sync_meta(state).key_epoch;
+    let local_epoch = load_local_sync_meta(state)?.key_epoch;
 
     if rotation_state != "active" {
         return Err(
@@ -897,9 +914,8 @@ enum ServerVault {
     /// The chunks decrypted and reassembled into a vault.
     Available(crate::vault::VaultStore, i64),
     /// The server holds vault chunks this account's key cannot open — server-
-    /// side corruption or a foreign chunk. Nothing can be merged from them; the
-    /// local vault is re-uploaded to overwrite them (a deliberate recovery:
-    /// the codebase's own comments name re-sync as the fix for a corrupt sync).
+    /// side corruption, a foreign chunk, or an authority mismatch. Nothing can
+    /// safely be merged or overwritten automatically in this state.
     Unreadable(String),
     /// The server has no vault chunks.
     Empty,
@@ -920,7 +936,7 @@ async fn download_vault_from_manifest(
 ) -> Result<ServerVault, String> {
     // What this device last accepted for each chunk, to catch a server that
     // serves an older revision back (audit C-2).
-    let local_meta = load_local_sync_meta(state);
+    let local_meta = load_local_sync_meta(state)?;
     let ids = ordered_vault_chunk_ids(manifest);
     let ids = if ids.is_empty()
         && manifest
@@ -962,9 +978,8 @@ async fn download_vault_from_manifest(
             }
             reject_rollback(&chunk_id, lamport, seen_lamport)?;
             // A chunk this account's key cannot open is corruption (or a
-            // foreign chunk), not a rollback — it must not abort the sync
-            // forever. It is reported as `Corrupt` and the caller heals by
-            // re-uploading the local vault.
+            // foreign chunk). Report it distinctly, but never turn an
+            // authentication failure into permission to overwrite the server.
             match vela_crypto::rekey::open_epoch_chunk(
                 &key,
                 &ciphertext,
@@ -1418,20 +1433,25 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
             }
         }
         ServerVault::Unreadable(why) => {
-            // The server's vault chunks cannot be opened with this account's
-            // key. Merge nothing from them; the upload below re-seals the local
-            // vault with fresh Lamports and overwrites the bad chunks. Loud on
-            // purpose: a device that cannot read the server is not silently
-            // trusted to clobber it.
+            // Authentication failure is not a repair authorization. An
+            // automatic upload here could destroy genuine server data when a
+            // stale/mismatched key or a malicious server caused the failure.
             tracing::error!(
-                "Sync: the server's vault chunks could not be decrypted ({why}); \
-                 re-uploading the local vault to heal them"
+                "Sync: refusing to overwrite server vault chunks that could not be decrypted ({why})"
             );
+            return Ok(SyncStatus {
+                syncing: false,
+                last_synced: Some(Utc::now()),
+                conflicts: merged_conflicts,
+                error: Some(format!(
+                    "Server vault data could not be authenticated ({why}). No server data was overwritten."
+                )),
+            });
         }
         ServerVault::Empty => {}
     }
 
-    let mut current_meta = load_local_sync_meta(state);
+    let mut current_meta = load_local_sync_meta(state)?;
     let local_vault_snapshot = state.vault.read().clone();
     let local_count = local_vault_snapshot.items.len();
 
@@ -1530,8 +1550,9 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
 }
 
 pub async fn get_sync_status(state: &AppState) -> Result<SyncStatus, String> {
-    let meta = load_local_sync_meta(state);
-    let has_meta = !meta.chunks.is_empty();
+    // Status needs only the non-secret chunk clocks. Keep it available while
+    // locked without parsing or exposing plaintext epoch metadata as authority.
+    let has_meta = !load_plaintext_sync_chunks(state).is_empty();
 
     let last_synced_path = state.store.store_path().join("sync_meta.json");
     let last_synced = if has_meta {
@@ -1716,21 +1737,288 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_epoch_survives_missing_or_legacy_sync_metadata() {
+    fn authenticated_epoch_overrides_missing_or_legacy_sync_metadata() {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::AppState::for_test(dir.path());
         let crypto = crate::crypto::Crypto::new(&[12u8; 32]);
         state.store.save_key_epoch(&crypto, 4).unwrap();
         *state.crypto.write() = Some(crypto);
 
-        assert_eq!(load_local_sync_meta(&state).key_epoch, 4);
+        assert_eq!(load_local_sync_meta(&state).unwrap().key_epoch, 4);
 
         std::fs::write(
             state.store.store_path().join("sync_meta.json"),
-            r#"{"chunks":{}}"#,
+            r#"{"key_epoch":999,"chunks":{}}"#,
         )
         .unwrap();
-        assert_eq!(load_local_sync_meta(&state).key_epoch, 4);
+        assert_eq!(load_local_sync_meta(&state).unwrap().key_epoch, 4);
+    }
+
+    #[test]
+    fn missing_authenticated_epoch_is_strictly_legacy_epoch_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[13u8; 32]);
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":42,"chunks":{"vault-data-000000":{"version":7,"lamport_clock":9}}}"#,
+        )
+        .unwrap();
+
+        let meta = load_local_sync_meta(&state).expect("missing marker is legacy epoch 1");
+        assert_eq!(meta.key_epoch, 1, "plaintext must never supply epoch authority");
+        assert_eq!(meta.chunks["vault-data-000000"].version, 7);
+    }
+
+    #[test]
+    fn unreadable_authenticated_epoch_never_falls_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[14u8; 32]);
+        state
+            .store
+            .save_key_epoch(&crate::crypto::Crypto::new(&[15u8; 32]), 6)
+            .unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":6,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        let error = load_local_sync_meta(&state)
+            .expect_err("wrong-RMS epoch marker must fail closed");
+        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        assert!(local_key_epoch(&state).is_err());
+    }
+
+    #[test]
+    fn malformed_authenticated_epoch_never_falls_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[16u8; 32]);
+        std::fs::write(
+            state.store.store_path().join("key_epoch.enc"),
+            b"not an authenticated envelope",
+        )
+        .unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":8,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        assert!(load_local_sync_meta(&state).is_err());
+    }
+
+    #[test]
+    fn invalid_authenticated_epoch_never_falls_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[21u8; 32]);
+        let ciphertext = {
+            let crypto = state.crypto.read();
+            crypto
+                .as_ref()
+                .unwrap()
+                .encrypt_vault(&serde_json::to_vec(&0i64).unwrap())
+                .unwrap()
+        };
+        std::fs::write(state.store.store_path().join("key_epoch.enc"), ciphertext).unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":7,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        let error = load_local_sync_meta(&state).expect_err("epoch zero must fail closed");
+        assert!(error.contains("invalid local key epoch"), "{error}");
+    }
+
+    #[test]
+    fn epoch_marker_io_errors_never_fall_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[22u8; 32]);
+        std::fs::create_dir(state.store.store_path().join("key_epoch.enc")).unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":7,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        assert!(load_local_sync_meta(&state).is_err());
+    }
+
+    #[test]
+    fn malformed_plaintext_metadata_cannot_hide_a_valid_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[17u8; 32]);
+        {
+            let crypto = state.crypto.read();
+            state.store.save_key_epoch(crypto.as_ref().unwrap(), 9).unwrap();
+        }
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            b"not json",
+        )
+        .unwrap();
+
+        let meta = load_local_sync_meta(&state).unwrap();
+        assert_eq!(meta.key_epoch, 9);
+        assert!(meta.chunks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn locked_sync_status_uses_chunk_clocks_without_trusting_plaintext_epoch() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":999,"chunks":{"vault-data-000000":{"version":2,"lamport_clock":3}}}"#,
+        )
+        .unwrap();
+
+        let status = get_sync_status(&state)
+            .await
+            .expect("locked status only reads non-secret chunk clocks");
+        assert!(status.last_synced.is_some());
+        assert!(local_key_epoch(&state).is_err());
+    }
+
+    #[test]
+    fn plaintext_epoch_updates_cannot_change_authenticated_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[18u8; 32]);
+        {
+            let crypto = state.crypto.read();
+            state.store.save_key_epoch(crypto.as_ref().unwrap(), 3).unwrap();
+        }
+
+        set_local_key_epoch(&state, 77).unwrap();
+        assert_eq!(load_local_sync_meta(&state).unwrap().key_epoch, 3);
+        assert!(set_local_key_epoch(&state, 0).is_err());
+    }
+
+    #[tokio::test]
+    async fn unreadable_epoch_marker_aborts_sync_before_manifest_or_repair_upload() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(crate::AppState::for_test(dir.path()));
+        state.unlock_for_test(&[19u8; 32]);
+        state.session.write().set_server_token("token".into());
+        state
+            .store
+            .save_key_epoch(&crate::crypto::Crypto::new(&[20u8; 32]), 5)
+            .unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":5,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        let server = MockServer::start().await;
+        *state.server_url.write() = server.uri();
+        Mock::given(method("GET"))
+            .and(path("/vault/epoch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "epoch": 5,
+                "state": "active",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": []
+            })))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let error = status.error.expect("unreadable marker must stop sync");
+        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn unreadable_server_chunk_aborts_sync_without_any_upload() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(crate::AppState::for_test(dir.path()));
+        state.unlock_for_test(&[23u8; 32]);
+        state.session.write().set_server_token("token".into());
+        state.vault.write().items.push(login(
+            "local-must-not-overwrite-server",
+            Utc::now(),
+            Some("test-device"),
+        ));
+
+        let foreign = vela_crypto::aead::seal(
+            &[0x42u8; 32],
+            b"{\"items\":[]}",
+            &vela_crypto::aead::vault_chunk_aad("vault-data-000000", 1),
+        )
+        .unwrap();
+        let server = MockServer::start().await;
+        *state.server_url.write() = server.uri();
+        Mock::given(method("GET"))
+            .and(path("/vault/epoch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "epoch": 1,
+                "state": "active",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": [{
+                    "chunk_id": "vault-data-000000",
+                    "version": 1,
+                    "lamport_clock": 1,
+                    "last_writer": null,
+                }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("X-Chunk-Version", "1")
+                    .append_header("X-Lamport-Clock", "1")
+                    .set_body_raw(foreign, "application/octet-stream"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let error = status.error.expect("unreadable server data must stop sync");
+        assert!(error.contains("could not be authenticated"), "{error}");
+        assert!(error.contains("No server data was overwritten"), "{error}");
+        server.verify().await;
     }
 
     /// Audit C-2: the sync server is untrusted, and replaying an older
@@ -1967,11 +2255,11 @@ mod tests {
         assert_eq!(kept.last_modified_device(), Some("this-device"));
     }
 
-    /// The heal: a server chunk this account's key cannot open must surface as
-    /// `ServerVault::Unreadable` — so sync re-uploads the local vault to
-    /// overwrite it — rather than aborting the whole sync forever.
+    /// A server chunk this account's key cannot open must surface as
+    /// `ServerVault::Unreadable`; its caller fails closed rather than treating
+    /// an authentication failure as repair authorization.
     #[tokio::test]
-    async fn a_chunk_this_account_cannot_decrypt_is_unreadable_not_fatal() {
+    async fn a_chunk_this_account_cannot_decrypt_is_unreadable() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 

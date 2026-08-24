@@ -1300,13 +1300,19 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let state = Arc::new(AppState::for_test(dir.path()));
         state.unlock_for_test(&[37u8; 32]);
-        {
+        let invalid_marker = {
             let crypto = state.crypto.read();
-            state
-                .store
-                .save_key_epoch(crypto.as_ref().unwrap(), 0)
-                .expect("write invalid authenticated marker for test");
-        }
+            crypto
+                .as_ref()
+                .unwrap()
+                .encrypt_vault(&serde_json::to_vec(&0i64).unwrap())
+                .expect("seal invalid authenticated marker fixture")
+        };
+        std::fs::write(
+            state.store.store_path().join("key_epoch.enc"),
+            invalid_marker,
+        )
+        .expect("write invalid authenticated marker fixture");
         assert!(ensure_shares_split(&state).is_err());
     }
 

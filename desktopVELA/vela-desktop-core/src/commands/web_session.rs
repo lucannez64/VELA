@@ -129,7 +129,7 @@ pub async fn grant_web_session(
     if rotation_state != "active" {
         return Err("A vault key rotation is in progress; approve web access after it completes.".into());
     }
-    let local_epoch = crate::sync::local_key_epoch(state);
+    let local_epoch = crate::sync::local_key_epoch(state)?;
     if local_epoch != server_epoch {
         return Err(format!(
             "This device has vault key epoch {local_epoch}, but the account is at epoch {server_epoch}; sync before approving web access."

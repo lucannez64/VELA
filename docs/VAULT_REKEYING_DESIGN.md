@@ -43,6 +43,14 @@ derives from the 32-byte RMS by BLAKE3 domain separation
    forward).
 4. **Detect, never trust.** Any epoch ambiguity degrades to an error a client
    can act on (re-fetch, re-push, adopt-and-retry), never to silent corruption.
+   On desktop, `key_epoch.enc` is the sole local epoch authority and is
+   authenticated by the currently unlocked RMS. An authentication, decryption,
+   I/O, or parse failure is fatal before manifest fetch, repair upload, web
+   grant, recovery delivery, or rotation start. Independently, a server chunk
+   that fails authenticated decryption stops sync without a repair upload.
+   Only an absent marker is a supported legacy state, and it means epoch 1
+   exactly; plaintext
+   `sync_meta.json` contributes chunk clocks but never epoch authority.
 
 ## 3. What rotation covers — and what it does not
 
@@ -143,8 +151,9 @@ The unique index moves from `(user_id, chunk_id)` to
 
 Preconditions: unlocked session, full vault locally (or fetched first).
 
-1. `GET /vault/epoch` — refuse if already `FREEZING` (another rotation in
-   flight; retry later).
+1. Authenticate the local epoch marker, then `GET /vault/epoch` — refuse if
+   already `FREEZING` (another rotation in flight; retry later) or if the
+   authenticated local epoch differs from the server epoch.
    Before starting, a client attests `/device/rekey-capable` only after it has
    loaded the private half matching its registered `hybrid_ek`. The server
    refuses rotation while any active device has not attested, preventing
