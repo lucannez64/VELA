@@ -2967,6 +2967,27 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         assert_eq!(body["epoch"], 2);
         assert_eq!(body["rotation_id"], rotation_id);
     }
+    // An ACK for another epoch must neither masquerade as an idempotent retry
+    // nor consume the transition which this device still needs.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/capsule/ack")
+                .header("authorization", format!("Bearer {}", token_other))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 3 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        app.clone().oneshot(capsule_req()).await.unwrap().status(),
+        StatusCode::OK,
+        "a mismatched ACK must leave the pending capsule available"
+    );
     let resp = app
         .clone()
         .oneshot(

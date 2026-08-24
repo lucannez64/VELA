@@ -142,7 +142,10 @@ pub async fn post_capsule_ack(
             .map_err(|e| AppError::Internal(e.to_string()))?;
         // A lost successful ACK response is safe to retry. A different pending
         // epoch is not: clearing it would strand the device on its old RMS.
-        if rows.first().and_then(|row| row.i64(0)).is_some() {
+        let row = rows.first().ok_or_else(|| {
+            AppError::Conflict("device is no longer eligible to acknowledge capsules".into())
+        })?;
+        if row.i64(0).is_some() {
             return Err(AppError::Conflict(
                 "a different re-key capsule is awaiting acknowledgement".into(),
             ));

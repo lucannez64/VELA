@@ -1756,10 +1756,36 @@ pub fn set_server_url(state: &AppState, url: String) -> Result<(), String> {
 mod tests {
 
     #[test]
-    fn adoption_rejects_a_stale_capsule_relabelled_as_current() {
+    fn adoption_validates_every_authenticated_capsule_authority() {
         let (hybrid_ek, hybrid_dk) = crate::crypto::generate_share_keypair();
         let previous_rms = [40u8; 32];
         let stale_rms = [41u8; 32];
+        let current_rms = [42u8; 32];
+        let current = crate::crypto::seal_rekey_capsule(
+            &hybrid_ek,
+            &previous_rms,
+            &current_rms,
+            3,
+            "rotation-current",
+        )
+        .unwrap();
+        let current_response = crate::api::CapsuleResponse {
+            capsule: B64.encode(current),
+            epoch: Some(3),
+            rotation_id: Some("rotation-current".into()),
+        };
+        assert_eq!(
+            open_epoch_adoption_capsule(
+                &current_response,
+                &hybrid_dk,
+                &previous_rms,
+                3,
+            )
+            .unwrap()
+            .as_ref(),
+            &current_rms
+        );
+
         let stale = crate::crypto::seal_rekey_capsule(
             &hybrid_ek,
             &previous_rms,
@@ -1782,6 +1808,36 @@ mod tests {
         )
         .expect_err("server metadata cannot relabel an authenticated stale capsule");
         assert!(error.contains("authenticated re-key capsule epoch"), "{error}");
+
+        let mut missing_attempt = current_response.clone();
+        missing_attempt.rotation_id = None;
+        assert!(open_epoch_adoption_capsule(
+            &missing_attempt,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .is_err());
+
+        let mut wrong_attempt = current_response.clone();
+        wrong_attempt.rotation_id = Some("rotation-other".into());
+        assert!(open_epoch_adoption_capsule(
+            &wrong_attempt,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .is_err());
+
+        let mut wrong_outer_epoch = current_response;
+        wrong_outer_epoch.epoch = Some(2);
+        assert!(open_epoch_adoption_capsule(
+            &wrong_outer_epoch,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .is_err());
     }
 
     #[test]
