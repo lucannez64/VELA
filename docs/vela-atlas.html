@@ -300,7 +300,7 @@ const NODES = [
   files:["desktopVELA/vela-desktop-core/src/sync.rs","desktopVELA/src-tauri/src/commands/sync.rs"],
   what:["The hardest module in the client, because it has to merge two vaults **without trusting the thing in the middle**.",
         "Every chunk carries a Lamport clock; each writer sets `max(previous, local) + 1`. A clock that comes back *lower* than what this device already recorded is not a stale cache, it is a rollback attempt — and it is refused.",
-        "Before any manifest, read or write it probes `/vault/epoch`. If the server is ahead, the device opens its retained KEM capsule and migrates every local RMS consumer before sync continues; a lower server epoch is refused as rollback.",
+        "Before any manifest, read or write it probes `/vault/epoch`. If the server is ahead, the device opens its retained KEM capsule, requires the authenticated inner epoch and rotation id to match the committed metadata, and only then migrates every local RMS consumer; a lower server epoch is refused as rollback.",
         "Merges honour tombstones so deletions propagate, and anything genuinely divergent becomes a conflict the user resolves rather than a silent overwrite."],
   built:["Serialised behind a sync mutex so local edits cannot interleave with a merge or RMS adoption. `key_epoch.enc`, authenticated by the unlocked RMS, is the sole local epoch authority: unreadable is a hard stop before manifest fetch or repair upload, while absence means legacy epoch 1 exactly. Plaintext `sync_meta.json` supplies chunk clocks only. A vault chunk that fails authenticated decryption also stops without overwriting the server. It captures the session generation before starting and aborts if the vault is locked mid-flight. A 401 triggers exactly one re-authentication and retry, because a 15-minute server token routinely outlives an idle unlocked app."],
   cond:["Conflicts cannot be listed or resolved while the vault is locked — they are stored encrypted, so there is nothing to show.","Desktop is the only client that currently implements rekey-capsule adoption; Android and iOS support epoch-bound sync after enrollment/recovery into the current epoch."],
@@ -310,8 +310,8 @@ const NODES = [
   files:["libVELA/vela-crypto/src/rekey.rs","desktopVELA/vela-desktop-core/src/commands/rekey.rs","serverVELA/vela-server/src/vault/rekey.rs","docs/VAULT_REKEYING_DESIGN.md"],
   what:["The account-wide operation that makes a leaked Root Master Seed expire. One capable desktop creates RMS N+1, re-seals every current chunk into shadow rows, KEM-seals the new seed to every active device, then atomically advances the account epoch.",
         "The server never handles either RMS. It coordinates an **ACTIVE(N) → FREEZING(N→N+1) → ACTIVE(N+1)** state machine and verifies completeness before the compare-and-swap commit."],
-  built:["Rotation is serialized with ordinary sync and requires an explicit human confirmation. Before freezing, the initiator authenticates its RMS-bound local epoch marker and requires it to equal the active server epoch. The server returns an inventory and a random rotation id, accepts only starter-authenticated shadow writes at the target epoch, requires one shadow per current chunk plus one capsule per active device, and rolls an abandoned freeze back after 15 minutes. Recovery delivery takes the same client mutex, while server share writes use an atomic epoch/state guard."],
-  cond:["Every active device must have retained its capsule private key and advertised desktop re-key capability. Android/iOS do not yet advertise it.","Rotation is refused while any Path ORAM bucket exists.","Fresh recovery shares are generated and verified after adoption, but cloud upload, FIDO2 registration and trusted-contact delivery must be performed again."],
+  built:["Rotation is serialized with ordinary sync and requires an explicit human confirmation. Before freezing, the initiator authenticates its RMS-bound local epoch marker and requires it to equal the active server epoch. The server returns an inventory and a random rotation id, accepts only starter-authenticated shadow writes at the target epoch, and requires one shadow per current chunk plus one capsule per active device. Each capsule's v1 plaintext contains epoch, rotation id and RMS, is authenticated by an RMS N-derived transition key, then KEM-sealed per device. This prevents relay forgery and stale-capsule relabeling. An abandoned freeze rolls back after 15 minutes. Recovery delivery takes the same client mutex, while server share writes use an atomic epoch/state guard."],
+  cond:["Every active device must have retained its capsule private key, advertised desktop re-key capability, and acknowledged the previous epoch transition before another rotation can start. Android/iOS do not yet advertise it.","Rotation is refused while any Path ORAM bucket exists.","Fresh recovery shares are generated and verified after adoption, but cloud upload, FIDO2 registration and trusted-contact delivery must be performed again."],
   inside:[["presence","confirm outside the requesting renderer"],["start","freeze N; inventory chunks and active devices"],["rotate","OS RNG → RMS N+1"],["shadow","re-seal every chunk with epoch N+1 AAD"],["fan-out","KEM capsule for every active capable device"],["commit","completeness check + epoch CAS"],["migrate local","durable journal, files and RMS wrappers"],["recovery","re-mint 2-of-3 shares; repeat delivery"]] },
 
 { id:"API", key:"H", label:"HTTP api client", group:"vault", gx:7, gy:9, w:2, d:2, h:2.3,
@@ -697,12 +697,13 @@ X-Lamport-Clock: 121
 
 <epoch-2 ciphertext>`,
     note:"The server accepts this only from the rotation starter and isolates it by rotation id, so a stale attempt cannot complete a later one." }},
-  { a:"RKY", b:"KEM", bend:"y", p:{ t:"Capsule fan-out", kind:"ML-KEM-1024 + X25519", src:"crypto::seal_rms_to_device",
+  { a:"RKY", b:"KEM", bend:"y", p:{ t:"Capsule fan-out", kind:"ML-KEM-1024 + X25519", src:"crypto::seal_rekey_capsule",
     body:`for each active capable device:
-  capsule[device_id] = seal(hybrid_ek, rms2)
+  capsule[device_id] = kem_seal(hybrid_ek,
+    aead(key_from(rms1), {v1, epoch:2, rotation_id, rms2}))
 
 POST /vault/rekey/capsules   batches ≤ 64`,
-    note:"One retained capsule per device is both distribution and crash recovery. A device acknowledges it only after its local migration is durable." }},
+    note:"One retained capsule per device is both distribution and crash recovery. Adoption verifies its authenticated inner epoch and rotation id before exposing RMS2; acknowledgement happens only after local migration is durable." }},
   { a:"KEM", b:"SRV", bend:"x", p:{ t:"Store capsules, then commit", kind:"completeness + CAS", src:"vault/rekey.rs::post_commit",
     body:`POST /vault/rekey/capsules   (batches ≤ 64)
 POST /vault/rekey/commit

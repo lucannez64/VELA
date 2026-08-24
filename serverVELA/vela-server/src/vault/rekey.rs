@@ -455,6 +455,25 @@ pub async fn post_start(
         ));
     }
 
+    // The v1 capsule proves continuity from RMS_N to RMS_N+1. A device which
+    // has not acknowledged the previous transition still holds an older RMS
+    // and cannot authenticate the next link, so never overwrite that capsule.
+    let pending_adoption = state
+        .sqldb
+        .query(
+            "SELECT 1 FROM devices
+             WHERE user_id = ? AND revoked = 0 AND rms_capsule_epoch IS NOT NULL
+             LIMIT 1",
+            vec![TursoValue::Text(user_id.clone())],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if !pending_adoption.is_empty() {
+        return Err(AppError::Conflict(
+            "vault key rotation requires every active device to adopt and acknowledge the current epoch first".into(),
+        ));
+    }
+
     let next = ks.epoch + 1;
 
     // The inventory must be captured inside the same transaction as the
@@ -500,6 +519,11 @@ pub async fn post_start(
              WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
                AND NOT EXISTS (
                  SELECT 1 FROM oram_buckets WHERE user_id = users.id
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM devices
+                  WHERE user_id = users.id AND revoked = 0
+                    AND rms_capsule_epoch IS NOT NULL
                )",
             vec![
                 TursoValue::Text(Utc::now().to_rfc3339()),

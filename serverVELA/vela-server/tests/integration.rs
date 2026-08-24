@@ -2965,7 +2965,23 @@ async fn rekey_rotation_lifecycle_end_to_end() {
         )
         .unwrap();
         assert_eq!(body["epoch"], 2);
+        assert_eq!(body["rotation_id"], rotation_id);
     }
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/capsule/ack")
+                .header("authorization", format!("Bearer {}", token_other))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 2 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    // Lost ACK responses are harmless: replay succeeds after the row is clear.
     let resp = app
         .clone()
         .oneshot(
@@ -2982,6 +2998,40 @@ async fn rekey_rotation_lifecycle_end_to_end() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     let resp = app.clone().oneshot(capsule_req()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // The initiator has not ACKed its retained crash-recovery capsule yet, so
+    // another rotation must not overwrite the only transition it could use
+    // after a lost local migration.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/start")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("adopt and acknowledge"));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/capsule/ack")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 2 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     // A concurrent abort and commit must have exactly one winner. In
     // particular, the loser must never sweep the epoch the winner made live.

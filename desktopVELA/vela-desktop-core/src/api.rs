@@ -1621,6 +1621,8 @@ pub struct CapsuleResponse {
     pub capsule: String,
     #[serde(default)]
     pub epoch: Option<i64>,
+    #[serde(default)]
+    pub rotation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

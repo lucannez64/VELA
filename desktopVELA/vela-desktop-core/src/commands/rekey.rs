@@ -282,7 +282,13 @@ pub async fn rotate_vault_keys(state: &Arc<AppState>) -> Result<RotateSummary, S
             let ek = B64
                 .decode(ek_b64)
                 .map_err(|e| format!("Device {} has a malformed KEM key: {e}", device.id))?;
-            let capsule = crate::crypto::seal_rms_to_device(&ek, &new_crypto.rms())
+            let capsule = crate::crypto::seal_rekey_capsule(
+                &ek,
+                &old_crypto_snapshot.rms(),
+                &new_crypto.rms(),
+                new_epoch,
+                &rotation_id,
+            )
                 .map_err(|e| format!("Failed to seal the new seed for {}: {e}", device.id))?;
             capsules.insert(device.id.to_string(), B64.encode(capsule));
         }

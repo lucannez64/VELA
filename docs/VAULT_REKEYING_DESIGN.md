@@ -51,6 +51,10 @@ derives from the 32-byte RMS by BLAKE3 domain separation
    Only an absent marker is a supported legacy state, and it means epoch 1
    exactly; plaintext
    `sync_meta.json` contributes chunk clocks but never epoch authority.
+   Rekey capsules likewise carry a versioned `{epoch, rotation_id, rms}`
+   plaintext authenticated under an RMSₙ-derived transition key, then KEM-sealed
+   per device. Adoption verifies that continuity and both inner metadata fields
+   before exposing RMSₙ₊₁, so a relay cannot forge, replay, or relabel a seed.
 
 ## 3. What rotation covers — and what it does not
 
@@ -108,11 +112,17 @@ All endpoints require device authentication unless noted.
 |---|---|
 | `GET /vault/epoch` *(device auth)* | `{epoch, state}` — the adoption probe |
 | `POST /vault/rekey/start` | `ACTIVE(N) → FREEZING(N+1)`. Returns `{epoch: N+1, rotation_id, chunks: [...]}` — the inventory and unique attempt nonce. Rejects if already `FREEZING`. |
-| `POST /vault/rekey/capsules` | Only while `FREEZING`, only from the device that started it, with matching `X-Vela-Rekey-Id`. Body: `{capsules: {device_id: b64}}` — RMS₂ sealed to each device's `hybrid_ek`. Stored into `devices.rms_capsule` (the existing read-and-clear relay). |
+| `POST /vault/rekey/capsules` | Only while `FREEZING`, only from the device that started it, with matching `X-Vela-Rekey-Id`. Body: `{capsules: {device_id: b64}}` — versioned `{epoch, rotation_id, RMS₂}` payloads authenticated with an RMS₁-derived transition key, then sealed to each device's `hybrid_ek`. Stored into `devices.rms_capsule` (the existing read-and-clear relay). |
 | `POST /vault/rekey/commit` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Atomically validate completeness, set `users.key_epoch = N+1`, and clear state; then best-effort delete chunk rows with `epoch < N+1`. Unfreezes writes. A replay after a lost commit response carries the target epoch in `X-Vela-Epoch` and is answered with success when the account already sits at that epoch — so crash recovery never has to guess between "committed" and "failed". |
 | `POST /vault/rekey/abort` | Only while `FREEZING`, same device and matching `X-Vela-Rekey-Id`. Delete rows and capsules for the attempt, back to `ACTIVE(N)`. |
 | `PUT /recovery/share` | Body carries the RMS source `key_epoch`; an atomic `key_epoch = ? AND rekey_state IS NULL` update refuses stale or mid-rotation recovery material. `DELETE /recovery/share` has the same guard via `X-Vela-Epoch`. |
 | *(automatic)* | A `FREEZING` account older than `REKEY_TIMEOUT` (15 min) rolls back lazily: the next state-observing call for that account performs the abort. No cron. |
+
+Starting the next rotation also requires every active device to have
+acknowledged its current-epoch capsule. This preserves the authenticated
+RMSₙ→RMSₙ₊₁ chain instead of overwriting the only transition held for an
+offline device. Capsule acknowledgement is idempotent, and equal-epoch sync
+retries it after a lost response.
 
 Known, accepted limitation: because every successful shadow write refreshes
 `rekey_started_at`, an initiator can hold its own account in `FREEZING`
@@ -171,8 +181,9 @@ Preconditions: unlocked session, full vault locally (or fetched first).
    `open_epoch_chunk`'s fallback), re-seal with `seal_epoch_chunk(.., N+1, ..)`,
    upload with `X-Vela-Epoch: N+1`. Sequential, bounded memory; resumable by
    simply restarting (server-side shadows make replays idempotent upserts).
-5. Capsule fan-out: `GET /devices`, `seal_rms_to_device(hybrid_ekᵢ, RMS₂)`
-   for every non-revoked device including itself, `POST /vault/rekey/capsules`.
+5. Capsule fan-out: `GET /devices`,
+   `seal_rekey_capsule(hybrid_ekᵢ, RMS₂, N+1, rotation_id)` for every
+   non-revoked device including itself, `POST /vault/rekey/capsules`.
 6. `POST /vault/rekey/commit` **while the initiator still holds RMS₁
    locally**. A crash before this call leaves both sides at N and timeout aborts
    the shadows. A crash after it leaves the server at N+1 and the retryable
@@ -202,7 +213,8 @@ Preconditions: unlocked session, full vault locally (or fetched first).
 
 Next sync: the device probes `GET /vault/epoch` (cheap, cached per sync run),
 sees `epoch ≠ own`, then: `GET /device/capsule` (the capsule is sealed to THIS
-device's `hybrid_ek`, opened with its own secret key), migrates its local store
+device's `hybrid_ek`; its authenticated inner epoch and rotation id must match
+the committed outer metadata before the RMS is returned), migrates its local store
 exactly like step 5 above, durably stores the new RMS and epoch, then
 `POST /device/capsule/ack` clears the retryable capsule. Chunks arrive as
 ordinary sync data.

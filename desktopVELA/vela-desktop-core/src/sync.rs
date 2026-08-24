@@ -307,6 +307,33 @@ pub(crate) fn recover_pending_rms_migration(
 /// Adopt a server epoch before fetching or writing any vault data. The capsule
 /// is opened with the current identity key, then every local RMS-derived file
 /// and the platform RMS are moved together to the new seed.
+fn open_epoch_adoption_capsule(
+    response: &crate::api::CapsuleResponse,
+    hybrid_dk: &[u8],
+    previous_rms: &[u8; 32],
+    server_epoch: i64,
+) -> Result<zeroize::Zeroizing<[u8; 32]>, String> {
+    if response.epoch != Some(server_epoch) {
+        return Err(format!(
+            "Server returned a capsule for epoch {:?}, expected {server_epoch}",
+            response.epoch
+        ));
+    }
+    let rotation_id = response.rotation_id.as_deref().ok_or(
+        "Server returned an epoch adoption capsule without its committed rotation id",
+    )?;
+    let capsule = B64
+        .decode(&response.capsule)
+        .map_err(|e| format!("Malformed epoch adoption capsule: {e}"))?;
+    crate::crypto::open_rekey_capsule(
+        hybrid_dk,
+        &capsule,
+        previous_rms,
+        server_epoch,
+        rotation_id,
+    )
+}
+
 async fn adopt_server_epoch(
     state: &Arc<AppState>,
     client: &ApiClient,
@@ -329,11 +356,31 @@ async fn adopt_server_epoch(
         );
     }
     if server_epoch == local_epoch {
+        // ACK is idempotent. Retrying it here heals a lost response from a
+        // previous adoption; the server will not allow another rotation while
+        // any active device still has an unacknowledged transition capsule.
+        if server_epoch > 1 {
+            match client.acknowledge_rekey_capsule(token, server_epoch).await {
+                Ok(Some(refreshed)) => {
+                    state.session.write().set_server_token(refreshed.clone());
+                    *token = refreshed;
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(
+                    "Could not retry the epoch {server_epoch} capsule acknowledgement: {e}"
+                ),
+            }
+        }
         return Ok(server_epoch);
     }
     if server_epoch < local_epoch {
         return Err(format!(
             "Server key epoch {server_epoch} is older than local epoch {local_epoch}; refusing rollback"
+        ));
+    }
+    if local_epoch.checked_add(1) != Some(server_epoch) {
+        return Err(format!(
+            "Server key epoch {server_epoch} skips this device's authenticated local epoch {local_epoch}; refusing to bypass a re-key transition"
         ));
     }
 
@@ -370,17 +417,12 @@ async fn adopt_server_epoch(
         state.session.write().set_server_token(t.clone());
         *token = t;
     }
-    if capsule.epoch != Some(server_epoch) {
-        return Err(format!(
-            "Server returned a capsule for epoch {:?}, expected {server_epoch}",
-            capsule.epoch
-        ));
-    }
-    let capsule = B64
-        .decode(&capsule.capsule)
-        .map_err(|e| format!("Malformed epoch adoption capsule: {e}"))?;
-    let new_rms =
-        zeroize::Zeroizing::new(crate::crypto::open_rms_from_capsule(&hybrid_dk, &capsule)?);
+    let new_rms = open_epoch_adoption_capsule(
+        &capsule,
+        &hybrid_dk,
+        &old_crypto.rms(),
+        server_epoch,
+    )?;
     let new_crypto = crate::crypto::Crypto::new(&new_rms);
 
     state.ensure_unlocked_since(generation)?;
@@ -1712,6 +1754,35 @@ pub fn set_server_url(state: &AppState, url: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn adoption_rejects_a_stale_capsule_relabelled_as_current() {
+        let (hybrid_ek, hybrid_dk) = crate::crypto::generate_share_keypair();
+        let previous_rms = [40u8; 32];
+        let stale_rms = [41u8; 32];
+        let stale = crate::crypto::seal_rekey_capsule(
+            &hybrid_ek,
+            &previous_rms,
+            &stale_rms,
+            2,
+            "rotation-old",
+        )
+        .unwrap();
+        let relabelled = crate::api::CapsuleResponse {
+            capsule: B64.encode(stale),
+            epoch: Some(3),
+            rotation_id: Some("rotation-current".into()),
+        };
+
+        let error = open_epoch_adoption_capsule(
+            &relabelled,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .expect_err("server metadata cannot relabel an authenticated stale capsule");
+        assert!(error.contains("authenticated re-key capsule epoch"), "{error}");
+    }
 
     #[test]
     fn completed_migration_cannot_resurrect_a_locked_session() {

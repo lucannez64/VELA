@@ -13,6 +13,8 @@ pub struct CapsuleResponse {
     pub capsule: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub epoch: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -36,8 +38,12 @@ pub async fn get_capsule(
 
     let rows = tx
         .query(
-            "SELECT rms_capsule, rms_capsule_epoch FROM devices
-             WHERE id = ? AND user_id = ? AND revoked = 0 AND rms_capsule IS NOT NULL",
+            "SELECT devices.rms_capsule, devices.rms_capsule_epoch,
+                    CASE WHEN devices.rms_capsule_epoch = users.last_rekey_epoch
+                         THEN users.last_rekey_id ELSE NULL END
+             FROM devices JOIN users ON users.id = devices.user_id
+             WHERE devices.id = ? AND devices.user_id = ?
+               AND devices.revoked = 0 AND devices.rms_capsule IS NOT NULL",
             vec![
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
@@ -57,6 +63,7 @@ pub async fn get_capsule(
         }
     };
     let capsule_epoch = rows.first().and_then(|r| r.i64(1));
+    let rotation_id = rows.first().and_then(|r| r.text(2)).map(str::to_string);
 
     // Enrollment capsules retain their historical read-once behavior. Rekey
     // capsules carry an epoch and remain retryable until the adopter confirms
@@ -97,6 +104,7 @@ pub async fn get_capsule(
         Json(CapsuleResponse {
             capsule: B64.encode(&capsule_bytes),
             epoch: capsule_epoch,
+            rotation_id,
         }),
     ))
 }
@@ -120,9 +128,25 @@ pub async fn post_capsule_ack(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     if updated != 1 {
-        return Err(AppError::Conflict(
-            "no matching re-key capsule is awaiting acknowledgement".into(),
-        ));
+        let rows = state
+            .sqldb
+            .query(
+                "SELECT rms_capsule_epoch FROM devices
+                 WHERE id = ? AND user_id = ? AND revoked = 0",
+                vec![
+                    TursoValue::Text(session.device_id.to_string()),
+                    TursoValue::Text(session.user_id.to_string()),
+                ],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        // A lost successful ACK response is safe to retry. A different pending
+        // epoch is not: clearing it would strand the device on its old RMS.
+        if rows.first().and_then(|row| row.i64(0)).is_some() {
+            return Err(AppError::Conflict(
+                "a different re-key capsule is awaiting acknowledgement".into(),
+            ));
+        }
     }
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
