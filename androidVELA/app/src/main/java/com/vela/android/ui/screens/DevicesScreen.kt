@@ -77,8 +77,11 @@ fun DevicesScreen(onBack: () -> Unit, onWebAccess: () -> Unit = {}) {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 VelaRepositories.sync.withAuthenticatedClient { client, token ->
-                    val deviceList = client.getDevices(token).first
-                    val sessionList = runCatching { client.listWebSessions(token) }.getOrDefault(emptyList())
+                    var currentToken = token
+                    val (deviceList, deviceToken) = client.getDevices(currentToken)
+                    deviceToken?.let { currentToken = it }
+                    val sessionList = runCatching { client.listWebSessions(currentToken).first }
+                        .getOrDefault(emptyList())
                     deviceList to sessionList
                 }
             }.onSuccess { (deviceList, sessionList) ->

@@ -26,6 +26,9 @@ struct AccountState: Codable, Equatable {
     var shareEK: String = ""
     /// Sealed private halves — opaque to Swift, reopened natively with the seal key.
     var sealedIdentity: String = ""
+    /// Epoch authenticated by the RMS this device has actually adopted.
+    /// Legacy account files predate rotation and are therefore epoch 1 only.
+    var keyEpoch: Int = 1
 }
 
 /// The file-backed subset. The sealed blob rides along: it is useless without
@@ -39,6 +42,7 @@ private struct AccountFileState: Codable {
     var token: String?
     var shareEK: String = ""
     var sealedIdentity: String = ""
+    var keyEpoch: Int?
 
     init(_ state: AccountState) {
         serverURL = state.serverURL
@@ -49,12 +53,14 @@ private struct AccountFileState: Codable {
         token = state.token
         shareEK = state.shareEK
         sealedIdentity = state.sealedIdentity
+        keyEpoch = state.keyEpoch
     }
 
     func merged() -> AccountState {
         AccountState(serverURL: serverURL, userID: userID, deviceID: deviceID,
                      hybridEK: hybridEK, hybridVK: hybridVK,
-                     token: token, shareEK: shareEK, sealedIdentity: sealedIdentity)
+                     token: token, shareEK: shareEK, sealedIdentity: sealedIdentity,
+                     keyEpoch: max(keyEpoch ?? 1, 1))
     }
 }
 

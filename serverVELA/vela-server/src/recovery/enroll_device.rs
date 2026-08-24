@@ -31,7 +31,6 @@ use crate::{
 
 const HYBRID_EK_LEN: usize = 1568 + 32;
 const HYBRID_VK_LEN: usize = 2592 + 32;
-
 #[derive(Deserialize)]
 pub struct EnrollDeviceRequest {
     pub user_id: Uuid,
@@ -61,11 +60,6 @@ pub async fn post_enroll_device(
     rate_limit::recovery_enroll_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
     rate_limit::recovery_enroll_by_user(&state.store, &body.user_id.to_string())?;
 
-    // Consumes the grant — a second call with the same grant fails here,
-    // so a recovering user can only ever mint one new device per successful
-    // WebAuthn-gated recovery.
-    crate::recovery::recover::take_enroll_grant(&state, body.user_id, body.recovery_grant)?;
-
     let hybrid_ek = B64
         .decode(&body.hybrid_ek)
         .map_err(|_| AppError::BadRequest("hybrid_ek is not valid base64".into()))?;
@@ -84,6 +78,15 @@ pub async fn post_enroll_device(
         )));
     }
 
+    // Do not reveal account or rotation state unless the caller possesses the
+    // unguessable grant. This is only a non-consuming proof; redemption below
+    // remains atomic and single-use.
+    let grant_epoch = crate::recovery::recover::load_enroll_grant_epoch(
+        &state,
+        body.user_id,
+        body.recovery_grant,
+    )?;
+
     // The grant already proved `user_id` exists and completed recovery, but
     // a deleted-account race between /recovery/recover and this call is
     // still possible in principle — fail closed rather than orphan a device
@@ -91,13 +94,37 @@ pub async fn post_enroll_device(
     let user_rows = state
         .sqldb
         .query(
-            "SELECT id FROM users WHERE id = ?",
+            "SELECT key_epoch, rekey_state FROM users WHERE id = ?",
             vec![TursoValue::Text(body.user_id.to_string())],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if user_rows.first().is_none() {
+    let Some(user_row) = user_rows.first() else {
         return Err(AppError::NotFound("account no longer exists".into()));
+    };
+    if user_row.i64(0).unwrap_or(1).max(1) != grant_epoch {
+        return Err(AppError::Unauthorized(
+            "recovery grant was invalidated by vault key rotation".into(),
+        ));
+    }
+    if user_row.text(1).is_some() {
+        return Err(AppError::Conflict(
+            "device enrollment is paused during vault key rotation".into(),
+        ));
+    }
+
+    // Consume only after validation and the fast rotation check. The guarded
+    // insert below remains the authority for a concurrent rotation; if that
+    // race is lost, the grant is restored so the user can retry afterwards.
+    let consumed_epoch = crate::recovery::recover::take_enroll_grant(
+        &state,
+        body.user_id,
+        body.recovery_grant,
+    )?;
+    if consumed_epoch != grant_epoch {
+        return Err(AppError::Unauthorized(
+            "recovery grant changed while redeeming".into(),
+        ));
     }
 
     let new_device_id = Uuid::new_v4();
@@ -111,12 +138,16 @@ pub async fn post_enroll_device(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-    state
+    let inserted = state
         .sqldb
         .execute(
             "INSERT INTO devices
              (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-             VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?)",
+             SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?
+             WHERE EXISTS (
+                 SELECT 1 FROM users
+                 WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
+             )",
             vec![
                 TursoValue::Text(new_device_id.to_string()),
                 TursoValue::Text(body.user_id.to_string()),
@@ -125,10 +156,23 @@ pub async fn post_enroll_device(
                 TursoValue::Text(crate::db::encode_b64(&hybrid_ek)),
                 TursoValue::Text(crate::db::encode_b64(&hybrid_vk)),
                 TursoValue::Text(now),
+                TursoValue::Text(body.user_id.to_string()),
+                TursoValue::Integer(grant_epoch),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    if inserted == 0 {
+        crate::recovery::recover::restore_enroll_grant(
+            &state,
+            body.user_id,
+            body.recovery_grant,
+            grant_epoch,
+        )?;
+        return Err(AppError::Conflict(
+            "device enrollment is paused during vault key rotation".into(),
+        ));
+    }
 
     tracing::info!(
         new_device_id = %new_device_id,

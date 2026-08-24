@@ -15,8 +15,8 @@
 //! until every call site is migrated. Sync `stoolap::params!` sites become
 //! `Vec<turso::Value>` here.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// A row buffered out of turso's streaming `Rows` into plain values.
 #[derive(Debug)]
@@ -110,7 +110,39 @@ impl TursoDb {
             tx_idx: AtomicUsize::new(0),
         };
         this.execute_batch(SCHEMA).await?;
+        this.backfill_rekey_columns().await?;
+        this.execute_batch(REKEY_INDEXES).await?;
         Ok(this)
+    }
+
+    /// Add the re-keying columns to databases created before they existed
+    /// (docs/VAULT_REKEYING_DESIGN.md §9). Fresh databases already have them
+    /// from `SCHEMA`, so each ALTER failing with "duplicate column" is the
+    /// expected no-op path and is swallowed; anything else surfaces.
+    async fn backfill_rekey_columns(&self) -> anyhow::Result<()> {
+        const ALTERS: &[&str] = &[
+            "ALTER TABLE users ADD COLUMN key_epoch INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN rekey_state TEXT",
+            "ALTER TABLE users ADD COLUMN rekey_started_at TEXT",
+            "ALTER TABLE users ADD COLUMN rekey_starter TEXT",
+            "ALTER TABLE users ADD COLUMN rekey_id TEXT",
+            "ALTER TABLE users ADD COLUMN last_rekey_id TEXT",
+            "ALTER TABLE users ADD COLUMN last_rekey_epoch INTEGER",
+            "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
+            "ALTER TABLE devices ADD COLUMN rekey_capable INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
+        ];
+        for sql in ALTERS {
+            if let Err(e) = self.conn().execute(sql, ()).await {
+                let msg = e.to_string().to_lowercase();
+                if !msg.contains("duplicate") && !msg.contains("exists") {
+                    return Err(e.into());
+                }
+            }
+        }
+        Ok(())
     }
 
     fn conn(&self) -> &turso::Connection {
@@ -125,7 +157,7 @@ impl TursoDb {
         let guard = arc.lock_owned().await;
         guard.execute("BEGIN", ()).await?;
         Ok(TxGuard {
-            guard,
+            guard: Some(guard),
             finished: false,
         })
     }
@@ -135,13 +167,22 @@ impl TursoDb {
 /// BEGIN on creation, COMMIT or ROLLBACK on finish, ROLLBACK on drop if
 /// unfinished.
 pub struct TxGuard {
-    guard: tokio::sync::OwnedMutexGuard<turso::Connection>,
+    guard: Option<tokio::sync::OwnedMutexGuard<turso::Connection>>,
     finished: bool,
 }
 
 impl TxGuard {
-    pub async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>> {
-        let mut stream = self.guard.query(sql, params).await?;
+    pub async fn query(
+        &self,
+        sql: &str,
+        params: Vec<turso::Value>,
+    ) -> anyhow::Result<Vec<VelaRow>> {
+        let mut stream = self
+            .guard
+            .as_ref()
+            .expect("tx guard taken while in use")
+            .query(sql, params)
+            .await?;
         let mut out = Vec::new();
         while let Some(row) = stream.next().await? {
             let mut values = Vec::with_capacity(row.column_count());
@@ -154,31 +195,61 @@ impl TxGuard {
     }
 
     pub async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64> {
-        Ok(self.guard.execute(sql, params).await?)
+        Ok(self
+            .guard
+            .as_ref()
+            .expect("tx guard taken while in use")
+            .execute(sql, params)
+            .await?)
     }
 
+    /// COMMIT and release the connection back to the tx pool.
     pub async fn commit(mut self) -> anyhow::Result<()> {
-        self.guard.execute("COMMIT", ()).await?;
+        self.guard
+            .as_ref()
+            .expect("tx guard taken while finishing")
+            .execute("COMMIT", ())
+            .await?;
         self.finished = true;
+        self.guard.take();
         Ok(())
     }
 
+    /// ROLLBACK and release the connection back to the tx pool.
     pub async fn rollback(mut self) -> anyhow::Result<()> {
-        self.guard.execute("ROLLBACK", ()).await?;
+        self.guard
+            .as_ref()
+            .expect("tx guard taken while finishing")
+            .execute("ROLLBACK", ())
+            .await?;
         self.finished = true;
+        self.guard.take();
         Ok(())
     }
 }
 
 impl Drop for TxGuard {
     fn drop(&mut self) {
-        if !self.finished {
-            // Best-effort rollback; cannot await in Drop. turso's own
-            // Transaction handles dangling-tx on the next statement; leaving it
-            // open here is safe because we drop the connection slot back to the
-            // mutex, and a stale open tx is rolled back when the connection is
-            // reused/freed.
-            let _ = self.guard.execute("ROLLBACK", ());
+        if self.finished {
+            return;
+        }
+        // Roll back an abandoned transaction (an early `return Err` between
+        // statements). The previous fire-and-forget attempt dropped the
+        // ROLLBACK future without awaiting it, so nothing was ever sent and
+        // the pooled connection stayed inside an open transaction — every
+        // later `BEGIN` on it failed with "cannot start a transaction within
+        // a transaction". Spawning keeps the connection locked (the guard IS
+        // the lock) until the ROLLBACK completes, so the slot is guaranteed
+        // clean when it becomes reusable.
+        if let Some(guard) = self.guard.take() {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = guard.execute("ROLLBACK", ()).await;
+                });
+            }
+            // No ambient runtime (a sync test, most plausibly): the guard
+            // drops here and turso recovers the dangling transaction when the
+            // connection is next used or freed.
         }
     }
 }
@@ -212,26 +283,29 @@ pub const SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS users (
     id TEXT UNIQUE NOT NULL, recovery_share TEXT, recovery_auth_hash TEXT,
     created_at TEXT NOT NULL, recovery_webauthn_credential TEXT,
-    share_ek TEXT, recovery_webauthn_cred_id TEXT);
+    share_ek TEXT, recovery_webauthn_cred_id TEXT,
+    key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
+    rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT,
+    last_rekey_id TEXT, last_rekey_epoch INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_webauthn_cred_id ON users(recovery_webauthn_cred_id);
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
     device_name TEXT NOT NULL DEFAULT 'Desktop Device', device_type TEXT NOT NULL DEFAULT 'desktop',
     last_active TEXT, hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL, enrolled_by TEXT,
-    rms_capsule TEXT, revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
+    rms_capsule TEXT, rms_capsule_epoch INTEGER, rekey_capable INTEGER NOT NULL DEFAULT 0,
+    revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
     created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE TABLE IF NOT EXISTS vault_chunks (
     chunk_id TEXT NOT NULL, user_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
     lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT, ciphertext TEXT NOT NULL,
+    epoch INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk ON vault_chunks(user_id, chunk_id);
-CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id);
 CREATE TABLE IF NOT EXISTS oram_buckets (
     user_id TEXT NOT NULL, tree_id TEXT NOT NULL, bucket_index INTEGER NOT NULL,
     version INTEGER NOT NULL DEFAULT 1, lamport_clock INTEGER NOT NULL DEFAULT 0,
-    last_writer TEXT, ciphertext TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket ON oram_buckets(user_id, tree_id, bucket_index);
+    last_writer TEXT, ciphertext TEXT NOT NULL, epoch INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS share_inbox (
     id TEXT UNIQUE NOT NULL, sender_user_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL,
     capsule TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -243,10 +317,26 @@ CREATE TABLE IF NOT EXISTS shared_items (
 CREATE TABLE IF NOT EXISTS web_sessions (
     id TEXT UNIQUE NOT NULL, user_id TEXT, approver_user_id TEXT, poll_secret_hash TEXT,
     ephemeral_pk TEXT NOT NULL, web_vk TEXT, link_nonce TEXT NOT NULL, mode TEXT,
-    status TEXT NOT NULL, capsule TEXT, approved_by TEXT, created_at TEXT NOT NULL,
+    status TEXT NOT NULL, capsule TEXT, approved_by TEXT, key_epoch INTEGER,
+    created_at TEXT NOT NULL,
     expires_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
+";
+
+/// Index changes which depend on columns added by `backfill_rekey_columns`.
+/// Keep these out of `SCHEMA`: on an existing database `CREATE TABLE IF NOT
+/// EXISTS` does not add `epoch`, so creating these indexes before the ALTERs
+/// would make startup fail before the migration could run.
+const REKEY_INDEXES: &str = "\
+DROP INDEX IF EXISTS idx_vault_chunks_user_chunk;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
+    ON vault_chunks(user_id, chunk_id, epoch);
+CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
+    ON vault_chunks(user_id, epoch);
+DROP INDEX IF EXISTS idx_oram_buckets_user_tree_bucket;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
+    ON oram_buckets(user_id, tree_id, bucket_index, epoch);
 ";
 
 #[cfg(test)]
@@ -317,6 +407,82 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(u, 1);
+    }
+
+    #[tokio::test]
+    async fn opens_and_upgrades_a_pre_rekey_database() {
+        let path = temp_path();
+        let _ = std::fs::remove_file(&path);
+
+        // Build the relevant part of the pre-rekey schema without going
+        // through TursoDb::open, then prove open performs the ALTERs before
+        // creating the new epoch-dependent indexes.
+        let raw = turso::Builder::new_local(&path).build().await.unwrap();
+        let conn = raw.connect().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (
+                 id TEXT UNIQUE NOT NULL, recovery_share TEXT,
+                 recovery_auth_hash TEXT, created_at TEXT NOT NULL,
+                 recovery_webauthn_credential TEXT, share_ek TEXT,
+                 recovery_webauthn_cred_id TEXT);
+             CREATE TABLE devices (
+                 id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
+                 device_name TEXT NOT NULL DEFAULT 'Desktop Device',
+                 device_type TEXT NOT NULL DEFAULT 'desktop', last_active TEXT,
+                 hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL,
+                 enrolled_by TEXT, rms_capsule TEXT,
+                 revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT,
+                 revoked_by TEXT, created_at TEXT NOT NULL);
+             CREATE TABLE vault_chunks (
+                 chunk_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                 version INTEGER NOT NULL DEFAULT 1,
+                 lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT,
+                 ciphertext TEXT NOT NULL, created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL);
+             CREATE UNIQUE INDEX idx_vault_chunks_user_chunk
+                 ON vault_chunks(user_id, chunk_id);
+             CREATE TABLE oram_buckets (
+                 user_id TEXT NOT NULL, tree_id TEXT NOT NULL,
+                 bucket_index INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+                 lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT,
+                 ciphertext TEXT NOT NULL, created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL);
+             CREATE UNIQUE INDEX idx_oram_buckets_user_tree_bucket
+                 ON oram_buckets(user_id, tree_id, bucket_index);",
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        drop(raw);
+
+        let db = TursoDb::open(&path, 1).await.unwrap();
+        db.query("SELECT epoch FROM vault_chunks LIMIT 0", vec![])
+            .await
+            .unwrap();
+        db.query("SELECT epoch FROM oram_buckets LIMIT 0", vec![])
+            .await
+            .unwrap();
+        db.query("SELECT key_epoch FROM users LIMIT 0", vec![])
+            .await
+            .unwrap();
+        db.query(
+            "SELECT rekey_id, last_rekey_id, last_rekey_epoch FROM users LIMIT 0",
+            vec![],
+        )
+            .await
+            .unwrap();
+
+        let indexes = db
+            .query(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+                vec![turso::Value::Text(
+                    "idx_vault_chunks_user_chunk_epoch".into(),
+                )],
+            )
+            .await
+            .unwrap();
+        assert_eq!(indexes.len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

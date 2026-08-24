@@ -761,6 +761,69 @@ mod tests {
         }
     }
 
+    /// Wiping an item in place clears every secret field, so a dropped item
+    /// does not leave its password behind in freed heap memory (audit, crypto
+    /// hardening: plaintext `String`s lacked `Zeroize`).
+    #[test]
+    fn zeroizing_an_item_clears_every_secret_field() {
+        let now = Utc::now();
+        let meta = |id: &str| VaultMeta {
+            id: id.to_string(),
+            name: "Bank".into(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+            last_modified_device: None,
+            favorite: false,
+            shared: false,
+            share_recipient: None,
+        };
+
+        let mut login_item = VaultItem::Login {
+            meta: meta("1"),
+            url: "https://bank.example".into(),
+            username: "ada".into(),
+            pass: "hunter2-SECRET".into(),
+            totp: Some("JBSWY3DPEHPK3PXP".into()),
+            app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
+        };
+        login_item.zeroize_secrets();
+        let VaultItem::Login { pass, totp, username, .. } = &login_item else {
+            panic!("wrong variant");
+        };
+        assert!(
+            pass.as_bytes().iter().all(|&b| b == 0),
+            "the password must be wiped"
+        );
+        assert!(
+            totp.as_ref().expect("totp kept").bytes().all(|b| b == 0),
+            "the TOTP seed must be wiped"
+        );
+        assert_eq!(username, "ada", "non-secret metadata is not wiped");
+
+        let mut card = VaultItem::CreditCard {
+            meta: meta("2"),
+            number: "4111111111111111".into(),
+            exp: "12/30".into(),
+            cvv: "123".into(),
+            pin: Some("9876".into()),
+            cardholder_name: None,
+        };
+        card.zeroize_secrets();
+        let VaultItem::CreditCard { number, cvv, pin, exp, .. } = &card else {
+            panic!("wrong variant");
+        };
+        assert!(number.bytes().all(|b| b == 0), "the PAN must be wiped");
+        assert!(cvv.bytes().all(|b| b == 0), "the CVV must be wiped");
+        assert!(
+            pin.as_ref().expect("pin kept").bytes().all(|b| b == 0),
+            "the PIN must be wiped"
+        );
+        assert_eq!(exp, "12/30", "non-secret metadata is not wiped");
+    }
+
     #[test]
     fn debug_never_prints_a_secret() {
         let now = Utc::now();

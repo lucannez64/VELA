@@ -40,7 +40,7 @@ impl Host for NopHost {
     }
     fn notify_vault_items_changed(&self) {}
     fn show_toast(&self, _message: &str) {}
-    fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
+    fn confirm_presence(&self, _title: &str, _prompt: &str) -> Option<bool> {
         panic!("ping must not prompt");
     }
 }

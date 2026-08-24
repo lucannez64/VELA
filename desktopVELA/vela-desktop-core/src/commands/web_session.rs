@@ -106,12 +106,35 @@ pub async fn grant_web_session(
 
     let (session_id, expected_fp, link_nonce) = parse_session_id(qr_payload)?;
 
-    let token = state.get_session_token().ok_or("Not authenticated — unlock your vault first.")?;
+    // Sync and rotation can replace the local RMS. Hold their shared mutex from
+    // the epoch probe through grant submission so the capsule and its declared
+    // epoch always describe the same local key material.
+    let _sync_guard = state.sync_mutex.lock().await;
+    let mut token = state
+        .get_session_token()
+        .ok_or("Not authenticated — unlock your vault first.")?;
 
     // Fetch the browser's ephemeral public key from the server (the QR only
     // carries the session id, so it stays scannable).
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
+    let (server_epoch, rotation_state, refreshed) = client
+        .get_key_epoch(&token)
+        .await
+        .map_err(|e| format!("Could not verify the vault key epoch: {e}"))?;
+    if let Some(refreshed) = refreshed {
+        state.session.write().set_server_token(refreshed.clone());
+        token = refreshed;
+    }
+    if rotation_state != "active" {
+        return Err("A vault key rotation is in progress; approve web access after it completes.".into());
+    }
+    let local_epoch = crate::sync::local_key_epoch(state)?;
+    if local_epoch != server_epoch {
+        return Err(format!(
+            "This device has vault key epoch {local_epoch}, but the account is at epoch {server_epoch}; sync before approving web access."
+        ));
+    }
     let (ephemeral_pk_b64, web_vk) = client
         .get_web_session_keys(&token, &session_id)
         .await
@@ -152,7 +175,15 @@ pub async fn grant_web_session(
     let capsule_b64 = B64.encode(&capsule);
 
     let expires_at = client
-        .grant_web_session(&token, &session_id, mode, &capsule_b64, ttl_secs, &link_nonce)
+        .grant_web_session(
+            &token,
+            &session_id,
+            mode,
+            &capsule_b64,
+            ttl_secs,
+            &link_nonce,
+            server_epoch,
+        )
         .await
         .map_err(|e| format!("Failed to grant web access: {e}"))?;
 

@@ -36,6 +36,9 @@ pub struct RecoverRequest {
 #[derive(Serialize)]
 pub struct RecoverResponse {
     pub share: String,
+    /// Epoch of both this server share and the RMS it reconstructs. Clients
+    /// must require their independently fetched cloud share to match it.
+    pub key_epoch: i64,
     /// Single-use proof that this caller just passed WebAuthn-gated recovery
     /// for `user_id`. Redeemable exactly once at `/recovery/enroll-device`
     /// within `ENROLL_GRANT_TTL_SECS`, since a recovering device has no prior
@@ -88,47 +91,99 @@ pub async fn post_recover(
     let rows = state
         .sqldb
         .query(
-            "SELECT recovery_share FROM users WHERE id = ?",
+            "SELECT recovery_share, key_epoch, rekey_state FROM users WHERE id = ?",
             vec![TursoValue::Text(body.user_id.to_string())],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let share_b64 = rows
-        .first()
-        .and_then(|r| r.text(0))
+    let row = rows.first().ok_or_else(|| {
+        AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
+    })?;
+    if row.text(2).is_some() {
+        return Err(AppError::Conflict(
+            "account recovery is paused during vault key rotation".into(),
+        ));
+    }
+    let share_b64 = row
+        .text(0)
         .map(String::from)
         .ok_or_else(|| {
             AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
         })?;
     let share_bytes = crate::db::decode_b64(&share_b64)?;
+    let key_epoch = row.i64(1).unwrap_or(1).max(1);
 
     let recovery_grant = Uuid::new_v4();
-    store_enroll_grant(&state, body.user_id, recovery_grant)?;
+    store_enroll_grant(&state, body.user_id, recovery_grant, key_epoch)?;
 
     tracing::info!(user_id = %body.user_id, "recovery share released after WebAuthn assertion");
 
     Ok(Json(RecoverResponse {
         share: B64.encode(&share_bytes),
+        key_epoch,
         recovery_grant,
     }))
 }
 
-fn store_enroll_grant(state: &AppState, user_id: Uuid, grant: Uuid) -> Result<()> {
+fn enroll_grant_key(user_id: Uuid, grant: Uuid) -> String {
+    format!("recovery:enroll_grant:{user_id}:{grant}")
+}
+
+fn decode_enroll_grant_epoch(value: &[u8]) -> Result<i64> {
+    std::str::from_utf8(value)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|epoch| *epoch >= 1)
+        .ok_or_else(|| AppError::Unauthorized("recovery grant is invalid".into()))
+}
+
+fn store_enroll_grant(
+    state: &AppState,
+    user_id: Uuid,
+    grant: Uuid,
+    key_epoch: i64,
+) -> Result<()> {
     state.store.set_ex(
-        &format!("recovery:enroll_grant:{user_id}:{grant}"),
-        b"1",
+        &enroll_grant_key(user_id, grant),
+        key_epoch.to_string().as_bytes(),
         ENROLL_GRANT_TTL_SECS,
     )
 }
 
+/// Read the epoch without consuming the grant, so callers can reject rotation
+/// state without spending a valid same-epoch recovery ceremony.
+pub(crate) fn load_enroll_grant_epoch(
+    state: &AppState,
+    user_id: Uuid,
+    grant: Uuid,
+) -> Result<i64> {
+    let value = state
+        .store
+        .get(&enroll_grant_key(user_id, grant))?
+        .ok_or_else(|| AppError::Unauthorized("recovery grant expired or already used".into()))?;
+    decode_enroll_grant_epoch(&value)
+}
+
 /// Consume a grant issued by `post_recover`. Returns an error if it's missing,
 /// expired, or already redeemed — grants are single-use.
-pub(crate) fn take_enroll_grant(state: &AppState, user_id: Uuid, grant: Uuid) -> Result<()> {
-    let key = format!("recovery:enroll_grant:{user_id}:{grant}");
-    state
+pub(crate) fn take_enroll_grant(
+    state: &AppState,
+    user_id: Uuid,
+    grant: Uuid,
+) -> Result<i64> {
+    let value = state
         .store
-        .get_del(&key)?
+        .get_del(&enroll_grant_key(user_id, grant))?
         .ok_or_else(|| AppError::Unauthorized("recovery grant expired or already used".into()))?;
-    Ok(())
+    decode_enroll_grant_epoch(&value)
+}
+
+pub(crate) fn restore_enroll_grant(
+    state: &AppState,
+    user_id: Uuid,
+    grant: Uuid,
+    key_epoch: i64,
+) -> Result<()> {
+    store_enroll_grant(state, user_id, grant, key_epoch)
 }

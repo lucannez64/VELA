@@ -1,5 +1,6 @@
 pub mod chunk;
 pub mod oram;
+pub mod rekey;
 pub mod sync;
 
 use crate::{
@@ -28,12 +29,17 @@ pub fn max_user_storage_bytes() -> u64 {
 /// buckets (base64-encoded ciphertext length, as stored).
 async fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
     let mut total: u64 = 0;
+    // Only rows at the account's served epoch are reachable by readers.
+    // Superseded rows left behind by a failed commit sweep and future shadow
+    // rows must not count against the user.
     for table in ["vault_chunks", "oram_buckets"] {
         let rows = state
             .sqldb
             .query(
                 &format!(
-                    "SELECT COALESCE(SUM(LENGTH(ciphertext)), 0) FROM {table} WHERE user_id = ?"
+                    "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM {table} t
+                     JOIN users u ON u.id = t.user_id
+                     WHERE t.user_id = ? AND t.epoch = u.key_epoch"
                 ),
                 vec![TursoValue::Text(user_id.to_string())],
             )
@@ -54,6 +60,44 @@ pub async fn enforce_storage_quota(state: &AppState, user_id: &str, incoming: u6
     if usage.saturating_add(incoming) > quota {
         return Err(AppError::PayloadTooLarge(format!(
             "storage quota of {quota} bytes exceeded (used {usage}, requested {incoming})"
+        )));
+    }
+    Ok(())
+}
+
+/// Enforce quota against the state which would remain after a successful
+/// rotation. Current-epoch rows are replacements, not permanent additional
+/// usage, and a replay replaces its existing shadow rather than growing it.
+pub(crate) async fn enforce_rekey_shadow_quota(
+    state: &AppState,
+    user_id: &str,
+    shadow_epoch: i64,
+    chunk_id: &str,
+    incoming_stored: u64,
+) -> Result<()> {
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT
+                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)
+                   FROM vault_chunks
+                  WHERE user_id = ? AND epoch = ? AND chunk_id != ?) +
+                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)
+                   FROM oram_buckets WHERE user_id = ?)",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Integer(shadow_epoch),
+                TursoValue::Text(chunk_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let projected = rows.first().and_then(|row| row.i64(0)).unwrap_or(0).max(0) as u64;
+    let quota = max_user_storage_bytes();
+    if projected.saturating_add(incoming_stored) > quota {
+        return Err(AppError::PayloadTooLarge(format!(
+            "storage quota of {quota} bytes exceeded by rotated vault"
         )));
     }
     Ok(())

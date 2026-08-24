@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
-    sqldb::Db as _,
+    middleware::{maybe_append_new_token, DeviceSession},
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -22,6 +22,13 @@ pub struct DeviceInfo {
     pub revoked_at: Option<DateTime<Utc>>,
     pub revoked_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
+    /// Base64 KEM public key (`ML-KEM-1024 ‖ X25519`). Public material: this is
+    /// what RMS capsules are sealed to at enrollment and during vault
+    /// re-keying, so sibling devices need to see it.
+    pub hybrid_ek: String,
+    /// True only after this device has attested that it retained the private
+    /// half matching `hybrid_ek` and can therefore adopt a rotated RMS.
+    pub rekey_capable: bool,
 }
 
 #[derive(Serialize)]
@@ -38,7 +45,8 @@ pub async fn list_devices(
         .query(
             "SELECT id, user_id, device_name, device_type, last_active,
                 hybrid_ek, hybrid_vk,
-                enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at
+                enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at,
+                rekey_capable
              FROM devices
              WHERE user_id = ?
              ORDER BY created_at ASC
@@ -63,6 +71,8 @@ pub async fn list_devices(
                 revoked_at: d.revoked_at,
                 revoked_by: d.revoked_by,
                 created_at: d.created_at,
+                hybrid_ek: crate::db::encode_b64(&d.hybrid_ek),
+                rekey_capable: row.i64(13).unwrap_or(0) != 0,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -71,6 +81,33 @@ pub async fn list_devices(
     maybe_append_new_token(&mut headers, &session);
 
     Ok((headers, Json(ListDevicesResponse { devices })))
+}
+
+/// Record a device's positive capability attestation. The desktop calls this
+/// only after loading a non-empty `hybrid_dk`; old devices which discarded that
+/// key remain false and safely block account rotation.
+pub async fn post_rekey_capable(
+    State(state): State<AppState>,
+    session: DeviceSession,
+) -> Result<(HeaderMap, axum::http::StatusCode)> {
+    let updated = state
+        .sqldb
+        .execute(
+            "UPDATE devices SET rekey_capable = 1
+             WHERE id = ? AND user_id = ? AND revoked = 0",
+            vec![
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if updated != 1 {
+        return Err(AppError::NotFound("active device not found".into()));
+    }
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, &session);
+    Ok((headers, axum::http::StatusCode::NO_CONTENT))
 }
 
 #[cfg(test)]

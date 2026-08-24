@@ -31,6 +31,10 @@ pub struct AuthSession {
     pub user_id: uuid::Uuid,
     pub device_id: uuid::Uuid,
     pub jti: String,
+    /// Epoch at which this authority was granted. Permanent device tokens may
+    /// omit it; web-session tokens are pinned to it so rotation retires their
+    /// ability to mutate the vault even when commit races request extraction.
+    pub key_epoch: Option<i64>,
     /// Set when the token is close to expiry and has been refreshed.
     pub new_token: Option<String>,
     /// What kind of caller this is (red-team RT-4). Routes whose effects
@@ -88,18 +92,24 @@ impl FromRequestParts<AppState> for AuthSession {
         // Web-session RW tokens use session_id as device_id and carry no
         // devices row, so device-revocation alone cannot kill them when the
         // account is deleted. One indexed lookup per request closes that gap.
-        let user_exists = state
+        let user_rows = state
             .sqldb
             .query(
-                "SELECT 1 FROM users WHERE id = ?",
+                "SELECT key_epoch FROM users WHERE id = ?",
                 vec![TursoValue::Text(claims.user_id.to_string())],
             )
             .await
-            .map_err(|e| AppError::Internal(e.to_string()))?
-            .first()
-            .is_some();
-        if !user_exists {
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let Some(user_row) = user_rows.first() else {
             return Err(AppError::Unauthorized("account no longer exists".into()));
+        };
+        let current_key_epoch = user_row.i64(0).unwrap_or(1).max(1);
+        if claims.scope == TokenScope::WebSession
+            && claims.key_epoch.unwrap_or(1) != current_key_epoch
+        {
+            return Err(AppError::Unauthorized(
+                "web session expired after vault key rotation".into(),
+            ));
         }
 
         // ── 6. Token renewal (if expiry is ≤5 min away) ──────────────────────
@@ -121,11 +131,12 @@ impl FromRequestParts<AppState> for AuthSession {
                 // `issue_scoped`, not `issue`: renewing with the default scope
                 // would launder an ephemeral web-session token into a device
                 // token every 10 minutes, quietly undoing the RT-4 boundary.
-                let (refreshed, new_jti) = ts.issue_scoped(
+                let (refreshed, new_jti) = ts.issue_scoped_at_epoch(
                     claims.user_id,
                     claims.device_id,
                     Some(claims.hard_cap),
                     claims.scope,
+                    claims.key_epoch,
                 )?;
                 let _ =
                     rate_limit::track_device_jti(store, &claims.device_id.to_string(), &new_jti);
@@ -145,9 +156,28 @@ impl FromRequestParts<AppState> for AuthSession {
             user_id: claims.user_id,
             device_id: claims.device_id,
             jti: claims.jti,
+            key_epoch: claims.key_epoch,
             new_token,
             scope: claims.scope,
         })
+    }
+}
+
+impl AuthSession {
+    /// Return the epoch which must still be current at a vault mutation's SQL
+    /// boundary. A legacy web token is epoch 1; device tokens follow the
+    /// request's already-resolved epoch (including device-only shadow writes).
+    pub fn write_epoch_authority(&self, resolved_epoch: i64) -> Result<i64, AppError> {
+        if self.scope != TokenScope::WebSession {
+            return Ok(resolved_epoch);
+        }
+        let token_epoch = self.key_epoch.unwrap_or(1);
+        if token_epoch != resolved_epoch {
+            return Err(AppError::Rekeyed(format!(
+                "web session was granted at vault epoch {token_epoch}, not write epoch {resolved_epoch}"
+            )));
+        }
+        Ok(token_epoch)
     }
 }
 

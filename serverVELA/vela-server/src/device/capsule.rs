@@ -3,26 +3,33 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
 use crate::{
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
-    sqldb::TursoValue,
+    middleware::{maybe_append_new_token, DeviceSession},
+    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
 #[derive(serde::Serialize)]
 pub struct CapsuleResponse {
     pub capsule: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation_id: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CapsuleAck {
+    pub epoch: i64,
 }
 
 pub async fn get_capsule(
     State(state): State<AppState>,
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<CapsuleResponse>)> {
-    // Read-then-clear must be atomic: two concurrent requests must never both
-    // observe the same capsule. Do both inside one transaction pinned to a
-    // single connection, and only decode/return the capsule after `commit()`
-    // actually succeeds — if a concurrent request raced us to the same row, the
-    // write conflict surfaces here and we report 409 instead of handing the
-    // secret to the loser of the race.
+    // Enrollment delivery remains atomic read-then-clear, so two concurrent
+    // join polls cannot both consume the one-time capsule. Epoch-tagged re-key
+    // capsules deliberately stay readable until `post_capsule_ack` confirms
+    // that the adopter persisted its new RMS.
     let tx = state
         .sqldb
         .tx()
@@ -31,8 +38,12 @@ pub async fn get_capsule(
 
     let rows = tx
         .query(
-            "SELECT rms_capsule FROM devices
-             WHERE id = ? AND user_id = ? AND revoked = 0 AND rms_capsule IS NOT NULL",
+            "SELECT devices.rms_capsule, devices.rms_capsule_epoch,
+                    CASE WHEN devices.rms_capsule_epoch = users.last_rekey_epoch
+                         THEN users.last_rekey_id ELSE NULL END
+             FROM devices JOIN users ON users.id = devices.user_id
+             WHERE devices.id = ? AND devices.user_id = ?
+               AND devices.revoked = 0 AND devices.rms_capsule IS NOT NULL",
             vec![
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
@@ -51,16 +62,24 @@ pub async fn get_capsule(
             ));
         }
     };
+    let capsule_epoch = rows.first().and_then(|r| r.i64(1));
+    let rotation_id = rows.first().and_then(|r| r.text(2)).map(str::to_string);
 
-    tx.execute(
-        "UPDATE devices SET rms_capsule = NULL WHERE id = ? AND user_id = ?",
-        vec![
-            TursoValue::Text(session.device_id.to_string()),
-            TursoValue::Text(session.user_id.to_string()),
-        ],
-    )
-    .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
+    // Enrollment capsules retain their historical read-once behavior. Rekey
+    // capsules carry an epoch and remain retryable until the adopter confirms
+    // that local files and the platform RMS were durably migrated.
+    if capsule_epoch.is_none() {
+        tx.execute(
+            "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
+             WHERE id = ? AND user_id = ?",
+            vec![
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    }
 
     tx.commit().await.map_err(|e| {
         AppError::Conflict(format!(
@@ -73,7 +92,8 @@ pub async fn get_capsule(
     tracing::info!(
         device_id = %session.device_id,
         user_id   = %session.user_id,
-        "RMS capsule downloaded and cleared"
+        epoch = ?capsule_epoch,
+        "RMS capsule downloaded"
     );
 
     let mut headers = HeaderMap::new();
@@ -83,6 +103,55 @@ pub async fn get_capsule(
         headers,
         Json(CapsuleResponse {
             capsule: B64.encode(&capsule_bytes),
+            epoch: capsule_epoch,
+            rotation_id,
         }),
     ))
+}
+
+pub async fn post_capsule_ack(
+    State(state): State<AppState>,
+    session: DeviceSession,
+    Json(body): Json<CapsuleAck>,
+) -> Result<(HeaderMap, axum::http::StatusCode)> {
+    let updated = state
+        .sqldb
+        .execute(
+            "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
+             WHERE id = ? AND user_id = ? AND revoked = 0 AND rms_capsule_epoch = ?",
+            vec![
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(body.epoch),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if updated != 1 {
+        let rows = state
+            .sqldb
+            .query(
+                "SELECT rms_capsule_epoch FROM devices
+                 WHERE id = ? AND user_id = ? AND revoked = 0",
+                vec![
+                    TursoValue::Text(session.device_id.to_string()),
+                    TursoValue::Text(session.user_id.to_string()),
+                ],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        // A lost successful ACK response is safe to retry. A different pending
+        // epoch is not: clearing it would strand the device on its old RMS.
+        let row = rows.first().ok_or_else(|| {
+            AppError::Conflict("device is no longer eligible to acknowledge capsules".into())
+        })?;
+        if row.i64(0).is_some() {
+            return Err(AppError::Conflict(
+                "a different re-key capsule is awaiting acknowledgement".into(),
+            ));
+        }
+    }
+    let mut headers = HeaderMap::new();
+    maybe_append_new_token(&mut headers, &session);
+    Ok((headers, axum::http::StatusCode::NO_CONTENT))
 }

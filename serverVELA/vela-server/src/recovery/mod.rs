@@ -23,6 +23,8 @@ const MAX_SHARE_BYTES: usize = 4096;
 #[derive(Deserialize)]
 pub struct PutShareRequest {
     pub share: String,
+    /// Key epoch of the RMS which produced this Shamir share.
+    pub key_epoch: i64,
 }
 
 #[derive(Serialize)]
@@ -44,18 +46,32 @@ pub async fn put_share(
             "share exceeds maximum size of {MAX_SHARE_BYTES} bytes"
         )));
     }
+    if body.key_epoch < 1 {
+        return Err(AppError::BadRequest("key_epoch must be positive".into()));
+    }
 
-    state
+    // The epoch check belongs in the UPDATE, not in a preceding SELECT: a
+    // rotation may commit between two statements. `rekey_state IS NULL` also
+    // refuses setup while the account is frozen, so an old share cannot land
+    // after commit and resurrect recovery for the retired RMS.
+    let updated = state
         .sqldb
         .execute(
-            "UPDATE users SET recovery_share = ?, recovery_auth_hash = NULL WHERE id = ?",
+            "UPDATE users SET recovery_share = ?, recovery_auth_hash = NULL
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
             vec![
                 TursoValue::Text(crate::db::encode_b64(&share_bytes)),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(body.key_epoch),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    if updated != 1 {
+        return Err(AppError::Rekeyed(
+            "vault epoch changed during recovery setup; adopt the current key and retry".into(),
+        ));
+    }
 
     tracing::info!(user_id = %session.user_id, bytes = share_bytes.len(), "recovery share stored");
 
@@ -107,15 +123,34 @@ pub async fn get_share(
 pub async fn delete_share(
     State(state): State<AppState>,
     session: DeviceSession,
+    headers: HeaderMap,
 ) -> Result<(HeaderMap, StatusCode)> {
-    state
+    let key_epoch = headers
+        .get("x-vela-epoch")
+        .ok_or_else(|| AppError::BadRequest("X-Vela-Epoch header is required".into()))?
+        .to_str()
+        .ok()
+        .and_then(|raw| raw.parse::<i64>().ok())
+        .filter(|epoch| *epoch >= 1)
+        .ok_or_else(|| AppError::BadRequest("X-Vela-Epoch must be a positive integer".into()))?;
+
+    let updated = state
         .sqldb
         .execute(
-            "UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL WHERE id = ?",
-            vec![TursoValue::Text(session.user_id.to_string())],
+            "UPDATE users SET recovery_share = NULL, recovery_auth_hash = NULL
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(key_epoch),
+            ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    if updated != 1 {
+        return Err(AppError::Rekeyed(
+            "vault epoch changed during recovery setup; adopt the current key and retry".into(),
+        ));
+    }
 
     tracing::info!(user_id = %session.user_id, "recovery share deleted");
 

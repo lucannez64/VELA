@@ -29,7 +29,10 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             recovery_share  TEXT,
             recovery_auth_hash TEXT,
             created_at      TIMESTAMP NOT NULL,
-            recovery_webauthn_credential TEXT
+            recovery_webauthn_credential TEXT,
+            key_epoch       INTEGER NOT NULL DEFAULT 1,
+            last_rekey_id   TEXT,
+            last_rekey_epoch INTEGER
         )",
         (),
     )?;
@@ -44,6 +47,8 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             hybrid_vk   TEXT NOT NULL,
             enrolled_by TEXT,
             rms_capsule TEXT,
+            rms_capsule_epoch INTEGER,
+            rekey_capable BOOLEAN NOT NULL DEFAULT FALSE,
             revoked     BOOLEAN NOT NULL DEFAULT FALSE,
             revoked_at  TIMESTAMP,
             revoked_by  TEXT,
@@ -59,6 +64,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             lamport_clock INTEGER NOT NULL DEFAULT 0,
             last_writer   TEXT,
             ciphertext    TEXT NOT NULL,
+            epoch         INTEGER NOT NULL DEFAULT 1,
             created_at    TIMESTAMP NOT NULL,
             updated_at    TIMESTAMP NOT NULL
         )",
@@ -73,6 +79,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             lamport_clock INTEGER NOT NULL DEFAULT 0,
             last_writer   TEXT,
             ciphertext    TEXT NOT NULL,
+            epoch         INTEGER NOT NULL DEFAULT 1,
             created_at    TIMESTAMP NOT NULL,
             updated_at    TIMESTAMP NOT NULL
         )",
@@ -81,11 +88,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket
          ON oram_buckets(user_id, tree_id, bucket_index)",
-        (),
-    )?;
-    db.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk
-         ON vault_chunks(user_id, chunk_id)",
         (),
     )?;
     db.execute(
@@ -143,10 +145,6 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         (),
     )?;
     db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id)",
-        (),
-    )?;
-    db.execute(
         "CREATE INDEX IF NOT EXISTS idx_share_inbox_recipient ON share_inbox(recipient_user_id)",
         (),
     )?;
@@ -175,6 +173,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             status            TEXT NOT NULL,
             capsule           TEXT,
             approved_by       TEXT,
+            key_epoch         INTEGER,
             created_at        TIMESTAMP NOT NULL,
             expires_at        TIMESTAMP
         )",
@@ -197,6 +196,59 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         (),
     )?;
     migrate_vault_chunks_schema(db)?;
+    migrate_rekey_schema(db)?;
+    Ok(())
+}
+
+/// Vault re-keying schema (docs/VAULT_REKEYING_DESIGN.md §9): per-account key
+/// epoch + rotation state, and an epoch column on both ciphertext tables.
+///
+/// Tolerant ALTERs follow the file's existing pattern: a fresh database already
+/// has the columns from `CREATE TABLE` (the `let _ =` absorbs the duplicate-
+/// column error), an upgraded one gets them here.
+fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
+    const ALTERS: &[&str] = &[
+        "ALTER TABLE users ADD COLUMN key_epoch INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN rekey_state TEXT",
+        "ALTER TABLE users ADD COLUMN rekey_started_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN rekey_starter TEXT",
+        "ALTER TABLE users ADD COLUMN rekey_id TEXT",
+        "ALTER TABLE users ADD COLUMN last_rekey_id TEXT",
+        "ALTER TABLE users ADD COLUMN last_rekey_epoch INTEGER",
+        "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
+        "ALTER TABLE devices ADD COLUMN rekey_capable BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
+    ];
+    for sql in ALTERS {
+        if let Err(e) = db.execute(sql, ()) {
+            let message = e.to_string().to_lowercase();
+            if !message.contains("duplicate") && !message.contains("exists") {
+                return Err(e.into());
+            }
+        }
+    }
+
+    // Shadow rows during a rotation coexist with the current-epoch rows for the
+    // same chunk, so uniqueness moves from (user, chunk) to (user, chunk,
+    // epoch). Commit sweeps the superseded rows; see the design doc, §5.
+    let _ = db.execute("DROP INDEX IF EXISTS idx_vault_chunks_user_chunk", ());
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
+         ON vault_chunks(user_id, chunk_id, epoch)",
+        (),
+    )?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
+         ON vault_chunks(user_id, epoch)",
+        ())?;
+    let _ = db.execute("DROP INDEX IF EXISTS idx_oram_buckets_user_tree_bucket", ());
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
+         ON oram_buckets(user_id, tree_id, bucket_index, epoch)",
+        (),
+    )?;
     Ok(())
 }
 
@@ -220,6 +272,7 @@ fn migrate_vault_chunks_schema(db: &Database) -> anyhow::Result<()> {
             lamport_clock INTEGER NOT NULL DEFAULT 0,
             last_writer   TEXT,
             ciphertext    TEXT NOT NULL,
+            epoch         INTEGER NOT NULL DEFAULT 1,
             created_at    TIMESTAMP NOT NULL,
             updated_at    TIMESTAMP NOT NULL
         )",
@@ -234,13 +287,18 @@ fn migrate_vault_chunks_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     db.execute("DROP TABLE vault_chunks", ())?;
     db.execute("ALTER TABLE vault_chunks_v2 RENAME TO vault_chunks", ())?;
+    // Epoch-aware indexes, matching the rekey schema (§5): shadow rows make
+    // uniqueness per (user, chunk, epoch), and readers filter by (user,
+    // epoch). The legacy names are gone — migrate_rekey_schema only drops
+    // them for databases indexed before this file was aligned.
     db.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk
-         ON vault_chunks(user_id, chunk_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_chunks_user_chunk_epoch
+         ON vault_chunks(user_id, chunk_id, epoch)",
         (),
     )?;
     db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_id ON vault_chunks(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
+         ON vault_chunks(user_id, epoch)",
         (),
     )?;
     Ok(())
@@ -266,6 +324,8 @@ fn migrate_devices_schema(db: &Database) -> anyhow::Result<()> {
             hybrid_vk   TEXT NOT NULL,
             enrolled_by TEXT,
             rms_capsule TEXT,
+            rms_capsule_epoch INTEGER,
+            rekey_capable BOOLEAN NOT NULL DEFAULT FALSE,
             revoked     BOOLEAN NOT NULL DEFAULT FALSE,
             revoked_at  TIMESTAMP,
             revoked_by  TEXT,
@@ -626,6 +686,8 @@ const BOOTSTRAP_TABLES: &[(&str, &[&str])] = &[
         &[
             "id", "recovery_share", "recovery_auth_hash", "created_at",
             "recovery_webauthn_credential", "share_ek", "recovery_webauthn_cred_id",
+            "key_epoch", "rekey_state", "rekey_started_at", "rekey_starter", "rekey_id",
+            "last_rekey_id", "last_rekey_epoch",
         ],
     ),
     (
@@ -633,21 +695,21 @@ const BOOTSTRAP_TABLES: &[(&str, &[&str])] = &[
         &[
             "id", "user_id", "device_name", "device_type", "last_active",
             "hybrid_ek", "hybrid_vk", "enrolled_by", "rms_capsule", "revoked",
-            "revoked_at", "revoked_by", "created_at",
+            "revoked_at", "revoked_by", "created_at", "rms_capsule_epoch", "rekey_capable",
         ],
     ),
     (
         "vault_chunks",
         &[
             "chunk_id", "user_id", "version", "lamport_clock", "last_writer",
-            "ciphertext", "created_at", "updated_at",
+            "ciphertext", "created_at", "updated_at", "epoch",
         ],
     ),
     (
         "oram_buckets",
         &[
             "user_id", "tree_id", "bucket_index", "version", "lamport_clock",
-            "last_writer", "ciphertext", "created_at", "updated_at",
+            "last_writer", "ciphertext", "created_at", "updated_at", "epoch",
         ],
     ),
     (
@@ -666,7 +728,7 @@ const BOOTSTRAP_TABLES: &[(&str, &[&str])] = &[
         &[
             "id", "user_id", "approver_user_id", "poll_secret_hash", "ephemeral_pk",
             "web_vk", "link_nonce", "mode", "status", "capsule", "approved_by",
-            "created_at", "expires_at",
+            "created_at", "expires_at", "key_epoch",
         ],
     ),
 ];
@@ -761,6 +823,37 @@ pub fn parse_chunk_manifest_row_turso(row: &crate::sqldb::VelaRow) -> Result<Chu
 mod tests {
     use super::*;
 
+    #[test]
+    fn upgrades_a_pre_rekey_stoolap_schema_before_creating_epoch_indexes() {
+        let db = Database::open(&format!("memory://{}", Uuid::new_v4())).unwrap();
+        db.execute(
+            "CREATE TABLE vault_chunks (
+                chunk_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                lamport_clock INTEGER NOT NULL DEFAULT 0, last_writer TEXT,
+                ciphertext TEXT NOT NULL, created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "CREATE UNIQUE INDEX idx_vault_chunks_user_chunk
+             ON vault_chunks(user_id, chunk_id)",
+            (),
+        )
+        .unwrap();
+
+        init_schema(&db).expect("epoch columns must be added before epoch indexes");
+        db.query("SELECT epoch FROM vault_chunks LIMIT 0", ()).unwrap();
+        db.query(
+            "SELECT key_epoch, rekey_state, rekey_id, last_rekey_id, last_rekey_epoch
+             FROM users LIMIT 0",
+            (),
+        )
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn bootstrap_stoolap_into_turso_copies_once_and_is_idempotent() {
         use crate::sqldb::{Db as _, TursoDb};
@@ -769,17 +862,59 @@ mod tests {
         let now = Utc::now().to_rfc3339();
         let user_id = Uuid::new_v4().to_string();
         let device_id = Uuid::new_v4().to_string();
+        let rekey_id = Uuid::new_v4().to_string();
         stoolap
             .execute(
-                "INSERT INTO users (id, created_at) VALUES ($1, $2)",
+                "INSERT INTO users
+                 (id, created_at, key_epoch, rekey_state, rekey_started_at,
+                  rekey_starter, rekey_id, last_rekey_id, last_rekey_epoch)
+                 VALUES ($1, $2, 2, 'freezing', $2, $3, $4, $4, 2)",
+                stoolap::params![
+                    user_id.clone(),
+                    now.clone(),
+                    device_id.clone(),
+                    rekey_id.clone()
+                ],
+            )
+            .unwrap();
+        stoolap
+            .execute(
+                "INSERT INTO devices
+                 (id, user_id, hybrid_ek, hybrid_vk, rms_capsule,
+                  rms_capsule_epoch, rekey_capable, revoked, created_at)
+                 VALUES ($1, $2, $3, $4, $5, 2, TRUE, FALSE, $6)",
+                stoolap::params![
+                    device_id.clone(),
+                    user_id.clone(),
+                    "ek".to_string(),
+                    "vk".to_string(),
+                    "epoch-2-capsule".to_string(),
+                    now.clone()
+                ],
+            )
+            .unwrap();
+        stoolap
+            .execute(
+                "INSERT INTO vault_chunks
+                 (chunk_id, user_id, ciphertext, epoch, created_at, updated_at)
+                 VALUES ('vault:main', $1, 'epoch-2-chunk', 2, $2, $2)",
                 stoolap::params![user_id.clone(), now.clone()],
             )
             .unwrap();
         stoolap
             .execute(
-                "INSERT INTO devices (id, user_id, hybrid_ek, hybrid_vk, revoked, created_at) \
-                 VALUES ($1, $2, $3, $4, FALSE, $5)",
-                stoolap::params![device_id.clone(), user_id.clone(), "ek".to_string(), "vk".to_string(), now.clone()],
+                "INSERT INTO oram_buckets
+                 (user_id, tree_id, bucket_index, ciphertext, epoch, created_at, updated_at)
+                 VALUES ($1, 'tree', 0, 'epoch-2-bucket', 2, $2, $2)",
+                stoolap::params![user_id.clone(), now.clone()],
+            )
+            .unwrap();
+        stoolap
+            .execute(
+                "INSERT INTO web_sessions
+                 (id, user_id, ephemeral_pk, link_nonce, status, key_epoch, created_at)
+                 VALUES ($1, $2, 'pk', 'nonce', 'granted', 2, $3)",
+                stoolap::params![Uuid::new_v4().to_string(), user_id.clone(), now.clone()],
             )
             .unwrap();
 
@@ -793,21 +928,53 @@ mod tests {
 
         // First run copies.
         let copied = bootstrap_stoolap_into_turso(&stoolap, &turso).await.unwrap();
-        assert!(copied >= 2, "expected >=2 rows copied, got {copied}");
+        assert!(copied >= 5, "expected >=5 rows copied, got {copied}");
 
         let devs = turso
             .query(
-                "SELECT id FROM devices WHERE id = ? AND revoked = 0",
+                "SELECT id, rms_capsule, rms_capsule_epoch, rekey_capable
+                 FROM devices WHERE id = ? AND revoked = 0",
                 vec![crate::sqldb::TursoValue::Text(device_id.clone())],
             )
             .await
             .unwrap();
         assert_eq!(devs.len(), 1, "device should be visible in turso after bootstrap");
+        assert_eq!(devs[0].text(1), Some("epoch-2-capsule"));
+        assert_eq!(devs[0].i64(2), Some(2));
+        assert_eq!(devs[0].bool_int(3), Some(true));
         let users = turso
-            .query("SELECT id FROM users", vec![])
+            .query(
+                "SELECT id, key_epoch, rekey_state, rekey_starter, rekey_id,
+                        last_rekey_id, last_rekey_epoch
+                 FROM users",
+                vec![],
+            )
             .await
             .unwrap();
         assert_eq!(users.len(), 1, "user should be visible in turso after bootstrap");
+        assert_eq!(users[0].i64(1), Some(2));
+        assert_eq!(users[0].text(2), Some("freezing"));
+        assert_eq!(users[0].text(3), Some(device_id.as_str()));
+        assert_eq!(users[0].text(4), Some(rekey_id.as_str()));
+        assert_eq!(users[0].text(5), Some(rekey_id.as_str()));
+        assert_eq!(users[0].i64(6), Some(2));
+
+        for (table, id_column) in [
+            ("vault_chunks", "chunk_id"),
+            ("oram_buckets", "tree_id"),
+            ("web_sessions", "id"),
+        ] {
+            let epoch_column = if table == "web_sessions" { "key_epoch" } else { "epoch" };
+            let rows = turso
+                .query(
+                    &format!("SELECT {id_column}, {epoch_column} FROM {table}"),
+                    vec![],
+                )
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1, "{table} row should be copied");
+            assert_eq!(rows[0].i64(1), Some(2), "{table} epoch should be preserved");
+        }
 
         // Second run is a no-op (turso already populated).
         let copied_again = bootstrap_stoolap_into_turso(&stoolap, &turso).await.unwrap();

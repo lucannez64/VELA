@@ -394,7 +394,6 @@ mod tests {
         REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    #[test]
     /// The registered `hybrid_ek` must be a key the device can actually use.
     ///
     /// Enrollment v3 seals the RMS to it, so a device whose private half was
@@ -460,6 +459,7 @@ mod tests {
             .can_open_identity_capsule());
     }
 
+    #[test]
     fn seal_round_trip_preserves_both_capabilities() {
         let identity = DeviceIdentity::generate().expect("generate");
         let publics = identity.publics().clone();

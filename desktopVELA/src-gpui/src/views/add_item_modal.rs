@@ -61,6 +61,12 @@ pub struct AddItemModal {
     _generator_subscription: Option<gpui::Subscription>,
     saving: bool,
     error: Option<SharedString>,
+    /// M9a sign-in behaviour flags (login items only). Booleans here, sent as
+    /// `Some(..)` on submit, so what the user sees ticked is exactly what gets
+    /// saved — unlike an editor that omits the fields, which means
+    /// "unchanged" and preserves the old value via `preserving_app_ids`.
+    needs_reauth: bool,
+    allow_downgrade: bool,
     /// `Some(original_meta)` when editing an existing item — preserves its
     /// id/created_at/favorite/shared/share_recipient (none of which the form
     /// itself edits) and makes `submit` call `update_item` instead of
@@ -91,6 +97,8 @@ impl AddItemModal {
             _generator_subscription: None,
             saving: false,
             error: None,
+            needs_reauth: false,
+            allow_downgrade: false,
             editing: None,
         }
     }
@@ -105,7 +113,7 @@ impl AddItemModal {
             this.notes.update(cx, |s, cx| s.emplace(notes, cx));
         }
         match &item {
-            VaultItem::Login { url, username, pass, totp, .. } => {
+            VaultItem::Login { url, username, pass, totp, credential_change_needs_reauth, allow_second_factor_downgrade, .. } => {
                 this.kind = ItemKind::Login;
                 this.url.update(cx, |s, cx| s.emplace(url, cx));
                 this.username.update(cx, |s, cx| s.emplace(username, cx));
@@ -113,6 +121,8 @@ impl AddItemModal {
                 if let Some(totp) = totp {
                     this.totp.update(cx, |s, cx| s.emplace(totp, cx));
                 }
+                this.needs_reauth = credential_change_needs_reauth.unwrap_or(false);
+                this.allow_downgrade = allow_second_factor_downgrade.unwrap_or(false);
             }
             VaultItem::CreditCard { number, exp, cvv, pin, cardholder_name, .. } => {
                 this.kind = ItemKind::CreditCard;
@@ -200,19 +210,25 @@ impl AddItemModal {
             },
         };
         let item = match self.kind {
-            ItemKind::Login => VaultItem::Login {
-                meta,
-                url: self.url.read(cx).as_str().to_string(),
-                username: self.username.read(cx).as_str().to_string(),
-                pass: self.password.read(cx).as_str().to_string(),
-                totp: {
+            ItemKind::Login => {
+                let totp = {
                     let t = self.totp.read(cx).as_str().to_string();
                     (!t.trim().is_empty()).then_some(t)
-                },
-                app_ids: Vec::new(),
-                credential_change_needs_reauth: None,
-                allow_second_factor_downgrade: None,
-            },
+                };
+                // A user can enable the switch and then clear the TOTP field.
+                // Do not persist a hidden downgrade opt-in with no code.
+                let allow_downgrade = totp.is_some() && self.allow_downgrade;
+                VaultItem::Login {
+                    meta,
+                    url: self.url.read(cx).as_str().to_string(),
+                    username: self.username.read(cx).as_str().to_string(),
+                    pass: self.password.read(cx).as_str().to_string(),
+                    totp,
+                    app_ids: Vec::new(),
+                    credential_change_needs_reauth: Some(self.needs_reauth),
+                    allow_second_factor_downgrade: Some(allow_downgrade),
+                }
+            }
             ItemKind::CreditCard => VaultItem::CreditCard {
                 meta,
                 number: self.card_number.read(cx).as_str().to_string(),
@@ -403,6 +419,51 @@ impl Render for AddItemModal {
                         .whitespace_nowrap()
                         .overflow_x_scroll(),
                 ))
+                // M9a sign-in behaviour (same controls as the webview UI's
+                // AddItemModal "Sign-in behaviour" block). Without these the
+                // flags could only be set from the Tauri front end, and the
+                // gpui build shipped as Linux's UI could not express them.
+                .when(self.kind == ItemKind::Login, |el| {
+                    let has_totp = !self.totp.read(cx).as_str().trim().is_empty();
+                    el.child(
+                        div().flex().flex_col().gap_2()
+                            .child(
+                                div()
+                                    .child(fonts::tracked_text("SIGN-IN BEHAVIOUR", px(12.), 0.1))
+                                    .font_family(fonts::LABEL)
+                                    .text_xs()
+                                    .text_color(palette.outline),
+                            )
+                            .child(toggle_row(
+                                &palette,
+                                "needs-reauth",
+                                self.needs_reauth,
+                                "This site asks for my current password before changing it",
+                                "If it does, signing out ends a stolen session's power.",
+                                cx.listener(|this, _, _, cx| {
+                                    this.needs_reauth = !this.needs_reauth;
+                                    cx.notify();
+                                }),
+                            ))
+                            // Only meaningful once there is a code to answer
+                            // with; showing an unusable switch invites ticking
+                            // it "just in case" (the webview UI hides it the
+                            // same way).
+                            .when(has_totp, |el| {
+                                el.child(toggle_row(
+                                    &palette,
+                                    "allow-downgrade",
+                                    self.allow_downgrade,
+                                    "Use my authenticator code even when this site asks for a security key",
+                                    "Deliberately takes the weaker of the two factors the site offered. A security key cannot be phished; a code can.",
+                                    cx.listener(|this, _, _, cx| {
+                                        this.allow_downgrade = !this.allow_downgrade;
+                                        cx.notify();
+                                    }),
+                                ))
+                            }),
+                    )
+                })
                 .child(labeled_field(
                     &palette,
                     "NOTES",
@@ -719,6 +780,51 @@ fn labeled_field(palette: &Palette, label: &'static str, field: impl IntoElement
                 .text_color(palette.outline),
         )
         .child(field)
+}
+
+/// One sign-in-behaviour toggle: label + subtitle on the left, a Material-style
+/// switch on the right, the whole row clickable. Mirrors settings_screen's
+/// switch rows; kept local because the visual is slightly denser here.
+fn toggle_row(
+    palette: &Palette,
+    id: &'static str,
+    checked: bool,
+    label: &'static str,
+    subtitle: &'static str,
+    on_toggle: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex()
+        .items_start()
+        .gap_3()
+        .py_2()
+        .cursor_pointer()
+        .child(
+            div().flex().flex_col().gap_0p5().flex_1()
+                .child(
+                    div().text_sm().text_color(palette.on_surface).child(label),
+                )
+                .child(
+                    div().text_xs().text_color(palette.on_surface_variant).child(subtitle),
+                ),
+        )
+        .child(switch_thumb(palette, checked))
+        .on_mouse_down(MouseButton::Left, on_toggle)
+}
+
+fn switch_thumb(palette: &Palette, checked: bool) -> impl IntoElement {
+    div()
+        .w(px(40.))
+        .h(px(24.))
+        .rounded_full()
+        .bg(if checked { palette.primary } else { palette.surface_container_highest })
+        .flex()
+        .items_center()
+        .px(px(2.))
+        .when(checked, |el| el.justify_end())
+        .when(!checked, |el| el.justify_start())
+        .child(div().w(px(16.)).h(px(16.)).rounded_full().bg(gpui::rgb(0xffffff)))
 }
 
 fn kind_tab(

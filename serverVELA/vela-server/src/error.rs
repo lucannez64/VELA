@@ -23,6 +23,13 @@ pub enum AppError {
     #[error("version conflict: {0}")]
     Conflict(String),
 
+    /// The account's key epoch moved (vault re-keying, docs/VAULT_REKEYING_DESIGN.md):
+    /// the client must adopt the new epoch via its sealed capsule and retry.
+    /// Its own variant — not `Conflict` — so clients can branch on the code
+    /// instead of string-matching a version clash.
+    #[error("vault re-keyed: {0}")]
+    Rekeyed(String),
+
     #[error("unprocessable: {0}")]
     Unprocessable(String),
 
@@ -44,6 +51,7 @@ impl IntoResponse for AppError {
             AppError::Forbidden(m) => (StatusCode::FORBIDDEN, "forbidden", m.clone()),
             AppError::NotFound(m) => (StatusCode::NOT_FOUND, "not_found", m.clone()),
             AppError::Conflict(m) => (StatusCode::CONFLICT, "version_conflict", m.clone()),
+            AppError::Rekeyed(m) => (StatusCode::CONFLICT, "vault_rekeyed", m.clone()),
             AppError::Unprocessable(m) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable", m.clone())
             }

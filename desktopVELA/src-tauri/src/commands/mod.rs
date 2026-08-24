@@ -4,6 +4,7 @@ pub mod clipboard;
 pub mod devices;
 pub mod ipc;
 pub mod recovery;
+pub mod rekey;
 pub mod session;
 pub mod settings;
 pub mod sharing;

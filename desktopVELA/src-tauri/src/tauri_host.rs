@@ -58,14 +58,14 @@ impl Host for TauriHost {
     /// The buttons are labelled with the action rather than "OK"/"Cancel":
     /// somebody clicking through prompts should at least have had to click one
     /// that said "Approve".
-    fn confirm_presence(&self, prompt: &str) -> Option<bool> {
+    fn confirm_presence(&self, title: &str, prompt: &str) -> Option<bool> {
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
         Some(
             self.0
                 .dialog()
                 .message(prompt)
-                .title("VELA — passkey request")
+                .title(title)
                 .kind(MessageDialogKind::Warning)
                 .buttons(MessageDialogButtons::OkCancelCustom(
                     "Approve".to_string(),

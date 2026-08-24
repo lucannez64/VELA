@@ -10,6 +10,7 @@ data class SyncSettings(
     val chunkId: String = "vault-data-000000",
     val localVersion: Long = 0,
     val lamportClock: Long = 0,
+    val keyEpoch: Long = 1,
     val lastSyncedAt: String? = null,
     val hasLocalChanges: Boolean = false,
     val syncOnStartup: Boolean = true,
@@ -46,6 +47,11 @@ class SyncSettingsStore(context: Context) {
         write(_settings.value.copy(bearerToken = bearerToken.trim()))
     }
 
+    fun updateKeyEpoch(keyEpoch: Long) {
+        require(keyEpoch >= 1) { "Vault key epoch must be positive" }
+        write(_settings.value.copy(keyEpoch = keyEpoch))
+    }
+
     fun markLocalChanged() {
         write(_settings.value.copy(hasLocalChanges = true))
     }
@@ -60,6 +66,7 @@ class SyncSettingsStore(context: Context) {
         chunkId = prefs.getString(KEY_CHUNK_ID, "vault-data-000000").orEmpty().ifBlank { "vault-data-000000" },
         localVersion = prefs.getLong(KEY_LOCAL_VERSION, 0),
         lamportClock = prefs.getLong(KEY_LAMPORT, 0),
+        keyEpoch = prefs.getLong(KEY_KEY_EPOCH, 1).coerceAtLeast(1),
         lastSyncedAt = prefs.getString(KEY_LAST_SYNCED, null),
         hasLocalChanges = prefs.getBoolean(KEY_HAS_LOCAL_CHANGES, false),
         syncOnStartup = prefs.getBoolean(KEY_SYNC_ON_STARTUP, true),
@@ -73,6 +80,7 @@ class SyncSettingsStore(context: Context) {
             .putString(KEY_CHUNK_ID, settings.chunkId)
             .putLong(KEY_LOCAL_VERSION, settings.localVersion)
             .putLong(KEY_LAMPORT, settings.lamportClock)
+            .putLong(KEY_KEY_EPOCH, settings.keyEpoch)
             .putString(KEY_LAST_SYNCED, settings.lastSyncedAt)
             .putBoolean(KEY_HAS_LOCAL_CHANGES, settings.hasLocalChanges)
             .putBoolean(KEY_SYNC_ON_STARTUP, settings.syncOnStartup)
@@ -118,6 +126,7 @@ class SyncSettingsStore(context: Context) {
         private const val KEY_CHUNK_ID = "chunk_id"
         private const val KEY_LOCAL_VERSION = "local_version"
         private const val KEY_LAMPORT = "lamport"
+        private const val KEY_KEY_EPOCH = "key_epoch"
         private const val KEY_LAST_SYNCED = "last_synced"
         private const val KEY_HAS_LOCAL_CHANGES = "has_local_changes"
         private const val KEY_SYNC_ON_STARTUP = "sync_on_startup"

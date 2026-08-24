@@ -1,13 +1,13 @@
 pub mod api;
 pub mod audit;
-pub mod breach;
-pub mod clipboard;
 pub mod biometric;
+pub mod breach;
 /// The browser-driven login tier: a disposable real browser driven by the core
 /// over CDP. Only compiled behind `--features browser-login`. See
 /// `security/browser-driven-login-design.md`.
 #[cfg(feature = "browser-login")]
 pub mod browser;
+pub mod clipboard;
 pub mod commands;
 pub mod credential_key;
 pub mod crypto;
@@ -22,18 +22,18 @@ pub mod login;
 pub mod passkey;
 pub mod presence;
 pub mod rclone;
+pub mod recovery;
 pub mod session;
 pub mod settings;
 pub mod sharing;
-pub mod recovery;
 pub mod store;
 pub mod sync;
 pub mod token;
 pub mod totp;
 pub mod vault;
-pub mod webauthn;
 #[cfg(target_os = "linux")]
 pub mod wayland_shortcut;
+pub mod webauthn;
 
 #[cfg(test)]
 mod passkey_rp_test;
@@ -42,8 +42,8 @@ mod perf_bench;
 #[cfg(test)]
 mod vault_lifecycle_test;
 
-use parking_lot::RwLock;
 use chrono::Utc;
+use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -77,10 +77,8 @@ pub fn validate_server_url(raw: &str) -> Result<String, String> {
         "https" => Ok(trimmed.to_string()),
         "http" => {
             let host = parsed.host_str().unwrap_or("");
-            let is_loopback = host == "localhost"
-                || host == "127.0.0.1"
-                || host == "::1"
-                || host == "[::1]";
+            let is_loopback =
+                host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]";
             if !is_loopback {
                 return Err(
                     "Insecure server URL: plain HTTP is only allowed for localhost / 127.0.0.1"
@@ -108,6 +106,10 @@ pub struct AppState {
     pub extension_connected: Arc<AtomicBool>,
     /// Serializes sync runs so local edits and merges cannot interleave.
     pub sync_mutex: tokio::sync::Mutex<()>,
+    /// Coordinates synchronous secret-file writers with an RMS transition.
+    /// Ordinary writers take a read guard before choosing the active crypto;
+    /// migration takes the write guard through file rewrite + in-memory swap.
+    pub(crate) key_transition_lock: std::sync::RwLock<()>,
     /// Allows only one disposable-browser login ceremony at a time. Both
     /// desktop frontends share this core state, and the owned guard acquired
     /// by `browser::login` releases on return, error, cancellation, or panic.
@@ -116,6 +118,11 @@ pub struct AppState {
     /// Bumped on every lock/unlock. Sync captures it and aborts if it changes
     /// mid-flight (vault locked during sync).
     pub session_generation: AtomicU64,
+    /// Master password retained only for the lifetime of a password-unlocked
+    /// session. Re-keying needs it to re-wrap the new RMS; keeping it here
+    /// avoids persisting a transition key under the retired RMS (which would
+    /// defeat rotation). Cleared and zeroized on lock.
+    rekey_password: RwLock<Option<zeroize::Zeroizing<String>>>,
     /// When the user last proved presence for a plaintext credential release
     /// over IPC, and to which caller (audit D-4). Not persisted: a restart
     /// should cost a fresh confirmation.
@@ -138,6 +145,12 @@ pub struct AppState {
     /// claiming a grant and opening the capsule sealed to it. The private
     /// halves in here never leave the process (audit P-1).
     pub pending_join: RwLock<Option<commands::enrollment_v3::PendingJoin>>,
+    /// The toolkit host, registered once at startup by whichever binary is
+    /// hosting the core (`TauriHost` or `GpuiHost`). Core code that must put a
+    /// question to a human — destructive-action presence gates — reaches the UI
+    /// through this, so a gate cannot be forgotten by a new caller: an absent
+    /// host means there is nobody to ask, and every gate fails closed.
+    host: RwLock<Option<Arc<dyn host::Host>>>,
 }
 
 /// How long one user-presence confirmation covers further plaintext releases to
@@ -260,14 +273,17 @@ impl AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),
+            rekey_password: RwLock::new(None),
             plaintext_release: RwLock::new(None),
             released_domains: RwLock::new(HashSet::new()),
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),
+            host: RwLock::new(None),
         }
     }
 
@@ -279,6 +295,64 @@ impl AppState {
             session.unlock("test-device".to_string(), "test-user".to_string(), 900);
         }
         *self.crypto.write() = Some(crypto::Crypto::new(rms));
+    }
+
+    /// Called once at startup by the hosting binary.
+    pub fn register_host(&self, host: Arc<dyn host::Host>) {
+        *self.host.write() = Some(host);
+    }
+
+    pub(crate) fn set_rekey_password(&self, password: Option<String>) {
+        *self.rekey_password.write() = password.map(zeroize::Zeroizing::new);
+    }
+
+    pub(crate) fn rekey_password(&self) -> Option<zeroize::Zeroizing<String>> {
+        self.rekey_password.read().as_ref().cloned()
+    }
+
+    /// Put a yes/no question to a human through the host's UI — the same
+    /// native-modal channel the passkey presence gate uses, deliberately not a
+    /// web-view dialog the requesting renderer could answer itself.
+    ///
+    /// `title` names the action (the dialog caption); `prompt` is the body.
+    /// The caption must say what is being approved — a dialog always titled
+    /// like a passkey request would let somebody clicking through captions
+    /// approve a vault wipe without ever reading it.
+    ///
+    /// Fails closed in every direction: no registered host means nobody can be
+    /// asked (`None`), a refusal is an answer (`Some(false)`), and only an
+    /// explicit approval proceeds. Blocking — waits for a human — so callers
+    /// must invoke it off the async runtime.
+    pub fn confirm_with_human(&self, title: &str, prompt: &str) -> Result<(), String> {
+        let host = self
+            .host
+            .read()
+            .clone()
+            .ok_or_else(|| "No way to ask for confirmation; action refused".to_string())?;
+        match host.confirm_presence(title, prompt) {
+            Some(true) => Ok(()),
+            Some(false) => Err("You declined this action.".to_string()),
+            None => Err("No way to ask for confirmation; action refused".to_string()),
+        }
+    }
+
+    /// Persist the current in-memory vault under whichever RMS is authoritative
+    /// when this write actually runs. Holding the transition read guard before
+    /// reading `crypto` prevents a writer from retaining RMS1 across the RMS2
+    /// migration and stranding `vault.enc` after the journal is removed.
+    pub(crate) fn persist_current_vault(&self) -> anyhow::Result<()> {
+        let _transition = self
+            .key_transition_lock
+            .read()
+            .map_err(|_| anyhow::anyhow!("key transition lock poisoned"))?;
+        let crypto = self.crypto.read();
+        let crypto = crypto
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("vault is locked"))?;
+        // Match `lock_session`'s crypto -> vault order so a concurrent lock
+        // cannot hold crypto while waiting on the vault snapshot we own.
+        let vault = self.vault.read();
+        self.store.save_vault(&vault, crypto)
     }
 }
 
@@ -417,7 +491,8 @@ impl AppState {
 pub enum RateLimitResult {
     Allowed,
     Blocked,
-}impl Default for AppState {
+}
+impl Default for AppState {
     fn default() -> Self {
         let store = Store::new().expect("Failed to create store");
         let server_url = store
@@ -444,14 +519,17 @@ pub enum RateLimitResult {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),
+            rekey_password: RwLock::new(None),
             plaintext_release: RwLock::new(None),
             released_domains: RwLock::new(HashSet::new()),
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),
             pending_join: RwLock::new(None),
+            host: RwLock::new(None),
         }
     }
 }
@@ -503,7 +581,10 @@ mod tests {
 
     #[test]
     fn normalize_server_url_trims() {
-        assert_eq!(normalize_server_url("  https://x.example  "), "https://x.example");
+        assert_eq!(
+            normalize_server_url("  https://x.example  "),
+            "https://x.example"
+        );
         assert_eq!(normalize_server_url("   "), "");
     }
 
@@ -512,17 +593,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::for_test(dir.path());
 
-        assert!(matches!(state.check_rate_limit("dev-1", "ip"), RateLimitResult::Allowed));
+        assert!(matches!(
+            state.check_rate_limit("dev-1", "ip"),
+            RateLimitResult::Allowed
+        ));
         for _ in 0..5 {
             state.record_failed_attempt("dev-1", "ip");
         }
         // new() starts at 1 attempt + 5 recorded = 6 > FREE_ATTEMPTS → blocked.
-        assert!(matches!(state.check_rate_limit("dev-1", "ip"), RateLimitResult::Blocked));
+        assert!(matches!(
+            state.check_rate_limit("dev-1", "ip"),
+            RateLimitResult::Blocked
+        ));
         // A different device is unaffected.
-        assert!(matches!(state.check_rate_limit("dev-2", "ip"), RateLimitResult::Allowed));
+        assert!(matches!(
+            state.check_rate_limit("dev-2", "ip"),
+            RateLimitResult::Allowed
+        ));
 
         state.record_successful_auth("dev-1");
-        assert!(matches!(state.check_rate_limit("dev-1", "ip"), RateLimitResult::Allowed));
+        assert!(matches!(
+            state.check_rate_limit("dev-1", "ip"),
+            RateLimitResult::Allowed
+        ));
     }
 
     #[test]
@@ -539,7 +632,10 @@ mod tests {
         assert_eq!(state.get_session_token().as_deref(), Some("srv"));
 
         state.session.write().lock();
-        assert!(state.get_session_token().is_none(), "locked vault must not hand out tokens");
+        assert!(
+            state.get_session_token().is_none(),
+            "locked vault must not hand out tokens"
+        );
     }
 
     #[test]
@@ -571,7 +667,10 @@ mod tests {
         for _ in 0..5 {
             state.record_unlock_failure();
         }
-        assert!(state.check_unlock_throttle().is_err(), "6th attempt must throttle");
+        assert!(
+            state.check_unlock_throttle().is_err(),
+            "6th attempt must throttle"
+        );
 
         // A "restarted" app (fresh AppState over the same store dir) still
         // sees the throttle — it is persisted to disk.

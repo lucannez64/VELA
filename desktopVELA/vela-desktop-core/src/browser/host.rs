@@ -382,8 +382,15 @@ fn rand_hex(len: usize) -> String {
 mod tests {
     use super::*;
 
+    // The launcher reads an env var, and env vars are process-global: these
+    // two tests raced each other when run in parallel (one asserted presence
+    // while the other asserted absence). Serialize every test that touches
+    // `VELA_BROWSER_SANDBOX`.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn sandbox_launcher_uses_the_configured_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("VELA_BROWSER_SANDBOX", "/opt/vela/libexec/vela-browser-sandbox");
         assert_eq!(
             sandbox_launcher(),
@@ -394,6 +401,7 @@ mod tests {
 
     #[test]
     fn sandbox_launcher_is_absent_when_not_configured() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("VELA_BROWSER_SANDBOX");
         assert_eq!(sandbox_launcher(), None);
     }

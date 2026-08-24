@@ -52,15 +52,30 @@ class LocalVaultRepository(
         persistIfUnlocked()
     }
 
-    fun encryptSnapshotForSync(rms: ByteArray, chunkId: String, lamportClock: Long): ByteArray {
+    fun encryptSnapshotForSync(
+        rms: ByteArray,
+        chunkId: String,
+        lamportClock: Long,
+        keyEpoch: Long,
+    ): ByteArray {
         val vaultJson = VaultJson.encode(snapshot()).toString(Charsets.UTF_8)
-        val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(rms, chunkId, vaultJson, lamportClock)
+        val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(
+            rms, chunkId, vaultJson, lamportClock, keyEpoch
+        )
             ?: error("Native VELA bridge is required for server sync")
         return java.util.Base64.getDecoder().decode(ciphertextB64)
     }
 
-    fun decryptSyncedVault(rms: ByteArray, chunkId: String, ciphertext: ByteArray): VaultStore {
-        val vaultJson = NativeVelaCore.decryptVaultChunkJson(rms, chunkId, ciphertext)
+    fun decryptSyncedVault(
+        rms: ByteArray,
+        chunkId: String,
+        ciphertext: ByteArray,
+        lamportClock: Long,
+        keyEpoch: Long,
+    ): VaultStore {
+        val vaultJson = NativeVelaCore.decryptVaultChunkJson(
+            rms, chunkId, ciphertext, lamportClock, keyEpoch
+        )
             ?: error("Native VELA bridge could not decrypt server vault")
         return VaultJson.decode(vaultJson.toByteArray(Charsets.UTF_8))
     }

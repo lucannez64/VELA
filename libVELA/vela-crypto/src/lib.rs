@@ -9,6 +9,7 @@
 //! - [`kem`]    — Hybrid ML-KEM-1024 + X25519 key encapsulation
 //! - [`shamir`] — Shamir's Secret Sharing over GF(2^8)
 //! - [`oram`]   — Path ORAM client state machine
+//! - [`rekey`]  — RMS rotation (vault re-keying) primitives
 //! - [`verification`] — Out-of-band short verification codes (device enrollment)
 
 pub mod aead;
@@ -18,6 +19,7 @@ pub mod kdf;
 pub mod kem;
 pub mod oram;
 pub mod password_kdf;
+pub mod rekey;
 pub mod shamir;
 pub mod signing;
 pub mod verification;

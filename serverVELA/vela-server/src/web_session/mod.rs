@@ -32,7 +32,7 @@ use crate::{
     auth::token::{TokenScope, TokenService},
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession, DeviceSession},
+    middleware::{maybe_append_new_token, DeviceSession},
     net, rate_limit,
     sqldb::{Db as _, TursoDb, TursoValue},
     state::AppState,
@@ -184,6 +184,8 @@ struct SessionRow {
     status: String,
     capsule: Option<String>,
     expires_at: Option<DateTime<Utc>>,
+    /// Epoch whose chunk keys were sealed into this grant's capsule.
+    key_epoch: Option<i64>,
 }
 
 async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
@@ -191,7 +193,7 @@ async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
         .sqldb
         .query(
             "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at,
-                    approver_user_id, poll_secret_hash
+                    approver_user_id, poll_secret_hash, key_epoch
              FROM web_sessions WHERE id = ?",
             vec![TursoValue::Text(id.to_string())],
         )
@@ -214,6 +216,7 @@ async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
     let expires_at = row.timestamp(6);
     let approver_user_id = row.uuid(7);
     let poll_secret_hash = text(8).map(String::from);
+    let key_epoch = row.i64(9).filter(|epoch| *epoch >= 1);
 
     Ok(SessionRow {
         user_id,
@@ -225,6 +228,7 @@ async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
         status,
         capsule,
         expires_at,
+        key_epoch,
     })
 }
 
@@ -417,6 +421,9 @@ pub struct GrantRequest {
     /// Anti-phishing binding: the 32-byte link nonce (b64) the browser showed in
     /// the QR. Must match the nonce registered at `/web-session/start`.
     pub link_nonce: String,
+    /// Exact vault-key epoch used to seal the capsule. The grant CAS binds this
+    /// to the account so a concurrent rotation cannot mislabel old key material.
+    pub key_epoch: i64,
     /// Requested lifetime in seconds; defaults to 30 min, capped at 24 h.
     #[serde(default)]
     pub ttl_secs: Option<i64>,
@@ -438,6 +445,9 @@ pub async fn post_grant(
         "ro" | "rw" => body.mode.as_str(),
         _ => return Err(AppError::BadRequest("mode must be 'ro' or 'rw'".into())),
     };
+    if body.key_epoch < 1 {
+        return Err(AppError::BadRequest("key_epoch must be positive".into()));
+    }
 
     let capsule_bytes = B64
         .decode(body.capsule.as_bytes())
@@ -503,22 +513,32 @@ pub async fn post_grant(
             // against a concurrent grant, not just the read above.
             "UPDATE web_sessions
              SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
-                 approved_by = ?, expires_at = ?
-             WHERE id = ? AND status = 'pending' AND approver_user_id = ?",
+                 approved_by = ?, expires_at = ?,
+                 key_epoch = ?
+             WHERE id = ? AND status = 'pending' AND approver_user_id = ?
+               AND EXISTS (
+                   SELECT 1 FROM users
+                   WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?
+               )",
             vec![
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Text(mode.to_string()),
                 TursoValue::Text(body.capsule),
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(expires_at.to_rfc3339()),
+                TursoValue::Integer(body.key_epoch),
                 TursoValue::Text(id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(body.key_epoch),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     if n == 0 {
-        return Err(AppError::Conflict("web session was not pending".into()));
+        return Err(AppError::Conflict(
+            "web session was not pending or its vault key epoch changed".into(),
+        ));
     }
 
     tracing::info!(session_id = %id, user_id = %session.user_id, mode, ttl, "web session granted");
@@ -619,8 +639,18 @@ pub async fn post_token(
     // user's real devices, and delete the account. The design calls this session
     // temporary and non-enrolling; the scope is what makes that true rather than
     // merely stated.
+    // Bind the token to the epoch whose keys were sealed into this grant's
+    // capsule. Using the epoch at token-exchange time would let a pre-rotation
+    // grant redeemed after commit masquerade as current.
+    let key_epoch = session.key_epoch.unwrap_or(1);
     let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
-    let (token, jti) = ts.issue_scoped(user_id, id, Some(expires_at), TokenScope::WebSession)?;
+    let (token, jti) = ts.issue_scoped_at_epoch(
+        user_id,
+        id,
+        Some(expires_at),
+        TokenScope::WebSession,
+        Some(key_epoch),
+    )?;
     rate_limit::track_device_jti(&state.store, &id.to_string(), &jti)?;
 
     tracing::info!(session_id = %id, user_id = %user_id, "web session rw token issued");
@@ -646,6 +676,15 @@ pub async fn delete_session(
         return Err(AppError::NotFound("web session not found".into()));
     }
 
+    // Reject any already-issued RW token (device_id == session_id) before the
+    // SQL audit row says the session is revoked. If SQL subsequently fails,
+    // the safe partial state is locked-out-but-visible, not marked-but-live.
+    state.store.set_ex(
+        &format!("device:revoked:{}", id),
+        &[1u8],
+        MAX_TTL_SECS as u64,
+    )?;
+
     state
         .sqldb
         .execute(
@@ -654,14 +693,6 @@ pub async fn delete_session(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    // Reject any already-issued RW token (device_id == session_id) for up to the
-    // maximum possible remaining lifetime.
-    let _ = state.store.set_ex(
-        &format!("device:revoked:{}", id),
-        &[1u8],
-        MAX_TTL_SECS as u64,
-    );
 
     tracing::info!(session_id = %id, user_id = %session.user_id, "web session revoked");
 

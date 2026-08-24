@@ -17,6 +17,7 @@ use crate::state::AppState;
 
 static IF_MATCH: HeaderName = HeaderName::from_static("if-match");
 static X_LAMPORT_CLOCK: HeaderName = HeaderName::from_static("x-lamport-clock");
+static X_VELA_EPOCH: HeaderName = HeaderName::from_static("x-vela-epoch");
 static X_NEW_TOKEN: HeaderName = HeaderName::from_static("x-new-token");
 
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +29,7 @@ pub fn build(state: AppState) -> Router {
         CONTENT_TYPE,
         IF_MATCH.clone(),
         X_LAMPORT_CLOCK.clone(),
+        X_VELA_EPOCH.clone(),
     ];
 
     let cors = if state.config.cors_origins == ["*"] && state.config.allow_wildcard_cors {
@@ -104,8 +106,27 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/device/revoke", post(crate::device::revoke::post_revoke))
         .route("/device/capsule", get(crate::device::capsule::get_capsule))
+        .route(
+            "/device/capsule/ack",
+            post(crate::device::capsule::post_capsule_ack),
+        )
         .route("/devices", get(crate::device::list::list_devices))
+        .route(
+            "/device/rekey-capable",
+            post(crate::device::list::post_rekey_capable),
+        )
         .route("/vault/sync", get(crate::vault::sync::get_sync))
+        .route("/vault/epoch", get(crate::vault::rekey::get_epoch))
+        .route("/vault/rekey/start", post(crate::vault::rekey::post_start))
+        .route(
+            "/vault/rekey/capsules",
+            post(crate::vault::rekey::post_capsules),
+        )
+        .route(
+            "/vault/rekey/commit",
+            post(crate::vault::rekey::post_commit),
+        )
+        .route("/vault/rekey/abort", post(crate::vault::rekey::post_abort))
         .route("/vault/chunk/:id", get(crate::vault::chunk::get_chunk))
         .route("/vault/chunk/:id", put(crate::vault::chunk::put_chunk))
         .route(

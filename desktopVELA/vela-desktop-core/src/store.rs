@@ -15,6 +15,7 @@ const RMS_FILE: &str = "rms.enc";
 const SETTINGS_FILE: &str = "settings.json";
 const DEVICE_ID_FILE: &str = "device_id.json";
 const IDENTITY_KEYS_FILE: &str = "identity_keys.enc";
+const KEY_EPOCH_FILE: &str = "key_epoch.enc";
 const DEVICE_KEY_CONTEXT: &str = "vela device rms protection v1";
 const IDENTITY_KEY_FILE_CONTEXT: &str = "vela desktop identity key file v1";
 
@@ -112,10 +113,312 @@ impl Store {
             .clone()
     }
 
-    fn derive_identity_file_key(crypto: &Crypto) -> [u8; 32] {
+    /// The identity-file key as a [`kdf::DerivedKey`], so the raw bytes are
+    /// zeroized on drop instead of lingering in a plain array copy.
+    fn derive_identity_file_key(crypto: &Crypto) -> kdf::DerivedKey {
         kdf::derive(IDENTITY_KEY_FILE_CONTEXT, crypto.identity_key().as_bytes())
-            .as_bytes()
-            .clone()
+    }
+
+    /// Re-seal every RMS-derived secret file across a seed rotation
+    /// (docs/VAULT_REKEYING_DESIGN.md §6 step 5).
+    ///
+    /// Each file is decrypted under its old derivation and re-encrypted under
+    /// the new one with a fresh nonce — the ciphertext bytes on disk change,
+    /// the plaintext never touches anything but a `Zeroizing` buffer inside
+    /// `vela_crypto::rekey::rekey_blob`. Files are rewritten atomically via
+    /// [`write_secret_file`]. Missing files (no audit log yet, no shares) are
+    /// skipped; a corrupt one is an error, because silently leaving a file on
+    /// the old key would strand it after the rotation completes.
+    pub fn rekey_secret_files(&self, old: &Crypto, new: &Crypto) -> anyhow::Result<()> {
+        self.rekey_secret_files_inner(old, new, false)
+    }
+
+    /// Resume an already-journaled migration during unlock. Corruption in
+    /// non-authority caches must not permanently prevent access to the vault;
+    /// quarantine those files while keeping vault and identity corruption fatal.
+    pub(crate) fn recover_rekey_secret_files(
+        &self,
+        old: &Crypto,
+        new: &Crypto,
+    ) -> anyhow::Result<()> {
+        self.rekey_secret_files_inner(old, new, true)
+    }
+
+    fn rekey_secret_files_inner(
+        &self,
+        old: &Crypto,
+        new: &Crypto,
+        quarantine_non_authority: bool,
+    ) -> anyhow::Result<()> {
+        use vela_crypto::rekey;
+
+        // Held in `Zeroizing` so the retired seed does not linger in a plain
+        // stack array after the migration completes.
+        let old_rms = zeroize::Zeroizing::new(old.rms());
+        let new_rms = zeroize::Zeroizing::new(new.rms());
+        let mut rewrites: Vec<(PathBuf, Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut quarantines = Vec::new();
+
+        // These files all use the vault envelope. Build every replacement
+        // before touching disk so a corrupt late file cannot leave an earlier
+        // file stranded under the new seed.
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+            KEY_EPOCH_FILE,
+        ] {
+            let path = self.store_path.join(file);
+            if !path.exists() {
+                continue;
+            }
+            let ct = fs::read(&path)?;
+            // A process may have died after replacing this file but before the
+            // rest of the migration completed. Treat an already-new file as a
+            // successful no-op so the durable RMS migration journal can resume
+            // a mixed on-disk state safely.
+            if new.decrypt_vault(&ct).is_ok() {
+                continue;
+            }
+            match rekey::rekey_blob(&old_rms, &new_rms, kdf::contexts::VAULT_ENCRYPTION, &ct) {
+                Ok(rekeyed) => rewrites.push((path, ct, rekeyed)),
+                Err(_)
+                    if quarantine_non_authority
+                        && matches!(
+                            file,
+                            "audit.enc" | "sync_conflicts.enc" | "recovery_setup.enc"
+                        ) =>
+                {
+                    quarantines.push(path)
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        // identity_keys.enc has its own derivation context off the identity key.
+        let identity_path = self.store_path.join(IDENTITY_KEYS_FILE);
+        if identity_path.exists() {
+            let ct = fs::read(&identity_path)?;
+            let old_key = Self::derive_identity_file_key(old);
+            let new_key = Self::derive_identity_file_key(new);
+            if crate::crypto::Crypto::decrypt_with_key(new_key.as_bytes(), &ct).is_err() {
+                let plaintext = crate::crypto::Crypto::decrypt_with_key(old_key.as_bytes(), &ct)?;
+                let rekeyed =
+                    crate::crypto::Crypto::encrypt_with_key(new_key.as_bytes(), &plaintext)?;
+                drop(plaintext);
+                rewrites.push((identity_path, ct, rekeyed));
+            }
+        }
+
+        self.apply_rekey_rewrites(rewrites)?;
+        for path in quarantines {
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("secret-file");
+            let quarantine = path.with_file_name(format!(
+                "{file_name}.corrupt-{}",
+                chrono::Utc::now().timestamp_millis()
+            ));
+            fs::rename(&path, &quarantine)?;
+            tracing::warn!(
+                path = %path.display(),
+                quarantine = %quarantine.display(),
+                "quarantined corrupt non-authority file during RMS migration recovery"
+            );
+        }
+        Ok(())
+    }
+
+    fn apply_rekey_rewrites(
+        &self,
+        rewrites: Vec<(PathBuf, Vec<u8>, Vec<u8>)>,
+    ) -> anyhow::Result<()> {
+        // Each individual write is temp+rename atomic. If a later rename or
+        // permission update fails, restore every file already replaced before
+        // returning. This gives the caller an all-old or all-new local store.
+        let mut replaced = 0usize;
+        for (path, _, rekeyed) in &rewrites {
+            if let Err(write_err) = write_secret_file(path, rekeyed) {
+                let mut rollback_errors = Vec::new();
+                for (rollback_path, original, _) in rewrites[..replaced].iter().rev() {
+                    if let Err(e) = write_secret_file(rollback_path, original) {
+                        rollback_errors.push(format!("{}: {e}", rollback_path.display()));
+                    }
+                }
+                if rollback_errors.is_empty() {
+                    return Err(write_err);
+                }
+                anyhow::bail!(
+                    "{write_err}; rollback also failed for {}",
+                    rollback_errors.join(", ")
+                );
+            }
+            replaced += 1;
+        }
+
+        Ok(())
+    }
+
+    const RMS_MIGRATION_FILE: &'static str = "rms_migration.json";
+    const RMS_MIGRATION_CONTEXT: &'static str = "vela rms migration journal v1";
+
+    /// Persist a two-way, encrypted bridge between the old and new RMS before
+    /// changing any consumer. Whichever RMS the OS/password store yields after
+    /// a crash can open exactly one side and recover the other.
+    pub(crate) fn begin_rms_migration(
+        &self,
+        old_rms: &[u8; 32],
+        new_rms: &[u8; 32],
+        new_epoch: i64,
+    ) -> anyhow::Result<()> {
+        #[derive(serde::Serialize)]
+        struct Journal<'a> {
+            version: u8,
+            new_epoch: i64,
+            new_under_old: &'a [u8],
+            old_under_new: &'a [u8],
+        }
+
+        let old_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, old_rms);
+        let new_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, new_rms);
+        let new_under_old = crate::crypto::Crypto::encrypt_with_key(old_key.as_bytes(), new_rms)?;
+        let old_under_new = crate::crypto::Crypto::encrypt_with_key(new_key.as_bytes(), old_rms)?;
+        let bytes = serde_json::to_vec(&Journal {
+            version: 1,
+            new_epoch,
+            new_under_old: &new_under_old,
+            old_under_new: &old_under_new,
+        })?;
+        let path = self.store_path.join(Self::RMS_MIGRATION_FILE);
+        write_secret_file(&path, &bytes)?;
+        // Ordering is the safety property: the journal must reach stable
+        // storage before any file can reach the new key. Rename alone is
+        // atomic but does not guarantee persistence across power loss.
+        fs::File::open(&path)?.sync_all()?;
+        #[cfg(unix)]
+        fs::File::open(&self.store_path)?.sync_all()?;
+        Ok(())
+    }
+
+    /// Open a pending migration journal with either endpoint RMS. Returns the
+    /// complete `(old, new, epoch)` tuple after cross-checking both capsules.
+    pub(crate) fn load_rms_migration(
+        &self,
+        current_rms: &[u8; 32],
+    ) -> anyhow::Result<Option<([u8; 32], [u8; 32], i64)>> {
+        #[derive(serde::Deserialize)]
+        struct Journal {
+            version: u8,
+            new_epoch: i64,
+            new_under_old: Vec<u8>,
+            old_under_new: Vec<u8>,
+        }
+
+        let path = self.store_path.join(Self::RMS_MIGRATION_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
+        anyhow::ensure!(
+            journal.version == 1,
+            "unsupported RMS migration journal version"
+        );
+        let current_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, current_rms);
+
+        let (old, new) = if let Ok(opened) =
+            crate::crypto::Crypto::decrypt_with_key(current_key.as_bytes(), &journal.new_under_old)
+        {
+            let new: [u8; 32] = opened
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid new RMS in migration journal"))?;
+            (*current_rms, new)
+        } else {
+            let opened = crate::crypto::Crypto::decrypt_with_key(
+                current_key.as_bytes(),
+                &journal.old_under_new,
+            )?;
+            let old: [u8; 32] = opened
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid old RMS in migration journal"))?;
+            (old, *current_rms)
+        };
+
+        // Authenticate the opposite direction too. This detects a corrupt or
+        // mismatched journal before any file is rewritten during recovery.
+        let old_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, &old);
+        let check_new =
+            crate::crypto::Crypto::decrypt_with_key(old_key.as_bytes(), &journal.new_under_old)?;
+        anyhow::ensure!(
+            check_new.as_slice() == new,
+            "RMS migration journal mismatch"
+        );
+        let new_key = kdf::derive(Self::RMS_MIGRATION_CONTEXT, &new);
+        let check_old =
+            crate::crypto::Crypto::decrypt_with_key(new_key.as_bytes(), &journal.old_under_new)?;
+        anyhow::ensure!(
+            check_old.as_slice() == old,
+            "RMS migration journal mismatch"
+        );
+
+        Ok(Some((old, new, journal.new_epoch)))
+    }
+
+    pub(crate) fn finish_rms_migration(&self) -> anyhow::Result<()> {
+        let path = self.store_path.join(Self::RMS_MIGRATION_FILE);
+        // Do not let the journal deletion become durable ahead of any consumer
+        // rewrite or the epoch marker. If power fails before this barrier, the
+        // journal remains the recovery authority; after it, every local file is
+        // guaranteed to match the new RMS.
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+            IDENTITY_KEYS_FILE,
+            KEY_EPOCH_FILE,
+            "sync_meta.json",
+        ] {
+            let consumer = self.store_path.join(file);
+            if consumer.exists() {
+                fs::File::open(consumer)?.sync_all()?;
+            }
+        }
+        #[cfg(unix)]
+        fs::File::open(&self.store_path)?.sync_all()?;
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        #[cfg(unix)]
+        fs::File::open(&self.store_path)?.sync_all()?;
+        Ok(())
+    }
+
+    /// Persist the adopted key epoch under the RMS itself. `sync_meta.json` is
+    /// useful merge metadata but is not an authority boundary: if it is lost
+    /// or corrupt, this redundant authenticated marker lets a device prove
+    /// that its current RMS already belongs to the server's epoch.
+    pub(crate) fn save_key_epoch(&self, crypto: &Crypto, epoch: i64) -> anyhow::Result<()> {
+        anyhow::ensure!(epoch >= 1, "invalid local key epoch");
+        let plaintext = serde_json::to_vec(&epoch)?;
+        let ciphertext = crypto.encrypt_vault(&plaintext)?;
+        write_secret_file(&self.store_path.join(KEY_EPOCH_FILE), &ciphertext)
+    }
+
+    pub(crate) fn load_key_epoch(&self, crypto: &Crypto) -> anyhow::Result<Option<i64>> {
+        let path = self.store_path.join(KEY_EPOCH_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let plaintext = crypto.decrypt_vault(&fs::read(path)?)?;
+        let epoch: i64 = serde_json::from_slice(&plaintext)?;
+        anyhow::ensure!(epoch >= 1, "invalid local key epoch");
+        Ok(Some(epoch))
     }
 
     pub fn save_vault(&self, vault: &VaultStore, crypto: &Crypto) -> anyhow::Result<()> {
@@ -196,10 +499,7 @@ impl Store {
         self.store_path.join(RMS_FILE).exists() || self.store_path.join(VAULT_FILE).exists()
     }
 
-    pub fn save_settings(
-        &self,
-        settings: &crate::settings::Settings,
-    ) -> anyhow::Result<()> {
+    pub fn save_settings(&self, settings: &crate::settings::Settings) -> anyhow::Result<()> {
         let settings_path = self.store_path.join(SETTINGS_FILE);
 
         if let Some(parent) = settings_path.parent() {
@@ -331,7 +631,7 @@ impl Store {
 
         let plaintext = serde_json::to_vec(keys)?;
         let key = Self::derive_identity_file_key(crypto);
-        let ciphertext = encrypt(&key, &plaintext)?;
+        let ciphertext = encrypt(key.as_bytes(), &plaintext)?;
         write_secret_file(&identity_path, &ciphertext)?;
         Ok(())
     }
@@ -357,7 +657,7 @@ impl Store {
         // Decryption is a decision, not a guess: a legacy plaintext file will
         // never satisfy the AEAD tag, and a real ciphertext always will.
         let key = Self::derive_identity_file_key(crypto);
-        let store: IdentityKeysStore = match decrypt(&key, &bytes) {
+        let store: IdentityKeysStore = match decrypt(key.as_bytes(), &bytes) {
             Ok(plaintext) => serde_json::from_slice(&plaintext)?,
             Err(decrypt_error) => {
                 // Not ours to decrypt. Either a legacy plaintext file (private
@@ -579,7 +879,9 @@ mod tests {
         let second = store.load_device_id().unwrap();
         assert_eq!(first, second, "device id must persist across loads");
 
-        store.save_device_id_with_user_id("dev-x", "user-y").unwrap();
+        store
+            .save_device_id_with_user_id("dev-x", "user-y")
+            .unwrap();
         assert_eq!(store.load_device_id().unwrap(), "dev-x");
         assert_eq!(store.load_user_id().unwrap(), "user-y");
     }
@@ -593,7 +895,11 @@ mod tests {
             .unwrap();
 
         let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
-        assert_ne!(raw.first(), Some(&b'{'), "identity keys must not be plaintext");
+        assert_ne!(
+            raw.first(),
+            Some(&b'{'),
+            "identity keys must not be plaintext"
+        );
 
         let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();
         assert_eq!(loaded.hybrid_ek, b"ek");
@@ -611,7 +917,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new_at(dir.path().to_path_buf()).unwrap();
 
-        assert!(!store.take_plaintext_identity_migration(), "nothing migrated yet");
+        assert!(
+            !store.take_plaintext_identity_migration(),
+            "nothing migrated yet"
+        );
         store
             .plaintext_identity_migrated
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -645,7 +954,10 @@ mod tests {
                 break;
             }
             attempts += 1;
-            assert!(attempts < 10_000, "never produced a nonce starting with '{{'");
+            assert!(
+                attempts < 10_000,
+                "never produced a nonce starting with '{{'"
+            );
         }
 
         let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();
@@ -699,7 +1011,11 @@ mod tests {
             "file still parses as the plaintext format"
         );
         assert_eq!(
-            store.load_identity_keys(&crypto).unwrap().unwrap().hybrid_sk,
+            store
+                .load_identity_keys(&crypto)
+                .unwrap()
+                .unwrap()
+                .hybrid_sk,
             SECRET,
             "the migrated file must still load"
         );
@@ -719,5 +1035,144 @@ mod tests {
             let mode = fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn rekey_migrates_every_rms_derived_file() {
+        let (_dir, store) = test_store();
+        let old = Crypto::new(&[1u8; 32]);
+        let new = Crypto::new(&[2u8; 32]);
+
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+        ] {
+            let ciphertext = old.encrypt_vault(file.as_bytes()).unwrap();
+            write_secret_file(&store.store_path().join(file), &ciphertext).unwrap();
+        }
+        store
+            .save_identity_keys_full(&test_identity_keys(b"share-secret"), &old)
+            .unwrap();
+
+        store.rekey_secret_files(&old, &new).unwrap();
+
+        for file in [
+            VAULT_FILE,
+            "audit.enc",
+            "shares.enc",
+            "sync_conflicts.enc",
+            "recovery_setup.enc",
+        ] {
+            let ciphertext = fs::read(store.store_path().join(file)).unwrap();
+            assert_eq!(
+                new.decrypt_vault(&ciphertext).unwrap().as_slice(),
+                file.as_bytes()
+            );
+            assert!(
+                old.decrypt_vault(&ciphertext).is_err(),
+                "{file} still opens under old RMS"
+            );
+        }
+        assert_eq!(
+            store.load_identity_keys(&new).unwrap().unwrap().hybrid_dk,
+            b"hybrid-dk"
+        );
+        assert!(store.load_identity_keys(&old).is_err());
+    }
+
+    #[test]
+    fn rms_migration_journal_recovers_from_either_key_and_mixed_files() {
+        let (_dir, store) = test_store();
+        let old_rms = [3u8; 32];
+        let new_rms = [4u8; 32];
+        let old = Crypto::new(&old_rms);
+        let new = Crypto::new(&new_rms);
+
+        store.begin_rms_migration(&old_rms, &new_rms, 7).unwrap();
+        assert_eq!(
+            store.load_rms_migration(&old_rms).unwrap(),
+            Some((old_rms, new_rms, 7))
+        );
+        assert_eq!(
+            store.load_rms_migration(&new_rms).unwrap(),
+            Some((old_rms, new_rms, 7))
+        );
+
+        // Model a crash after only the first file reached the new key.
+        write_secret_file(
+            &store.store_path().join(VAULT_FILE),
+            &new.encrypt_vault(b"vault").unwrap(),
+        )
+        .unwrap();
+        write_secret_file(
+            &store.store_path().join("audit.enc"),
+            &old.encrypt_vault(b"audit").unwrap(),
+        )
+        .unwrap();
+
+        store.rekey_secret_files(&old, &new).unwrap();
+        for (file, expected) in [(VAULT_FILE, b"vault".as_slice()), ("audit.enc", b"audit")] {
+            let ciphertext = fs::read(store.store_path().join(file)).unwrap();
+            assert_eq!(new.decrypt_vault(&ciphertext).unwrap().as_slice(), expected);
+        }
+
+        store.finish_rms_migration().unwrap();
+        assert!(store.load_rms_migration(&new_rms).unwrap().is_none());
+    }
+
+    #[test]
+    fn migration_recovery_quarantines_non_authority_corruption() {
+        let (_dir, store) = test_store();
+        let old = Crypto::new(&[3u8; 32]);
+        let new = Crypto::new(&[4u8; 32]);
+        write_secret_file(
+            &store.store_path().join(VAULT_FILE),
+            &old.encrypt_vault(b"vault").unwrap(),
+        )
+        .unwrap();
+        write_secret_file(&store.store_path().join("audit.enc"), b"truncated").unwrap();
+
+        store.recover_rekey_secret_files(&old, &new).unwrap();
+
+        let vault = fs::read(store.store_path().join(VAULT_FILE)).unwrap();
+        assert_eq!(new.decrypt_vault(&vault).unwrap().as_slice(), b"vault");
+        assert!(!store.store_path().join("audit.enc").exists());
+        assert!(fs::read_dir(store.store_path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("audit.enc.corrupt-")
+        }));
+    }
+
+    #[test]
+    fn migration_recovery_keeps_authority_corruption_fatal() {
+        let (_dir, store) = test_store();
+        let old = Crypto::new(&[3u8; 32]);
+        let new = Crypto::new(&[4u8; 32]);
+        write_secret_file(&store.store_path().join(VAULT_FILE), b"truncated").unwrap();
+
+        assert!(store.recover_rekey_secret_files(&old, &new).is_err());
+        assert_eq!(
+            fs::read(store.store_path().join(VAULT_FILE)).unwrap(),
+            b"truncated"
+        );
+    }
+
+    #[test]
+    fn key_epoch_marker_is_authenticated_by_the_current_rms() {
+        let (_dir, store) = test_store();
+        let current = Crypto::new(&[8u8; 32]);
+        let wrong = Crypto::new(&[9u8; 32]);
+
+        assert_eq!(store.load_key_epoch(&current).unwrap(), None);
+        store.save_key_epoch(&current, 6).unwrap();
+        assert_eq!(store.load_key_epoch(&current).unwrap(), Some(6));
+        assert!(store.load_key_epoch(&wrong).is_err());
+        assert!(store.save_key_epoch(&current, 0).is_err());
     }
 }

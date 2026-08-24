@@ -42,6 +42,7 @@ struct VaultRepository {
     }
 
     private var vaultURL: URL { directory.appendingPathComponent("vault.enc") }
+    private var keyEpochURL: URL { directory.appendingPathComponent("key_epoch.enc") }
     private var vaultExists: Bool { FileManager.default.fileExists(atPath: vaultURL.path) }
 
     func hasVault() -> Bool { (rmsStore.exists() || passwordStore.exists()) && vaultExists }
@@ -106,10 +107,40 @@ struct VaultRepository {
         return try JSONDecoder().decode(VaultStore.self, from: Data(vaultJSON.utf8))
     }
 
+    /// Persist the local epoch inside an RMS-authenticated envelope. Keeping
+    /// only a plaintext account preference would let stale RMS material be
+    /// relabeled as the server's current epoch after local-state tampering.
+    func saveKeyEpoch(_ keyEpoch: Int, rms: Data) throws {
+        guard keyEpoch >= 1 else { throw VaultError.crypto }
+        let marker = #"{"items":[],"tombstones":[],"key_epoch":\#(keyEpoch)}"#
+        guard let ciphertext = VelaCoreFFI.encryptVault(rms: rms, vaultJSON: marker) else {
+            throw VaultError.crypto
+        }
+        try Data(ciphertext.utf8).write(
+            to: keyEpochURL, options: [.completeFileProtection, .atomic])
+        BackupExclusion.exclude(keyEpochURL)
+    }
+
+    /// Missing means a pre-epoch vault and is accepted by callers only as
+    /// epoch 1. A present but invalid marker fails closed.
+    func loadKeyEpoch(rms: Data) throws -> Int? {
+        guard FileManager.default.fileExists(atPath: keyEpochURL.path) else { return nil }
+        let ciphertext = try String(contentsOf: keyEpochURL, encoding: .utf8)
+        guard let json = VelaCoreFFI.decryptVault(rms: rms, ciphertextBase64: ciphertext),
+              let data = json.data(using: .utf8),
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let epoch = object["key_epoch"] as? Int,
+              epoch >= 1 else {
+            throw VaultError.crypto
+        }
+        return epoch
+    }
+
     /// Wipe the on-device vault (used by UI tests via the VELA_RESET launch env).
     func reset() {
         rmsStore.delete()
         passwordStore.delete()
         try? FileManager.default.removeItem(at: vaultURL)
+        try? FileManager.default.removeItem(at: keyEpochURL)
     }
 }

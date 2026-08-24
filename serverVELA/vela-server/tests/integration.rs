@@ -517,6 +517,8 @@ async fn enroll_device_without_grant_returns_401() {
 
 #[tokio::test]
 async fn enroll_device_redeems_grant_exactly_once() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
     let state = helpers::test_state().await;
 
     // Create the account this recovery grant is scoped to.
@@ -565,6 +567,39 @@ async fn enroll_device_redeems_grant_exactly_once() {
     }))
     .unwrap();
 
+    // A rotation conflict is retryable and must not spend the one-shot grant.
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.clone())],
+        )
+        .await
+        .unwrap();
+    let paused_req = Request::builder()
+        .method("POST")
+        .uri("/recovery/enroll-device")
+        .header("content-type", "application/json")
+        .body(Body::from(enroll_body.clone()))
+        .unwrap();
+    let paused_resp = vela_server::routes::build(state.clone())
+        .oneshot(paused_req)
+        .await
+        .unwrap();
+    assert_eq!(paused_resp.status(), StatusCode::CONFLICT);
+    assert!(state
+        .store
+        .exists(&format!("recovery:enroll_grant:{user_id}:{grant}"))
+        .unwrap());
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.clone())],
+        )
+        .await
+        .unwrap();
+
     let first_req = Request::builder()
         .method("POST")
         .uri("/recovery/enroll-device")
@@ -596,6 +631,76 @@ async fn enroll_device_redeems_grant_exactly_once() {
         .await
         .unwrap();
     assert_eq!(second_resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn recovery_enrollment_grant_is_invalid_after_key_rotation() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    let grant = Uuid::new_v4();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at, key_epoch) VALUES (?, ?, 2)",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(chrono::Utc::now().to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+    // This grant was minted while the account was still at epoch 1.
+    state
+        .store
+        .set_ex(
+            &format!("recovery:enroll_grant:{user_id}:{grant}"),
+            b"1",
+            600,
+        )
+        .unwrap();
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/recovery/enroll-device")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "user_id": user_id,
+                "recovery_grant": grant,
+                "hybrid_ek": B64.encode(vec![1u8; 1600]),
+                "hybrid_vk": B64.encode(vec![1u8; 2624]),
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = vela_server::routes::build(state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body["message"],
+        "recovery grant was invalidated by vault key rotation",
+        "the request must reach the grant-epoch check"
+    );
+    let devices = state
+        .sqldb
+        .query(
+            "SELECT id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert!(devices.is_empty(), "a stale grant must not enroll a device");
 }
 
 #[tokio::test]
@@ -710,6 +815,7 @@ async fn web_session_grant_requires_auth() {
                         "mode": "ro",
                         "capsule": B64.encode(vec![0u8; 64]),
                         "link_nonce": B64.encode(vec![0u8; 32]),
+                        "key_epoch": 1,
                     })).unwrap(),
                 ))
                 .unwrap(),
@@ -747,6 +853,301 @@ async fn seed_user_with_device(state: &vela_server::state::AppState) -> (Uuid, S
     ).await.unwrap();
     let token = issue_token(state, user_id, device_id);
     (user_id, token)
+}
+
+fn sign_hybrid_message(secret_key: &[u8], message: &[u8]) -> String {
+    let secret_key = secret_key.to_vec();
+    let message = message.to_vec();
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let sk = vela_crypto::signing::HybridSigningKey::from_bytes(&secret_key).unwrap();
+            B64.encode(vela_crypto::signing::sign(&sk, &message).unwrap().to_bytes())
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+async fn fresh_challenge(app: &axum::Router) -> String {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/challenge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["challenge"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn v2_and_v3_enrollment_capsules_are_atomically_epoch_bound() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let primary_id = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    let (primary_vk, primary_sk) = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let (vk, sk) = vela_crypto::signing::generate_keypair().unwrap();
+            (vk.to_bytes().to_vec(), sk.into_bytes())
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, key_epoch, created_at) VALUES (?, 2, ?)",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO devices (id, user_id, hybrid_ek, hybrid_vk, created_at)
+             VALUES (?, ?, ?, ?, ?)",
+            vec![
+                TursoValue::Text(primary_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(&primary_vk)),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+    let token = issue_token(&state, user_id, primary_id);
+
+    // V3: a stale completion is rejected without consuming the already
+    // fingerprint-confirmed grant, then the same capsule succeeds at epoch 2.
+    let grant_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/enrollment-grant")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let grant_body = axum::body::to_bytes(grant_response.into_body(), 4096)
+        .await
+        .unwrap();
+    let grant_id = serde_json::from_slice::<serde_json::Value>(&grant_body).unwrap()["grant_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let v3_ek = vec![1u8; 1600];
+    let v3_vk = vec![2u8; 2624];
+    let claim = Request::builder()
+        .method("POST")
+        .uri(format!("/device/enrollment-grant/{grant_id}/claim"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "hybrid_ek": B64.encode(&v3_ek),
+                "hybrid_vk": B64.encode(&v3_vk),
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(claim).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let v3_capsule = vec![3u8; 96];
+    let v3_signature = sign_hybrid_message(
+        &primary_sk,
+        &vela_crypto::signing::enrollment_message(&v3_ek, &v3_vk, &v3_capsule),
+    );
+    let complete_v3 = |epoch| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/device/enrollment-grant/{grant_id}/complete"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "rms_capsule": B64.encode(&v3_capsule),
+                    "signature": v3_signature,
+                    "key_epoch": epoch,
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone().oneshot(complete_v3(0)).await.unwrap().status(),
+        StatusCode::BAD_REQUEST,
+        "v3 rejects the reserved epoch without consuming its grant"
+    );
+    let stale_v3 = app.clone().oneshot(complete_v3(1)).await.unwrap();
+    assert_eq!(stale_v3.status(), StatusCode::CONFLICT);
+    let stale_v3_body = axum::body::to_bytes(stale_v3.into_body(), 4096)
+        .await
+        .unwrap();
+    assert!(String::from_utf8_lossy(&stale_v3_body).contains("key epoch changed"));
+    assert_eq!(
+        app.clone().oneshot(complete_v3(3)).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "a future epoch cannot authorize v3 enrollment"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(complete_v3(2)).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "v3 completion must fail while rotation is freezing"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    let current_v3 = app.clone().oneshot(complete_v3(2)).await.unwrap();
+    let current_v3_status = current_v3.status();
+    let current_v3_body = axum::body::to_bytes(current_v3.into_body(), 4096)
+        .await
+        .unwrap();
+    assert_eq!(
+        current_v3_status,
+        StatusCode::OK,
+        "epoch mismatch must not consume the v3 grant: {}",
+        String::from_utf8_lossy(&current_v3_body)
+    );
+
+    // V2: signed-challenge enrollment has the same atomic epoch predicate.
+    let v2_ek = vec![4u8; 1600];
+    let v2_vk = vec![5u8; 2624];
+    let v2_capsule = vec![6u8; 96];
+    let v2_enrollment_signature = sign_hybrid_message(
+        &primary_sk,
+        &vela_crypto::signing::enrollment_message(&v2_ek, &v2_vk, &v2_capsule),
+    );
+    let enroll_v2 = |challenge_b64: String, epoch: i64| {
+        let challenge = B64.decode(&challenge_b64).unwrap();
+        let auth_signature = sign_hybrid_message(
+            &primary_sk,
+            &vela_crypto::signing::auth_message(&primary_id.to_string(), &challenge),
+        );
+        Request::builder()
+            .method("POST")
+            .uri("/device/enroll")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "enrolling_device_id": primary_id,
+                    "challenge": challenge_b64,
+                    "auth_signature": auth_signature,
+                    "new_device": {
+                        "hybrid_ek": B64.encode(&v2_ek),
+                        "hybrid_vk": B64.encode(&v2_vk),
+                        "rms_capsule": B64.encode(&v2_capsule),
+                        "signature": v2_enrollment_signature,
+                        "key_epoch": epoch,
+                    },
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 0))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST,
+        "v2 rejects the reserved epoch"
+    );
+    let stale_v2 = app
+        .clone()
+        .oneshot(enroll_v2(fresh_challenge(&app).await, 1))
+        .await
+        .unwrap();
+    assert_eq!(stale_v2.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 3))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT,
+        "a future epoch cannot authorize v2 enrollment"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 2))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT,
+        "v2 completion must fail while rotation is freezing"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 2))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+
+    let count = state
+        .sqldb
+        .query(
+            "SELECT COUNT(*) FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap()[0]
+        .i64(0)
+        .unwrap();
+    assert_eq!(count, 3, "only the primary and two current-epoch joins exist");
 }
 
 /// The secret the browser keeps to collect its capsule, and the hash it commits
@@ -815,6 +1216,7 @@ async fn web_session_grant_rejects_wrong_link_nonce() {
                     "mode": "ro",
                     "capsule": B64.encode(vec![0u8; 64]),
                     "link_nonce": nonce,
+                    "key_epoch": 1,
                 }))
                 .unwrap(),
             ))
@@ -842,6 +1244,61 @@ async fn web_session_grant_rejects_wrong_link_nonce() {
     // Correct nonce → grant succeeds.
     let resp = app.oneshot(grant(link_nonce)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn web_session_grant_rejects_a_capsule_from_an_old_key_epoch() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let (user_id, token) = seed_user_with_device(&state).await;
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET key_epoch = 2 WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+
+    let link_nonce = B64.encode(vec![7u8; 32]);
+    let resp = app
+        .clone()
+        .oneshot(web_session_start_req(user_id, &link_nonce))
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let session_id = body["session_id"].as_str().unwrap();
+
+    let grant = |epoch| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/web-session/{session_id}/grant"))
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(
+                json!({
+                    "mode": "ro",
+                    "capsule": B64.encode(vec![0u8; 64]),
+                    "link_nonce": link_nonce,
+                    "key_epoch": epoch,
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    assert_eq!(
+        app.clone().oneshot(grant(1)).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        app.oneshot(grant(2)).await.unwrap().status(),
+        StatusCode::OK,
+        "an epoch mismatch must leave the session pending and retryable"
+    );
 }
 
 /// Audit S-1/S-4: the session is bound to the account the browser named at
@@ -884,6 +1341,7 @@ async fn web_session_is_bound_to_the_committed_approver() {
                     "mode": "rw",
                     "capsule": B64.encode(vec![0u8; 64]),
                     "link_nonce": link_nonce,
+                    "key_epoch": 1,
                 }))
                 .unwrap(),
             ))
@@ -989,6 +1447,7 @@ async fn web_session_poll_requires_the_browsers_secret() {
                         "mode": "ro",
                         "capsule": capsule,
                         "link_nonce": link_nonce,
+                        "key_epoch": 1,
                     }))
                     .unwrap(),
                 ))
@@ -1101,6 +1560,7 @@ async fn committed_approver_can_decline_a_pending_session() {
                         "mode": "ro",
                         "capsule": B64.encode(vec![0u8; 64]),
                         "link_nonce": link_nonce,
+                        "key_epoch": 1,
                     }))
                     .unwrap(),
                 ))
@@ -1212,7 +1672,11 @@ async fn web_session_token_is_refused_on_permanent_power_routes() {
     let web = token_for(&state, user_id, session_id, TokenScope::WebSession);
 
     let cases: Vec<(&str, &str, Option<serde_json::Value>)> = vec![
-        ("PUT", "/recovery/share", Some(json!({ "share": B64.encode(b"x") }))),
+        (
+            "PUT",
+            "/recovery/share",
+            Some(json!({ "share": B64.encode(b"x"), "key_epoch": 1 })),
+        ),
         ("GET", "/recovery/share", None),
         ("DELETE", "/recovery/share", None),
         (
@@ -1232,7 +1696,7 @@ async fn web_session_token_is_refused_on_permanent_power_routes() {
         (
             "POST",
             "/web-session/00000000-0000-0000-0000-000000000000/grant",
-            Some(json!({ "mode": "rw", "capsule": B64.encode([0u8; 64]), "link_nonce": B64.encode([0u8; 32]) })),
+            Some(json!({ "mode": "rw", "capsule": B64.encode([0u8; 64]), "link_nonce": B64.encode([0u8; 32]), "key_epoch": 1 })),
         ),
         // The rest of the session-management surface, same class.
         ("GET", "/web-session/00000000-0000-0000-0000-000000000000/keys", None),
@@ -1286,7 +1750,10 @@ async fn device_token_still_reaches_permanent_power_routes() {
                 .header("Authorization", format!("Bearer {device}"))
                 .header("Content-Type", "application/json")
                 .body(Body::from(
-                    serde_json::to_vec(&json!({ "share": B64.encode(b"share-bytes") })).unwrap(),
+                    serde_json::to_vec(
+                        &json!({ "share": B64.encode(b"share-bytes"), "key_epoch": 1 }),
+                    )
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
@@ -1297,6 +1764,196 @@ async fn device_token_still_reaches_permanent_power_routes() {
         StatusCode::FORBIDDEN,
         "a real device must not be caught by the web-session guard"
     );
+}
+
+/// Recovery delivery is authority for one RMS, so the write must be tied to
+/// the epoch which produced the share. A stale device must neither resurrect
+/// an epoch-N share after N+1 commits nor delete N+1's replacement.
+#[tokio::test]
+async fn recovery_share_writes_are_epoch_bound_and_refuse_freezing_accounts() {
+    use vela_server::auth::token::TokenScope;
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let device_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    let token = token_for(&state, user_id, device_id, TokenScope::Device);
+
+    let put = |epoch: i64, share: &'static [u8]| {
+        Request::builder()
+            .method("PUT")
+            .uri("/recovery/share")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "share": B64.encode(share),
+                    "key_epoch": epoch,
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+    let delete = |epoch: i64| {
+        Request::builder()
+            .method("DELETE")
+            .uri("/recovery/share")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("X-Vela-Epoch", epoch.to_string())
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    assert_eq!(
+        app.clone().oneshot(put(0, b"invalid")).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    let missing_delete_epoch = Request::builder()
+        .method("DELETE")
+        .uri("/recovery/share")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(missing_delete_epoch)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    assert_eq!(
+        app.clone().oneshot(put(1, b"epoch-one")).await.unwrap().status(),
+        StatusCode::OK
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET key_epoch = 2 WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(put(2, b"epoch-two")).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone().oneshot(put(1, b"stale")).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "an epoch-one device must not overwrite epoch two's share"
+    );
+    assert_eq!(
+        app.clone().oneshot(delete(1)).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "an epoch-one device must not delete epoch two's share"
+    );
+
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT recovery_share FROM users WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    let stored = match rows[0].get(0) {
+        Some(TursoValue::Text(value)) => vela_server::db::decode_b64(value).unwrap(),
+        other => panic!("expected stored recovery share, got {other:?}"),
+    };
+    assert_eq!(stored, b"epoch-two");
+
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(put(2, b"during-freeze")).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        app.clone().oneshot(delete(2)).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.oneshot(delete(2)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+}
+
+/// A write racing the epoch transition has only two legal outcomes: it lands
+/// before the transition and is cleared by commit, or it loses the epoch CAS.
+/// It must never remain attached to the new epoch.
+#[tokio::test]
+async fn recovery_share_upload_cannot_survive_a_concurrent_epoch_commit() {
+    use vela_server::auth::token::TokenScope;
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    for attempt in 0..16 {
+        let state = helpers::test_state().await;
+        let app = vela_server::routes::build(state.clone());
+        let user_id = Uuid::new_v4();
+        let device_id = Uuid::new_v4();
+        insert_user(&state, user_id).await;
+        let token = token_for(&state, user_id, device_id, TokenScope::Device);
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/recovery/share")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "share": B64.encode(format!("attempt-{attempt}")),
+                    "key_epoch": 1,
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let commit = state.sqldb.execute(
+            "UPDATE users SET key_epoch = 2, recovery_share = NULL,
+                    recovery_auth_hash = NULL
+             WHERE id = ? AND key_epoch = 1",
+            vec![TursoValue::Text(user_id.to_string())],
+        );
+        let (response, committed) = tokio::join!(app.oneshot(request), commit);
+        assert_eq!(committed.unwrap(), 1);
+        let status = response.unwrap().status();
+        assert!(
+            status == StatusCode::OK || status == StatusCode::CONFLICT,
+            "unexpected race outcome: {status}"
+        );
+
+        let rows = state
+            .sqldb
+            .query(
+                "SELECT key_epoch, recovery_share FROM users WHERE id = ?",
+                vec![TursoValue::Text(user_id.to_string())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows[0].i64(0), Some(2));
+        assert!(
+            matches!(rows[0].get(1), None | Some(TursoValue::Null)),
+            "a stale share survived commit on attempt {attempt}: {:?}",
+            rows[0].get(1)
+        );
+    }
 }
 
 /// Renewal must carry the scope across.
@@ -1314,25 +1971,25 @@ async fn renewing_a_web_session_token_keeps_it_a_web_session_token() {
     let session_id = Uuid::new_v4();
 
     let (web, _) = ts
-        .issue_scoped(user_id, session_id, None, TokenScope::WebSession)
+        .issue_scoped_at_epoch(user_id, session_id, None, TokenScope::WebSession, Some(7))
         .unwrap();
     let claims = ts.verify(&web).unwrap();
     assert_eq!(claims.scope, TokenScope::WebSession);
+    assert_eq!(claims.key_epoch, Some(7));
 
     // What `AuthSession::from_request_parts` does on renewal.
     let (renewed, _) = ts
-        .issue_scoped(
+        .issue_scoped_at_epoch(
             claims.user_id,
             claims.device_id,
             Some(claims.hard_cap),
             claims.scope,
+            claims.key_epoch,
         )
         .unwrap();
-    assert_eq!(
-        ts.verify(&renewed).unwrap().scope,
-        TokenScope::WebSession,
-        "renewal must not promote a web session to a device"
-    );
+    let renewed = ts.verify(&renewed).unwrap();
+    assert_eq!(renewed.scope, TokenScope::WebSession);
+    assert_eq!(renewed.key_epoch, Some(7));
 }
 
 /// A token minted before the scope claim existed reads as a device token.
@@ -1563,6 +2220,209 @@ async fn web_session_token_still_reaches_the_vault() {
     }
 }
 
+/// Model the exact extraction/commit interleaving directly: middleware has
+/// already accepted an epoch-1 web session, then another device commits epoch
+/// 2 before the handler resolves and performs its mutation. The immutable
+/// claim carried in `AuthSession` must stop every web-writable vault surface.
+#[tokio::test]
+async fn extracted_web_session_cannot_mutate_after_a_concurrent_epoch_commit() {
+    use axum::{
+        body::Bytes,
+        extract::{Path, State},
+        http::HeaderMap,
+    };
+    use vela_server::{
+        auth::token::TokenScope,
+        error::AppError,
+        middleware::AuthSession,
+        sqldb::{Db as _, TursoValue},
+        vault::{chunk, oram},
+    };
+
+    let state = helpers::test_state().await;
+    let user = Uuid::new_v4();
+    let web_session = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, key_epoch, created_at) VALUES (?, 2, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO vault_chunks
+             (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
+             VALUES ('protected', ?, 1, 1, ?, 'b2xk', 2, ?, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(web_session.to_string()),
+                TursoValue::Text(now.clone()),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let extracted_at_epoch_one = AuthSession {
+        user_id: user,
+        device_id: web_session,
+        jti: "already-extracted".into(),
+        key_epoch: Some(1),
+        new_token: None,
+        scope: TokenScope::WebSession,
+    };
+    let chunk_headers = |if_match: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("if-match", if_match.parse().unwrap());
+        headers.insert("x-lamport-clock", "2".parse().unwrap());
+        headers.insert("x-vela-epoch", "2".parse().unwrap());
+        headers
+    };
+
+    for (id, if_match) in [("new", "0"), ("protected", "1")] {
+        let result = chunk::put_chunk(
+            State(state.clone()),
+            Path(id.to_string()),
+            extracted_at_epoch_one.clone(),
+            chunk_headers(if_match),
+            Bytes::from_static(b"retired-key ciphertext"),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::Rekeyed(_))));
+    }
+
+    let result = chunk::delete_chunk(
+        State(state.clone()),
+        Path("protected".to_string()),
+        extracted_at_epoch_one.clone(),
+        chunk_headers("1"),
+    )
+    .await;
+    assert!(matches!(result, Err(AppError::Rekeyed(_))));
+
+    let result = oram::put_path(
+        State(state.clone()),
+        Path(("tree".to_string(), 0)),
+        extracted_at_epoch_one.clone(),
+        axum::Json(oram::PutOramPathRequest {
+            height: 0,
+            epoch: Some(2),
+            buckets: vec![oram::PutOramBucket {
+                bucket_index: 1,
+                if_match: 0,
+                lamport_clock: 2,
+                ciphertext: B64.encode(b"retired-key ciphertext"),
+            }],
+        }),
+    )
+    .await;
+    assert!(matches!(result, Err(AppError::Rekeyed(_))));
+
+    let chunks = state
+        .sqldb
+        .query(
+            "SELECT chunk_id, version, ciphertext FROM vault_chunks WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].text(0), Some("protected"));
+    assert_eq!(chunks[0].i64(1), Some(1));
+    assert_eq!(chunks[0].text(2), Some("b2xk"));
+    assert!(state
+        .sqldb
+        .query(
+            "SELECT 1 FROM oram_buckets WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap()
+        .is_empty());
+
+    // The guard is epoch-specific, not a blanket web-write denial: authority
+    // granted at the current epoch still reaches every intended RW surface.
+    let current = AuthSession {
+        key_epoch: Some(2),
+        jti: "current-web-session".into(),
+        ..extracted_at_epoch_one.clone()
+    };
+    assert!(chunk::put_chunk(
+        State(state.clone()),
+        Path("current".to_string()),
+        current.clone(),
+        chunk_headers("0"),
+        Bytes::from_static(b"current ciphertext"),
+    )
+    .await
+    .is_ok());
+    assert!(chunk::put_chunk(
+        State(state.clone()),
+        Path("protected".to_string()),
+        current.clone(),
+        chunk_headers("1"),
+        Bytes::from_static(b"current ciphertext"),
+    )
+    .await
+    .is_ok());
+    assert!(chunk::delete_chunk(
+        State(state.clone()),
+        Path("current".to_string()),
+        current.clone(),
+        chunk_headers("1"),
+    )
+    .await
+    .is_ok());
+    assert!(oram::put_path(
+        State(state.clone()),
+        Path(("tree".to_string(), 0)),
+        current,
+        axum::Json(oram::PutOramPathRequest {
+            height: 0,
+            epoch: Some(2),
+            buckets: vec![oram::PutOramBucket {
+                bucket_index: 1,
+                if_match: 0,
+                lamport_clock: 2,
+                ciphertext: B64.encode(b"current ciphertext"),
+            }],
+        }),
+    )
+    .await
+    .is_ok());
+    assert_eq!(
+        state
+            .sqldb
+            .query(
+                "SELECT version FROM vault_chunks WHERE user_id = ? AND chunk_id = 'protected'",
+                vec![TursoValue::Text(user.to_string())],
+            )
+            .await
+            .unwrap()[0]
+            .i64(0),
+        Some(2)
+    );
+    assert_eq!(
+        state
+            .sqldb
+            .query(
+                "SELECT COUNT(*) FROM oram_buckets WHERE user_id = ?",
+                vec![TursoValue::Text(user.to_string())],
+            )
+            .await
+            .unwrap()[0]
+            .i64(0),
+        Some(1)
+    );
+}
+
 /// The capsule is one-shot even when polls arrive together.
 ///
 /// The sequential case was already covered. This is the concurrent one: the
@@ -1607,6 +2467,7 @@ async fn the_capsule_is_delivered_once_even_under_concurrent_polls() {
                         "mode": "ro",
                         "capsule": capsule,
                         "link_nonce": link_nonce,
+                        "key_epoch": 1,
                     }))
                     .unwrap(),
                 ))
@@ -1663,7 +2524,7 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
 
     // The seeded device really exists; this id does not.
     let real = {
-        use vela_server::sqldb::{Db as _, TursoValue};
+        use vela_server::sqldb::Db as _;
         let rows = state.sqldb.query("SELECT id FROM devices", vec![]).await.unwrap();
         rows.first()
             .and_then(|r| r.text(0))
@@ -1742,6 +2603,7 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
                             "hybrid_vk": B64.encode(vec![0u8; 2624]),
                             "rms_capsule": B64.encode(vec![0u8; 64]),
                             "signature": bad_sig,
+                            "key_epoch": 1,
                         },
                     }),
                 )
@@ -1758,4 +2620,922 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
             "/device/enroll distinguishes an existing device id from an absent one"
         );
     }
+}
+
+// ── Vault re-keying (docs/VAULT_REKEYING_DESIGN.md) ────────────────────────────
+
+#[tokio::test]
+async fn rekey_commit_replay_is_bound_to_the_completed_attempt() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let (user_id, token) = seed_user_with_device(&state).await;
+    let completed_attempt = Uuid::new_v4().to_string();
+    let stale_attempt = Uuid::new_v4().to_string();
+
+    // This is the durable state after attempt A was aborted and a second
+    // N -> N+1 attempt B committed. Only B may replay a lost commit response.
+    state
+        .sqldb
+        .execute(
+            "UPDATE users
+             SET key_epoch = 2, last_rekey_id = ?, last_rekey_epoch = 2
+             WHERE id = ?",
+            vec![
+                TursoValue::Text(completed_attempt.clone()),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let commit = |rotation_id: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/vault/rekey/commit")
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-vela-epoch", "2")
+            .header("x-vela-rekey-id", rotation_id)
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(commit(&stale_attempt))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        app.oneshot(commit(&completed_attempt)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+}
+
+/// One device drives a full rotation while a second device's stale write is
+/// refused. Pins the whole epoch lifecycle: active → freezing → committed,
+/// shadow-row isolation, the `vault_rekeyed` guard, capsule storage, and the
+/// post-commit sweep of the superseded rows.
+#[tokio::test]
+async fn rekey_rotation_lifecycle_end_to_end() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+
+    let user = Uuid::new_v4();
+    let initiator = Uuid::new_v4();
+    let other_device = Uuid::new_v4();
+    let now = chrono::Utc::now();
+
+    use vela_server::sqldb::{Db as _, TursoValue};
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, recovery_share, created_at) VALUES (?, ?, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text("retired-share".into()),
+                TursoValue::Text(now.to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+    for device in [initiator, other_device] {
+        state
+            .sqldb
+            .execute(
+                "INSERT INTO devices (id, user_id, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, revoked, created_at)
+                 VALUES (?, ?, ?, ?, NULL, NULL, 0, ?)",
+                vec![
+                    TursoValue::Text(device.to_string()),
+                    TursoValue::Text(user.to_string()),
+                    TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                    TursoValue::Text(B64.encode(vec![0u8; 2624])),
+                    TursoValue::Text(now.to_rfc3339()),
+                ],
+            )
+            .await
+            .unwrap();
+    }
+
+    let token_initiator = issue_token(&state, user, initiator);
+    let token_other = issue_token(&state, user, other_device);
+
+    let attest = |token: &String| {
+        Request::builder()
+            .method("POST")
+            .uri("/device/rekey-capable")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone().oneshot(attest(&token_initiator)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+
+    // Seed one chunk at the current epoch.
+    let put = |token: &String, epoch: Option<i64>, if_match: &str, rotation_id: Option<&str>| {
+        let mut b = Request::builder()
+            .method("PUT")
+            .uri("/vault/chunk/vault-main")
+            .header("authorization", format!("Bearer {}", token))
+            .header("if-match", if_match)
+            .header("x-lamport-clock", "1");
+        if let Some(e) = epoch {
+            b = b.header("x-vela-epoch", e.to_string());
+        }
+        if let Some(id) = rotation_id {
+            b = b.header("x-vela-rekey-id", id);
+        }
+        b.body(Body::from(vec![1u8, 2, 3])).unwrap()
+    };
+
+    let resp = app.clone().oneshot(put(&token_initiator, None, "0", None)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // A malformed declaration must not silently become legacy/headerless.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/vault/chunk/bad-epoch")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .header("if-match", "0")
+                .header("x-lamport-clock", "1")
+                .header("x-vela-epoch", "not-an-integer")
+                .body(Body::from(vec![1u8]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Rotation is unavailable until every active device has positively
+    // attested that it retained its capsule private key.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/start")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        app.clone().oneshot(attest(&token_other)).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+
+    // Start: returns the next epoch plus the inventory.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/start")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["epoch"], 2);
+    let rotation_id = body["rotation_id"].as_str().unwrap().to_string();
+    assert_eq!(body["chunks"].as_array().unwrap().len(), 1);
+    assert_eq!(body["chunks"][0]["chunk_id"], "vault-main");
+
+    // Commit is structurally gated: the old row may not be swept until its
+    // epoch-2 shadow exists.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/commit")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // While freezing: a stale-epoch write from the offline device is refused
+    // with the dedicated code — this is the guard that keeps an old-key blob
+    // out of the new vault.
+    let resp = app.clone().oneshot(put(&token_other, Some(1), "1", None)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let err: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(err["error"], "vault_rekeyed");
+
+    // ...and even without an epoch header at all.
+    let resp = app.clone().oneshot(put(&token_other, None, "1", None)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/vault/chunk/vault-main")
+                .header("authorization", format!("Bearer {token_other}"))
+                .header("if-match", "1")
+                .header("x-vela-epoch", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "freeze rejects deletes");
+
+    // Knowing the target epoch does not authorize a sibling device to poison
+    // the starter's shadow rows.
+    let resp = app
+        .clone()
+        .oneshot(put(&token_other, Some(2), "0", Some(&rotation_id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Nor may the temporary web-session authority rotation is intended to
+    // retire populate a candidate row with attacker-chosen ciphertext.
+    let web = token_for(
+        &state,
+        user,
+        Uuid::new_v4(),
+        vela_server::auth::token::TokenScope::WebSession,
+    );
+    let resp = app.clone().oneshot(put(&web, Some(2), "0", Some(&rotation_id))).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // ORAM has no shadow migration protocol. Even a caller that knows the
+    // target epoch must not create buckets which become authoritative at
+    // commit without participating in the chunk completeness checks.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/vault/oram/tree/path/0")
+                .header("authorization", format!("Bearer {web}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "height": 0,
+                        "epoch": 2,
+                        "buckets": [{
+                            "bucket_index": 1,
+                            "if_match": 0,
+                            "lamport_clock": 1,
+                            "ciphertext": B64.encode([1u8, 2, 3]),
+                        }],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let oram_rows = state
+        .sqldb
+        .query(
+            "SELECT 1 FROM oram_buckets WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert!(oram_rows.is_empty(), "freeze must not create ORAM rows");
+
+    // The initiator's re-keyed copy lands as a shadow row at epoch 2. Replays
+    // must be tolerated (crash-resume), and successful progress refreshes the
+    // inactivity deadline instead of imposing a fixed 15-minute wall clock.
+    let old_activity = (chrono::Utc::now() - chrono::Duration::minutes(14)).to_rfc3339();
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_started_at = ? WHERE id = ?",
+            vec![
+                TursoValue::Text(old_activity.clone()),
+                TursoValue::Text(user.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let resp = app.clone().oneshot(put(
+            &token_initiator,
+            Some(2),
+            "0",
+            Some(&rotation_id),
+        )).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+    let activity = state
+        .sqldb
+        .query(
+            "SELECT rekey_started_at FROM users WHERE id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_ne!(activity[0].text(0), Some(old_activity.as_str()));
+
+    // Shadows alone are insufficient: every active device needs a capsule
+    // minted for this exact target epoch before commit can strand nobody.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/commit")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // Reads still serve the pre-rotation world until commit.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/vault/sync")
+                .header("authorization", format!("Bearer {}", token_other))
+                .header("x-vela-rekey-id", &rotation_id)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["epoch"], 1);
+    assert_eq!(manifest["chunks"].as_array().unwrap().len(), 1);
+
+    // Capsules: only the starter may store them, and only for real devices.
+    let capsules = json!({
+        "capsules": {
+            initiator.to_string(): "Y2Fwc3VsZS1mb3ItaW5pdGlhdG9y",
+            other_device.to_string(): "Y2Fwc3VsZS1mb3Itb3RoZXI=",
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/capsules")
+                .header("authorization", format!("Bearer {}", token_other))
+                .header("content-type", "application/json")
+                .body(Body::from(capsules.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "non-starter refused");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/capsules")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
+                .header("content-type", "application/json")
+                .body(Body::from(capsules.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Commit flips the epoch and sweeps the superseded rows.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/commit")
+                .header("authorization", format!("Bearer {}", token_initiator))
+                .header("x-vela-rekey-id", &rotation_id)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Commit retires both old recovery shares and outstanding browser grants.
+    let recovery = state
+        .sqldb
+        .query(
+            "SELECT recovery_share FROM users WHERE id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(recovery[0].get(0), None | Some(TursoValue::Null)));
+    let resp = app
+        .clone()
+        .oneshot(put(&web, Some(2), "2", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "a pre-rotation web grant must lose write authority"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/vault/epoch")
+                .header("authorization", format!("Bearer {}", token_other))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["epoch"], 2);
+    assert_eq!(body["state"], "active");
+
+    // A commit response may be lost after the CAS succeeds. Replaying with
+    // the target epoch must report success rather than an ambiguous conflict.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/commit")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .header("x-vela-rekey-id", &rotation_id)
+                .header("x-vela-epoch", "2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // A legacy/offline client that omits X-Vela-Epoch must not have its
+    // old-RMS ciphertext silently labelled as epoch 2 after commit.
+    let resp = app
+        .clone()
+        .oneshot(put(&token_other, None, "2", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let err: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(err["error"], "vault_rekeyed");
+
+    // Deletes are writes too: a stale headerless client must not be able to
+    // delete the new epoch merely because its cached version happens to match.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/vault/chunk/vault-main")
+                .header("authorization", format!("Bearer {token_other}"))
+                .header("if-match", "2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // Exactly ONE row survives per chunk — the epoch-2 re-keyed copy.
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT epoch FROM vault_chunks WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "superseded rows must be swept at commit");
+
+    let capsule_req = || {
+        Request::builder()
+            .uri("/device/capsule")
+            .header("authorization", format!("Bearer {}", token_other))
+            .body(Body::empty())
+            .unwrap()
+    };
+    // Rekey capsules remain retryable until the device durably adopts and
+    // explicitly acknowledges them.
+    for _ in 0..2 {
+        let resp = app.clone().oneshot(capsule_req()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["epoch"], 2);
+        assert_eq!(body["rotation_id"], rotation_id);
+    }
+    // An ACK for another epoch must neither masquerade as an idempotent retry
+    // nor consume the transition which this device still needs.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/capsule/ack")
+                .header("authorization", format!("Bearer {}", token_other))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 3 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        app.clone().oneshot(capsule_req()).await.unwrap().status(),
+        StatusCode::OK,
+        "a mismatched ACK must leave the pending capsule available"
+    );
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/capsule/ack")
+                .header("authorization", format!("Bearer {}", token_other))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 2 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    // Lost ACK responses are harmless: replay succeeds after the row is clear.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/capsule/ack")
+                .header("authorization", format!("Bearer {}", token_other))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 2 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = app.clone().oneshot(capsule_req()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // The initiator has not ACKed its retained crash-recovery capsule yet, so
+    // another rotation must not overwrite the only transition it could use
+    // after a lost local migration.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/start")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("adopt and acknowledge"));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/capsule/ack")
+                .header("authorization", format!("Bearer {token_initiator}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "epoch": 2 }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // A concurrent abort and commit must have exactly one winner. In
+    // particular, the loser must never sweep the epoch the winner made live.
+    let start = Request::builder()
+        .method("POST")
+        .uri("/vault/rekey/start")
+        .header("authorization", format!("Bearer {token_initiator}"))
+        .body(Body::empty())
+        .unwrap();
+    let start = app.clone().oneshot(start).await.unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let start_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(start.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let rotation_id3 = start_body["rotation_id"].as_str().unwrap().to_string();
+
+    // A delayed upload from the previous N -> N+1 attempt must not be accepted
+    // by this new attempt merely because it came from the same device.
+    assert_eq!(
+        app.clone()
+            .oneshot(put(
+                &token_initiator,
+                Some(3),
+                "0",
+                Some(&rotation_id),
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(put(
+                &token_initiator,
+                Some(3),
+                "0",
+                Some(&rotation_id3),
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let capsules3 = json!({
+        "capsules": {
+            initiator.to_string(): "Y2Fwc3VsZS0zLWluaXQ=",
+            other_device.to_string(): "Y2Fwc3VsZS0zLW90aGVy",
+        }
+    });
+    let stale_capsules = Request::builder()
+        .method("POST")
+        .uri("/vault/rekey/capsules")
+        .header("authorization", format!("Bearer {token_initiator}"))
+        .header("x-vela-rekey-id", &rotation_id)
+        .header("content-type", "application/json")
+        .body(Body::from(capsules3.to_string()))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(stale_capsules).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "capsules from a prior attempt must not overwrite the current attempt"
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/vault/rekey/capsules")
+                    .header("authorization", format!("Bearer {token_initiator}"))
+                    .header("x-vela-rekey-id", &rotation_id3)
+                    .header("content-type", "application/json")
+                    .body(Body::from(capsules3.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    let commit = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/vault/rekey/commit")
+            .header("authorization", format!("Bearer {token_initiator}"))
+            .header("x-vela-rekey-id", &rotation_id3)
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let abort = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/vault/rekey/abort")
+            .header("authorization", format!("Bearer {token_initiator}"))
+            .header("x-vela-rekey-id", &rotation_id3)
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let (commit, abort) = tokio::join!(commit, abort);
+    let commit = commit.unwrap();
+    let abort = abort.unwrap();
+    let statuses = [commit.status(), abort.status()];
+    let details = [
+        String::from_utf8_lossy(
+            &axum::body::to_bytes(commit.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned(),
+        String::from_utf8_lossy(
+            &axum::body::to_bytes(abort.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned(),
+    ];
+    assert_eq!(
+        statuses.iter().filter(|&&s| s == StatusCode::NO_CONTENT).count(),
+        1,
+        "exactly one state transition wins: {statuses:?} {details:?}"
+    );
+    assert_eq!(
+        statuses.iter().filter(|&&s| s == StatusCode::CONFLICT).count(),
+        1,
+        "the losing transition reports a conflict"
+    );
+    let user_state = state
+        .sqldb
+        .query(
+            "SELECT key_epoch FROM users WHERE id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    let winning_epoch = user_state[0].i64(0).unwrap();
+    let chunks = state
+        .sqldb
+        .query(
+            "SELECT epoch FROM vault_chunks WHERE user_id = ?",
+            vec![TursoValue::Text(user.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].i64(0), Some(winning_epoch));
+}
+
+#[tokio::test]
+async fn rekey_start_refuses_accounts_with_oram_buckets() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user = Uuid::new_v4();
+    let device = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at) VALUES (?, ?)",
+            vec![TursoValue::Text(user.to_string()), TursoValue::Text(now.clone())],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO devices
+             (id, user_id, hybrid_ek, hybrid_vk, revoked, created_at)
+             VALUES (?, ?, ?, ?, 0, ?)",
+            vec![
+                TursoValue::Text(device.to_string()),
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(vec![0u8; 2624])),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO oram_buckets
+             (user_id, tree_id, bucket_index, version, ciphertext, epoch, created_at, updated_at)
+             VALUES (?, 'tree', 1, 1, 'Y3Q=', 1, ?, ?)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(now.clone()),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let token = issue_token(&state, user, device);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/vault/rekey/start")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn oram_writes_declare_and_accept_post_rotation_epoch() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user = Uuid::new_v4();
+    let device = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at, key_epoch) VALUES (?, ?, 2)",
+            vec![
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO devices
+             (id, user_id, hybrid_ek, hybrid_vk, revoked, created_at)
+             VALUES (?, ?, ?, ?, 0, ?)",
+            vec![
+                TursoValue::Text(device.to_string()),
+                TursoValue::Text(user.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(vec![0u8; 2624])),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+    let token = issue_token(&state, user, device);
+    let body = |epoch: Option<i64>| {
+        json!({
+            "height": 0,
+            "epoch": epoch,
+            "buckets": [{
+                "bucket_index": 1,
+                "if_match": 0,
+                "lamport_clock": 1,
+                "ciphertext": B64.encode([1u8, 2, 3]),
+            }],
+        })
+    };
+    let request = |body: serde_json::Value| {
+        Request::builder()
+            .method("PUT")
+            .uri("/vault/oram/tree/path/0")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+
+    assert_eq!(
+        app.clone().oneshot(request(body(None))).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "headerless legacy writes remain forbidden after epoch 1"
+    );
+    assert_eq!(
+        app.oneshot(request(body(Some(2)))).await.unwrap().status(),
+        StatusCode::OK,
+        "an ORAM write sealed for the active post-rotation epoch succeeds"
+    );
 }

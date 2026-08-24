@@ -989,15 +989,9 @@ pub mod server {
         }
 
         // Persist the encrypted vault to disk.
-        {
-            let vault = state.vault.read();
-            let crypto = state.crypto.read();
-            if let Some(crypto) = crypto.as_ref() {
-                if let Err(e) = state.store.save_vault(&vault, crypto) {
-                    error!("Failed to persist vault after save: {}", e);
-                    return save_response(false, None, Some("Failed to save vault".to_string()));
-                }
-            }
+        if let Err(e) = state.persist_current_vault() {
+            error!("Failed to persist vault after save: {}", e);
+            return save_response(false, None, Some("Failed to save vault".to_string()));
         }
 
         crate::audit::record_audit_event(
@@ -1261,7 +1255,7 @@ pub mod server {
             fn show_toast(&self, message: &str) {
                 self.toasts.lock().unwrap().push(message.to_string());
             }
-            fn confirm_presence(&self, _prompt: &str) -> Option<bool> {
+            fn confirm_presence(&self, _title: &str, _prompt: &str) -> Option<bool> {
                 self.presence_prompts.fetch_add(1, Ordering::SeqCst);
                 match self.presence_answer.load(Ordering::SeqCst) {
                     1 => Some(true),

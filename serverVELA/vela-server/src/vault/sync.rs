@@ -19,6 +19,10 @@ pub struct ChunkMeta {
 
 #[derive(Serialize)]
 pub struct SyncManifest {
+    /// Epoch whose rows are represented by this manifest. Web sessions cannot
+    /// call the device-only epoch endpoint, so this is their authenticated
+    /// source of truth for ciphertext AAD and write headers.
+    pub epoch: i64,
     pub chunks: Vec<ChunkMeta>,
 }
 
@@ -26,14 +30,21 @@ pub async fn get_sync(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<SyncManifest>)> {
+    // The manifest lists only the currently-served epoch's rows: a device that
+    // has not yet adopted sees the pre-rotation world; after adopting (and
+    // commit), it sees the new one — never a mix of both.
+    let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
     let rows = state
         .sqldb
         .query(
             "SELECT chunk_id, version, lamport_clock, last_writer
          FROM vault_chunks
-         WHERE user_id = ?
+         WHERE user_id = ? AND epoch = ?
          ORDER BY chunk_id",
-            vec![TursoValue::Text(session.user_id.to_string())],
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Integer(read_epoch),
+            ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -54,5 +65,11 @@ pub async fn get_sync(
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
 
-    Ok((headers, Json(SyncManifest { chunks })))
+    Ok((
+        headers,
+        Json(SyncManifest {
+            epoch: read_epoch,
+            chunks,
+        }),
+    ))
 }

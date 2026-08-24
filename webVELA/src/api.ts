@@ -77,6 +77,9 @@ export interface ChunkMeta {
 }
 
 export class AuthedSession {
+  /** Authenticated epoch returned by the latest sync manifest. */
+  epoch = 1;
+
   constructor(public token: string) {}
 
   private async req(method: string, path: string, body?: BodyInit, headers: Record<string, string> = {}) {
@@ -94,7 +97,12 @@ export class AuthedSession {
   async manifest(): Promise<Map<string, ChunkMeta>> {
     const r = await this.req('GET', '/vault/sync');
     if (!r.ok) throw new Error(`Sync failed (HTTP ${r.status})`);
-    const m = (await r.json()) as { chunks: { chunk_id: string; version: number; lamport_clock: number }[] };
+    const m = (await r.json()) as {
+      epoch: number;
+      chunks: { chunk_id: string; version: number; lamport_clock: number }[];
+    };
+    if (!Number.isSafeInteger(m.epoch) || m.epoch < 1) throw new Error('Server returned an invalid vault epoch.');
+    this.epoch = m.epoch;
     const out = new Map<string, ChunkMeta>();
     for (const c of m.chunks) out.set(c.chunk_id, { version: c.version, lamport: c.lamport_clock });
     return out;
@@ -114,6 +122,7 @@ export class AuthedSession {
       'Content-Type': 'application/octet-stream',
       'If-Match': String(ifMatch),
       'X-Lamport-Clock': String(lamport),
+      'X-Vela-Epoch': String(this.epoch),
     });
     if (r.status === 409) throw new Error('The vault changed on another device — reload to get the latest.');
     if (!r.ok) throw new Error(`Save failed (HTTP ${r.status})`);
@@ -123,6 +132,9 @@ export class AuthedSession {
 
   /** Delete a stale chunk (best-effort). */
   async deleteChunk(chunkId: string, ifMatch: number): Promise<void> {
-    await this.req('DELETE', `/vault/chunk/${chunkId}`, undefined, { 'If-Match': String(ifMatch) });
+    await this.req('DELETE', `/vault/chunk/${chunkId}`, undefined, {
+      'If-Match': String(ifMatch),
+      'X-Vela-Epoch': String(this.epoch),
+    });
   }
 }

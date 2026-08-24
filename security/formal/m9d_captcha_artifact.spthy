@@ -1,0 +1,140 @@
+theory M9d_CaptchaArtifactLogin
+/*
+  Model 9d - the CAPTCHA-artifact tier (Tier A / the recipe machinery). The
+  browser mints the artifact a gated site demands - a solved CAPTCHA token,
+  plus its own pre-session cookie jar - and the CORE still submits the
+  credential over its own TLS. Only the session reaches the domain afterwards,
+  exactly as in M9a.
+
+  This model exists because M9a's proof assumes the desktop->site leg carries
+  everything the site checks. Tier A breaks that assumption by design: the
+  login request now contains a component the browser produced. The question
+  the tier left open (`security/in-core-login-future-work.md`, §2, "M9d the
+  formal model") is whether that component is an adversary-observable that
+  CHANGES THE SECRECY STORY - whether letting the domain mint part of the
+  login request lets the adversary learn the credential, or log in without it.
+
+  The answer the model certifies: NO - expected inert. The token is modelled
+  as fully adversary-observable (it is lifted out of a page, and pages are in
+  the domain), and the cookie jar as fully adversary-chosen (In facts, the
+  strongest form of attacker influence). Neither helps the adversary:
+
+    * the token authenticates nothing about WHO logs in - the site checks it
+      alongside a credential that comes only from the vault path;
+    * the token is spent once (linear fact) - a lifted token cannot be replayed
+      into a second login;
+    * sessions are still minted exclusively behind the vault + approval path.
+
+  What the model deliberately does NOT certify: the policy cost of the lift
+  (the token shape is indistinguishable from CAPTCHA-relay tooling - recorded
+  in the recipe module header, not hidden here), and anything about sites
+  whose gate binds the login to the browser beyond the token (the Netflix-class
+  wall, §4 of the future-work file - those sites are simply not reachable by
+  this tier and not modelled).
+
+  Expected:
+    credential_never_leaks              VERIFIED - the answer to the open
+        question: the observable artifact does not change the secrecy story.
+    used_item_still_secret              VERIFIED - even after LoginOk.
+    artifact_is_adversary_observable    (exists-trace) VERIFIED - the model
+        really grants the adversary the token; the inertness result is not an
+        artefact of hiding it.
+    every_session_goes_through_the_vault VERIFIED - no session is minted
+        without an approval of some vault credential at that origin.
+    a_lifted_token_logs_in_once         VERIFIED - single-use: two logins can
+        never share one token.
+*/
+
+begin
+
+// The vault and the site's record of the SAME credential.
+rule Setup:
+    [ Fr(~cred) ]
+  --[ Secret(~cred, $O) ]->
+    [ !Vault(~cred, $O), !SiteStore(~cred, $O) ]
+
+// One-time login approval (DE gate, M6/M9a-consistent).
+rule Human_Approve_Login:
+    [ !Vault(cred, $O), Fr(~g) ]
+  --[ LoginApproved(cred, $O) ]->
+    [ LoginGrant(cred, $O) ]
+
+// The user solves the CAPTCHA in their OWN tab at the origin. The token is
+// minted for the browser, and the page is in the domain, so the token goes Out:
+// this rule deliberately HANDS IT TO THE ADVERSARY. That is the whole point -
+// the open question was precisely whether this observability matters.
+rule Human_Solves_Captcha:
+    [ Fr(~tok) ]
+  --[ CaptchaSolved($O, ~tok) ]->
+    [ Out(<'captcha', $O, ~tok>), CaptchaToken($O, ~tok) ]
+
+// The extension lifts the solved token out of the page and relays it to the
+// core over native messaging (authenticated IPC - but the token was already
+// public, so this leg adds no secrecy, only delivery).
+rule Extension_Lifts_Token:
+    [ CaptchaToken($O, tok) ]
+  --[ TokenLifted($O, tok) ]->
+    [ TokenAtCore($O, tok) ]
+
+// Tier-A login: core submits credential + token over its own TLS. The cookie
+// jar rides along as an In fact - fully adversary-chosen input, because the
+// jar lives in the domain. It gates reachability at real sites; here the site
+// checks none of it, which is the conservative direction: whatever influence
+// the adversary gains over the request, the credential still comes from the
+// vault path and the token is consumed (linear) by this very rule.
+rule Desktop_Login_With_Artifact:
+    [ !Vault(cred, $O), LoginGrant(cred, $O), TokenAtCore($O, tok), In(<'jar', $O>) ]
+  --[ LoginPerformedWithArtifact(cred, $O, tok) ]->
+    [ CredToSite(cred, $O, tok) ]
+
+// The site verifies the credential against its record and issues the session
+// artifact into the domain - same shape as M9a's issuance.
+rule Site_CheckAndIssue:
+    [ !SiteStore(cred, O), CredToSite(cred, O, tok), Fr(~sid) ]
+  --[ SessionIssued(O, ~sid, tok), LoginOk(cred, O) ]->
+    [ Out(<'session', O, ~sid>) ]
+
+// ---- Secrecy: the open question, answered ------------------------------------
+
+lemma credential_never_leaks:
+  "All c O #i.
+     Secret(c, O) @ i ==> not(Ex #j. K(c) @ j)"
+
+lemma used_item_still_secret:
+  "All c O #i.
+     LoginOk(c, O) @ i ==> not(Ex #j. K(c) @ j)"
+
+// ---- Structure: where sessions can come from, and how often tokens work ------
+
+// Every session traces back to an approved vault credential at that origin.
+// Possessing the token and the cookie jar - both adversary-reachable - mints
+// nothing on its own.
+lemma every_session_goes_through_the_vault:
+  "All O sid t #i.
+     SessionIssued(O, sid, t) @ i
+     ==> Ex c #j. LoginApproved(c, O) @ j"
+
+// Single-use: one token can never carry two logins. TokenAtCore is linear and
+// nothing ever restores it, so a token lifted from the user's solve is spent
+// exactly once - by the core, on the user's account.
+lemma a_lifted_token_logs_in_once:
+  "All c1 c2 O t #i #j.
+     LoginPerformedWithArtifact(c1, O, t) @ i &
+     LoginPerformedWithArtifact(c2, O, t) @ j
+     ==> #i = #j"
+
+// ---- Existence ----------------------------------------------------------------
+
+// The premise of the open question, made true inside the model: the adversary
+// really does learn the artifact. Everything above holds WITH this trace.
+lemma artifact_is_adversary_observable:
+  exists-trace
+  "Ex O t #i. K(<'captcha', O, t>) @ i"
+
+// Sanity: the tier still works when nobody attacks it.
+lemma login_succeeds:
+  exists-trace
+  "Ex O sid c #i #j #k.
+     LoginOk(c, O) @ i & K(<'session', O, sid>) @ j & LoginApproved(c, O) @ k"
+
+end

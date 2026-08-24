@@ -14,6 +14,8 @@ struct SyncEngine {
 
     let client: VelaClient
     let repo: VaultRepository
+    /// Epoch authenticated by the RMS supplied to `sync`.
+    let keyEpoch: Int
 
     enum SyncError: LocalizedError {
         case crypto
@@ -168,7 +170,8 @@ struct SyncEngine {
                 rms: rms,
                 chunkID: id,
                 ciphertextBase64: fetched.ciphertextBase64,
-                lamportClock: Int64(byID[id]?.lamport_clock ?? 0)) else {
+                lamportClock: Int64(byID[id]?.lamport_clock ?? 0),
+                keyEpoch: keyEpoch) else {
                 // A failed decrypt used to be skipped silently; the truncated
                 // merge was then pushed back, making the loss durable. Fail the
                 // sync instead — the local vault stays intact and usable.
@@ -203,11 +206,13 @@ struct SyncEngine {
                 let existing = byID[id]
                 lamport = max(lamport, existing?.lamport_clock ?? 0) + 1
                 guard let cipherB64 = VelaCoreFFI.encryptVaultChunk(
-                    rms: rms, chunkID: id, vaultJSON: piece, lamportClock: lamport) else {
+                    rms: rms, chunkID: id, vaultJSON: piece, lamportClock: lamport,
+                    keyEpoch: keyEpoch) else {
                     throw SyncError.crypto
                 }
                 _ = try await client.putChunk(
-                    id, ciphertextBase64: cipherB64, ifMatch: existing?.version ?? 0, lamportClock: lamport)
+                    id, ciphertextBase64: cipherB64, ifMatch: existing?.version ?? 0,
+                    lamportClock: lamport, keyEpoch: keyEpoch)
                 written.append((id: id, clock: lamport))
             }
             recordSeenClock(lamport)
@@ -219,10 +224,12 @@ struct SyncEngine {
             for chunk in manifest.chunks {
                 if chunk.chunk_id.hasPrefix(Self.dataPrefix) {
                     if let idx = Int(chunk.chunk_id.dropFirst(Self.dataPrefix.count)), idx >= pieces.count {
-                        try? await client.deleteChunk(chunk.chunk_id, ifMatch: chunk.version)
+                        try? await client.deleteChunk(
+                            chunk.chunk_id, ifMatch: chunk.version, keyEpoch: keyEpoch)
                     }
                 } else if chunk.chunk_id == Self.legacyMainID || chunk.chunk_id == Self.legacyIOSID {
-                    try? await client.deleteChunk(chunk.chunk_id, ifMatch: chunk.version)
+                    try? await client.deleteChunk(
+                        chunk.chunk_id, ifMatch: chunk.version, keyEpoch: keyEpoch)
                 }
             }
         }

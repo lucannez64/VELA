@@ -66,6 +66,8 @@ pub struct SettingsScreen {
     delete_confirm_state: gpui::Entity<EditableTextState>,
     deleting: bool,
     delete_error: Option<SharedString>,
+    rotating: bool,
+    rotate_status: Option<SharedString>,
     syncing: bool,
     sync_status: Option<vela_desktop_core::sync::SyncStatus>,
     sync_error: Option<SharedString>,
@@ -148,6 +150,8 @@ impl SettingsScreen {
             delete_confirm_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             deleting: false,
             delete_error: None,
+            rotating: false,
+            rotate_status: None,
             syncing: false,
             sync_status: None,
             sync_error: None,
@@ -738,6 +742,54 @@ impl SettingsScreen {
         }
     }
 
+    /// Rotate the account's Root Master Seed (vault re-keying). Long-running:
+    /// downloads, re-encrypts and re-uploads every chunk, so the row reports
+    /// progress as a busy state rather than pretending to be instant.
+    fn rotate_keys(&mut self, cx: &mut Context<Self>) {
+        self.rotating = true;
+        self.rotate_status = None;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            // Network-bound rotation — must run on the real tokio runtime via
+            // gpui_tokio's bridge (same reason as `delete_vault` above).
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                vela_desktop_core::commands::rekey::rotate_vault_keys(&app_state).await
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                this.rotating = false;
+                match result {
+                    Ok(Ok(summary)) => {
+                        let mut message = format!(
+                            "Vault re-keyed: epoch {} → {}, {} chunks, {} devices sealed.",
+                            summary.from_epoch,
+                            summary.to_epoch,
+                            summary.chunks_rekeyed,
+                            summary.devices_sealed,
+                        );
+                        if summary.recovery_setup_required {
+                            message.push_str(
+                                " Recovery shares were retired. Set up every recovery method again now.",
+                            );
+                        }
+                        this.rotate_status = Some(message.into());
+                        if summary.recovery_setup_required {
+                            let app_state = this.app_state.clone();
+                            Self::load_recovery_status(&app_state, cx);
+                        }
+                    }
+                    Ok(Err(e)) => this.rotate_status = Some(format!("Rotation failed: {e}").into()),
+                    Err(e) => this.rotate_status = Some(format!("Task failed: {e}").into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn delete_vault(&mut self, cx: &mut Context<Self>) {
         self.deleting = true;
         self.delete_error = None;
@@ -1210,7 +1262,40 @@ fn security_section(
                                 .child(settings.quick_search_shortcut.clone())
                                 .into_any_element()
                         }),
-                ),
+                )
+                // Vault re-keying: rotate the Root Master Seed so every
+                // long-lived key derived from it — chunk keys an RW web
+                // session held, old recovery shares, anything leaked — stops
+                // working (docs/VAULT_REKEYING_DESIGN.md).
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .child(field_label(
+                            palette,
+                            "Rotate vault keys",
+                            "Retire every key derived from the master seed. Other devices adopt the new seed on their next sync.",
+                        ))
+                        .child(action_button(palette, "rotate-keys", if screen.rotating { "Rotating…" } else { "Rotate" }, window, cx).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                if !this.rotating {
+                                    this.rotate_keys(cx);
+                                }
+                            }),
+                        )),
+                )
+                .when_some(screen.rotate_status.clone(), |el, status| {
+                    el.child(
+                        div()
+                            .text_xs()
+                            .font_family(fonts::MONO)
+                            .text_color(palette.on_surface_variant)
+                            .child(status),
+                    )
+                }),
         )
 }
 

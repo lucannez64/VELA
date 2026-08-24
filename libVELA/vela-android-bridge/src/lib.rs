@@ -15,6 +15,7 @@ use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
 use vela_crypto::aead;
 use vela_crypto::kdf;
 use vela_crypto::kem;
+use vela_crypto::rekey;
 use vela_crypto::shamir;
 use zeroize::Zeroize;
 
@@ -179,6 +180,9 @@ struct EncryptChunkRequest {
     /// (audit C-2). Deliberately *not* defaulted: a caller that forgets it would
     /// otherwise seal against clock 0 and write something nothing can read.
     lamport_clock: i64,
+    /// Account epoch whose RMS derived this chunk key. Mandatory so an
+    /// epoch-2 caller cannot accidentally emit legacy-AAD ciphertext.
+    key_epoch: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -192,6 +196,8 @@ struct DecryptChunkRequest {
     /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
     #[serde(default)]
     lamport_clock: i64,
+    /// Authenticated manifest epoch. Mandatory and checked against the AEAD.
+    key_epoch: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -662,10 +668,14 @@ fn encrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let _: VaultStore = serde_json::from_str(&request.vault_json)?;
     let key = chunk_key(&rms, &request.chunk_id);
-    let ciphertext = aead::seal(
+    let epoch = u64::try_from(request.key_epoch)
+        .map_err(|_| "vault key epoch must be positive")?;
+    let ciphertext = rekey::seal_fleet_chunk(
         &key,
         request.vault_json.as_bytes(),
-        &aead::vault_chunk_aad(&request.chunk_id, request.lamport_clock),
+        epoch,
+        &request.chunk_id,
+        request.lamport_clock,
     )?;
     Ok(EncryptVaultResponse {
         ciphertext_b64: B64.encode(ciphertext),
@@ -677,9 +687,12 @@ fn decrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &request.chunk_id);
-    let plaintext = aead::open_vault_chunk(
+    let epoch = u64::try_from(request.key_epoch)
+        .map_err(|_| "vault key epoch must be positive")?;
+    let plaintext = rekey::open_fleet_chunk(
         &key,
         &ciphertext,
+        epoch,
         &request.chunk_id,
         request.lamport_clock,
     )?;
@@ -1296,6 +1309,7 @@ mod tests {
                 "chunk_id": "vault-data-000000",
                 "vault_json": vault_json,
                 "lamport_clock": 3,
+                "key_epoch": 1,
             })
             .to_string(),
         )
@@ -1306,6 +1320,7 @@ mod tests {
                 "chunk_id": "vault-data-000000",
                 "ciphertext_b64": encrypted.ciphertext_b64,
                 "lamport_clock": 3,
+                "key_epoch": 1,
             })
             .to_string(),
         )
@@ -1329,6 +1344,130 @@ mod tests {
             &serde_json::json!({ "vault_json": vault_json }).to_string()
         )
         .is_err());
+    }
+
+    #[test]
+    fn android_chunk_crypto_binds_and_enforces_rotated_epochs() {
+        let rms = [8u8; 32];
+        let vault_json = r#"{"items":[],"tombstones":[]}"#;
+        let encrypted = encrypt_vault_chunk_with_rms(
+            &rms,
+            &serde_json::json!({
+                "chunk_id": "vault-data-000000",
+                "vault_json": vault_json,
+                "lamport_clock": 9,
+                "key_epoch": 2,
+            })
+            .to_string(),
+        )
+        .expect("seal epoch-2 chunk");
+
+        let decrypt = |epoch| {
+            decrypt_vault_chunk_with_rms(
+                &rms,
+                &serde_json::json!({
+                    "chunk_id": "vault-data-000000",
+                    "ciphertext_b64": encrypted.ciphertext_b64,
+                    "lamport_clock": 9,
+                    "key_epoch": epoch,
+                })
+                .to_string(),
+            )
+        };
+        assert_eq!(decrypt(2).unwrap().vault_json, vault_json);
+        assert!(decrypt(1).is_err(), "an epoch-2 chunk must not open as epoch 1");
+        assert!(decrypt(3).is_err(), "an epoch-2 chunk must not open as epoch 3");
+        for (candidate_rms, chunk_id, lamport) in [
+            ([9u8; 32], "vault-data-000000", 9),
+            (rms, "vault-data-000001", 9),
+            (rms, "vault-data-000000", 10),
+        ] {
+            assert!(decrypt_vault_chunk_with_rms(
+                &candidate_rms,
+                &serde_json::json!({
+                    "chunk_id": chunk_id,
+                    "ciphertext_b64": encrypted.ciphertext_b64,
+                    "lamport_clock": lamport,
+                    "key_epoch": 2,
+                })
+                .to_string(),
+            )
+            .is_err());
+        }
+
+        for invalid in [
+            serde_json::json!({
+                "chunk_id": "vault-data-000000",
+                "vault_json": vault_json,
+                "lamport_clock": 9,
+            }),
+            serde_json::json!({
+                "chunk_id": "vault-data-000000",
+                "vault_json": vault_json,
+                "lamport_clock": 9,
+                "key_epoch": 0,
+            }),
+        ] {
+            assert!(encrypt_vault_chunk_with_rms(&rms, &invalid.to_string()).is_err());
+        }
+        for invalid in [
+            serde_json::json!({
+                "chunk_id": "vault-data-000000",
+                "ciphertext_b64": encrypted.ciphertext_b64,
+                "lamport_clock": 9,
+            }),
+            serde_json::json!({
+                "chunk_id": "vault-data-000000",
+                "ciphertext_b64": encrypted.ciphertext_b64,
+                "lamport_clock": 9,
+                "key_epoch": 0,
+            }),
+        ] {
+            assert!(decrypt_vault_chunk_with_rms(&rms, &invalid.to_string()).is_err());
+        }
+    }
+
+    #[test]
+    fn android_accepts_legacy_chunks_only_at_epoch_one() {
+        let rms = [10u8; 32];
+        let chunk_id = "vault-data-000000";
+        let lamport = 4;
+        let key = chunk_key(&rms, chunk_id);
+        let legacy = aead::seal(
+            &key,
+            br#"{"items":[],"tombstones":[]}"#,
+            &aead::vault_chunk_aad(chunk_id, lamport),
+        )
+        .unwrap();
+        let request = |epoch| {
+            serde_json::json!({
+                "chunk_id": chunk_id,
+                "ciphertext_b64": B64.encode(&legacy),
+                "lamport_clock": lamport,
+                "key_epoch": epoch,
+            })
+            .to_string()
+        };
+
+        assert!(decrypt_vault_chunk_with_rms(&rms, &request(1)).is_ok());
+        assert!(decrypt_vault_chunk_with_rms(&rms, &request(2)).is_err());
+
+        let encrypted_at_one = encrypt_vault_chunk_with_rms(
+            &rms,
+            &serde_json::json!({
+                "chunk_id": chunk_id,
+                "vault_json": r#"{"items":[],"tombstones":[]}"#,
+                "lamport_clock": lamport,
+                "key_epoch": 1,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let emitted = B64.decode(encrypted_at_one.ciphertext_b64).unwrap();
+        assert!(
+            aead::open_vault_chunk(&key, &emitted, chunk_id, lamport).is_ok(),
+            "epoch 1 must remain readable by legacy mobile clients"
+        );
     }
 
     /// The recovery/enrollment paths hand the RMS back as raw bytes for the

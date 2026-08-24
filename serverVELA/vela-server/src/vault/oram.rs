@@ -42,6 +42,10 @@ pub struct OramPathResponse {
 #[derive(Deserialize)]
 pub struct PutOramPathRequest {
     pub height: u32,
+    /// Epoch under whose RMS-derived key these buckets were sealed. Optional
+    /// only for legacy epoch-1 clients.
+    #[serde(default)]
+    pub epoch: Option<i64>,
     pub buckets: Vec<PutOramBucket>,
 }
 
@@ -74,17 +78,21 @@ pub async fn get_path(
     let indices = path_bucket_indices(query.height, leaf)?;
     let mut buckets = Vec::with_capacity(indices.len());
 
+    // Serve only the account's current-epoch rows (re-keying design §5).
+    let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
+
     for bucket_index in indices {
         let rows = state
             .sqldb
             .query(
                 "SELECT version, lamport_clock, last_writer, ciphertext
              FROM oram_buckets
-             WHERE user_id = ? AND tree_id = ? AND bucket_index = ?",
+             WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
                 vec![
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Text(tree_id.clone()),
                     TursoValue::Integer(bucket_index as i64),
+                    TursoValue::Integer(read_epoch),
                 ],
             )
             .await
@@ -162,11 +170,21 @@ pub async fn put_path(
     let now = Utc::now().to_rfc3339();
     let mut updated = Vec::with_capacity(body.buckets.len());
 
-    let incoming: u64 = body
-        .buckets
-        .iter()
-        .map(|b| b.ciphertext.len() as u64)
-        .sum();
+    // ORAM paths rewrite whole buckets, so they cannot be shadowed the way
+    // vault chunks can. Rather than risk a mixed-epoch tree, writes are simply
+    // refused for the (bounded) freeze window; clients retry after adopting.
+    let declared = body.epoch;
+    let (write_epoch, read_epoch) =
+        crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared)
+            .await?;
+    let authority_epoch = session.write_epoch_authority(write_epoch)?;
+    if write_epoch != read_epoch {
+        return Err(AppError::Rekeyed(
+            "ORAM writes are unavailable while a re-key is in progress".into(),
+        ));
+    }
+
+    let incoming: u64 = body.buckets.iter().map(|b| b.ciphertext.len() as u64).sum();
     crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), incoming).await?;
 
     for bucket in body.buckets {
@@ -187,11 +205,12 @@ pub async fn put_path(
                 .sqldb
                 .query(
                     "SELECT 1 FROM oram_buckets
-                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ?",
+                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
                     vec![
                         TursoValue::Text(session.user_id.to_string()),
                         TursoValue::Text(tree_id.clone()),
                         TursoValue::Integer(bucket_index_i64),
+                        TursoValue::Integer(write_epoch),
                     ],
                 )
                 .await
@@ -204,10 +223,11 @@ pub async fn put_path(
                 )));
             }
 
-            state.sqldb.execute(
+            let inserted = state.sqldb.execute(
                 "INSERT INTO oram_buckets
-                 (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, created_at, updated_at)
-                 VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+                 (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
+                 SELECT ?, ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
+                 WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
                 vec![
                     TursoValue::Text(session.user_id.to_string()),
                     TursoValue::Text(tree_id.clone()),
@@ -215,10 +235,18 @@ pub async fn put_path(
                     TursoValue::Integer(bucket.lamport_clock),
                     TursoValue::Text(session.device_id.to_string()),
                     TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                    TursoValue::Integer(write_epoch),
                     TursoValue::Text(now.clone()),
                     TursoValue::Text(now.clone()),
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Integer(authority_epoch),
                 ],
             ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+            if inserted != 1 {
+                return Err(AppError::Rekeyed(
+                    "vault epoch changed before the ORAM write completed".into(),
+                ));
+            }
             1
         } else {
             let n = state
@@ -233,7 +261,13 @@ pub async fn put_path(
                  WHERE user_id = ?
                    AND tree_id = ?
                    AND bucket_index = ?
-                   AND version = ?",
+                   AND version = ?
+                   AND epoch = ?
+                   AND EXISTS (
+                     SELECT 1 FROM users
+                     WHERE users.id = oram_buckets.user_id
+                       AND users.key_epoch = ? AND users.rekey_state IS NULL
+                   )",
                     vec![
                         TursoValue::Integer(bucket.lamport_clock),
                         TursoValue::Text(session.device_id.to_string()),
@@ -243,12 +277,28 @@ pub async fn put_path(
                         TursoValue::Text(tree_id.clone()),
                         TursoValue::Integer(bucket_index_i64),
                         TursoValue::Integer(bucket.if_match),
+                        TursoValue::Integer(write_epoch),
+                        TursoValue::Integer(authority_epoch),
                     ],
                 )
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
 
             if n == 0 {
+                // Distinguish a genuine If-Match miss from a rotation which
+                // froze or advanced the account after the initial epoch probe.
+                // The latter must drive adoption, not a fruitless version retry.
+                let current = crate::vault::rekey::resolve_write_epoch(
+                    &state,
+                    &session.user_id.to_string(),
+                    declared,
+                )
+                .await?;
+                if current != (write_epoch, read_epoch) {
+                    return Err(AppError::Rekeyed(
+                        "vault epoch changed before the ORAM write completed".into(),
+                    ));
+                }
                 return Err(AppError::Conflict(format!(
                     "ORAM bucket {} version mismatch",
                     bucket.bucket_index

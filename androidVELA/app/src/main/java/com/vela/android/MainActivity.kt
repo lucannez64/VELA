@@ -184,8 +184,7 @@ class MainActivity : FragmentActivity() {
                         // enrollWithCode does blocking network I/O, so this
                         // froze the UI for the duration of enrollment + sync.
                         lifecycleScope.launch(Dispatchers.IO) {
-                            val rms = VelaRepositories.sync.enrollWithCode(serverUrl, enrollmentCode)
-                            VelaRepositories.security.adoptRms(rms)
+                            VelaRepositories.sync.enrollWithCode(serverUrl, enrollmentCode)
                             VelaRepositories.sync.syncNow()
                             startBackgroundSync()
                         }
@@ -206,8 +205,7 @@ class MainActivity : FragmentActivity() {
                                 deviceId = VelaRepositories.sync.pollV3Join(session)
                             }
 
-                            val rms = VelaRepositories.sync.finishV3Join(session, deviceId)
-                            VelaRepositories.security.adoptRms(rms)
+                            VelaRepositories.sync.finishV3Join(session, deviceId)
                             VelaRepositories.sync.syncNow()
                             startBackgroundSync()
                         }
@@ -219,10 +217,9 @@ class MainActivity : FragmentActivity() {
                         // own dispatch to show the Credential Manager UI.
                         lifecycleScope.launch(Dispatchers.IO) {
                             val ceremony = WebAuthnCeremony(this@MainActivity)
-                            val rms = VelaRepositories.sync.recoverAccount(
+                            VelaRepositories.sync.recoverAccount(
                                 serverUrl, userId, share1B64, deviceName.ifBlank { null }
                             ) { options -> ceremony.assert(options) }
-                            VelaRepositories.security.adoptRms(rms)
                             VelaRepositories.sync.syncNow()
                             startBackgroundSync()
                         }

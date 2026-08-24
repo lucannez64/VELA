@@ -192,13 +192,13 @@
 
 const STATS = [
   { k:"repository",     v:"vela · local-first vault", wide:true },
-  { k:"rust crates",    v:"14" },
-  { k:"rust",           v:"63,628 lines" },
+  { k:"rust crates",    v:"13" },
+  { k:"rust",           v:"84,554 lines" },
   { k:"other clients",  v:"kotlin · swift · ts · wasm" },
-  { k:"server routes",  v:"47" },
-  { k:"tauri commands", v:"39" },
+  { k:"server routes",  v:"54" },
+  { k:"tauri commands", v:"47" },
   { k:"front ends",     v:"2 — one still being ported" },
-  { k:"traced flows",   v:"11" },
+  { k:"traced flows",   v:"12" },
 ];
 
 const OVERVIEW = {
@@ -206,9 +206,9 @@ const OVERVIEW = {
   sub:"how a secret gets sealed, stored, synced and handed back",
   what:[
     "VELA is a **zero-knowledge** password vault. The whole design follows from one rule: the server may hold your data but must never be able to read it. Everything in this map is downstream of that.",
-    "The **loop** across the top is the unlock path — master password → Argon2id → the Root Master Seed → a BLAKE3 fan-out of purpose-bound keys → XChaCha20-Poly1305 → the vault in memory. The RMS is the only secret; every other key in the system is derived from it with a context string, so no key can be reused for the wrong job.",
-    "Below the loop is what the vault talks to: a **sync engine** that chunks and seals items with Lamport clocks, an IPC socket the browser extension speaks through, device identity keys that authenticate to the server, and a 2-of-3 Shamir split for recovery.",
-    "To the right is **serverVELA** — an Axum router in front of sled and stoolap. It sees ciphertext, signatures and revocation state. It never sees a vault item, an RMS, or a private key.",
+    "The **loop** across the top is the unlock path — master password → Argon2id → the Root Master Seed → a BLAKE3 fan-out of purpose-bound keys → XChaCha20-Poly1305 → the vault in memory. The RMS is the only secret; every other key in the system is derived from it with a context string, so no key can be reused for the wrong job. The seed can now rotate: every ciphertext and device capsule moves from epoch N to N+1 without revealing either seed to the server.",
+    "Below the loop is what the vault talks to: a **sync engine** that probes the account key epoch before touching chunks, an IPC socket the browser extension speaks through, device identity keys that authenticate to the server, and a 2-of-3 Shamir split whose cache and delivery channels are bound to the RMS epoch.",
+    "To the right is **serverVELA** — an Axum router in front of sled and Turso. It sees ciphertext, signatures, epochs and revocation state. It never sees a vault item, an RMS, or a private key.",
     "Nearly every hard problem here turned out to be a **trust-boundary** problem rather than a cryptography one: how a brand-new device proves it is the user's, how a browser extension proves it is the extension, how a client can tell a stale blob from a replayed one. The tall structures are the parts that decide who is allowed what.",
   ],
   built:[
@@ -219,6 +219,8 @@ const OVERVIEW = {
   cond:[
     "The Rust server speaks plain HTTP. TLS is expected to terminate in front of it; in production a request that cannot be proven HTTPS is rejected with 426.",
     "Two desktop front ends exist in parallel — React-on-Tauri is what ships, the gpui port is still being brought level. Both drive the same core; the Tauri layer is wrappers only.",
+    "RMS rotation and rekey-capsule adoption currently ship in the desktop core only, so active Android or iOS devices still block a new rotation. Both mobile clients can enroll or recover directly into an already-rotated account: they persist that epoch, bind post-epoch-1 chunk AEAD to it and send `X-Vela-Epoch` on mutations.",
+    "Accounts with persisted Path ORAM buckets cannot rotate yet; `/vault/rekey/start` refuses them rather than migrate an incomplete shadow tree.",
   ],
 };
 
@@ -254,12 +256,12 @@ const NODES = [
   inside:[["parse","magic VRMS + version byte"],["params","m_cost / t_cost / p_cost from the blob, not from the binary"],["derive","Argon2id(password, salt) → 32-byte key"],["open","XChaCha20-Poly1305 over the ciphertext"],["needs_reseal","compare stored cost against current default"]] },
 
 { id:"RMS", key:"R", label:"Root master seed", group:"unlock", gx:8, gy:0, w:2, d:2, h:4.8,
-  files:["libVELA/vela-crypto/src/kdf.rs","desktopVELA/vela-desktop-core/src/crypto.rs"],
+  files:["libVELA/vela-crypto/src/kdf.rs","libVELA/vela-crypto/src/rekey.rs","desktopVELA/vela-desktop-core/src/crypto.rs"],
   what:["32 bytes. **Every key in VELA descends from these.** Losing them loses the vault; leaking them loses everything at once, which is why they are the tallest thing on the map and the shortest-lived thing in memory.",
-        "The RMS never travels in the clear. To reach a second device it is sealed to that device's public KEM key; to survive a lost device it is split three ways with Shamir."],
-  built:["Generated once from the OS RNG at account creation. At rest it lives only inside the Argon2id blob (`rms_software.enc`) or an OS-credential store. In memory it is held behind the session lock and dropped on lock."],
+        "The RMS never travels in the clear. To reach a second device — including one adopting a new key epoch — it is sealed to that device's public KEM key; to survive a lost device it is split three ways with Shamir."],
+  built:["Generated from the OS RNG at account creation and again on every vault-key rotation. At rest it lives only inside the Argon2id blob (`rms_software.enc`) or an OS-credential store. In memory it is held behind the session lock and dropped on lock."],
   cond:["Whether the seed sits in the OS keychain or in a software blob depends on platform capability, so the offline attack surface is not identical everywhere."],
-  inside:[["generate","getrandom → [u8;32]"],["seal","password_kdf::seal_with_password"],["derive","kdf::derive(context, rms) for every subkey"],["escrow","shamir::split(rms, 2, 3)"],["transfer","kem seal to a joining device"]] },
+  inside:[["generate","getrandom → [u8;32]"],["rotate","fresh RMS for epoch N+1"],["seal","password_kdf::seal_with_password"],["derive","kdf::derive(context, rms) for every subkey"],["escrow","shamir::split(rms, 2, 3)"],["transfer","KEM seal to a joining or adopting device"]] },
 
 { id:"KDF", key:"K", label:"BLAKE3 key fan-out", group:"unlock", gx:12, gy:0, w:3, d:2, h:3.2,
   files:["libVELA/vela-crypto/src/kdf.rs"],
@@ -270,12 +272,12 @@ const NODES = [
   inside:[["vault_encryption_key","\"vela vault encryption v1\""],["chunk_key","context + chunk_id"],["audit_log_key","\"vela audit log v1\""],["mac_key","\"vela mac key v1\""],["share_encryption_key","\"vela share encryption v1\""],["oram_position_map_key","\"vela oram position map v1\""],["device_identity_key_seed","\"vela device identity v1\""],["identity_signing_key_seed","\"vela identity signing v1\""],["web_session_chunk_keys","32 ids, one key each"]] },
 
 { id:"AED", key:"E", label:"XChaCha20 AEAD", group:"unlock", gx:16, gy:0, w:2, d:2, h:2.5,
-  files:["libVELA/vela-crypto/src/aead.rs"],
+  files:["libVELA/vela-crypto/src/aead.rs","libVELA/vela-crypto/src/rekey.rs"],
   what:["Every blob that leaves the process goes through here. A fresh **192-bit random nonce** is prepended to the ciphertext so the nonce always travels with what it protects — there is no nonce counter to get wrong.",
-        "Vault chunks are sealed with associated data binding the chunk id and its Lamport clock, so a server that relabels or replays a blob produces a decryption failure rather than a silent rollback."],
+        "Vault chunks are sealed with associated data binding the account key epoch, chunk id and Lamport clock, so a server that crosses epochs, relabels or replays a blob produces a decryption failure rather than a silent rollback."],
   built:["XChaCha20-Poly1305. Overhead is 40 bytes: 24-byte nonce + 16-byte tag. Sealed-with-AAD blobs carry the magic `VAE1` so `is_sealed` can tell the two envelope generations apart during migration."],
-  cond:[],
-  inside:[["vault_chunk_aad","chunk_id ‖ lamport_clock"],["seal","nonce[24] ‖ ct ‖ tag[16]"],["open","AAD mismatch = hard failure"],["is_sealed","VAE1 magic probe for migration"]] },
+  cond:["Epoch 1 accepts the legacy chunk-id + Lamport AAD for rolling compatibility. Every later epoch requires the explicit epoch binding."],
+  inside:[["epoch_aad","\"vela epoch v1\" ‖ epoch ‖ chunk_id ‖ lamport_clock"],["seal","nonce[24] ‖ ct ‖ tag[16]"],["open","epoch or revision mismatch = hard failure"],["is_sealed","VAE1 magic probe for migration"]] },
 
 /* ---- the vault ---- */
 { id:"VLT", key:"V", label:"Vault store", group:"vault", gx:16, gy:4, w:4, d:3, h:1.1,
@@ -288,33 +290,43 @@ const NODES = [
 
 { id:"STO", key:"S", label:"Encrypted local store", group:"vault", gx:16, gy:9, w:3, d:3, h:0.65,
   files:["desktopVELA/vela-desktop-core/src/store.rs"],
-  what:["What survives a restart. Nothing lands here in plaintext: the vault, the audit log, the share list and the conflict list are each sealed under their own derived key before they touch the disk."],
-  built:["Per-file envelopes (`vault.enc`, `audit.enc`, `shares.enc`, `conflicts.enc`) written under the app data directory, each opened only after the RMS is available."],
+  what:["What survives a restart. Nothing secret lands here in plaintext: the vault, audit log, share list, conflict list, recovery setup and authenticated key epoch are sealed before they touch disk.",
+        "A seed rotation is crash-resumable. Before any consumer changes, a durably synced two-way migration journal seals RMS N+1 under RMS N and RMS N under RMS N+1; either endpoint can then finish a mixed on-disk migration after a crash."],
+  built:["Per-file envelopes (`vault.enc`, `audit.enc`, `shares.enc`, `sync_conflicts.enc`, `recovery_setup.enc`, `key_epoch.enc`) use temp-file + rename writes. `rms_migration.json` is retained until files, platform/password RMS wrappers and epoch markers are synced under the new seed."],
   cond:["A file's freshness on disk is not authenticated against the server's view — rollback protection lives in the sync engine's Lamport check, not here."],
-  inside:[["vault.enc","sealed items"],["audit.enc","sealed local audit trail"],["shares.enc","sealed inbox / linked shares"],["conflicts.enc","sealed unresolved merges"]] },
+  inside:[["vault.enc","sealed items"],["audit.enc","sealed local audit trail"],["shares.enc","sealed inbox / linked shares"],["sync_conflicts.enc","sealed unresolved merges"],["key_epoch.enc","epoch authenticated by the current RMS"],["rms_migration.json","two-way old ↔ new RMS recovery bridge"]] },
 
 { id:"SYN", key:"C", label:"Sync engine", group:"vault", gx:11, gy:9, w:3, d:3, h:3.8,
   files:["desktopVELA/vela-desktop-core/src/sync.rs","desktopVELA/src-tauri/src/commands/sync.rs"],
   what:["The hardest module in the client, because it has to merge two vaults **without trusting the thing in the middle**.",
         "Every chunk carries a Lamport clock; each writer sets `max(previous, local) + 1`. A clock that comes back *lower* than what this device already recorded is not a stale cache, it is a rollback attempt — and it is refused.",
+        "Before any manifest, read or write it probes `/vault/epoch`. If the server is ahead, the device opens its retained KEM capsule, requires the authenticated inner epoch and rotation id to match the committed metadata, and only then migrates every local RMS consumer; a lower server epoch is refused as rollback.",
         "Merges honour tombstones so deletions propagate, and anything genuinely divergent becomes a conflict the user resolves rather than a silent overwrite."],
-  built:["Serialised behind a sync mutex so local edits cannot interleave with a merge. It captures the session generation before starting and aborts if the vault is locked mid-flight. A 401 triggers exactly one re-authentication and retry, because a 15-minute server token routinely outlives an idle unlocked app."],
-  cond:["Conflicts cannot be listed or resolved while the vault is locked — they are stored encrypted, so there is nothing to show.","The rollback guard used to exist only in the shared core, which the shipping Tauri build did not call. Both front ends run it now."],
-  inside:[["trigger_sync","take the mutex, capture session generation"],["manifest","GET /vault/sync → chunk_id, version, lamport_clock, last_writer"],["rollback guard","refuse lamport < last seen"],["open","AEAD with chunk_id ‖ lamport as AAD"],["merge","tombstone-aware, per item"],["conflicts","divergent items → conflicts.enc"],["push","PUT /vault/chunk/:id with If-Match"],["prune","drop tombstones past retention"]] },
+  built:["Serialised behind a sync mutex so local edits cannot interleave with a merge or RMS adoption. `key_epoch.enc`, authenticated by the unlocked RMS, is the sole local epoch authority: unreadable is a hard stop before manifest fetch or repair upload, while absence means legacy epoch 1 exactly. Plaintext `sync_meta.json` supplies chunk clocks only. A vault chunk that fails authenticated decryption also stops without overwriting the server. It captures the session generation before starting and aborts if the vault is locked mid-flight. A 401 triggers exactly one re-authentication and retry, because a 15-minute server token routinely outlives an idle unlocked app."],
+  cond:["Conflicts cannot be listed or resolved while the vault is locked — they are stored encrypted, so there is nothing to show.","Desktop is the only client that currently implements rekey-capsule adoption; Android and iOS support epoch-bound sync after enrollment/recovery into the current epoch."],
+  inside:[["trigger_sync","take the mutex, capture session generation"],["epoch probe","GET /vault/epoch before vault traffic"],["adopt","open retained capsule; journal files + RMS wrappers"],["manifest","GET /vault/sync → epoch + chunk_id, version, lamport_clock, last_writer"],["rollback guard","refuse lamport < last seen or server epoch < local"],["open","AEAD with epoch ‖ chunk_id ‖ lamport as AAD"],["merge","tombstone-aware, per item"],["conflicts","divergent items → sync_conflicts.enc"],["push","PUT with If-Match + X-Vela-Epoch"],["prune","drop tombstones past retention"]] },
+
+{ id:"RKY", key:"RK", label:"Vault key rotation", group:"vault", gx:11, gy:5, w:3, d:2, h:4.2,
+  files:["libVELA/vela-crypto/src/rekey.rs","desktopVELA/vela-desktop-core/src/commands/rekey.rs","serverVELA/vela-server/src/vault/rekey.rs","docs/VAULT_REKEYING_DESIGN.md"],
+  what:["The account-wide operation that makes a leaked Root Master Seed expire. One capable desktop creates RMS N+1, re-seals every current chunk into shadow rows, KEM-seals the new seed to every active device, then atomically advances the account epoch.",
+        "The server never handles either RMS. It coordinates an **ACTIVE(N) → FREEZING(N→N+1) → ACTIVE(N+1)** state machine and verifies completeness before the compare-and-swap commit."],
+  built:["Rotation is serialized with ordinary sync and requires an explicit human confirmation. Before freezing, the initiator authenticates its RMS-bound local epoch marker and requires it to equal the active server epoch. The server returns an inventory and a random rotation id, accepts only starter-authenticated shadow writes at the target epoch, and requires one shadow per current chunk plus one capsule per active device. Each capsule's v1 plaintext contains epoch, rotation id and RMS, is authenticated by an RMS N-derived transition key, then KEM-sealed per device. This prevents relay forgery and stale-capsule relabeling. An abandoned freeze rolls back after 15 minutes. Recovery delivery takes the same client mutex, while server share writes use an atomic epoch/state guard.","Three Tamarin theories prove 31 epoch-state, capsule-binding and atomic-authority lemmas with no falsifications or warnings. Executable refinement explores the finite state graph, all 24 shadow/capsule orderings, commit/write/timeout races, and the desktop × web × Android × iOS epoch wire matrix; every layer is a required security CI gate."],
+  cond:["Every active device must have retained its capsule private key, advertised desktop re-key capability, and acknowledged the previous epoch transition before another rotation can start. Android/iOS do not yet advertise it.","Rotation is refused while any Path ORAM bucket exists.","Fresh recovery shares are generated and verified after adoption, but cloud upload, FIDO2 registration and trusted-contact delivery must be performed again.","The formal proof covers the declared symbolic transition system and cryptographic assumptions; real-handler/database and cross-client tests provide implementation refinement evidence, not a proof that arbitrary platform code is bug-free."],
+  inside:[["presence","confirm outside the requesting renderer"],["start","freeze N; inventory chunks and active devices"],["rotate","OS RNG → RMS N+1"],["shadow","re-seal every chunk with epoch N+1 AAD"],["fan-out","KEM capsule for every active capable device"],["commit","completeness check + epoch CAS"],["migrate local","durable journal, files and RMS wrappers"],["recovery","re-mint 2-of-3 shares; repeat delivery"],["formal gate","M11/M11b/M11c: 31 verified"],["model gate","reachable graph + handler races + fleet matrix"]] },
 
 { id:"API", key:"H", label:"HTTP api client", group:"vault", gx:7, gy:9, w:2, d:2, h:2.3,
   files:["desktopVELA/vela-desktop-core/src/api.rs"],
-  what:["45 typed calls, one per server route the client actually uses. It is also the place that refuses to talk to the wrong kind of URL: `validate_server_url` allows https anywhere and plain http **only for loopback**, so a compromised renderer cannot redirect sync traffic — encrypted chunks plus a bearer token — to a plaintext endpoint."],
+  what:["54 async request helpers cover the server routes the desktop actually uses. This is also the place that refuses to talk to the wrong kind of URL: `validate_server_url` allows https anywhere and plain http **only for loopback**, so a compromised renderer cannot redirect sync traffic — encrypted chunks plus a bearer token — to a plaintext endpoint."],
   built:["reqwest with a 30-second timeout. Renewed tokens arrive on the `x-new-token` response header and are threaded back into the token store on every call that can produce one."],
   cond:[],
-  inside:[["validate_server_url","https anywhere, http only for localhost"],["get_challenge","32-byte nonce"],["verify_signature","device_id + challenge + hybrid signature"],["get_sync_manifest","chunk list with clocks"],["get_chunk / put_chunk","If-Match + X-Lamport-Clock"],["x-new-token","token rotation on any authed call"]] },
+  inside:[["validate_server_url","https anywhere, http only for localhost"],["get_challenge","32-byte nonce"],["verify_signature","device_id + challenge + hybrid signature"],["get_key_epoch","epoch + active/freezing state"],["get_sync_manifest","epoch + chunk list with clocks"],["get_chunk / put_chunk","If-Match + X-Lamport-Clock + X-Vela-Epoch"],["rekey_*","start, shadow, capsules, commit, abort, acknowledge"],["x-new-token","token rotation on any authed call"]] },
 
 { id:"ORM", key:"O", label:"Path ORAM", group:"vault", gx:21, gy:6, w:2, d:2, h:4.0,
   files:["libVELA/vela-crypto/src/oram.rs","serverVELA/vela-server/src/vault/oram.rs"],
   what:["Encryption hides *what* a chunk says. This hides **which chunk you asked for** — the access pattern itself, which otherwise tells a watching server which credential you just used.",
         "For small vaults it does the honest cheap thing: at four active chunks or fewer, every sync downloads and re-uploads everything, so there is no pattern to read."],
   built:["Client-side state machine only — position map (`chunk_id → leaf`) plus a stash, with no network or crypto of its own. The caller reads the path, decrypts the buckets, feeds them to `read_path`, then encrypts and uploads the write-back path. Bucket size 4, chunk size 1 MiB."],
-  cond:["The trivial-ORAM path is what runs for most real vaults today; full Path ORAM only engages past the threshold."],
+  cond:["The trivial-ORAM path is what runs for most real vaults today; full Path ORAM only engages past the threshold.","RMS rotation currently refuses accounts with stored ORAM buckets; shadow migration of a full tree has not shipped."],
   inside:[["use_trivial_oram","≤4 chunks → read everything"],["position map","chunk_id → current leaf, sealed under its own key"],["read_path","root→leaf bucket sequence in"],["stash","blocks evicted from the path"],["write-back","re-encrypt and upload the whole path"]] },
 
 { id:"BIO", key:"BM", label:"Biometric gate", group:"vault", gx:3, gy:9, w:2, d:2, h:2.6,
@@ -360,7 +372,7 @@ const NODES = [
   what:["The trust-bootstrap moment: an account with one device gets a second one, and **there is no pre-existing trust root to check a signature against**.",
         "v2 sealed the seed under a symmetric transfer key that travelled inside the enrollment code, so reading the code was enough to open the capsule. v3 seals it to a public KEM key whose private half never left the joining device — intercepting both the code and the capsule now gets you nothing.",
         "Claim and result are deliberately unauthenticated: the joining device has no identity yet, which is the entire point. Its binding comes from the grant being single-claim, and from a signature under the key it claimed with."],
-  built:["Grant → claim → fingerprint comparison → complete → result, four routes on the server and a state machine on both devices. Pending grants, invites and joins are held in memory only: a restart mid-enrollment means starting over rather than resuming a comparison the user never finished."],
+  built:["Grant → claim → fingerprint comparison → complete → result, four routes on the server and a state machine on both devices. Before sealing the RMS, v2 and v3 authenticate the primary's RMS-bound local epoch against the server; completion inserts the device only when that supplied epoch still equals `users.key_epoch` and no rotation is freezing. Pending grants, invites and joins are held in memory only: a restart mid-enrollment means starting over rather than resuming a comparison the user never finished."],
   cond:["The user has to actually compare the fingerprints. The protocol makes substitution detectable, not impossible."],
   inside:[["post_grant","opening device creates a single-claim grant"],["claim","joining device posts hybrid_ek + hybrid_vk"],["fingerprint","both sides derive the same short code"],["user compares","the only human step in the protocol"],["complete","RMS sealed to the claimed KEM key"],["post_result","signature over grant_id → device_id"]] },
 
@@ -375,18 +387,19 @@ const NODES = [
 { id:"TOK", key:"T", label:"Session tokens", group:"identity", gx:7, gy:5, w:2, d:2, h:2.2,
   files:["desktopVELA/vela-desktop-core/src/token.rs","serverVELA/vela-server/src/auth/token.rs"],
   what:["A PASETO the server hands back once a device has proved possession of its signing key. It is short-lived, rotates on use, and its ceiling is the TTL it was granted — a short session cannot mint a long token.",
+        "Tokens carry an explicit `device` or `web_session` scope. A web-session token is also bound to the key epoch that produced its capsule. The claim is preserved after request extraction and compared again in each chunk/ORAM SQL mutation predicate, so even a request already in flight when rotation commits cannot write with retired keys.",
         "Revocation reuses the same mechanism for everything: a revoked device, and an ended web session, are both just a `device:revoked:` entry."],
-  built:["PASETO v4.public, signed with a keypair persisted at `{DATA_DIR}/paseto.key` (0600) when `PASETO_SECRET_KEY` is unset — so sessions survive a restart with no manual step. Renewed tokens ride back on the `x-new-token` header."],
+  built:["PASETO v4.public, signed with a keypair persisted at `{DATA_DIR}/paseto.key` (0600) when `PASETO_SECRET_KEY` is unset — so sessions survive a restart with no manual step. Renewed tokens preserve scope and epoch and ride back on the `x-new-token` header."],
   cond:[],
-  inside:[["mint","after /auth/verify succeeds"],["ttl","absolute ceiling from the grant"],["rotate","x-new-token on subsequent calls"],["revoke","device:revoked: entry in sled"]] },
+  inside:[["mint","after /auth/verify or web-session proof"],["scope","device or web_session"],["key_epoch","required for web-session tokens"],["ttl","absolute ceiling from the grant"],["rotate","x-new-token preserves scope + epoch"],["revoke","device:revoked: entry in sled"]] },
 
 /* ---- recovery ---- */
 { id:"SHM", key:"M", label:"Shamir 2-of-3", group:"recovery", gx:7, gy:17, w:2, d:2, h:2.8,
-  files:["libVELA/vela-crypto/src/shamir.rs"],
+  files:["libVELA/vela-crypto/src/shamir.rs","libVELA/vela-crypto/src/rekey.rs"],
   what:["Losing every device must not mean losing the vault, and no single custodian may be able to restore it alone. So the 32-byte seed is split three ways: **cloud backup, the VELA server behind a FIDO2-bound key, and a trusted contact.** Any two reconstruct it; any one is nothing."],
-  built:["Sharing over GF(2^8) with the AES irreducible polynomial, byte by byte, with a degree-(t−1) polynomial. Shares serialise as `(x, y_0…y_31)` plus a 16-byte MAC so a corrupted share is caught rather than silently reconstructing garbage."],
-  cond:["The trusted-contact share has no delivery channel the app can verify — it is shown to the user, who says they handed it over. That acknowledgement is a claim, not a receipt."],
-  inside:[["split","secret, threshold 2, n 3"],["share 1","cloud provider backup"],["share 2","server, gated by a FIDO2 credential"],["share 3","trusted contact"],["reconstruct","any 2 shares + MAC check"]] },
+  built:["Sharing over GF(2^8) with the AES irreducible polynomial, byte by byte, with a degree-(t−1) polynomial. Shares serialise as `(x, y_0…y_31)` plus a 16-byte MAC so a corrupted share is caught rather than silently reconstructing garbage. The encrypted pending split records the authenticated RMS epoch; a cached split from another epoch is discarded, never relabelled."],
+  cond:["The trusted-contact share has no delivery channel the app can verify — it is shown to the user, who says they handed it over. That acknowledgement is a claim, not a receipt.","Old shares reconstruct only RMS N and become useless when epoch N+1 commits. The replacement delivery ceremonies are still required."],
+  inside:[["split","secret, threshold 2, n 3"],["verify after rotation","reconstruct fresh shares == RMS N+1"],["share 1","cloud provider backup"],["share 2","server, gated by a FIDO2 credential"],["share 3","trusted contact"],["reconstruct","any 2 shares + MAC check"]] },
 
 { id:"WAN", key:"W", label:"WebAuthn / FIDO2", group:"recovery", gx:11, gy:17, w:2, d:2, h:2.4,
   files:["desktopVELA/vela-desktop-core/src/webauthn.rs","serverVELA/vela-server/src/recovery/webauthn.rs"],
@@ -400,26 +413,26 @@ const NODES = [
 { id:"RCV", key:"Y", label:"Recovery flow", group:"recovery", gx:15, gy:17, w:2, d:2, h:2.0,
   files:["serverVELA/vela-server/src/recovery/","desktopVELA/vela-desktop-core/src/recovery.rs"],
   what:["Initiate, recover, then enrol the replacement device — the sequence that turns two shares back into a working vault on hardware that has never seen the account."],
-  built:["Four server routes (`/recovery/initiate`, `/recovery/recover`, `/recovery/enroll-device`, plus share storage) and `ensure_shares_split` on the client, which is idempotent so re-entering setup does not reshard a seed."],
-  cond:["Setup is only finished once the cached shares are dropped. Both front ends now do that explicitly, but nothing forces it: abandon setup midway and all three shares stay on the device until you come back."],
-  inside:[["initiate","prove intent, get the server share offer"],["fido2","unlock share 2 with the security key"],["reconstruct","2 of 3 → RMS"],["enroll-device","new device gets an identity"],["reseal","RMS re-sealed under the new password"]] },
+  built:["Four server routes (`/recovery/initiate`, `/recovery/recover`, `/recovery/enroll-device`, plus share storage) and idempotent setup on the client. Rekey commit atomically clears the old server share. Replacement server writes carry `key_epoch` and succeed only while that epoch is active; cloud objects are per-account and per-epoch; every delivery probes the server before it runs and before local success is recorded."],
+  cond:["Setup is only finished once the cached shares are dropped. Both front ends now do that explicitly, but nothing forces it: abandon setup midway and all three shares stay on the device until you come back.","A trusted-contact handoff cannot be recalled if another device rotates immediately afterward. Its acknowledgement is therefore revalidated against the server epoch and rejected after rotation; the old share reconstructs only the retired RMS."],
+  inside:[["initiate","prove intent, get the server share offer"],["fido2","unlock epoch-tagged share 2"],["epoch match","cloud share epoch == server share epoch"],["reconstruct","2 of 3 → RMS"],["enroll-device","new device gets an identity at the account epoch"],["after rotation","clear server share; repeat epoch-bound delivery"]] },
 
 /* ---- the server ---- */
 { id:"SRV", key:"X", label:"Axum router", group:"server", gx:25, gy:2, w:3, d:3, h:2.2,
   files:["serverVELA/vela-server/src/routes.rs","serverVELA/vela-server/src/main.rs"],
-  what:["47 routes and the front door for all of them. It holds ciphertext, public keys, revocation state and rate-limit counters — and by construction **nothing it could decrypt**.",
+  what:["54 routes and the front door for all of them. It holds ciphertext, public keys, epochs, revocation state and rate-limit counters — and by construction **nothing it could decrypt**.",
         "Two guards wrap everything. `enforce_https` rejects any request in production that cannot be proven HTTPS — either it arrived on the native TLS listener or a *trusted* proxy said so — because otherwise a bearer token could cross a LAN in the clear. `security_headers` sets nosniff, DENY framing, no-referrer and a CSP that allows the built SPA and nothing else."],
   built:["Axum with tower-http for CORS and tracing. Wildcard CORS is rejected in production. `/health` is exempt from the HTTPS check so a loopback probe works — and it answers `ok` or `degraded` without naming which backend is failing, since that is operator information, not public information."],
   cond:["It serves plain HTTP itself. Every HTTPS guarantee here depends on a correctly configured terminator in front."],
   inside:[["security_headers","outermost: nosniff, DENY, CSP"],["enforce_https","426 unless provably TLS"],["request_from_trusted_proxy","CIDR check before believing any header"],["cf_visitor_says_https","parse the JSON, don't substring it"],["cors","no wildcard in production"],["fallback","serve the web vault SPA when WEB_DIR is set"]] },
 
-{ id:"SDB", key:"D", label:"sled + stoolap", group:"server", gx:25, gy:7, w:3, d:3, h:0.6,
-  files:["serverVELA/vela-server/src/store.rs","serverVELA/vela-server/src/db.rs","serverVELA/vela-server/src/migration.rs"],
-  what:["Two stores with different jobs. sled holds keyed blobs with TTLs — challenges, revocations, chunk ciphertext, rate-limit counters. stoolap holds the relational side: accounts, devices, shares, sessions.",
+{ id:"SDB", key:"D", label:"sled + Turso", group:"server", gx:25, gy:7, w:3, d:3, h:0.6,
+  files:["serverVELA/vela-server/src/store.rs","serverVELA/vela-server/src/sqldb.rs","serverVELA/vela-server/src/db.rs"],
+  what:["Two stores with different jobs. sled holds keyed state with TTLs — challenges, revocations and rate-limit counters. Turso holds the relational side: accounts, devices, epoch-scoped ciphertext, recovery shares and sessions.",
         "Everything in here is either encrypted by a client or public by nature."],
-  built:["`set_ex` for anything that should expire on its own (a 60-second challenge, for instance). Schema changes go through `migration.rs`, 684 lines of it."],
-  cond:["A repeated `$N` placeholder in stoolap does not rebind by index — a real quirk that has to be worked around in queries.","`memory://` is one shared database across tests, so test isolation is by convention."],
-  inside:[["challenge:<nonce>","single-use, 60 s TTL"],["device:revoked:<id>","revocation, reused for web sessions"],["chunk:<user>:<id>","opaque ciphertext + lamport"],["accounts / devices","stoolap relational tables"],["rate counters","per-ip and per-account"]] },
+  built:["`set_ex` handles anything that should expire on its own (a 60-second challenge, for instance). `TursoDb::open` applies idempotent schema migrations before serving traffic; startup also performs a one-time, column-explicit Stoolap-to-Turso bootstrap for older deployments."],
+  cond:["Stoolap remains a migration source, not the live SQL backend. Bootstrap preserves key epochs, rotation metadata, capsules and web-session epochs."],
+  inside:[["challenge:<nonce>","sled: single-use, 60 s TTL"],["device:revoked:<id>","sled: revocation, reused for web sessions"],["users","Turso: key_epoch + in-flight rotation state"],["vault_chunks / oram_buckets","Turso: opaque ciphertext + lamport + epoch"],["devices","Turso: capability + retained RMS capsule epoch"],["rate counters","sled: per-ip and per-account"]] },
 
 { id:"RTL", key:"L", label:"Rate limit & guards", group:"server", gx:25, gy:11, w:2, d:2, h:3.2,
   files:["serverVELA/vela-server/src/rate_limit.rs","serverVELA/vela-server/src/middleware.rs","serverVELA/vela-server/src/net.rs"],
@@ -430,12 +443,12 @@ const NODES = [
   inside:[["client_ip","trust headers only from a trusted CIDR"],["challenge_by_ip","20 / minute"],["auth attempts","per device and per ip"],["enrollment","grant creation and claim budgets"]] },
 
 { id:"WBS", key:"B", label:"Ephemeral web session", group:"server", gx:29, gy:4, w:2, d:2, h:2.8,
-  files:["serverVELA/vela-server/src/web_session/mod.rs","EPHEMERAL_WEB_ACCESS_DESIGN.md"],
+  files:["serverVELA/vela-server/src/web_session/mod.rs","serverVELA/vela-server/src/middleware.rs","libVELA/vela-wasm-bridge/src/lib.rs","EPHEMERAL_WEB_ACCESS_DESIGN.md"],
   what:["No-install, revocable browser access to a vault. A browser starts a session with its ephemeral public keys and the hash of a poll secret only it holds, shows a QR, and waits. An enrolled device of that account scans it and grants — choosing **read-only snapshot or live read-write**, and a TTL.",
         "The capsule is sealed to the browser's ephemeral KEM key, so the server relays a secret it cannot open. For read-write the browser then proves possession of its ephemeral signing key and gets a PASETO whose ceiling is the session expiry."],
-  built:["The session is self-contained: `session_id` doubles as the token's `device_id`, so revocation reuses the existing `device:revoked:` mechanism and no device row is ever created."],
-  cond:["A live read-write session hands per-chunk vault keys to a browser tab. That is the point, and it is also the largest deliberate exposure in the system — hence the TTL and the one-click revoke."],
-  inside:[["post_start","ephemeral ek/vk + poll-secret hash"],["QR","session id shown to the granting device"],["get_session","polled with the secret only the browser holds"],["post_grant","mode (ro/rw) + ttl, capsule sealed to the ek"],["post_token","prove the ephemeral signing key → PASETO"],["delete_session","revoke from any device"]] },
+  built:["The session is self-contained: `session_id` doubles as the token's `device_id`, so revocation reuses the existing `device:revoked:` mechanism and no device row is ever created. Grant stores the approver's authenticated `key_epoch`; live tokens carry both `scope = web_session` and that epoch. WASM uses fleet-compatible legacy chunk AAD at epoch 1 and epoch-bound AAD above it."],
+  cond:["A live read-write session hands per-chunk vault keys to a browser tab. That is the point, and it is also the largest deliberate exposure in the system — hence the TTL and the one-click revoke.","Any RMS rotation makes the token epoch stale. Middleware rejects ordinary late requests, while each atomic chunk/ORAM mutation also binds the preserved token epoch so a request extracted before commit cannot cross the boundary."],
+  inside:[["post_start","ephemeral ek/vk + poll-secret hash"],["QR","session id shown to the granting device"],["get_session","polled with the secret only the browser holds"],["post_grant","mode + ttl + key_epoch; capsule sealed to the ek"],["post_token","ephemeral proof → scoped, epoch-bound PASETO"],["middleware","preserve and preflight token key_epoch"],["mutation CAS","token epoch = resolved write epoch = users.key_epoch"],["delete_session","revoke from any device"]] },
 
 { id:"SHR", key:"Q", label:"Share relay", group:"server", gx:29, gy:9, w:2, d:2, h:1.5,
   files:["serverVELA/vela-server/src/share/mod.rs","desktopVELA/vela-desktop-core/src/sharing.rs"],
@@ -470,9 +483,9 @@ const NODES = [
 
 { id:"TAU", key:"U", label:"Tauri + React", group:"clients", gx:-5, gy:4, w:3, d:3, h:1.9,
   files:["desktopVELA/src-tauri/src/commands/","desktopVELA/src/App.tsx","desktopVELA/src/views/"],
-  what:["The desktop app that ships. 39 Tauri commands are the entire surface the renderer can reach — the React side holds no keys and makes no crypto calls; it asks Rust for everything."],
+  what:["The desktop app that ships. 47 Tauri commands are the entire surface the renderer can reach — the React side holds no keys and makes no crypto calls; it asks Rust for everything."],
   built:["Vite + React in a webview, Rust behind `#[tauri::command]`. The heavy logic moved down into `vela-desktop-core` so both front ends share it; the command layer is now mostly a translation of Tauri types into `&AppState`."],
-  cond:["Nothing but the `#[tauri::command]` wrappers lives here now: 39 commands over ~1,200 lines that translate argument shapes and emit the renderer's refresh event."],
+  cond:["Nothing but the `#[tauri::command]` wrappers lives here now: 47 commands translate argument shapes and emit the renderer's refresh event."],
   inside:[["invoke","renderer → #[tauri::command]"],["AppState","session, vault, crypto, store, api"],["emit","vault_items_changed → refetch"],["window","quick search, tray, title bar"]] },
 
 { id:"GPU", key:"J", label:"gpui desktop", group:"clients", gx:-5, gy:9, w:3, d:3, h:1.9,
@@ -488,14 +501,14 @@ const NODES = [
   what:["A native Android app that does its crypto in the same Rust, through a JNI bridge, and fills credentials into other apps through the platform autofill service.",
         "Logins can be linked to apps by package (`androidapp://<package>`), which is how a vault entry for a website also fills its mobile app."],
   built:["Kotlin + Compose (13.9k lines) over `vela-android-bridge` (1,478 lines of JNI). Cleartext networking is blocked globally except for scoped local development hosts listed in `network_security_config.xml`."],
-  cond:["Key material crosses the JNI boundary as a sealing key only — the same rule as the Apple bridge — so the JVM side never holds a private key."],
+  cond:["Device-identity private halves stay behind an opaque native handle. Kotlin does hold short-lived RMS byte arrays for vault operations and clears its copies after adoption or derivation.","Android requires the manifest epoch to match the locally adopted epoch, binds epoch ‖ chunk id ‖ Lamport clock into chunk AEAD after epoch 1, rejects legacy ciphertext there, and sends `X-Vela-Epoch` on uploads and deletes. It can enroll/recover into a rotated account, but existing Android devices still block a later rotation because mobile rekey-capsule adoption is not shipped."],
   inside:[["NativeVelaCore","JNI entry points"],["VaultSyncManager","the sync loop, Android side"],["VelaAutofillService","platform autofill"],["LinkedApps","androidapp://<package> matching"]] },
 
 { id:"IOS", key:"IS", label:"iOS + Apple bridge", group:"clients", gx:-1, gy:14, w:3, d:3, h:1.9,
   files:["iosVELA/Sources/","iosVELA/AutoFill/","libVELA/vela-apple-bridge/src/lib.rs"],
   what:["The same shape as Android: a Swift app and a credential-provider extension over a Rust bridge, so the crypto is not reimplemented a third time."],
   built:["6.6k lines of Swift over a 1,125-line C-ABI bridge with a generated header, plus a smoke harness that links it outside Xcode."],
-  cond:["The autofill extension is a separate process with its own lifetime, so session state has to be re-established rather than assumed."],
+  cond:["The autofill extension is a separate process with its own lifetime, so session state has to be re-established rather than assumed.","iOS persists the epoch authenticated by its adopted RMS, probes it before sync/recovery/web grants, binds rotated chunk AAD to it and sends `X-Vela-Epoch`. It can enroll or recover into the current rotated epoch, but it does not yet consume later rekey capsules, so active iOS devices still block a new rotation."],
   inside:[["vela_apple_*","C ABI surface"],["AutoFill","credential provider extension"],["Shared","state between app and extension"]] },
 
 { id:"WEB", key:"WV", label:"Web vault + wasm", group:"clients", gx:29, gy:0, w:2, d:2, h:1.4,
@@ -546,11 +559,10 @@ derive("vela oram position map v1", rms)    → position map`,
     note:"Context separation is the whole point: no key can be reused for a job it was not derived for, even by mistake." }},
   { a:"AED", b:"VLT", bend:"y", p:{ t:"vault.enc opened", kind:"XChaCha20-Poly1305", src:"libVELA/vela-crypto/src/aead.rs",
     body:`blob  =  nonce[24] ‖ ciphertext ‖ tag[16]
-aad   =  vault_chunk_aad(chunk_id, lamport_clock)
 overhead = 40 B
 
-open(key, blob, aad) → Zeroizing<Vec<u8>>`,
-    note:"The AAD binds the chunk id and its Lamport clock into the ciphertext, so a relabelled or replayed blob fails to open instead of quietly rolling the vault back." }},
+decrypt(vault_encryption_key(rms), blob) → Zeroizing<Vec<u8>>`,
+    note:"This is the local whole-vault envelope. Server chunks use the stricter epoch + chunk-id + Lamport associated data shown in the sync flow." }},
   { a:"VLT", b:"TAU", bend:"x", p:{ t:"Items, in memory", kind:"serde json", src:"libVELA/vela-core/src/vault.rs",
     body:`[{ "item_type": "login",
    "id": "b1e5…", "name": "GitHub",
@@ -570,18 +582,18 @@ open(key, blob, aad) → Zeroizing<Vec<u8>>`,
   name: "Fastmail", url: "https://fastmail.com",
   username: "hery", password: "«generated»"
 })`,
-    note:"39 commands are the entire surface the renderer can reach. Everything else is unreachable from the webview." }},
+    note:"47 commands are the entire surface the renderer can reach. Everything else is unreachable from the webview." }},
   { a:"VLT", b:"AED", bend:"y", p:{ t:"New item, clock bumped", kind:"in memory", src:"vela-desktop-core/src/vault.rs",
     body:`meta.updated_at = now()
 meta.last_modified_device = "desk-01"
 lamport = max(previous, local) + 1`,
     note:"Every write moves the Lamport clock forward. That is what lets another device — and this one — tell a newer chunk from an older one later." }},
   { a:"AED", b:"STO", bend:"y", p:{ t:"vault.enc written", kind:"sealed blob", src:"vela-desktop-core/src/store.rs",
-    body:`seal(vault_key, items_json, aad) →
-  "VAE1" ‖ nonce[24] ‖ ct ‖ tag[16]
+    body:`encrypt(vault_key, items_json) →
+  nonce[24] ‖ ct ‖ tag[16]
 
 sibling files, each under its own derived key:
-  audit.enc   shares.enc   conflicts.enc`,
+  audit.enc   shares.enc   sync_conflicts.enc`,
     note:"Nothing reaches the disk in plaintext. The conflict list is encrypted too, which is why conflicts cannot be shown while the vault is locked." }},
 ]},
 
@@ -592,6 +604,14 @@ sibling files, each under its own derived key:
   gen = session_generation     abort if the vault locks mid-flight
   dirty = ["chunk-0"]`,
     note:"The sync is serialised on purpose. A merge that interleaved with a local edit could resurrect an item the user just deleted." }},
+  { a:"SYN", b:"RKY", bend:"y", p:{ t:"Probe the key epoch first", kind:"http + local adoption", src:"sync::adopt_server_epoch",
+    body:`GET /vault/epoch
+→ { "epoch": 2, "state": "active" }
+
+server > local  → fetch this device's KEM capsule
+                   migrate files + RMS wrappers
+server < local  → refuse rollback`,
+    note:"No manifest, chunk read or write happens until local key material matches the server's active epoch." }},
   { a:"SYN", b:"API", bend:"y", p:{ t:"GET /vault/sync", kind:"http", src:"vela-desktop-core/src/api.rs",
     body:`GET /vault/sync
 Authorization: Bearer v4.public.…`,
@@ -601,11 +621,13 @@ Authorization: Bearer v4.public.…`,
 security_headers   nosniff · DENY · no-referrer · CSP
 cors               no wildcard in production`,
     note:"In production a request that cannot be proven HTTPS is refused, because otherwise the bearer token above could cross a LAN in the clear." }},
-  { a:"SRV", b:"SDB", bend:"y", p:{ t:"Manifest read", kind:"sled + stoolap", src:"serverVELA/vela-server/src/vault/sync.rs",
-    body:`chunk:<user>:<chunk_id> → { blob, version, lamport_clock }`,
-    note:"The server stores an opaque blob, its version and its clock. It has never been able to read one." }},
+  { a:"SRV", b:"SDB", bend:"y", p:{ t:"Manifest read", kind:"Turso", src:"serverVELA/vela-server/src/vault/sync.rs",
+    body:`vault_chunks(user_id, chunk_id, ciphertext,
+             version, lamport_clock, epoch)`,
+    note:"The server selects only the account's active epoch. It stores an opaque blob, its version and its clock; it has never been able to read one." }},
   { a:"SDB", b:"API", bend:"x", p:{ t:"Sync manifest", kind:"json", src:"api::SyncManifest",
-    body:`{ "chunks": [
+    body:`{ "epoch": 2,
+  "chunks": [
     { "chunk_id": "chunk-0",
       "version": 41,
       "lamport_clock": 118,
@@ -618,22 +640,95 @@ server says          118
 
 118 < 121  →  REFUSED`,
     note:"Lamport clocks only ever increase for a chunk. A lower value is not a stale cache, it is a rollback — deleted credentials reappearing, rotated passwords reverting. The other half of the defence is the clock baked into the AEAD's associated data." }},
-  { a:"SYN", b:"AED", bend:"y", p:{ t:"Seal the new chunk", kind:"XChaCha20-Poly1305", src:"aead::vault_chunk_aad",
-    body:`aad = vault_chunk_aad("chunk-0", 122)
+  { a:"SYN", b:"AED", bend:"y", p:{ t:"Seal the new chunk", kind:"XChaCha20-Poly1305", src:"rekey::epoch_aad",
+    body:`aad = epoch_aad(2, "chunk-0", 122)
 ct  = seal(chunk_key(rms, "chunk-0"), items, aad)`,
-    note:"Per-chunk keys mean a chunk's key is worthless against any other chunk." }},
+    note:"Per-chunk keys isolate chunks; epoch AAD also prevents an old-key write from being mistaken for current ciphertext." }},
   { a:"AED", b:"API", bend:"y", p:{ t:"PUT /vault/chunk/:id", kind:"http", src:"api::put_chunk",
     body:`PUT /vault/chunk/chunk-0
 If-Match: "41"
 X-Lamport-Clock: 122
+X-Vela-Epoch: 2
 Content-Type: application/octet-stream
 
-<24 B nonce ‖ ciphertext ‖ 16 B tag>`,
+<"VAE1" ‖ 24 B nonce ‖ ciphertext ‖ 16 B tag>`,
     note:"If-Match makes the write conditional, so two devices racing produce a conflict the user resolves rather than a silent overwrite." }},
   { a:"API", b:"SRV", bend:"x", p:{ t:"Stored", kind:"http", src:"serverVELA/vela-server/src/vault/chunk.rs",
     body:`200 OK
 x-new-token: v4.public.…      (rotated)`,
     note:"Renewed tokens ride back on a header and are threaded into the token store by the same call that made the request." }},
+]},
+
+{ id:"rekey", name:"Rotate the vault key", short:"REKEY", hops:[
+  { a:"TAU", b:"RKY", bend:"x", p:{ t:"Rotate vault keys", kind:"human-confirmed command", src:"commands/rekey.rs",
+    body:`rotate_vault_keys(state)
+  require unlocked desktop + capsule private key
+  confirm_with_human("VELA — rotate vault keys", …)
+  sync_mutex.lock()`,
+    note:"The same renderer that requested rotation cannot approve it silently; the host asks outside that request path." }},
+  { a:"RKY", b:"SRV", bend:"x", p:{ t:"POST /vault/rekey/start", kind:"device-scoped http", src:"vault/rekey.rs::post_start",
+    body:`Authorization: Bearer «device session»
+
+ACTIVE(1) → FREEZING(1→2)
+→ { "epoch": 2,
+    "rotation_id": "rk_7Kd2…",
+    "chunks": [{ "chunk_id":"chunk-0",
+                  "version":41, "lamport_clock":121 }] }`,
+    note:"Start refuses an incapable active device, an existing ORAM tree, or another live rotation. An abandoned freeze lazily rolls back after 15 minutes." }},
+  { a:"SRV", b:"SDB", bend:"y", p:{ t:"Freeze + inventory transaction", kind:"Turso transaction", src:"vault/rekey.rs",
+    body:`users.key_epoch = 1              (unchanged until commit)
+users.rekey_state = "freezing"
+users.rekey_started_at = now()
+users.rekey_starter = "desk-01"
+users.rekey_id = "rk_7Kd2…"
+
+current epoch-1 rows remain readable`,
+    note:"Ordinary writes are frozen. Reads continue serving epoch 1 while only the starter may prepare epoch-2 shadow rows." }},
+  { a:"RKY", b:"AED", bend:"y", p:{ t:"Re-seal every current chunk", kind:"local crypto", src:"vela_crypto::rekey",
+    body:`rms2 = rotate()
+items = open_epoch_chunk(key(rms1), ct1, epoch=1, …)
+ct2   = seal_epoch_chunk(key(rms2), items, epoch=2, …)`,
+    note:"The plaintext and both seeds stay client-side in zeroizing buffers. Every output uses a fresh nonce and explicit epoch AAD." }},
+  { a:"AED", b:"SRV", bend:"x", p:{ t:"Upload a shadow row", kind:"http", src:"api::put_rekey_shadow",
+    body:`PUT /vault/chunk/chunk-0
+X-Vela-Epoch: 2
+X-Vela-Rekey-Id: rk_7Kd2…
+X-Lamport-Clock: 121
+
+<epoch-2 ciphertext>`,
+    note:"The server accepts this only from the rotation starter and isolates it by rotation id, so a stale attempt cannot complete a later one." }},
+  { a:"RKY", b:"KEM", bend:"y", p:{ t:"Capsule fan-out", kind:"ML-KEM-1024 + X25519", src:"crypto::seal_rekey_capsule",
+    body:`for each active capable device:
+  capsule[device_id] = kem_seal(hybrid_ek,
+    aead(key_from(rms1), {v1, epoch:2, rotation_id, rms2}))
+
+POST /vault/rekey/capsules   batches ≤ 64`,
+    note:"One retained capsule per device is both distribution and crash recovery. Adoption verifies its authenticated inner epoch and rotation id before exposing RMS2; acknowledgement happens only after local migration is durable." }},
+  { a:"KEM", b:"SRV", bend:"x", p:{ t:"Store capsules, then commit", kind:"completeness + CAS", src:"vault/rekey.rs::post_commit",
+    body:`POST /vault/rekey/capsules   (batches ≤ 64)
+POST /vault/rekey/commit
+
+require every current chunk has an epoch-2 shadow
+require every active device has an RMS2 capsule
+
+FREEZING(1→2) → ACTIVE(2)
+clear old server recovery share
+best-effort sweep epoch-1 rows`,
+    note:"Commit happens while the initiator still has RMS1. If its response is lost, the retained self-capsule lets ordinary sync discover and adopt epoch 2 safely." }},
+  { a:"RKY", b:"STO", bend:"y", p:{ t:"Adopt locally after commit", kind:"durable migration", src:"sync::migrate_local_rms",
+    body:`write + fsync rms_migration.json
+re-seal vault, audit, shares, conflicts, identity keys
+rewrite platform RMS + password wrapper
+persist key_epoch.enc + sync_meta.json
+fsync consumers → delete journal`,
+    note:"The two-way journal means a crash can resume regardless of which RMS the OS or password wrapper yields next." }},
+  { a:"STO", b:"SHM", bend:"y", p:{ t:"Replace recovery material", kind:"verified 2-of-3 split", src:"recovery::remint_recovery_setup",
+    body:`shares2 = split(rms2, 2, 3)
+reconstruct(shares2[0..2]) == rms2   ✓
+
+cloud upload · FIDO2 registration · trusted-contact handoff
+must now be repeated`,
+    note:"Old shares reconstruct RMS1 and die by construction. New shares are verified locally, but the app cannot pretend their three delivery ceremonies already happened." }},
 ]},
 
 { id:"auth", name:"Prove this device", short:"AUTH", hops:[
@@ -796,7 +891,7 @@ seal(rms) under this device's own protection`,
   "capsule": "«opaque»",
   "kind": "login" }`,
     note:"The relay learns that you shared something with someone. It does not learn what." }},
-  { a:"SHR", b:"SDB", bend:"y", p:{ t:"Inbox row", kind:"stoolap", src:"share/mod.rs",
+  { a:"SHR", b:"SDB", bend:"y", p:{ t:"Inbox row", kind:"Turso", src:"share/mod.rs",
     body:`shares(id, recipient, sender, capsule, created_at)`,
     note:"Linked shares stay updatable, so rotating a password reaches the recipient instead of leaving them with a stale one." }},
 ]},
@@ -817,24 +912,36 @@ fed to ctap-hid-fido2 AS the challenge, so the key hashes
 exactly what a browser would have hashed`,
     note:"A raw CTAP2 library has no concept of the browser's envelope, and a native app has no implicit origin. Both gaps had to be closed for the server's webauthn-rs verifier to accept the ceremony." }},
   { a:"WAN", b:"RCV", bend:"x", p:{ t:"PUT /recovery/share", kind:"http", src:"serverVELA/vela-server/src/recovery/",
-    body:`share 1 → cloud provider backup (rclone)
-share 2 → this server, behind the security key
-share 3 → trusted contact`,
-    note:"Three custodians, no one of whom can act alone. That constraint is what forced a 2-of-3 rather than an encrypted backup." }},
-  { a:"RCV", b:"SDB", bend:"y", p:{ t:"Stored, gated", kind:"stoolap", src:"recovery/mod.rs",
-    body:`recovery_share(user_id, blob, webauthn_cred_id)`,
-    note:"The server holds one share and the credential id that gates it. Holding one share is holding nothing." }},
+    body:`share 1 → cloud /<account>/recovery-share-<epoch>.json
+          (iOS KVS: vela.recovery.share1.v2.<account>.<epoch>)
+share 2 → PUT { share, key_epoch } behind the security key
+share 3 → trusted contact, acknowledged at key_epoch`,
+    note:"All delivery runs under the sync/rekey mutex and probes the active server epoch. Epoch-specific cloud names also prevent a delayed old upload from overwriting a new one." }},
+  { a:"RCV", b:"SDB", bend:"y", p:{ t:"Stored, gated", kind:"Turso", src:"recovery/mod.rs",
+    body:`UPDATE users SET recovery_share = ?
+WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL`,
+    note:"The compare-and-swap is the authority: a device still holding RMS N cannot resurrect or delete its share after N+1 commits." }},
   { a:"SDB", b:"RCV", bend:"y", p:{ t:"…later, on new hardware", kind:"http", src:"recovery/initiate.rs · recover.rs",
     body:`POST /recovery/initiate     prove intent
 POST /recovery/recover      after the security key ceremony
 POST /recovery/enroll-device`,
     note:"" }},
   { a:"RCV", b:"SHM", bend:"x", p:{ t:"Two of three", kind:"reconstruct", src:"shamir::reconstruct",
-    body:`reconstruct([share_1, share_2], 32) → rms`,
-    note:"" }},
+    body:`require cloud.key_epoch == server.key_epoch
+reconstruct([share_1, share_2], 32) → rms`,
+    note:"A stale cloud object fails with an epoch error before incompatible shares are combined." }},
   { a:"SHM", b:"RMS", bend:"y", p:{ t:"Reseal under a new password", kind:"argon2id", src:"password_kdf::seal_with_password",
     body:`"VRMS" ‖ 3 ‖ params ‖ salt[16] ‖ ct`,
     note:"The account is back with the same seed, a new password blob and a brand-new device identity. The old devices can then be revoked." }},
+  { a:"RKY", b:"SHM", bend:"y", p:{ t:"A later rotation invalidates these", kind:"epoch transition", src:"recovery::remint_recovery_setup",
+    body:`commit epoch N+1:
+  server recovery_share = NULL
+  server recovery_auth_hash = NULL
+  shares(RMS N) can reconstruct only retired RMS N
+
+desktop mints + verifies shares(RMS N+1)
+deliveries revalidate ACTIVE(N+1) before recording success`,
+    note:"Rotation removes the old server-held share transactionally. An old running setup cannot restore it: server writes are epoch-CASed, cloud names are epoch-specific, and contact/security delivery is revalidated." }},
 ]},
 
 { id:"web", name:"Open it in a browser", short:"WEB SESSION", hops:[
@@ -853,15 +960,17 @@ POST /recovery/enroll-device`,
   { a:"TAU", b:"WBS", bend:"x", p:{ t:"POST …/grant", kind:"json", src:"web_session::post_grant",
     body:`{ "mode": "ro",          ro = snapshot · rw = live
   "ttl_secs": 900,
+  "key_epoch": 2,
   "capsule": "«sealed to the browser's ephemeral ek»" }`,
-    note:"Read-only seals a snapshot. Read-write seals the per-chunk vault keys — the largest deliberate exposure in the system, which is why it is TTL-bound and revocable from any device." }},
+    note:"The server commits the grant only if the account is active at exactly this epoch. Read-only seals a snapshot. Read-write seals the per-chunk vault keys — the largest deliberate exposure in the system." }},
   { a:"WBS", b:"WEB", bend:"y", p:{ t:"Capsule relayed", kind:"opaque", src:"web_session::get_keys",
     body:`polled with the poll secret; the server never held the plaintext`,
     note:"" }},
   { a:"WEB", b:"WBS", bend:"y", p:{ t:"POST …/token", kind:"proof", src:"web_session::post_token",
     body:`signature under the ephemeral vk
-→ PASETO, exp ≤ session expiry`,
-    note:"Only needed for a live session; a read-only snapshot needs no token at all because it makes no further authenticated calls." }},
+→ PASETO { scope: "web_session", key_epoch: 2,
+           exp ≤ session expiry }`,
+    note:"Only needed for a live session. Middleware rejects it as soon as the account rotates beyond epoch 2; a read-only snapshot needs no token because it makes no further authenticated calls." }},
 ]},
 
 { id:"oram", name:"Hide which chunk you read", short:"ORAM", hops:[
@@ -1409,13 +1518,13 @@ function renderPanel() {
       OVERVIEW.cond.forEach(c => h += `<div class="cond">${fmt(c)}</div>`);
       h += `<h3>The tree</h3>
         <table>
-          <tr><td class="k">libVELA/vela-crypto</td><td>3,636 lines · every primitive</td></tr>
-          <tr><td class="k">libVELA/vela-core</td><td>1,302 lines · platform-neutral vault</td></tr>
-          <tr><td class="k">libVELA/vela-{android,apple,wasm}-bridge</td><td>3,037 lines · one core, four runtimes</td></tr>
-          <tr><td class="k">desktopVELA/vela-desktop-core</td><td>18,060 lines · the client brain</td></tr>
-          <tr><td class="k">desktopVELA/src-tauri</td><td>5,636 lines · 39 commands</td></tr>
-          <tr><td class="k">desktopVELA/src-gpui</td><td>the second front end</td></tr>
-          <tr><td class="k">serverVELA/vela-server</td><td>9,445 lines · 47 routes</td></tr>
+          <tr><td class="k">libVELA/vela-crypto</td><td>4,006 lines · every primitive</td></tr>
+          <tr><td class="k">libVELA/vela-core</td><td>2,275 lines · platform-neutral vault</td></tr>
+          <tr><td class="k">libVELA/vela-{android,apple,wasm}-bridge</td><td>3,280 lines · one core, four runtimes</td></tr>
+          <tr><td class="k">desktopVELA/vela-desktop-core</td><td>35,213 lines · the client brain</td></tr>
+          <tr><td class="k">desktopVELA/src-tauri</td><td>1,720 lines · 47 commands</td></tr>
+          <tr><td class="k">desktopVELA/src-gpui</td><td>19,483 lines · the second front end</td></tr>
+          <tr><td class="k">serverVELA/vela-server</td><td>15,708 lines · 54 routes</td></tr>
           <tr><td class="k">extension</td><td>3,871 lines · mv3 + native host</td></tr>
           <tr><td class="k">androidVELA · iosVELA · webVELA</td><td>the other three clients</td></tr>
         </table>`;

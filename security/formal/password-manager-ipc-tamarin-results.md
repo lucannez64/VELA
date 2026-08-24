@@ -1,6 +1,6 @@
 # Machine-checked model of the decide → unwrap → consume flow (Tamarin)
 
-*Companion to `password-manager-ipc-formal-model.md`. The pen-and-paper theorems there are here re-derived symbolically in Tamarin (1.12.0, Maude 3.5.1 backend), so the secrecy claims are checked by a prover rather than by hand. Twelve theories: M1-M5, one per claim of the skeleton; M6, the real IPC handshake; M7-M8, the passkey escape and its hybrid deployment; M9a/M9b/M9c, the in-core-vs-engine-vs-in-process line; and M10, the full three-tier ladder. All produced the predicted verdict; the `.spthy` sources live alongside this document and are re-runnable. Defensive modelling only.*
+*Companion to `password-manager-ipc-formal-model.md`. The pen-and-paper theorems there are here re-derived symbolically in Tamarin (1.12.0, Maude 3.5.1 backend), so the secrecy claims are checked by a prover rather than by hand. Thirteen theories: M1-M5, one per claim of the skeleton; M6, the real IPC handshake; M7-M8, the passkey escape and its hybrid deployment; M9a/M9b/M9c/M9d, the in-core-vs-engine-vs-in-process-vs-captcha-artifact line; and M10, the full three-tier ladder. All produced the predicted verdict; the `.spthy` sources live alongside this document and are re-runnable. Defensive modelling only.*
 
 > **Revision note (2026-08-06).** A review of the theories found three headline lemmas that were passing for the wrong reason, and one residual that was described as smaller than it is. All four are now fixed in the models and in this document; see [Corrections](#corrections--what-was-wrong-in-the-first-version) for what was wrong, how it was caught, and what changed. The *ordering* of the ladder and every falsification survived unchanged — the fixes tightened the top three rungs, they did not move them.
 
@@ -19,6 +19,10 @@ The **consume-stage residual** (a reusable secret must reach the consuming app, 
 ## Results
 
 All runs: `tamarin-prover --prove <file>.spthy` (locale `LC_ALL=C.UTF-8`). For an **all-traces** lemma, *verified* = property holds in every trace. For an **exists-trace** lemma, *verified* = the described trace provably **exists** — so an exists-trace "verified" on a leak lemma means **the leak is real**, not prevented.
+
+Aggregate verdict: **83 verified, 5 falsified** (88 lemmas across thirteen
+theories). The five falsifications are the intended negative results described
+below.
 
 | Model | Escapes | Lemma | Type | Verdict | Mirrors (paper) |
 |---|---|---|---|---|---|
@@ -68,10 +72,14 @@ All runs: `tamarin-prover --prove <file>.spthy` (locale `LC_ALL=C.UTF-8`). For a
 | | | `unused_credentials_stay_secret` | all-traces | **falsified** | **the edge** — verified in M9b, falsified here: the blast radius is the vault, not the working set |
 | | | `escape_takes_credentials_never_used` | exists-trace | verified (trace exists) | the adversary derives an item that was never logged into |
 | | | `escape_takes_the_master_key` | exists-trace | verified (trace exists) | the key an engine in another process never held |
+| | | `login_succeeds` | exists-trace | verified (trace exists) | the non-escape path remains live |
+| **M9d** CAPTCHA artifact | observable token + attacker-chosen cookies | `credential_never_leaks` / `used_item_still_secret` | all-traces | **verified** | an observable login artifact does not expose the credential |
+| | | `every_session_goes_through_the_vault` / `a_lifted_token_logs_in_once` | all-traces | **verified** | the artifact neither bypasses approval nor becomes replayable |
+| | | `artifact_is_adversary_observable` / `login_succeeds` | exists-trace | verified (traces exist) | the artifact is genuinely public and the approved path remains live |
 | **M10** full ladder | M7→M9a→M6 per tier | `passkey_item_never_leaks` / `plain_item_never_leaks` | all-traces | **verified** | both upper tiers leak zero, even in use |
 | | | `js_unused_item_secret` | all-traces | **verified** | the js tier keeps the working-set bound |
 | | | `released_items_are_js` / `asserted_items_are_passkey` / `authed_items_are_plain` | all-traces | **verified** | the three tiers cannot cross |
-| | | M6 agreement/injectivity/compromise, M7 presence-gate + agreement, M9a session-expiry + `no_takeover_at_hardened_sites` | all-traces | **verified** | every tier's guarantees carry over |
+| | | M6 agreement/injectivity/compromise, including `js_release_requires_client_request` / `js_request_is_single_use`; M7 presence-gate + agreement; M9a session-expiry + `no_takeover_at_hardened_sites` | all-traces | **verified** | every tier's guarantees carry over |
 | | | `passkey_auth_reachable` / `plain_login_reachable` / `js_fill_reachable` / `js_used_item_leaks` | exists-trace | verified (traces exist) | all three tiers live; only a used js item leaks |
 | | | `session_enables_persistent_takeover` | exists-trace | verified (trace exists) | plain tier inherits M9a's self-service caveat |
 
@@ -144,6 +152,9 @@ What it costs is a currency M9b never had to name. To log in to a JavaScript sit
 The obvious repair closes the loop. Putting the interpreter back in its own process to contain an escape reintroduces the observable channel — that is M9b, by construction. *The isolation that makes the runtime safe is the same isolation that makes it a domain member.* Neither theory proves that on its own; it is what the two say side by side.
 
 Feasibility is a separate objection and independently fatal: a login on a fingerprinting site needs canvas, WebGL and an audio stack, so anything that satisfies those checks is a renderer, and a renderer is an engine. M9c is therefore not a tier — it is the machine-checked reason there is no fourth tier, and JS/fingerprint-bound sites stay on M6.
+
+**M9d** (`m9d_captcha_artifact.spthy`) settles the question the CAPTCHA-artifact tier (Tier A, the recipe machinery) left open: the browser now mints *part of the login request* — a solved CAPTCHA token lifted out of the user's own tab, plus its cookie jar — so does that observability change the secrecy story M9a certified? The model makes the adversary as strong as the question implies: the token goes `Out` at mint time (fully learnable), and the cookie jar enters the login rule as an `In` fact (fully attacker-chosen). The answer is **inert**, and it is machine-checked rather than argued: `credential_never_leaks` and `used_item_still_secret` verify with all of that in place; `every_session_goes_through_the_vault` verifies that no session is ever minted without an approval of some vault credential at that origin — token plus jar alone authenticate nothing; `a_lifted_token_logs_in_once` verifies single-use (the token is consumed by the one core login it rides on, so a lifted token cannot be replayed into a second login); and `artifact_is_adversary_observable` (exists-trace) confirms the model really grants the adversary the artifact — the inertness result is not an artefact of hiding it. What the theory deliberately does not certify is the policy cost (the token's shape is indistinguishable from CAPTCHA-relay tooling; recorded in the recipe module header) and anything about sites whose gate binds deeper than the token (Netflix-class, where a replay fails even with the browser's full cookie jar — those sites are simply unreachable by this tier).
+
 ### M10 — the full ladder, as one model
 
 That three-tier deployment is `m10_full_ladder.spthy`: a single theory whose vault tags every item with its origin's tier (`'passkey'` / `'plain'` / `'js'`) and whose three serving paths are each gated on the tag. The airtightness lemmas of M8 extend to three modes — `released_items_are_js`, `asserted_items_are_passkey`, `authed_items_are_plain` — so a passkey item can no more be drained via a credential release than a plain item can be served an assertion or a js item routed through the in-core leg. The tier guarantees all carry over unchanged: `passkey_item_never_leaks` and `plain_item_never_leaks` (zero, even in use), `js_unused_item_secret` (working-set bound), plus the M6 agreement/compromise, M7 origin-bound/one-shot, and M9a session-expiry lemmas. The exists-trace set confirms all three tiers are live and the only item that reaches the adversary is a used js item.
@@ -157,7 +168,7 @@ The graph is unchanged by the corrections below: it counts *credentials that rea
 ```bash
 # needs: tamarin-prover 1.12.0+, maude 3.x, a UTF-8 locale
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
-for f in m1_indomain m2_se_alone m3_de_se m4_bool_naive m5_tr_originbound m6_ipc_handshake m7_oneshot_assertion m8_hybrid m9a_in_core_login m9b_engine_login m10_full_ladder; do
+for f in m1_indomain m2_se_alone m3_de_se m4_bool_naive m5_tr_originbound m6_ipc_handshake m7_oneshot_assertion m8_hybrid m9a_in_core_login m9b_engine_login m9c_inprocess_sandbox m9d_captcha_artifact m10_full_ladder; do
   echo "== $f =="
   tamarin-prover --prove "$f.spthy" 2>/dev/null \
     | grep -E ': (verified|falsified|analysed)'
@@ -178,7 +189,7 @@ done
 
 That next step — encode the real IPC handshake and prove secrecy + injective agreement on it, compromised-browser case included — is now **done, as M6** (`m6_ipc_handshake.spthy`): native-messaging channel setup, first-use pairing with a human-verifiable fingerprint phrase, per-client key exchange, the request replay cache, and the Approved-grant lifecycle (issue / use / anomaly-reconfirm / expire / revoke) are all in the theory, and the secrecy, agreement and both injectivity lemmas, including the compromised-browser bound, verify without an oracle.
 
-The follow-up ladder is also built and verified: **M7** (`m7_oneshot_assertion.spthy`) shows the passkey-shaped escape from the working-set floor (credential never leaks, even in use, with the assertion path gated on user presence); **M8** (`m8_hybrid.spthy`) is the deployment of M7-for-passkey-origins + M6-for-legacy with a machine-checked airtight mode split; **M9a/M9b** (`m9a_in_core_login.spthy`, `m9b_engine_login.spthy`) draw the in-core-vs-engine line (M9a reaches M7-grade secrecy for plain-form sites only if the login stays in the trusted core; M9b falsifies `credential_never_leaks` — the model's answer to "couldn't another app grab it from the Selenium?"); and **M10** (`m10_full_ladder.spthy`) is the final composite — **M7 if not M9a if not M6** — with the three tiers machine-checked airtight and each tier's guarantees intact. The log-time graph (`password-manager-ipc-leak-graph.png`) quantifies all twelve curves.
+The follow-up ladder is also built and verified: **M7** (`m7_oneshot_assertion.spthy`) shows the passkey-shaped escape from the working-set floor (credential never leaks, even in use, with the assertion path gated on user presence); **M8** (`m8_hybrid.spthy`) is the deployment of M7-for-passkey-origins + M6-for-legacy with a machine-checked airtight mode split; **M9a/M9b** (`m9a_in_core_login.spthy`, `m9b_engine_login.spthy`) draw the in-core-vs-engine line (M9a reaches M7-grade secrecy for plain-form sites only if the login stays in the trusted core; M9b falsifies `credential_never_leaks` — the model's answer to "couldn't another app grab it from the Selenium?"); and **M10** (`m10_full_ladder.spthy`) is the final composite — **M7 if not M9a if not M6** — with the three tiers machine-checked airtight and each tier's guarantees intact. The log-time graph (`password-manager-ipc-leak-graph.png`) plots the quantitatively distinct leak outcomes. M9c/M9d are structural credential-flow theories, so they add verified/falsified lemmas but no new numerical curve.
 
 What the models still leave open, in descending order of value:
 

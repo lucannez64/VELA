@@ -21,7 +21,9 @@ on:
       - "libVELA/vela-crypto/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
+      - "libVELA/vela-apple-bridge/**"
       - "libVELA/vela-wasm-bridge/**"
+      - "desktopVELA/vela-desktop-core/**"
       - "extension/src/**"
       - "Cargo.lock"
       - "**/Cargo.lock"
@@ -34,14 +36,53 @@ on:
       - "libVELA/vela-crypto/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
+      - "libVELA/vela-apple-bridge/**"
       - "libVELA/vela-wasm-bridge/**"
+      - "desktopVELA/vela-desktop-core/**"
       - "extension/src/**"
       - "Cargo.lock"
       - "**/Cargo.lock"
       - ".github/workflows/security.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  formal-rekey:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tamarin 1.12.0 and Maude
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes maude ripgrep
+          curl --fail --silent --show-error --location \
+            --output /tmp/tamarin-prover.tar.gz \
+            https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
+          echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin-prover.tar.gz" \
+            | sha256sum --check
+          sudo tar --extract --gzip --file /tmp/tamarin-prover.tar.gz --directory /usr/local/bin
+          tamarin-prover --version
+          maude --version
+
+      - name: Prove rekey state, capsule, and mutation invariants
+        run: ./security/formal/run-rekey-proofs.sh
+
+      - name: Exhaust the bounded model against real handlers and Turso
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
+
+      - name: Verify the desktop, Android, Apple, and web epoch wire contract
+        run: |
+          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml \
+            rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible
+          cargo test --manifest-path libVELA/vela-android-bridge/Cargo.toml --lib
+          cargo test --manifest-path libVELA/vela-apple-bridge/Cargo.toml --lib
+          cargo test --manifest-path libVELA/vela-wasm-bridge/Cargo.toml --lib
+
   static-scan:
     runs-on: ubuntu-latest
     steps:

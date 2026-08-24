@@ -186,7 +186,9 @@ final class VaultViewModel: ObservableObject {
 
     /// Adopt an RMS recovered during enrollment, securing it with the chosen mode,
     /// then open an (empty) vault ready for the first sync to populate.
-    func adoptVault(rms newRMS: Data, mode: UnlockMode, password: String?) throws {
+    func adoptVault(rms newRMS: Data, keyEpoch: Int,
+                    mode: UnlockMode, password: String?) throws {
+        guard keyEpoch >= 1 else { throw VaultError.crypto }
         switch mode {
         case .biometric:
             try repo.adoptRMSBiometric(newRMS)
@@ -199,8 +201,19 @@ final class VaultViewModel: ObservableObject {
         tombstones = []
         backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: newRMS)
+        try repo.saveKeyEpoch(keyEpoch, rms: newRMS)
         unlockMode = mode
         lockState = .unlocked
+    }
+
+    func loadAuthenticatedKeyEpoch() throws -> Int? {
+        guard let rms else { throw VaultError.crypto }
+        return try repo.loadKeyEpoch(rms: rms)
+    }
+
+    func saveAuthenticatedKeyEpoch(_ keyEpoch: Int) throws {
+        guard let rms else { throw VaultError.crypto }
+        try repo.saveKeyEpoch(keyEpoch, rms: rms)
     }
 
     /// Security model (matches Android on background): drop decrypted plaintext

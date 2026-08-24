@@ -48,7 +48,13 @@ pub struct ConflictItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LocalSyncMeta {
+    #[serde(default = "default_key_epoch")]
+    key_epoch: i64,
     chunks: HashMap<String, LocalChunkMeta>,
+}
+
+fn default_key_epoch() -> i64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,22 +63,415 @@ struct LocalChunkMeta {
     lamport_clock: i64,
 }
 
-fn load_local_sync_meta(state: &AppState) -> LocalSyncMeta {
-    let meta_path = state.store.store_path().join("sync_meta.json");
-    if let Ok(json) = std::fs::read_to_string(&meta_path) {
-        if let Ok(meta) = serde_json::from_str::<LocalSyncMeta>(&json) {
-            return meta;
-        }
-    }
-    LocalSyncMeta { chunks: HashMap::new() }
+fn load_plaintext_sync_chunks(state: &AppState) -> HashMap<String, LocalChunkMeta> {
+    std::fs::read_to_string(state.store.store_path().join("sync_meta.json"))
+        .ok()
+        .and_then(|json| serde_json::from_str::<LocalSyncMeta>(&json).ok())
+        .map(|meta| meta.chunks)
+        .unwrap_or_default()
+}
+
+fn load_local_sync_meta(state: &AppState) -> Result<LocalSyncMeta, String> {
+    // `key_epoch.enc` is the sole epoch authority. Authentication, I/O and
+    // parse errors must propagate: treating an unreadable marker as absent
+    // lets attacker-controlled plaintext metadata relabel a stale RMS.
+    let durable_epoch = {
+        let crypto = state.crypto.read();
+        let crypto = crypto.as_ref().ok_or("Vault is locked")?;
+        state
+            .store
+            .load_key_epoch(crypto)
+            .map_err(|e| format!("Failed to authenticate the local vault epoch: {e}"))?
+    };
+    // Absence is the one supported legacy shape and means epoch 1 exactly.
+    let authenticated_epoch = durable_epoch.unwrap_or_else(default_key_epoch);
+    Ok(LocalSyncMeta {
+        key_epoch: authenticated_epoch,
+        chunks: load_plaintext_sync_chunks(state),
+    })
+}
+
+pub(crate) fn local_key_epoch(state: &AppState) -> Result<i64, String> {
+    Ok(load_local_sync_meta(state)?.key_epoch)
 }
 
 fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), String> {
     let store = &state.store;
     let meta_path = store.store_path().join("sync_meta.json");
     let json = serde_json::to_string(meta).map_err(|e| e.to_string())?;
-    std::fs::write(meta_path, json).map_err(|e| e.to_string())?;
+    crate::store::write_secret_file(&meta_path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub(crate) fn set_local_key_epoch(state: &AppState, epoch: i64) -> Result<(), String> {
+    if epoch < 1 {
+        return Err("Local key epoch must be positive".into());
+    }
+    // Preserve only the non-authoritative chunk clocks from plaintext. Do not
+    // require or rewrite the authenticated marker here: migration callers may
+    // be between old and new RMS installation. Authority is established only
+    // by Store::save_key_epoch and enforced by load_local_sync_meta.
+    let chunks = load_plaintext_sync_chunks(state);
+    let meta = LocalSyncMeta {
+        key_epoch: epoch,
+        chunks,
+    };
+    save_local_sync_meta(state, &meta)
+}
+
+/// Return the master password needed to carry a password-backed RMS wrapper
+/// across a rotation. It exists only after a password unlock and is zeroized
+/// with the session. Refuse before changing either local or server state when
+/// a biometric-unlocked password vault cannot safely update that wrapper.
+pub(crate) fn password_for_rekey(
+    state: &AppState,
+    current_rms: &[u8; 32],
+) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+    if !crate::biometric::has_password_encrypted_rms() {
+        return Ok(None);
+    }
+    let password = state.rekey_password().ok_or_else(|| {
+        "This vault also has a master-password key. Lock it, unlock with the master password, then retry key rotation or sync."
+            .to_string()
+    })?;
+    let opened = crate::biometric::authenticate_with_password(password.as_str())
+        .ok_or("The cached master password no longer opens this vault")?;
+    if &opened != current_rms {
+        return Err("The master-password key does not match the currently unlocked vault".into());
+    }
+    Ok(Some(password))
+}
+
+fn install_migrated_session_crypto(
+    state: &AppState,
+    new_crypto: crate::crypto::Crypto,
+    new_rms: &[u8; 32],
+    expected_generation: u64,
+) -> Result<(), String> {
+    // Hold the session read lock across the crypto/cache install. `lock_session`
+    // takes these locks in the same order, so it either happens wholly before
+    // this operation (and fails the checks) or wholly afterwards (and clears
+    // the freshly installed values).
+    let session = state.session.read();
+    if state.session_generation() != expected_generation || !session.active || session.is_expired()
+    {
+        return Err(
+            "Vault locked during key migration; unlock again to finish adoption".to_string(),
+        );
+    }
+    *state.crypto.write() = Some(new_crypto);
+    crate::biometric::set_cached_rms(*new_rms);
+    Ok(())
+}
+
+/// Move all local RMS consumers together. This includes the platform key and,
+/// when present, the independent master-password wrapper. Any persistence
+/// failure leaves the journal in place so the next unlock can finish or safely
+/// recover the migration while the server capsule remains a retry path.
+pub(crate) fn migrate_local_rms(
+    state: &AppState,
+    old_crypto: &crate::crypto::Crypto,
+    new_crypto: crate::crypto::Crypto,
+    new_epoch: i64,
+    password: Option<&str>,
+    expected_generation: u64,
+) -> Result<(), String> {
+    let _transition = state
+        .key_transition_lock
+        .write()
+        .map_err(|_| "Key transition lock is unavailable".to_string())?;
+    // Held in `Zeroizing` so the seeds do not linger in plain stack arrays
+    // after the migration completes.
+    let old_rms = zeroize::Zeroizing::new(old_crypto.rms());
+    let new_rms = zeroize::Zeroizing::new(new_crypto.rms());
+    let has_platform_rms = crate::biometric::has_platform_stored_rms();
+    if !has_platform_rms && password.is_none() {
+        return Err("No durable RMS store is available for the rotated key".into());
+    }
+
+    // This journal is written before the first consumer changes. It bridges
+    // old<->new in both directions, so startup can finish after a process or
+    // power failure regardless of which files/wrappers reached the new RMS.
+    state
+        .store
+        .begin_rms_migration(&old_rms, &new_rms, new_epoch)
+        .map_err(|e| format!("Failed to create the RMS migration journal: {e}"))?;
+
+    state
+        .store
+        .rekey_secret_files(old_crypto, &new_crypto)
+        .map_err(|e| format!("Failed to migrate local vault files: {e}"))?;
+
+    if has_platform_rms {
+        crate::biometric::store_rms(&new_rms)
+            .map_err(|e| format!("Failed to persist the rotated vault key: {e}"))?;
+    }
+
+    if let Some(password) = password {
+        crate::biometric::store_password_encrypted(&new_rms, password)
+            .map_err(|e| format!("Failed to update the master-password vault key: {e}"))?;
+    }
+
+    state
+        .store
+        .save_key_epoch(&new_crypto, new_epoch)
+        .map_err(|e| format!("Failed to persist the authenticated key epoch: {e}"))?;
+    crate::recovery::retire_recovery_setup(state)
+        .map_err(|e| format!("Failed to retire old recovery shares: {e}"))?;
+    // Auto-lock does not take sync_mutex and may win while the blocking file /
+    // credential migration is running. If it already won, leave the durable
+    // journal in place and let the next real unlock finish.
+    install_migrated_session_crypto(state, new_crypto, &new_rms, expected_generation)?;
+    set_local_key_epoch(state, new_epoch)
+        .map_err(|e| format!("Failed to persist the new key epoch: {e}"))?;
+
+    state
+        .store
+        .finish_rms_migration()
+        .map_err(|e| format!("Migration completed but its journal could not be removed: {e}"))?;
+
+    Ok(())
+}
+
+/// Complete a migration interrupted between any two local writes. Called by
+/// both unlock paths before loading `vault.enc`, because that file may already
+/// be under the new RMS even while the platform/password wrapper is still old.
+pub(crate) fn recover_pending_rms_migration(
+    state: &AppState,
+    current_rms: [u8; 32],
+    password: Option<&str>,
+) -> Result<[u8; 32], String> {
+    let _transition = state
+        .key_transition_lock
+        .write()
+        .map_err(|_| "Key transition lock is unavailable".to_string())?;
+    let Some((old_rms, new_rms, new_epoch)) = state
+        .store
+        .load_rms_migration(&current_rms)
+        .map_err(|e| format!("Failed to open the pending RMS migration: {e}"))?
+    else {
+        return Ok(current_rms);
+    };
+
+    let old_crypto = crate::crypto::Crypto::new(&old_rms);
+    let new_crypto = crate::crypto::Crypto::new(&new_rms);
+    state
+        .store
+        .recover_rekey_secret_files(&old_crypto, &new_crypto)
+        .map_err(|e| format!("Failed to resume local vault migration: {e}"))?;
+
+    let has_platform_rms = crate::biometric::has_platform_stored_rms();
+    let has_password_rms = crate::biometric::has_password_encrypted_rms();
+    if has_platform_rms {
+        crate::biometric::store_rms(&new_rms)
+            .map_err(|e| format!("Failed to finish platform RMS migration: {e}"))?;
+    }
+    let password_pending = if has_password_rms {
+        if let Some(password) = password {
+            crate::biometric::store_password_encrypted(&new_rms, password)
+                .map_err(|e| format!("Failed to finish password RMS migration: {e}"))?;
+            false
+        } else {
+            true
+        }
+    } else {
+        false
+    };
+    if !has_platform_rms && password_pending {
+        return Err("The interrupted key migration requires the master password to finish".into());
+    }
+
+    set_local_key_epoch(state, new_epoch)
+        .map_err(|e| format!("Failed to persist the recovered key epoch: {e}"))?;
+    state
+        .store
+        .save_key_epoch(&new_crypto, new_epoch)
+        .map_err(|e| format!("Failed to persist the authenticated key epoch: {e}"))?;
+    crate::recovery::retire_recovery_setup(state)
+        .map_err(|e| format!("Failed to retire old recovery shares: {e}"))?;
+    crate::biometric::set_cached_rms(new_rms);
+
+    // A biometric unlock cannot rewrite an independent password wrapper. Keep
+    // the two-way journal until the next password unlock; meanwhile the new
+    // platform RMS and all local files are already usable.
+    if !password_pending {
+        state
+            .store
+            .finish_rms_migration()
+            .map_err(|e| format!("Failed to remove the completed migration journal: {e}"))?;
+    }
+
+    Ok(new_rms)
+}
+
+/// Adopt a server epoch before fetching or writing any vault data. The capsule
+/// is opened with the current identity key, then every local RMS-derived file
+/// and the platform RMS are moved together to the new seed.
+fn open_epoch_adoption_capsule(
+    response: &crate::api::CapsuleResponse,
+    hybrid_dk: &[u8],
+    previous_rms: &[u8; 32],
+    server_epoch: i64,
+) -> Result<zeroize::Zeroizing<[u8; 32]>, String> {
+    if response.epoch != Some(server_epoch) {
+        return Err(format!(
+            "Server returned a capsule for epoch {:?}, expected {server_epoch}",
+            response.epoch
+        ));
+    }
+    let rotation_id = response.rotation_id.as_deref().ok_or(
+        "Server returned an epoch adoption capsule without its committed rotation id",
+    )?;
+    let capsule = B64
+        .decode(&response.capsule)
+        .map_err(|e| format!("Malformed epoch adoption capsule: {e}"))?;
+    crate::crypto::open_rekey_capsule(
+        hybrid_dk,
+        &capsule,
+        previous_rms,
+        server_epoch,
+        rotation_id,
+    )
+}
+
+async fn adopt_server_epoch(
+    state: &Arc<AppState>,
+    client: &ApiClient,
+    token: &mut String,
+) -> Result<i64, String> {
+    let generation = state.session_generation();
+    let (server_epoch, rotation_state, new_token) = client
+        .get_key_epoch(token)
+        .await
+        .map_err(|e| format!("Failed to read server key epoch: {e}"))?;
+    if let Some(t) = new_token {
+        state.session.write().set_server_token(t.clone());
+        *token = t;
+    }
+    let local_epoch = load_local_sync_meta(state)?.key_epoch;
+
+    if rotation_state != "active" {
+        return Err(
+            "A vault key rotation is in progress; sync will retry after it commits.".into(),
+        );
+    }
+    if server_epoch == local_epoch {
+        // ACK is idempotent. Retrying it here heals a lost response from a
+        // previous adoption; the server will not allow another rotation while
+        // any active device still has an unacknowledged transition capsule.
+        if server_epoch > 1 {
+            match client.acknowledge_rekey_capsule(token, server_epoch).await {
+                Ok(Some(refreshed)) => {
+                    state.session.write().set_server_token(refreshed.clone());
+                    *token = refreshed;
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(
+                    "Could not retry the epoch {server_epoch} capsule acknowledgement: {e}"
+                ),
+            }
+        }
+        return Ok(server_epoch);
+    }
+    if server_epoch < local_epoch {
+        return Err(format!(
+            "Server key epoch {server_epoch} is older than local epoch {local_epoch}; refusing rollback"
+        ));
+    }
+    if local_epoch.checked_add(1) != Some(server_epoch) {
+        return Err(format!(
+            "Server key epoch {server_epoch} skips this device's authenticated local epoch {local_epoch}; refusing to bypass a re-key transition"
+        ));
+    }
+
+    let (old_crypto, hybrid_dk) = {
+        let guard = state.crypto.read();
+        let crypto = guard.as_ref().ok_or("Vault is locked")?;
+        let identity = state
+            .store
+            .load_identity_keys(crypto)
+            .map_err(|e| format!("Failed to load identity keys for epoch adoption: {e}"))?
+            .ok_or("No identity keys available for epoch adoption")?;
+        (
+            crate::crypto::Crypto::new(&crypto.rms()),
+            identity.hybrid_dk,
+        )
+    };
+    if hybrid_dk.is_empty() {
+        return Err("This device has no capsule decryption key; re-enrollment is required".into());
+    }
+    // Blocking platform-credential check — off the async runtime.
+    let password = {
+        let state = state.clone();
+        let current_rms = old_crypto.rms();
+        tokio::task::spawn_blocking(move || password_for_rekey(&state, &current_rms))
+            .await
+            .map_err(|e| format!("Password proof task panicked: {e}"))??
+    };
+
+    let (capsule, new_token) = client
+        .get_capsule(token)
+        .await
+        .map_err(|e| format!("Failed to fetch the epoch adoption capsule: {e}"))?;
+    if let Some(t) = new_token {
+        state.session.write().set_server_token(t.clone());
+        *token = t;
+    }
+    let new_rms = open_epoch_adoption_capsule(
+        &capsule,
+        &hybrid_dk,
+        &old_crypto.rms(),
+        server_epoch,
+    )?;
+    let new_crypto = crate::crypto::Crypto::new(&new_rms);
+
+    state.ensure_unlocked_since(generation)?;
+    // Synchronous fs + platform-credential I/O — run it on the blocking pool
+    // so a slow disk cannot stall the reactor.
+    let state_for_migration = state.clone();
+    let password_ref = password.clone();
+    tokio::task::spawn_blocking(move || {
+        migrate_local_rms(
+            &state_for_migration,
+            &old_crypto,
+            new_crypto,
+            server_epoch,
+            password_ref.as_ref().map(|p| p.as_str()),
+            generation,
+        )
+    })
+    .await
+    .map_err(|e| format!("Epoch adoption task failed: {e}"))??;
+
+    // Migration retires the cached split of the old RMS. Immediately create
+    // and verify a replacement split so an adopting device has the same
+    // recovery-setup state as the rotation initiator. Delivery ceremonies are
+    // still required, and a re-mint failure must not undo an already-durable
+    // epoch adoption.
+    if let Err(e) = tokio::task::spawn_blocking({
+        let state = state.clone();
+        move || crate::recovery::remint_recovery_setup(&state)
+    })
+    .await
+    .map_err(|e| format!("Recovery share re-mint task panicked: {e}"))
+    .and_then(|inner| inner)
+    {
+        tracing::warn!("Recovery share re-mint after epoch adoption failed: {e}");
+    }
+
+    match client.acknowledge_rekey_capsule(token, server_epoch).await {
+        Ok(Some(refreshed)) => {
+            state.session.write().set_server_token(refreshed.clone());
+            *token = refreshed;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            // Adoption is already durable; retaining an encrypted retry
+            // capsule is harmless and a later rotation overwrites it.
+            tracing::warn!("Adopted epoch {server_epoch}, but capsule acknowledgement failed: {e}");
+        }
+    }
+    Ok(server_epoch)
 }
 
 /// Refuse a chunk the server hands back at an older revision than we last saw.
@@ -88,7 +487,11 @@ fn save_local_sync_meta(state: &AppState, meta: &LocalSyncMeta) -> Result<(), St
 /// revision into the ciphertext so a *relabelled* blob also fails, needs every
 /// client to seal and open with the same associated data; see
 /// `vela_crypto::aead::vault_chunk_aad`.
-fn reject_rollback(chunk_id: &str, server_lamport: i64, last_seen: Option<i64>) -> Result<(), String> {
+fn reject_rollback(
+    chunk_id: &str,
+    server_lamport: i64,
+    last_seen: Option<i64>,
+) -> Result<(), String> {
     // Never synced this chunk on this device: nothing to compare against.
     let Some(seen) = last_seen else { return Ok(()) };
     if server_lamport < seen {
@@ -102,15 +505,38 @@ fn reject_rollback(chunk_id: &str, server_lamport: i64, last_seen: Option<i64>) 
 
 fn chunk_key_bytes(state: &AppState, chunk_id: &str) -> Result<[u8; 32], String> {
     let crypto_guard = state.crypto.read();
-    let crypto = crypto_guard.as_ref().ok_or_else(|| "Crypto not initialized".to_string())?;
+    let crypto = crypto_guard
+        .as_ref()
+        .ok_or_else(|| "Crypto not initialized".to_string())?;
     Ok(*crypto.chunk_key(chunk_id.as_bytes()).as_bytes())
+}
+
+/// Epoch 1 remains wire-compatible with mobile/web clients which have not yet
+/// shipped epoch-tagged AAD. Once an account rotates, the capability gate has
+/// proved every active device understands the new format, so later epochs are
+/// bound explicitly.
+fn seal_sync_chunk(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    key_epoch: i64,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Vec<u8>, vela_crypto::VelaError> {
+    let epoch = u64::try_from(key_epoch).map_err(|_| {
+        vela_crypto::VelaError::InvalidParameter("vault key epoch must be positive".into())
+    })?;
+    vela_crypto::rekey::seal_fleet_chunk(key, plaintext, epoch, chunk_id, lamport_clock)
 }
 
 fn log_sync_audit(state: &AppState, chunk_count: usize) {
     record_audit_event(state, AuditAction::VaultSync { chunk_count });
 }
 
-async fn authenticate_for_sync(state: &AppState, client: &ApiClient, device_id: &str) -> Result<String, String> {
+pub(crate) async fn authenticate_for_sync(
+    state: &AppState,
+    client: &ApiClient,
+    device_id: &str,
+) -> Result<String, String> {
     let identity_keys = state
         .crypto
         .read()
@@ -124,12 +550,17 @@ async fn authenticate_for_sync(state: &AppState, client: &ApiClient, device_id: 
                 .to_string()
         })?;
 
-    let challenge_resp = client.get_challenge().await.map_err(|e| format!("Failed to get challenge: {e}"))?;
-    let challenge_bytes =
-        B64.decode(&challenge_resp.challenge).map_err(|e| format!("Invalid challenge format: {e}"))?;
+    let challenge_resp = client
+        .get_challenge()
+        .await
+        .map_err(|e| format!("Failed to get challenge: {e}"))?;
+    let challenge_bytes = B64
+        .decode(&challenge_resp.challenge)
+        .map_err(|e| format!("Invalid challenge format: {e}"))?;
 
-    let signature = crypto::create_auth_signature(&identity_keys.hybrid_sk, &challenge_bytes, device_id)
-        .map_err(|e| format!("Failed to create auth signature: {e}"))?;
+    let signature =
+        crypto::create_auth_signature(&identity_keys.hybrid_sk, &challenge_bytes, device_id)
+            .map_err(|e| format!("Failed to create auth signature: {e}"))?;
 
     let verify_resp = client
         .verify_signature(&VerifyRequest {
@@ -216,7 +647,10 @@ async fn fetch_manifest_with_reauth(
 async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
     let keys = {
         let crypto = state.crypto.read();
-        match crypto.as_ref().and_then(|c| state.store.load_identity_keys(c).ok().flatten()) {
+        match crypto
+            .as_ref()
+            .and_then(|c| state.store.load_identity_keys(c).ok().flatten())
+        {
             Some(keys) => keys,
             None => return,
         }
@@ -232,7 +666,9 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
     }
 
     let crypto = state.crypto.read();
-    let Some(crypto) = crypto.as_ref() else { return };
+    let Some(crypto) = crypto.as_ref() else {
+        return;
+    };
     // Only the share keypair is being backfilled; everything else is carried
     // over untouched, `hybrid_dk` included — a device that has one must not
     // lose it to a share-key backfill.
@@ -245,6 +681,31 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
         tracing::warn!("Share key backfill: failed to persist keys: {}", e);
     } else {
         tracing::info!("Share key backfilled for existing identity");
+    }
+}
+
+/// Advertise capsule-adoption support only when this installation actually
+/// retained the matching private key. Best-effort during ordinary sync; the
+/// explicit rotation path repeats it and treats failure as fatal.
+async fn advertise_rekey_capability(state: &AppState, client: &ApiClient, token: &mut String) {
+    let capable = {
+        let crypto = state.crypto.read();
+        crypto
+            .as_ref()
+            .and_then(|crypto| state.store.load_identity_keys(crypto).ok().flatten())
+            .map(|identity| !identity.hybrid_dk.is_empty())
+            .unwrap_or(false)
+    };
+    if !capable {
+        return;
+    }
+    match client.mark_rekey_capable(token).await {
+        Ok(Some(refreshed)) => {
+            state.session.write().set_server_token(refreshed.clone());
+            *token = refreshed;
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!("Could not advertise re-key capability: {e}"),
     }
 }
 
@@ -268,11 +729,17 @@ pub(crate) fn merge_server_vaults(
         tombstone_map.insert(t.id.clone(), t.deleted_at);
     }
     for t in &server.tombstones {
-        tombstone_map.entry(t.id.clone()).and_modify(|d| *d = (*d).max(t.deleted_at)).or_insert(t.deleted_at);
+        tombstone_map
+            .entry(t.id.clone())
+            .and_modify(|d| *d = (*d).max(t.deleted_at))
+            .or_insert(t.deleted_at);
     }
     // ── 2. Detect conflicts for items that exist on both sides ──────────────
-    let server_map: HashMap<String, crate::vault::VaultItem> =
-        server.items.into_iter().map(|item| (item.id().to_string(), item)).collect();
+    let server_map: HashMap<String, crate::vault::VaultItem> = server
+        .items
+        .into_iter()
+        .map(|item| (item.id().to_string(), item))
+        .collect();
 
     for local_item in &local.items {
         let id = local_item.id().to_string();
@@ -298,20 +765,29 @@ pub(crate) fn merge_server_vaults(
         }
     }
 
-    let conflicted_ids: std::collections::HashSet<String> = conflicts.iter().map(|c| c.item_id.clone()).collect();
+    let conflicted_ids: std::collections::HashSet<String> =
+        conflicts.iter().map(|c| c.item_id.clone()).collect();
 
     // ── 3. Merge items, filtering out tombstoned IDs ───────────────────────
     let mut final_items: HashMap<String, crate::vault::VaultItem> = local
         .items
         .drain(..)
         .filter(|item| {
-            tombstone_map.get(item.id()).map(|deleted_at| *deleted_at >= item.updated_at()).unwrap_or(false) == false
+            tombstone_map
+                .get(item.id())
+                .map(|deleted_at| *deleted_at >= item.updated_at())
+                .unwrap_or(false)
+                == false
         })
         .map(|item| (item.id().to_string(), item))
         .collect();
 
     for (id, server_item) in server_map {
-        if tombstone_map.get(&id).map(|deleted_at| *deleted_at >= server_item.updated_at()).unwrap_or(false) {
+        if tombstone_map
+            .get(&id)
+            .map(|deleted_at| *deleted_at >= server_item.updated_at())
+            .unwrap_or(false)
+        {
             continue; // deleted item stays deleted
         }
         if let Some(existing) = final_items.get(&id) {
@@ -373,7 +849,15 @@ fn manifest_versions(manifest: &crate::api::SyncManifest) -> HashMap<String, Loc
     manifest
         .chunks
         .iter()
-        .map(|entry| (entry.chunk_id.clone(), LocalChunkMeta { version: entry.version, lamport_clock: entry.lamport_clock }))
+        .map(|entry| {
+            (
+                entry.chunk_id.clone(),
+                LocalChunkMeta {
+                    version: entry.version,
+                    lamport_clock: entry.lamport_clock,
+                },
+            )
+        })
         .collect()
 }
 
@@ -382,7 +866,10 @@ fn split_plaintext_chunks(plaintext: &[u8]) -> Vec<Vec<u8>> {
         return vec![Vec::new()];
     }
 
-    plaintext.chunks(VAULT_CHUNK_PLAINTEXT_SIZE).map(|chunk| chunk.to_vec()).collect()
+    plaintext
+        .chunks(VAULT_CHUNK_PLAINTEXT_SIZE)
+        .map(|chunk| chunk.to_vec())
+        .collect()
 }
 
 fn save_conflicts(state: &AppState, conflicts: &[ConflictItem]) -> Result<(), String> {
@@ -400,10 +887,14 @@ fn save_conflicts(state: &AppState, conflicts: &[ConflictItem]) -> Result<(), St
     // SSN, secure-note content), so they must never be persisted as plaintext.
     // Seal them under the vault key via the same envelope used for audit.enc.
     let crypto_guard = state.crypto.read();
-    let crypto = crypto_guard.as_ref().ok_or("Cannot save conflicts: vault is locked")?;
+    let crypto = crypto_guard
+        .as_ref()
+        .ok_or("Cannot save conflicts: vault is locked")?;
 
     let plaintext = serde_json::to_vec(conflicts).map_err(|e| e.to_string())?;
-    let ciphertext = crypto.encrypt_vault(&plaintext).map_err(|e| e.to_string())?;
+    let ciphertext = crypto
+        .encrypt_vault(&plaintext)
+        .map_err(|e| e.to_string())?;
 
     crate::store::write_secret_file(&enc_path, &ciphertext).map_err(|e| e.to_string())?;
 
@@ -439,7 +930,10 @@ fn load_conflicts(state: &AppState) -> Vec<ConflictItem> {
     }
 
     if legacy_path.exists() {
-        return std::fs::read_to_string(&legacy_path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default();
+        return std::fs::read_to_string(&legacy_path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
     }
 
     vec![]
@@ -451,9 +945,8 @@ enum ServerVault {
     /// The chunks decrypted and reassembled into a vault.
     Available(crate::vault::VaultStore, i64),
     /// The server holds vault chunks this account's key cannot open — server-
-    /// side corruption or a foreign chunk. Nothing can be merged from them; the
-    /// local vault is re-uploaded to overwrite them (a deliberate recovery:
-    /// the codebase's own comments name re-sync as the fix for a corrupt sync).
+    /// side corruption, a foreign chunk, or an authority mismatch. Nothing can
+    /// safely be merged or overwritten automatically in this state.
     Unreadable(String),
     /// The server has no vault chunks.
     Empty,
@@ -470,12 +963,18 @@ async fn download_vault_from_manifest(
     client: &ApiClient,
     token: &mut String,
     manifest: &crate::api::SyncManifest,
+    key_epoch: i64,
 ) -> Result<ServerVault, String> {
     // What this device last accepted for each chunk, to catch a server that
     // serves an older revision back (audit C-2).
-    let local_meta = load_local_sync_meta(state);
+    let local_meta = load_local_sync_meta(state)?;
     let ids = ordered_vault_chunk_ids(manifest);
-    let ids = if ids.is_empty() && manifest.chunks.iter().any(|entry| entry.chunk_id == LEGACY_VAULT_MAIN_CHUNK_ID) {
+    let ids = if ids.is_empty()
+        && manifest
+            .chunks
+            .iter()
+            .any(|entry| entry.chunk_id == LEGACY_VAULT_MAIN_CHUNK_ID)
+    {
         vec![LEGACY_VAULT_MAIN_CHUNK_ID.to_string()]
     } else {
         ids
@@ -501,26 +1000,39 @@ async fn download_vault_from_manifest(
 
         handles.push(tokio::spawn(async move {
             let t = token.lock().await.clone();
-            let (ciphertext, _version, lamport, new_tok) =
-                client.get_chunk(&t, &chunk_id).await.map_err(|e| format!("Failed to download chunk {chunk_id}: {e}"))?;
+            let (ciphertext, _version, lamport, new_tok) = client
+                .get_chunk(&t, &chunk_id)
+                .await
+                .map_err(|e| format!("Failed to download chunk {chunk_id}: {e}"))?;
             if let Some(new_t) = new_tok {
                 *token.lock().await = new_t;
             }
             reject_rollback(&chunk_id, lamport, seen_lamport)?;
             // A chunk this account's key cannot open is corruption (or a
-            // foreign chunk), not a rollback — it must not abort the sync
-            // forever. It is reported as `Corrupt` and the caller heals by
-            // re-uploading the local vault.
-            match vela_crypto::aead::open_vault_chunk(&key, &ciphertext, &chunk_id, lamport) {
+            // foreign chunk). Report it distinctly, but never turn an
+            // authentication failure into permission to overwrite the server.
+            match vela_crypto::rekey::open_fleet_chunk(
+                &key,
+                &ciphertext,
+                key_epoch as u64,
+                &chunk_id,
+                lamport,
+            ) {
                 Ok(chunk) => Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport)),
-                Err(e) => Ok::<_, String>(ChunkOutcome::Corrupt(idx, format!("chunk {chunk_id}: {e}"))),
+                Err(e) => {
+                    Ok::<_, String>(ChunkOutcome::Corrupt(idx, format!("chunk {chunk_id}: {e}")))
+                }
             }
         }));
     }
 
     let mut results = Vec::with_capacity(handles.len());
     for handle in handles {
-        results.push(handle.await.map_err(|e| format!("Download task panicked: {e}"))??);
+        results.push(
+            handle
+                .await
+                .map_err(|e| format!("Download task panicked: {e}"))??,
+        );
     }
     results.sort_by_key(|outcome| match outcome {
         ChunkOutcome::Decrypted(idx, ..) | ChunkOutcome::Corrupt(idx, ..) => *idx,
@@ -544,8 +1056,8 @@ async fn download_vault_from_manifest(
         return Ok(ServerVault::Unreadable(corrupt.join("; ")));
     }
 
-    let vault: crate::vault::VaultStore =
-        serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize synced vault: {e}"))?;
+    let vault: crate::vault::VaultStore = serde_json::from_slice(&plaintext)
+        .map_err(|e| format!("Failed to deserialize synced vault: {e}"))?;
     Ok(ServerVault::Available(vault, max_lamport))
 }
 
@@ -557,6 +1069,7 @@ async fn upload_vault_chunks(
     local_meta: &mut LocalSyncMeta,
     plaintext: &[u8],
     base_lamport: i64,
+    key_epoch: i64,
 ) -> Result<usize, String> {
     let chunks = split_plaintext_chunks(plaintext);
     let manifest_meta = manifest_versions(manifest);
@@ -580,19 +1093,16 @@ async fn upload_vault_chunks(
     let shared_token = Arc::new(Mutex::new(token.clone()));
     let mut handles = Vec::with_capacity(chunks.len());
 
-    for (idx, (chunk, &chunk_lamport)) in chunks.iter().zip(lamport_assignments.iter()).enumerate() {
+    for (idx, (chunk, &chunk_lamport)) in chunks.iter().zip(lamport_assignments.iter()).enumerate()
+    {
         let chunk_id = vault_chunk_id(idx);
         let version = manifest_meta.get(&chunk_id).map(|m| m.version).unwrap_or(0);
         let key = chunk_key_bytes(state, &chunk_id)?;
         // Sealed against this chunk's id and the clock it is about to be stored
         // under, so the server cannot hand any of it back later as if it were
         // current (audit C-2).
-        let ciphertext = vela_crypto::aead::seal(
-            &key,
-            chunk,
-            &vela_crypto::aead::vault_chunk_aad(&chunk_id, chunk_lamport),
-        )
-        .map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
+        let ciphertext = seal_sync_chunk(&key, chunk, key_epoch, &chunk_id, chunk_lamport)
+            .map_err(|e| format!("Failed to encrypt chunk {chunk_id}: {e}"))?;
         let client = client.clone();
         let token = shared_token.clone();
         let chunk_id_clone = chunk_id.clone();
@@ -600,7 +1110,14 @@ async fn upload_vault_chunks(
         handles.push(tokio::spawn(async move {
             let t = token.lock().await.clone();
             let (new_version, new_tok) = client
-                .put_chunk(&t, &chunk_id_clone, version, ciphertext, chunk_lamport)
+                .put_chunk_with_epoch(
+                    &t,
+                    &chunk_id_clone,
+                    version,
+                    ciphertext,
+                    chunk_lamport,
+                    Some(key_epoch),
+                )
                 .await
                 .map_err(|e| format!("Failed to upload chunk {chunk_id_clone}: {e}"))?;
             if let Some(new_t) = new_tok {
@@ -612,9 +1129,17 @@ async fn upload_vault_chunks(
 
     let mut next_meta = HashMap::new();
     for handle in handles {
-        let (chunk_id, new_version) = handle.await.map_err(|e| format!("Upload task panicked: {e}"))??;
+        let (chunk_id, new_version) = handle
+            .await
+            .map_err(|e| format!("Upload task panicked: {e}"))??;
         let chunk_lamport = lamport_assignments[next_meta.len()]; // results collected in order
-        next_meta.insert(chunk_id, LocalChunkMeta { version: new_version, lamport_clock: chunk_lamport });
+        next_meta.insert(
+            chunk_id,
+            LocalChunkMeta {
+                version: new_version,
+                lamport_clock: chunk_lamport,
+            },
+        );
     }
 
     *token = shared_token.lock().await.clone();
@@ -641,13 +1166,18 @@ async fn upload_vault_chunks(
         let _ = tokio::spawn(async move {
             for (chunk_id, version) in stale_chunks {
                 let t = delete_token.lock().await.clone();
-                match delete_client.delete_chunk(&t, &chunk_id, version).await {
+                match delete_client
+                    .delete_chunk_with_epoch(&t, &chunk_id, version, Some(key_epoch))
+                    .await
+                {
                     Ok(new_tok) => {
                         if let Some(new_t) = new_tok {
                             *delete_token.lock().await = new_t;
                         }
                     }
-                    Err(e) => tracing::warn!("Failed to delete stale sync chunk {}: {}", chunk_id, e),
+                    Err(e) => {
+                        tracing::warn!("Failed to delete stale sync chunk {}: {}", chunk_id, e)
+                    }
                 }
             }
         })
@@ -660,12 +1190,22 @@ async fn upload_vault_chunks(
     Ok(chunks.len())
 }
 
-async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut String, manifest: &crate::api::SyncManifest) {
+async fn sync_audit_chunk(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+    manifest: &crate::api::SyncManifest,
+    key_epoch: i64,
+) {
     let Some(plaintext) = audit::serialize_audit_plaintext(state) else {
         return;
     };
 
-    if let Some(entry) = manifest.chunks.iter().find(|entry| entry.chunk_id == audit::AUDIT_CHUNK_ID) {
+    if let Some(entry) = manifest
+        .chunks
+        .iter()
+        .find(|entry| entry.chunk_id == audit::AUDIT_CHUNK_ID)
+    {
         if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
             match client.get_chunk(token, audit::AUDIT_CHUNK_ID).await {
                 Ok((ciphertext, _, _, new_tok)) => {
@@ -680,12 +1220,15 @@ async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut Stri
                     // sealed chunk skips the merge, which is what it already
                     // does on any decrypt failure.
                     let entry_clock = entry.lamport_clock;
-                    if let Ok(server_plaintext) = vela_crypto::aead::open_vault_chunk(
-                        &key,
-                        &ciphertext,
-                        audit::AUDIT_CHUNK_ID,
-                        entry_clock,
-                    ) {
+                    if let Ok(server_plaintext) =
+                        vela_crypto::rekey::open_fleet_chunk(
+                            &key,
+                            &ciphertext,
+                            key_epoch as u64,
+                            audit::AUDIT_CHUNK_ID,
+                            entry_clock,
+                        )
+                    {
                         // Merge server events into the local log (union by
                         // event id) — never replace local history.
                         let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
@@ -701,14 +1244,23 @@ async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut Stri
                 // server cannot replay an older audit log — which is exactly the
                 // record a user consults after a compromise (audit C-2).
                 let next_clock = entry.lamport_clock + 1;
-                match vela_crypto::aead::seal(
+                match seal_sync_chunk(
                     &key,
                     &updated_plaintext,
-                    &vela_crypto::aead::vault_chunk_aad(audit::AUDIT_CHUNK_ID, next_clock),
+                    key_epoch,
+                    audit::AUDIT_CHUNK_ID,
+                    next_clock,
                 ) {
                     Ok(ciphertext) => {
                         let _ = client
-                            .put_chunk(token, audit::AUDIT_CHUNK_ID, entry.version, ciphertext, next_clock)
+                            .put_chunk_with_epoch(
+                                token,
+                                audit::AUDIT_CHUNK_ID,
+                                entry.version,
+                                ciphertext,
+                                next_clock,
+                                Some(key_epoch),
+                            )
                             .await
                             .map(|(_, new_tok)| {
                                 if let Some(t) = new_tok {
@@ -722,14 +1274,17 @@ async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut Stri
             }
         }
     } else if let Ok(key) = chunk_key_bytes(state, audit::AUDIT_CHUNK_ID) {
-        match vela_crypto::aead::seal(
-            &key,
-            &plaintext,
-            &vela_crypto::aead::vault_chunk_aad(audit::AUDIT_CHUNK_ID, 1),
-        ) {
+        match seal_sync_chunk(&key, &plaintext, key_epoch, audit::AUDIT_CHUNK_ID, 1) {
             Ok(ciphertext) => {
                 let _ = client
-                    .put_chunk(token, audit::AUDIT_CHUNK_ID, 0, ciphertext, 1)
+                    .put_chunk_with_epoch(
+                        token,
+                        audit::AUDIT_CHUNK_ID,
+                        0,
+                        ciphertext,
+                        1,
+                        Some(key_epoch),
+                    )
                     .await
                     .map(|(_, new_tok)| {
                         if let Some(t) = new_tok {
@@ -743,7 +1298,7 @@ async fn sync_audit_chunk(state: &AppState, client: &ApiClient, token: &mut Stri
     }
 }
 
-pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
+pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
     // Serialize sync runs: local writes and merges must not interleave.
     let _sync_guard = state.sync_mutex.lock().await;
 
@@ -802,6 +1357,24 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
     // Backfill a share keypair for identities created before sharing existed.
     ensure_share_key(state, &client, &token).await;
     state.ensure_unlocked_since(generation)?;
+    advertise_rekey_capability(state, &client, &mut token).await;
+    state.ensure_unlocked_since(generation)?;
+
+    // Epoch adoption must happen before even fetching the manifest: otherwise
+    // a stale client could mistake new-key ciphertext for corruption and push
+    // its old-key local vault over the rotated account.
+    let key_epoch = match adopt_server_epoch(state, &client, &mut token).await {
+        Ok(epoch) => epoch,
+        Err(e) => {
+            return Ok(SyncStatus {
+                syncing: false,
+                last_synced: Some(Utc::now()),
+                conflicts: vec![],
+                error: Some(e),
+            });
+        }
+    };
+    state.ensure_unlocked_since(generation)?;
 
     let manifest = match fetch_manifest_with_reauth(state, &client, &mut token, &device_id).await {
         Ok(m) => m,
@@ -811,7 +1384,10 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
                 syncing: false,
                 last_synced: Some(Utc::now()),
                 conflicts: vec![],
-                error: Some(format!("Server unavailable: {}. Using local vault only.", e)),
+                error: Some(format!(
+                    "Server unavailable: {}. Using local vault only.",
+                    e
+                )),
             });
         }
     };
@@ -820,7 +1396,8 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
     let mut merged_conflicts: Vec<ConflictItem> = Vec::new();
     let mut max_server_lamport = 0;
 
-    let mut downloaded = download_vault_from_manifest(state, &client, &mut token, &manifest).await;
+    let mut downloaded =
+        download_vault_from_manifest(state, &client, &mut token, &manifest, key_epoch).await;
     if let Err(e) = &downloaded {
         if is_auth_error(e) {
             // main's addition: a stale auth token should be refreshed and the
@@ -829,8 +1406,10 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
             match authenticate_for_sync(state, &client, &device_id).await {
                 Ok(new_token) => {
                     token = new_token;
-                    downloaded = download_vault_from_manifest(state, &client, &mut token, &manifest)
-                        .await;
+                    downloaded = download_vault_from_manifest(
+                        state, &client, &mut token, &manifest, key_epoch,
+                    )
+                    .await;
                 }
                 Err(auth_err) => {
                     tracing::warn!(
@@ -871,20 +1450,25 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
             }
         }
         ServerVault::Unreadable(why) => {
-            // The server's vault chunks cannot be opened with this account's
-            // key. Merge nothing from them; the upload below re-seals the local
-            // vault with fresh Lamports and overwrites the bad chunks. Loud on
-            // purpose: a device that cannot read the server is not silently
-            // trusted to clobber it.
+            // Authentication failure is not a repair authorization. An
+            // automatic upload here could destroy genuine server data when a
+            // stale/mismatched key or a malicious server caused the failure.
             tracing::error!(
-                "Sync: the server's vault chunks could not be decrypted ({why}); \
-                 re-uploading the local vault to heal them"
+                "Sync: refusing to overwrite server vault chunks that could not be decrypted ({why})"
             );
+            return Ok(SyncStatus {
+                syncing: false,
+                last_synced: Some(Utc::now()),
+                conflicts: merged_conflicts,
+                error: Some(format!(
+                    "Server vault data could not be authenticated ({why}). No server data was overwritten."
+                )),
+            });
         }
         ServerVault::Empty => {}
     }
 
-    let mut current_meta = load_local_sync_meta(state);
+    let mut current_meta = load_local_sync_meta(state)?;
     let local_vault_snapshot = state.vault.read().clone();
     let local_count = local_vault_snapshot.items.len();
 
@@ -909,9 +1493,13 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
         });
     }
 
-    let plaintext = serde_json::to_vec(&local_vault_snapshot).map_err(|e| format!("Failed to serialize vault: {}", e))?;
+    let plaintext = serde_json::to_vec(&local_vault_snapshot)
+        .map_err(|e| format!("Failed to serialize vault: {}", e))?;
 
-    tracing::info!("Sync: uploading vault as chunked trivial ORAM payload ({} bytes)", plaintext.len());
+    tracing::info!(
+        "Sync: uploading vault as chunked trivial ORAM payload ({} bytes)",
+        plaintext.len()
+    );
 
     // Upload, then check for local edits that landed while the upload was in
     // flight; if the vault changed, push the fresh snapshot once more so no
@@ -920,8 +1508,17 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
     let mut uploaded_chunks = 0usize;
     for attempt in 0..2 {
         state.ensure_unlocked_since(generation)?;
-        match upload_vault_chunks(state, &client, &mut token, &manifest, &mut current_meta, &plaintext_to_upload, max_server_lamport)
-            .await
+        match upload_vault_chunks(
+            state,
+            &client,
+            &mut token,
+            &manifest,
+            &mut current_meta,
+            &plaintext_to_upload,
+            max_server_lamport,
+            key_epoch,
+        )
+        .await
         {
             Ok(count) => {
                 uploaded_chunks = count;
@@ -939,7 +1536,8 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
         }
 
         state.ensure_unlocked_since(generation)?;
-        let fresh_plaintext = serde_json::to_vec(&*state.vault.read()).map_err(|e| format!("Failed to serialize vault: {}", e))?;
+        let fresh_plaintext = serde_json::to_vec(&*state.vault.read())
+            .map_err(|e| format!("Failed to serialize vault: {}", e))?;
         if fresh_plaintext == plaintext_to_upload || attempt == 1 {
             break;
         }
@@ -950,7 +1548,7 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
     save_conflicts(state, &merged_conflicts)?;
     log_sync_audit(state, uploaded_chunks);
     let _ = crate::sharing::refresh_linked_shares_inner(state).await;
-    sync_audit_chunk(state, &client, &mut token, &manifest).await;
+    sync_audit_chunk(state, &client, &mut token, &manifest, key_epoch).await;
     state.session.write().set_server_token(token);
 
     tracing::info!(
@@ -960,34 +1558,62 @@ pub async fn trigger_sync(state: &AppState) -> Result<SyncStatus, String> {
         merged_conflicts.len()
     );
 
-    Ok(SyncStatus { syncing: false, last_synced: Some(Utc::now()), conflicts: merged_conflicts, error: None })
+    Ok(SyncStatus {
+        syncing: false,
+        last_synced: Some(Utc::now()),
+        conflicts: merged_conflicts,
+        error: None,
+    })
 }
 
 pub async fn get_sync_status(state: &AppState) -> Result<SyncStatus, String> {
-    let meta = load_local_sync_meta(state);
-    let has_meta = !meta.chunks.is_empty();
+    // Status needs only the non-secret chunk clocks. Keep it available while
+    // locked without parsing or exposing plaintext epoch metadata as authority.
+    let has_meta = !load_plaintext_sync_chunks(state).is_empty();
 
     let last_synced_path = state.store.store_path().join("sync_meta.json");
     let last_synced = if has_meta {
-        std::fs::metadata(&last_synced_path).ok().and_then(|m| m.modified().ok()).map(DateTime::<Utc>::from)
+        std::fs::metadata(&last_synced_path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .map(DateTime::<Utc>::from)
     } else {
         None
     };
 
     let conflicts: Vec<ConflictItem> = load_conflicts(state);
 
-    Ok(SyncStatus { syncing: false, last_synced, conflicts, error: None })
+    Ok(SyncStatus {
+        syncing: false,
+        last_synced,
+        conflicts,
+        error: None,
+    })
 }
 
-pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool) -> Result<(), String> {
+pub async fn resolve_conflict(
+    state: &Arc<AppState>,
+    item_id: String,
+    use_local: bool,
+) -> Result<(), String> {
     if !state.is_unlocked() {
         return Err("Vault is locked".to_string());
     }
 
+    // Serialize against `trigger_sync`: the "use server" branch below can
+    // adopt a new server epoch, which migrates every RMS-derived file and
+    // swaps `state.crypto`. Letting that interleave with an in-flight sync
+    // would let the sync continue writing files under the retired key after
+    // the migration journal is consumed — stranding them unopenable.
+    let _sync_guard = state.sync_mutex.lock().await;
+
     // Read the stored conflict (if any) up-front: its server_version snapshot
     // is the authoritative "server side" for resolution.
     let stored_conflicts: Vec<ConflictItem> = load_conflicts(state);
-    let stored_conflict = stored_conflicts.iter().find(|c| c.item_id == item_id).cloned();
+    let stored_conflict = stored_conflicts
+        .iter()
+        .find(|c| c.item_id == item_id)
+        .cloned();
 
     if use_local {
         // If the merged vault currently holds the server version, restore the
@@ -1006,7 +1632,10 @@ pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool
                 let _ = state.store.save_vault(&state.vault.read(), crypto);
             }
         }
-        tracing::info!("Conflict resolved for item {}: keeping local version", item_id);
+        tracing::info!(
+            "Conflict resolved for item {}: keeping local version",
+            item_id
+        );
     } else if let Some(conflict) = stored_conflict {
         // Resolve from the stored snapshot — immune to any intermediate syncs.
         let mut vault = state.vault.write();
@@ -1022,20 +1651,28 @@ pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool
         if let Some(crypto) = crypto_guard.as_ref() {
             let _ = state.store.save_vault(&state.vault.read(), crypto);
         }
-        tracing::info!("Conflict resolved for item {}: using server version", item_id);
+        tracing::info!(
+            "Conflict resolved for item {}: using server version",
+            item_id
+        );
     } else {
         let server_url = state.server_url.read().clone();
         let client = ApiClient::with_url(server_url);
 
-        let mut token = state.get_session_token().ok_or("No session token available")?;
+        let mut token = state
+            .get_session_token()
+            .ok_or("No session token available")?;
+        let key_epoch = adopt_server_epoch(state, &client, &mut token).await?;
 
-        let (manifest, new_tok) =
-            client.get_sync_manifest(&token).await.map_err(|e| format!("Failed to fetch sync manifest: {}", e))?;
+        let (manifest, new_tok) = client
+            .get_sync_manifest(&token)
+            .await
+            .map_err(|e| format!("Failed to fetch sync manifest: {}", e))?;
         if let Some(t) = new_tok {
             token = t;
         }
         let ServerVault::Available(server_vault, _) =
-            download_vault_from_manifest(state, &client, &mut token, &manifest).await?
+            download_vault_from_manifest(state, &client, &mut token, &manifest, key_epoch).await?
         else {
             return Err(
                 "The server's vault is unavailable (empty or could not be decrypted); \
@@ -1063,7 +1700,10 @@ pub async fn resolve_conflict(state: &AppState, item_id: String, use_local: bool
             drop(crypto_guard);
         }
 
-        tracing::info!("Conflict resolved for item {}: using server version", item_id);
+        tracing::info!(
+            "Conflict resolved for item {}: using server version",
+            item_id
+        );
     }
 
     let mut conflicts: Vec<ConflictItem> = load_conflicts(state);
@@ -1089,6 +1729,399 @@ pub fn set_server_url(state: &AppState, url: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn adoption_validates_every_authenticated_capsule_authority() {
+        let (hybrid_ek, hybrid_dk) = crate::crypto::generate_share_keypair();
+        let previous_rms = [40u8; 32];
+        let stale_rms = [41u8; 32];
+        let current_rms = [42u8; 32];
+        let current = crate::crypto::seal_rekey_capsule(
+            &hybrid_ek,
+            &previous_rms,
+            &current_rms,
+            3,
+            "rotation-current",
+        )
+        .unwrap();
+        let current_response = crate::api::CapsuleResponse {
+            capsule: B64.encode(current),
+            epoch: Some(3),
+            rotation_id: Some("rotation-current".into()),
+        };
+        assert_eq!(
+            open_epoch_adoption_capsule(
+                &current_response,
+                &hybrid_dk,
+                &previous_rms,
+                3,
+            )
+            .unwrap()
+            .as_ref(),
+            &current_rms
+        );
+
+        let stale = crate::crypto::seal_rekey_capsule(
+            &hybrid_ek,
+            &previous_rms,
+            &stale_rms,
+            2,
+            "rotation-old",
+        )
+        .unwrap();
+        let relabelled = crate::api::CapsuleResponse {
+            capsule: B64.encode(stale),
+            epoch: Some(3),
+            rotation_id: Some("rotation-current".into()),
+        };
+
+        let error = open_epoch_adoption_capsule(
+            &relabelled,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .expect_err("server metadata cannot relabel an authenticated stale capsule");
+        assert!(error.contains("authenticated re-key capsule epoch"), "{error}");
+
+        let mut missing_attempt = current_response.clone();
+        missing_attempt.rotation_id = None;
+        assert!(open_epoch_adoption_capsule(
+            &missing_attempt,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .is_err());
+
+        let mut wrong_attempt = current_response.clone();
+        wrong_attempt.rotation_id = Some("rotation-other".into());
+        assert!(open_epoch_adoption_capsule(
+            &wrong_attempt,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .is_err());
+
+        let mut wrong_outer_epoch = current_response;
+        wrong_outer_epoch.epoch = Some(2);
+        assert!(open_epoch_adoption_capsule(
+            &wrong_outer_epoch,
+            &hybrid_dk,
+            &previous_rms,
+            3,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn completed_migration_cannot_resurrect_a_locked_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(crate::AppState::for_test(dir.path()));
+        let old_rms = [11u8; 32];
+        let new_rms = [12u8; 32];
+        state.unlock_for_test(&old_rms);
+        let generation = state.session_generation();
+
+        crate::commands::session::lock_session(&state);
+        let error = install_migrated_session_crypto(
+            &state,
+            crate::crypto::Crypto::new(&new_rms),
+            &new_rms,
+            generation,
+        )
+        .expect_err("migration tail must not reinstall secrets after auto-lock");
+
+        assert!(error.contains("locked during key migration"));
+        assert!(state.crypto.read().is_none());
+        assert!(!state.session.read().active);
+    }
+
+    #[test]
+    fn authenticated_epoch_overrides_missing_or_legacy_sync_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        let crypto = crate::crypto::Crypto::new(&[12u8; 32]);
+        state.store.save_key_epoch(&crypto, 4).unwrap();
+        *state.crypto.write() = Some(crypto);
+
+        assert_eq!(load_local_sync_meta(&state).unwrap().key_epoch, 4);
+
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":999,"chunks":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(load_local_sync_meta(&state).unwrap().key_epoch, 4);
+    }
+
+    #[test]
+    fn missing_authenticated_epoch_is_strictly_legacy_epoch_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[13u8; 32]);
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":42,"chunks":{"vault-data-000000":{"version":7,"lamport_clock":9}}}"#,
+        )
+        .unwrap();
+
+        let meta = load_local_sync_meta(&state).expect("missing marker is legacy epoch 1");
+        assert_eq!(meta.key_epoch, 1, "plaintext must never supply epoch authority");
+        assert_eq!(meta.chunks["vault-data-000000"].version, 7);
+    }
+
+    #[test]
+    fn unreadable_authenticated_epoch_never_falls_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[14u8; 32]);
+        state
+            .store
+            .save_key_epoch(&crate::crypto::Crypto::new(&[15u8; 32]), 6)
+            .unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":6,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        let error = load_local_sync_meta(&state)
+            .expect_err("wrong-RMS epoch marker must fail closed");
+        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        assert!(local_key_epoch(&state).is_err());
+    }
+
+    #[test]
+    fn malformed_authenticated_epoch_never_falls_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[16u8; 32]);
+        std::fs::write(
+            state.store.store_path().join("key_epoch.enc"),
+            b"not an authenticated envelope",
+        )
+        .unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":8,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        assert!(load_local_sync_meta(&state).is_err());
+    }
+
+    #[test]
+    fn invalid_authenticated_epoch_never_falls_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[21u8; 32]);
+        let ciphertext = {
+            let crypto = state.crypto.read();
+            crypto
+                .as_ref()
+                .unwrap()
+                .encrypt_vault(&serde_json::to_vec(&0i64).unwrap())
+                .unwrap()
+        };
+        std::fs::write(state.store.store_path().join("key_epoch.enc"), ciphertext).unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":7,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        let error = load_local_sync_meta(&state).expect_err("epoch zero must fail closed");
+        assert!(error.contains("invalid local key epoch"), "{error}");
+    }
+
+    #[test]
+    fn epoch_marker_io_errors_never_fall_back_to_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[22u8; 32]);
+        std::fs::create_dir(state.store.store_path().join("key_epoch.enc")).unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":7,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        assert!(load_local_sync_meta(&state).is_err());
+    }
+
+    #[test]
+    fn malformed_plaintext_metadata_cannot_hide_a_valid_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[17u8; 32]);
+        {
+            let crypto = state.crypto.read();
+            state.store.save_key_epoch(crypto.as_ref().unwrap(), 9).unwrap();
+        }
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            b"not json",
+        )
+        .unwrap();
+
+        let meta = load_local_sync_meta(&state).unwrap();
+        assert_eq!(meta.key_epoch, 9);
+        assert!(meta.chunks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn locked_sync_status_uses_chunk_clocks_without_trusting_plaintext_epoch() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":999,"chunks":{"vault-data-000000":{"version":2,"lamport_clock":3}}}"#,
+        )
+        .unwrap();
+
+        let status = get_sync_status(&state)
+            .await
+            .expect("locked status only reads non-secret chunk clocks");
+        assert!(status.last_synced.is_some());
+        assert!(local_key_epoch(&state).is_err());
+    }
+
+    #[test]
+    fn plaintext_epoch_updates_cannot_change_authenticated_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[18u8; 32]);
+        {
+            let crypto = state.crypto.read();
+            state.store.save_key_epoch(crypto.as_ref().unwrap(), 3).unwrap();
+        }
+
+        set_local_key_epoch(&state, 77).unwrap();
+        assert_eq!(load_local_sync_meta(&state).unwrap().key_epoch, 3);
+        assert!(set_local_key_epoch(&state, 0).is_err());
+    }
+
+    #[tokio::test]
+    async fn unreadable_epoch_marker_aborts_sync_before_manifest_or_repair_upload() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(crate::AppState::for_test(dir.path()));
+        state.unlock_for_test(&[19u8; 32]);
+        state.session.write().set_server_token("token".into());
+        state
+            .store
+            .save_key_epoch(&crate::crypto::Crypto::new(&[20u8; 32]), 5)
+            .unwrap();
+        std::fs::write(
+            state.store.store_path().join("sync_meta.json"),
+            r#"{"key_epoch":5,"chunks":{}}"#,
+        )
+        .unwrap();
+
+        let server = MockServer::start().await;
+        *state.server_url.write() = server.uri();
+        Mock::given(method("GET"))
+            .and(path("/vault/epoch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "epoch": 5,
+                "state": "active",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": []
+            })))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let error = status.error.expect("unreadable marker must stop sync");
+        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn unreadable_server_chunk_aborts_sync_without_any_upload() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(crate::AppState::for_test(dir.path()));
+        state.unlock_for_test(&[23u8; 32]);
+        state.session.write().set_server_token("token".into());
+        state.vault.write().items.push(login(
+            "local-must-not-overwrite-server",
+            Utc::now(),
+            Some("test-device"),
+        ));
+
+        let foreign = vela_crypto::aead::seal(
+            &[0x42u8; 32],
+            b"{\"items\":[]}",
+            &vela_crypto::aead::vault_chunk_aad("vault-data-000000", 1),
+        )
+        .unwrap();
+        let server = MockServer::start().await;
+        *state.server_url.write() = server.uri();
+        Mock::given(method("GET"))
+            .and(path("/vault/epoch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "epoch": 1,
+                "state": "active",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": [{
+                    "chunk_id": "vault-data-000000",
+                    "version": 1,
+                    "lamport_clock": 1,
+                    "last_writer": null,
+                }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("X-Chunk-Version", "1")
+                    .append_header("X-Lamport-Clock", "1")
+                    .set_body_raw(foreign, "application/octet-stream"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let error = status.error.expect("unreadable server data must stop sync");
+        assert!(error.contains("could not be authenticated"), "{error}");
+        assert!(error.contains("No server data was overwritten"), "{error}");
+        server.verify().await;
+    }
 
     /// Audit C-2: the sync server is untrusted, and replaying an older
     /// ciphertext for a chunk used to be invisible — deleted credentials
@@ -1155,8 +2188,16 @@ mod tests {
 
         assert_eq!(conflicts.len(), 1, "unsynced local edit must conflict");
         assert_eq!(conflicts[0].item_id, "a");
-        let kept = local.items.iter().find(|i| i.id() == "a").expect("item kept");
-        assert_eq!(kept.updated_at(), t_old, "conflicted local edit must not be overwritten by the server version");
+        let kept = local
+            .items
+            .iter()
+            .find(|i| i.id() == "a")
+            .expect("item kept");
+        assert_eq!(
+            kept.updated_at(),
+            t_old,
+            "conflicted local edit must not be overwritten by the server version"
+        );
     }
 
     /// Server-newer item last modified by ANOTHER device is ordinary
@@ -1172,7 +2213,11 @@ mod tests {
         let conflicts = merge_server_vaults(&mut local, server, "this-device");
 
         assert!(conflicts.is_empty(), "remote edit must not conflict");
-        let kept = local.items.iter().find(|i| i.id() == "a").expect("item kept");
+        let kept = local
+            .items
+            .iter()
+            .find(|i| i.id() == "a")
+            .expect("item kept");
         assert_eq!(kept.updated_at(), t_new, "newer server version must win");
     }
 
@@ -1188,7 +2233,15 @@ mod tests {
         let conflicts = merge_server_vaults(&mut local, server, "this-device");
 
         assert!(conflicts.is_empty());
-        assert_eq!(local.items.iter().find(|i| i.id() == "a").unwrap().updated_at(), t_new);
+        assert_eq!(
+            local
+                .items
+                .iter()
+                .find(|i| i.id() == "a")
+                .unwrap()
+                .updated_at(),
+            t_new
+        );
     }
 
     /// An item tombstoned after its last update must stay deleted even when
@@ -1200,14 +2253,25 @@ mod tests {
         let t_deleted = Utc::now() - chrono::Duration::hours(1);
 
         let mut local = store_with(vec![]);
-        local.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_deleted, deleted_by: Some("this-device".into()) });
+        local.tombstones.push(Tombstone {
+            id: "a".into(),
+            deleted_at: t_deleted,
+            deleted_by: Some("this-device".into()),
+        });
         let server = store_with(vec![login("a", t_item, Some("other-device"))]);
 
         let conflicts = merge_server_vaults(&mut local, server, "this-device");
 
         assert!(conflicts.is_empty());
-        assert!(local.items.iter().all(|i| i.id() != "a"), "tombstoned item must not resurrect");
-        assert_eq!(local.tombstones.len(), 1, "tombstone is retained for other devices");
+        assert!(
+            local.items.iter().all(|i| i.id() != "a"),
+            "tombstoned item must not resurrect"
+        );
+        assert_eq!(
+            local.tombstones.len(),
+            1,
+            "tombstone is retained for other devices"
+        );
     }
 
     /// A server edit NEWER than the tombstone means the item was deliberately
@@ -1219,13 +2283,21 @@ mod tests {
         let t_recreated = Utc::now() - chrono::Duration::hours(1);
 
         let mut local = store_with(vec![]);
-        local.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_deleted, deleted_by: None });
+        local.tombstones.push(Tombstone {
+            id: "a".into(),
+            deleted_at: t_deleted,
+            deleted_by: None,
+        });
         let server = store_with(vec![login("a", t_recreated, Some("other-device"))]);
 
         let conflicts = merge_server_vaults(&mut local, server, "this-device");
 
         assert!(conflicts.is_empty());
-        let kept = local.items.iter().find(|i| i.id() == "a").expect("re-created item resurrected");
+        let kept = local
+            .items
+            .iter()
+            .find(|i| i.id() == "a")
+            .expect("re-created item resurrected");
         assert_eq!(kept.updated_at(), t_recreated);
     }
 
@@ -1238,9 +2310,17 @@ mod tests {
         let t_new = Utc::now() - chrono::Duration::hours(1);
 
         let mut local = store_with(vec![]);
-        local.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_old, deleted_by: None });
+        local.tombstones.push(Tombstone {
+            id: "a".into(),
+            deleted_at: t_old,
+            deleted_by: None,
+        });
         let mut server = store_with(vec![]);
-        server.tombstones.push(Tombstone { id: "a".into(), deleted_at: t_new, deleted_by: Some("srv".into()) });
+        server.tombstones.push(Tombstone {
+            id: "a".into(),
+            deleted_at: t_new,
+            deleted_by: Some("srv".into()),
+        });
 
         merge_server_vaults(&mut local, server, "this-device");
 
@@ -1277,11 +2357,11 @@ mod tests {
         assert_eq!(kept.last_modified_device(), Some("this-device"));
     }
 
-    /// The heal: a server chunk this account's key cannot open must surface as
-    /// `ServerVault::Unreadable` — so sync re-uploads the local vault to
-    /// overwrite it — rather than aborting the whole sync forever.
+    /// A server chunk this account's key cannot open must surface as
+    /// `ServerVault::Unreadable`; its caller fails closed rather than treating
+    /// an authentication failure as repair authorization.
     #[tokio::test]
-    async fn a_chunk_this_account_cannot_decrypt_is_unreadable_not_fatal() {
+    async fn a_chunk_this_account_cannot_decrypt_is_unreadable() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1335,7 +2415,7 @@ mod tests {
         .unwrap();
         let mut token = "tok".to_string();
 
-        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest)
+        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest, 1)
             .await
             .expect("a corrupt chunk must not abort the download");
         assert!(
@@ -1374,10 +2454,12 @@ mod tests {
             let crypto = crypto.as_ref().unwrap();
             *crypto.chunk_key(b"vault-data-000000").as_bytes()
         };
-        let sealed = vela_crypto::aead::seal(
+        let sealed = vela_crypto::rekey::seal_epoch_chunk(
             &key,
             b"{\"items\":[]}",
-            &vela_crypto::aead::vault_chunk_aad("vault-data-000000", 1),
+            7,
+            "vault-data-000000",
+            1,
         )
         .unwrap();
         Mock::given(method("GET"))
@@ -1403,7 +2485,7 @@ mod tests {
         .unwrap();
         let mut token = "tok".to_string();
 
-        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest)
+        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest, 7)
             .await
             .expect("a good chunk must download");
         assert!(matches!(result, ServerVault::Available(_, 1)));

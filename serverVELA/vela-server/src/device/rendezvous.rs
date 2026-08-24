@@ -253,6 +253,8 @@ pub struct CompleteRequest {
     pub rms_capsule: String,
     /// The primary's signature over (claimed ek ‖ claimed vk ‖ capsule).
     pub signature: String,
+    /// Authenticated local epoch of the RMS sealed into `rms_capsule`.
+    pub key_epoch: i64,
 }
 
 #[derive(Serialize)]
@@ -269,13 +271,35 @@ pub async fn post_complete(
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
     let grant = authorize_grant(&state, grant_id, &session)?;
 
+    let user_rows = state
+        .sqldb
+        .query(
+            "SELECT key_epoch, rekey_state FROM users WHERE id = ?",
+            vec![TursoValue::Text(grant.user_id.clone())],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let current_epoch = user_rows.first().and_then(|row| row.i64(0));
+    let rotation_state = user_rows.first().and_then(|row| row.text(1));
+    if body.key_epoch < 1 {
+        return Err(AppError::BadRequest("key_epoch must be positive".into()));
+    }
+    if current_epoch != Some(body.key_epoch) || rotation_state.is_some() {
+        return Err(AppError::Conflict(
+            "device enrollment key epoch changed or rotation is in progress".into(),
+        ));
+    }
+
     // Take both together. A replayed completion finds nothing, and a grant that
     // failed midway cannot be retried with a different claim.
     let claim_bytes = state
         .store
         .get_del(&claim_key(grant_id))?
         .ok_or_else(|| AppError::NotFound("no device has claimed this code yet".into()))?;
-    let _ = state.store.get_del(&grant_key(grant_id))?;
+    let grant_bytes = state
+        .store
+        .get_del(&grant_key(grant_id))?
+        .ok_or_else(|| AppError::NotFound("enrollment grant not found or expired".into()))?;
 
     let claim: Claim = serde_json::from_slice(&claim_bytes)
         .map_err(|e| AppError::Internal(format!("stored claim is unreadable: {e}")))?;
@@ -309,10 +333,14 @@ pub async fn post_complete(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-    state.sqldb.execute(
+    let inserted = state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
-         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+         SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
+         WHERE EXISTS (
+             SELECT 1 FROM users
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
+         )",
         vec![
             TursoValue::Text(new_device_id.to_string()),
             TursoValue::Text(grant.user_id.clone()),
@@ -323,8 +351,24 @@ pub async fn post_complete(
             TursoValue::Text(grant.device_id.clone()),
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
+            TursoValue::Text(grant.user_id.clone()),
+            TursoValue::Integer(body.key_epoch),
         ],
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+    if inserted == 0 {
+        // A rotation may have started after the fast check but before the
+        // guarded insert. Restore the exact consumed claim and grant so the
+        // already-confirmed pairing can be retried once rotation completes.
+        state
+            .store
+            .set_ex(&claim_key(grant_id), &claim_bytes, GRANT_TTL_SECS)?;
+        state
+            .store
+            .set_ex(&grant_key(grant_id), &grant_bytes, GRANT_TTL_SECS)?;
+        return Err(AppError::Conflict(
+            "device enrollment key epoch changed or rotation is in progress".into(),
+        ));
+    }
 
     // Only now that the row exists: the joining device is holding a keypair and
     // waiting to be told which device it became. Written after the insert so a

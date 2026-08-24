@@ -29,6 +29,8 @@ concurrency:
 
 jobs:
   build-and-verify:
+    permissions:
+      contents: read
     runs-on: macos-14   # Apple Silicon (arm64)
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +46,15 @@ jobs:
           # at src-tauri it keys off an orphaned lockfile and caches an empty
           # target dir.
           workspaces: desktopVELA
+          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
+          # crate *inside* the workspace dir as a "workspace crate" and skips
+          # caching them by default - vendor/gpui-ce lives under desktopVELA/,
+          # so its whole debug + release output was rebuilt on every run.
+          cache-workspace-crates: true
+          # New cache contents (gpui-ce now included) need a new key: rust-cache
+          # refuses to re-save when the restore key already matched, so the
+          # first run after this is cold and every later one is fast.
+          prefix-key: v1-rust
 
       - name: Install frontend deps
         working-directory: desktopVELA

@@ -161,7 +161,7 @@ fn ask(host: &Arc<dyn Host>, prompt: &str) -> Result<bool, PresenceDenied> {
         crate::biometric::PresenceOutcome::Unavailable => {
             // Presence, not verification: the caller records that, and a relying
             // party asking for UV will be refused by the ceremony.
-            match host.confirm_presence(prompt) {
+            match host.confirm_presence("VELA — passkey request", prompt) {
                 Some(true) => Ok(false),
                 Some(false) => Err(PresenceDenied::Declined(
                     "You declined this request.".to_string(),

@@ -1,0 +1,146 @@
+theory M11_RekeyEpochStateMachine
+/*
+  Core vault epoch transition. E is arbitrary, so this one-step proof composes
+  for every N -> N+1 rotation. M11b proves capsule authentication; M11c proves
+  web/recovery/enrollment mutation authority. The executable Rust model checks
+  their composition over repeated rotations, multiple chunks/devices, replay,
+  failure and every bounded reachable command sequence against the real SQL.
+
+      ACTIVE(E) --start--> FREEZING(E,next(E)) --commit--> ACTIVE(next(E))
+          ^                         |
+          +------ abort/timeout ----+
+
+  Linear state and attempt tokens model the SQL compare-and-swap. There is no
+  rule capable of producing two terminal outcomes for one attempt. Commit needs
+  both structural completeness witnesses: all live chunks have shadows and all
+  active devices have capsules. Reads emitted at start remain E; the commit
+  event and post-commit read are next(E).
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+functions: next/1
+
+rule Initialize:
+    [ Fr(~e), Fr(~chunk_set), Fr(~device_set) ]
+  --[ Initialized($U, ~e), ReadServed($U, ~e) ]->
+    [ Active($U, ~e, ~chunk_set, ~device_set), CanStart($U) ]
+
+rule Start:
+    [ Active(U, e, chunks, devices), CanStart(U), Fr(~rid) ]
+  --[ RotationStarted(U, e, next(e), ~rid), ReadServed(U, e) ]->
+    [ Freezing(U, e, next(e), chunks, devices, ~rid),
+      NeedChunkShadows(U, ~rid), NeedDeviceCapsules(U, ~rid) ]
+
+// Universal set checks are represented by the two completeness witnesses.
+// The real SQL and executable model quantify over every member of each set.
+rule Complete_Chunk_Shadows:
+    [ Freezing(U, e, ne, chunks, devices, rid), NeedChunkShadows(U, rid) ]
+  --[ AllChunkShadowsPresent(U, e, ne, rid) ]->
+    [ Freezing(U, e, ne, chunks, devices, rid), ChunkShadowsComplete(U, rid) ]
+
+rule Complete_Device_Capsules:
+    [ Freezing(U, e, ne, chunks, devices, rid), NeedDeviceCapsules(U, rid) ]
+  --[ AllDeviceCapsulesPresent(U, e, ne, rid) ]->
+    [ Freezing(U, e, ne, chunks, devices, rid), DeviceCapsulesComplete(U, rid) ]
+
+rule Commit:
+    [ Freezing(U, e, next(e), chunks, devices, rid),
+      ChunkShadowsComplete(U, rid), DeviceCapsulesComplete(U, rid) ]
+  --[ RotationCommitted(U, e, next(e), rid), ReadServed(U, next(e)),
+      RecoveryInvalidated(U, e), WebSessionsInvalidated(U, e) ]->
+    [ Committed(U, next(e), chunks, devices, rid),
+      NeedDeviceAcknowledgements(U, rid) ]
+
+// The database quantifies over the active device set. Only that universal
+// witness returns the account to a state from which another rotation can start.
+rule Complete_Device_Acknowledgements:
+    [ Committed(U, e, chunks, devices, rid),
+      NeedDeviceAcknowledgements(U, rid) ]
+  --[ AllDevicesAcknowledged(U, e, rid) ]->
+    [ ReadyForNextRotation(U, e, chunks, devices, rid) ]
+
+// One composed successor start is enough to prove the gate without making the
+// symbolic search recursively unbounded. E itself remains arbitrary.
+rule Start_After_Acknowledgements:
+    [ ReadyForNextRotation(U, e, chunks, devices, prior_rid), Fr(~rid) ]
+  --[ LaterRotationStarted(U, e, next(e), prior_rid, ~rid) ]->
+    [ LaterFreezing(U, e, next(e), chunks, devices, ~rid) ]
+
+rule Abort:
+    [ Freezing(U, e, next(e), chunks, devices, rid) ]
+  --[ RotationAborted(U, e, next(e), rid), ReadServed(U, e) ]->
+    [ Aborted(U, e, chunks, devices, rid) ]
+
+rule Timeout:
+    [ Freezing(U, e, next(e), chunks, devices, rid) ]
+  --[ RotationTimedOut(U, e, next(e), rid), ReadServed(U, e) ]->
+    [ TimedOut(U, e, chunks, devices, rid) ]
+
+lemma committed_epoch_is_exact_successor:
+  "All U e ne rid #i. RotationCommitted(U, e, ne, rid) @ i ==> ne = next(e)"
+
+lemma commit_requires_both_completeness_witnesses:
+  "All U e ne rid #i. RotationCommitted(U, e, ne, rid) @ i
+     ==> (Ex #c. AllChunkShadowsPresent(U, e, ne, rid) @ c & #c < #i)
+       & (Ex #d. AllDeviceCapsulesPresent(U, e, ne, rid) @ d & #d < #i)"
+
+lemma commit_and_abort_are_mutually_exclusive:
+  "All U e ne rid #i #j.
+     RotationCommitted(U, e, ne, rid) @ i
+     & RotationAborted(U, e, ne, rid) @ j ==> F"
+
+lemma commit_and_timeout_are_mutually_exclusive:
+  "All U e ne rid #i #j.
+     RotationCommitted(U, e, ne, rid) @ i
+     & RotationTimedOut(U, e, ne, rid) @ j ==> F"
+
+lemma abort_and_timeout_are_mutually_exclusive:
+  "All U e ne rid #i #j.
+     RotationAborted(U, e, ne, rid) @ i
+     & RotationTimedOut(U, e, ne, rid) @ j ==> F"
+
+lemma abort_preserves_epoch:
+  "All U e ne rid #i. RotationAborted(U, e, ne, rid) @ i ==> ne = next(e)"
+
+lemma timeout_preserves_epoch:
+  "All U e ne rid #i. RotationTimedOut(U, e, ne, rid) @ i ==> ne = next(e)"
+
+lemma a_later_rotation_requires_device_acknowledgements:
+  "All U e ne rid ne2 rid2 #c #s.
+     RotationCommitted(U, e, ne, rid) @ c
+     & LaterRotationStarted(U, ne, ne2, rid, rid2) @ s & #c < #s
+     ==> Ex #a. AllDevicesAcknowledged(U, ne, rid) @ a & #c < #a & #a < #s"
+
+lemma commit_invalidates_old_recovery_and_web_authority:
+  "All U e ne rid #i. RotationCommitted(U, e, ne, rid) @ i
+     ==> (Ex #r. RecoveryInvalidated(U, e) @ r & #r = #i)
+       & (Ex #w. WebSessionsInvalidated(U, e) @ w & #w = #i)"
+
+lemma start_reachable:
+  exists-trace "Ex U e ne rid #i. RotationStarted(U, e, ne, rid) @ i"
+
+lemma commit_reachable:
+  exists-trace "Ex U e ne rid #i. RotationCommitted(U, e, ne, rid) @ i"
+
+lemma abort_reachable:
+  exists-trace "Ex U e ne rid #i. RotationAborted(U, e, ne, rid) @ i"
+
+lemma timeout_reachable:
+  exists-trace "Ex U e ne rid #i. RotationTimedOut(U, e, ne, rid) @ i"
+
+lemma committed_read_reachable:
+  exists-trace
+  "Ex U e ne rid #c.
+     RotationCommitted(U, e, ne, rid) @ c & ReadServed(U, ne) @ c"
+
+lemma acknowledged_second_rotation_reachable:
+  exists-trace
+  "Ex U e ne rid ne2 rid2 #c #a #s.
+     RotationCommitted(U, e, ne, rid) @ c
+     & AllDevicesAcknowledged(U, ne, rid) @ a
+     & LaterRotationStarted(U, ne, ne2, rid, rid2) @ s
+     & #c < #a & #a < #s"
+
+end

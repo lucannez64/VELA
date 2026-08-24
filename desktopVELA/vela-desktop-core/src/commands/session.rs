@@ -234,6 +234,7 @@ pub fn lock_session(state: &Arc<AppState>) {
     *vault = crate::vault::VaultStore::new();
 
     biometric::clear_cached_rms();
+    state.set_rekey_password(None);
     // A standing "the user confirmed a fill" grant must not outlive the unlocked
     // session it was given during (audit D-4).
     state.clear_plaintext_release();
@@ -340,6 +341,7 @@ pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, Stri
             biometric::get_cached_rms().ok_or_else(|| "Failed to retrieve vault key".to_string())?
         };
 
+        let rms = crate::sync::recover_pending_rms_migration(&app_state2, rms, None)?;
         let crypto = Crypto::new(&rms);
 
         let vault = app_state2
@@ -370,6 +372,9 @@ pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, Stri
             let mut vault_state = app_state2.vault.write();
             *vault_state = vault;
         }
+        // A biometric unlock does not prove knowledge of the master password;
+        // do not let a password cached by an earlier session survive it.
+        app_state2.set_rekey_password(None);
 
         record_audit_event(&app_state2, AuditAction::VaultUnlocked);
         note_plaintext_identity_migration(&app_state2);
@@ -427,6 +432,9 @@ pub async fn unlock_session_with_password(
             return Err("Invalid password".to_string());
         };
 
+        let rms =
+            crate::sync::recover_pending_rms_migration(&app_state2, rms, Some(password.as_str()))?;
+
         // The password just proved who this is, which is the one moment it is
         // safe to touch a pre-ACL platform key: re-store it under the OS's
         // user-presence protection so the next biometric unlock actually proves
@@ -463,6 +471,10 @@ pub async fn unlock_session_with_password(
             let mut vault_state = app_state2.vault.write();
             *vault_state = vault;
         }
+        // Rotation/adoption must re-wrap password-backed RMS storage before
+        // retiring the old seed. Keep the password only for this unlocked
+        // session; AppState zeroizes it on lock.
+        app_state2.set_rekey_password(Some(password));
 
         record_audit_event(&app_state2, AuditAction::VaultUnlocked);
         note_plaintext_identity_migration(&app_state2);
@@ -549,8 +561,13 @@ pub async fn create_vault(state: &Arc<AppState>) -> Result<(), String> {
 
     if server_url_configured(state) {
         if let Some(identity_keys) = state.store.load_identity_keys(&crypto).ok().flatten() {
-            match authenticate_with_server(state, &device_id, &device_name, &identity_keys.hybrid_sk)
-                .await
+            match authenticate_with_server(
+                state,
+                &device_id,
+                &device_name,
+                &identity_keys.hybrid_sk,
+            )
+            .await
             {
                 Ok((token, server_user_id)) => {
                     user_id = server_user_id.clone();
@@ -584,6 +601,7 @@ pub async fn create_vault(state: &Arc<AppState>) -> Result<(), String> {
         let mut vault_state = state.vault.write();
         *vault_state = vault;
     }
+    state.set_rekey_password(None);
     state.bump_session_generation();
 
     record_audit_event(state, AuditAction::VaultCreated);
@@ -648,8 +666,13 @@ pub async fn create_vault_with_password(
 
     if server_url_configured(state) {
         if let Some(identity_keys) = state.store.load_identity_keys(&crypto).ok().flatten() {
-            match authenticate_with_server(state, &device_id, &device_name, &identity_keys.hybrid_sk)
-                .await
+            match authenticate_with_server(
+                state,
+                &device_id,
+                &device_name,
+                &identity_keys.hybrid_sk,
+            )
+            .await
             {
                 Ok((token, server_user_id)) => {
                     user_id = server_user_id.clone();
@@ -682,6 +705,7 @@ pub async fn create_vault_with_password(
         let mut vault_state = state.vault.write();
         *vault_state = vault;
     }
+    state.set_rekey_password(Some(password));
     state.bump_session_generation();
 
     record_audit_event(state, AuditAction::VaultCreated);
@@ -706,7 +730,12 @@ pub fn check_vault_exists(state: &Arc<AppState>) -> bool {
 ///    impossible there: the identity signing key is RMS-encrypted and the RMS
 ///    is exactly what the user can no longer unwrap. Wiping local data is
 ///    recoverable via re-enrollment, so a typed confirmation is the strongest
-///    check that does not break recovery.
+///    check that does not break recovery. Because a typed string proves
+///    nothing about who typed it, this path — and any other path that did not
+///    end in a password or server-challenge proof — additionally requires a
+///    native user-presence confirmation drawn outside the requesting UI's
+///    reach (`AppState::confirm_with_human`); with no way to ask, reset is
+///    refused.
 pub async fn reset_vault(
     state: &Arc<AppState>,
     confirm: Option<String>,
@@ -738,7 +767,9 @@ pub async fn reset_vault(
 
         // When the vault is unlocked and a server is configured, additionally
         // require a freshly verified server auth challenge — an unlocked UI
-        // alone is not sufficient proof for destruction.
+        // alone is not sufficient proof for destruction. This narrows who can
+        // reset (a device holding its identity signing key) but is not itself
+        // the human gate; the presence confirmation below always runs.
         if state.is_unlocked() && server_url_configured(&app_state) {
             let (identity_keys, device_id) = {
                 let crypto_guard = state.crypto.read();
@@ -756,12 +787,34 @@ pub async fn reset_vault(
                 (keys, device_id)
             };
             let device_name = get_device_name();
-            authenticate_with_server(&app_state, &device_id, &device_name, &identity_keys.hybrid_sk)
-                .await
-                .map_err(|e| format!("Server re-authentication for reset failed: {}", e))?;
+            authenticate_with_server(
+                &app_state,
+                &device_id,
+                &device_name,
+                &identity_keys.hybrid_sk,
+            )
+            .await
+            .map_err(|e| format!("Server re-authentication for reset failed: {}", e))?;
         }
-        // Locked vault (forgot-password flow): typed DELETE is the strongest
-        // available proof — see the doc comment above.
+
+        // Presence gate for every path without master-password proof. Typed
+        // "DELETE" is a renderer-supplied string, and a server challenge
+        // proves device identity to the server — not that a human is at this
+        // keyboard; a compromised renderer with an unlocked session can fire
+        // both. What cannot be said of either is that a human pressed a
+        // button drawn outside the requester's reach — so ask, exactly like
+        // the passkey presence gate does, and fail closed when there is
+        // nobody to ask.
+        let app_state_for_gate = app_state.clone();
+        tokio::task::spawn_blocking(move || {
+            app_state_for_gate.confirm_with_human(
+                "VELA — delete vault",
+                "Permanently delete this VELA vault on this device? \
+                 Every secret stored here will be erased. This cannot be undone.",
+            )
+        })
+        .await
+        .map_err(|e| format!("Confirmation task panicked: {e}"))??;
     }
 
     biometric::delete_stored_rms().map_err(|e| format!("Failed to delete credentials: {}", e))?;
@@ -795,6 +848,7 @@ pub async fn reset_vault(
         *vault = crate::vault::VaultStore::new();
     }
     biometric::clear_cached_rms();
+    state.set_rekey_password(None);
     state.bump_session_generation();
 
     Ok(())
@@ -835,7 +889,11 @@ mod tests {
         assert!(!state.is_unlocked());
         assert!(state.crypto.read().is_none(), "crypto context wiped");
         assert!(!state.session.read().active, "session marked locked");
-        assert_ne!(state.session_generation(), generation, "in-flight work aborts");
+        assert_ne!(
+            state.session_generation(),
+            generation,
+            "in-flight work aborts"
+        );
 
         // Idempotent: a locked session is not re-locked on the next tick.
         assert!(!auto_lock_if_expired(&state));
@@ -879,5 +937,102 @@ mod tests {
         // Keep ticking past several intervals: a locked session must stay quiet.
         std::thread::sleep(Duration::from_millis(60));
         assert_eq!(locks.load(Ordering::SeqCst), 1);
+    }
+
+    /// A `Host` whose answer to every presence question is scripted. Everything
+    /// else is a no-op: the reset gate only talks to `confirm_presence`.
+    struct ScriptedHost {
+        state: Arc<AppState>,
+        answer: std::sync::Mutex<Option<bool>>,
+    }
+
+    impl ScriptedHost {
+        fn new(state: &Arc<AppState>, answer: Option<bool>) -> Self {
+            Self {
+                state: state.clone(),
+                answer: std::sync::Mutex::new(answer),
+            }
+        }
+    }
+
+    impl crate::host::Host for ScriptedHost {
+        fn state(&self) -> &Arc<AppState> {
+            &self.state
+        }
+        fn focus_main_window(&self) {}
+        fn app_identifier(&self) -> String {
+            "test".to_string()
+        }
+        fn open_quick_search(&self) {}
+        fn notify_vault_items_changed(&self) {}
+        fn show_toast(&self, _message: &str) {}
+        fn confirm_presence(&self, _title: &str, _prompt: &str) -> Option<bool> {
+            *self.answer.lock().unwrap()
+        }
+    }
+
+    /// The typed "DELETE" path on a locked vault must fail closed when there is
+    /// no human to ask — a missing host is not an automatic yes.
+    #[tokio::test]
+    async fn reset_with_no_way_to_ask_is_refused_and_wipes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault_file = dir.path().join("vault.enc");
+        std::fs::write(&vault_file, b"not really a vault").expect("seed file");
+        let state = Arc::new(AppState::for_test(dir.path()));
+
+        let err = reset_vault(&state, Some("DELETE".to_string()), None)
+            .await
+            .expect_err("no host registered — nobody to ask");
+        assert!(err.contains("No way to ask"), "unexpected error: {err}");
+        assert!(vault_file.exists(), "the vault must survive the refusal");
+    }
+
+    /// A refusal through the host's dialog is an answer: the wipe does not
+    /// happen.
+    #[tokio::test]
+    async fn reset_with_a_declined_confirmation_wipes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault_file = dir.path().join("vault.enc");
+        std::fs::write(&vault_file, b"not really a vault").expect("seed file");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.register_host(Arc::new(ScriptedHost::new(&state, Some(false))));
+
+        let err = reset_vault(&state, Some("DELETE".to_string()), None)
+            .await
+            .expect_err("a declined confirmation must refuse the reset");
+        assert!(err.contains("declined"), "unexpected error: {err}");
+        assert!(vault_file.exists(), "the vault must survive the refusal");
+    }
+
+    /// And the gate actually opens for an explicit approval (the presence ask
+    /// itself, not the full destructive flow — the rest of `reset_vault` touches
+    /// the platform credential store, which tests must not do).
+    #[tokio::test]
+    async fn confirm_with_human_proceeds_only_on_explicit_approval() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.register_host(Arc::new(ScriptedHost::new(&state, Some(true))));
+        state
+            .confirm_with_human("test title", "test prompt")
+            .expect("an explicit approval proceeds");
+
+        // Re-register with a declining host and check the same question fails.
+        state.register_host(Arc::new(ScriptedHost::new(&state, Some(false))));
+        state
+            .confirm_with_human("test title", "test prompt")
+            .expect_err("a declined confirmation refuses");
+    }
+
+    #[test]
+    fn locking_zeroizes_the_password_needed_for_rekey() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[7u8; 32]);
+        state.set_rekey_password(Some("correct horse battery staple".into()));
+        assert!(state.rekey_password().is_some());
+
+        lock_session(&state);
+
+        assert!(state.rekey_password().is_none());
     }
 }

@@ -60,6 +60,7 @@ export function decryptVaultChunk(
   ciphertextB64: string,
   chunkId: string,
   lamportClock: number,
+  epoch: number,
 ): string {
   return parse<{ vault_json: string }>(
     decrypt_vault_chunk_json(
@@ -68,6 +69,7 @@ export function decryptVaultChunk(
         ciphertext_b64: ciphertextB64,
         chunk_id: chunkId,
         lamport_clock: lamportClock,
+        epoch,
       }),
     ),
   ).vault_json;
@@ -86,6 +88,7 @@ export function encryptVaultChunk(
   vaultJson: string,
   chunkId: string,
   lamportClock: number,
+  epoch: number,
 ): string {
   return parse<{ ciphertext_b64: string }>(
     encrypt_vault_chunk_json(
@@ -94,6 +97,7 @@ export function encryptVaultChunk(
         vault_json: vaultJson,
         chunk_id: chunkId,
         lamport_clock: lamportClock,
+        epoch,
       }),
     ),
   ).ciphertext_b64;

@@ -28,6 +28,14 @@ data class SyncState(
     val canResolveConflict: Boolean = false
 )
 
+internal fun requireMatchingSyncEpoch(manifestEpoch: Long, localEpoch: Long) {
+    require(manifestEpoch >= 1 && localEpoch >= 1) { "Vault key epochs must be positive" }
+    check(manifestEpoch == localEpoch) {
+        "This device has vault key epoch $localEpoch, but the sync manifest is for epoch " +
+            "$manifestEpoch; adopt the current vault key before syncing."
+    }
+}
+
 class VaultSyncManager(
     private val context: Context,
     private val settingsStore: SyncSettingsStore,
@@ -35,6 +43,8 @@ class VaultSyncManager(
     private val security: SecureVaultManager,
     private val vault: LocalVaultRepository
 ) {
+    private val shareKeyRegistrationLock = Any()
+    private val recoverySetupMutex = Mutex()
     private val _state = MutableStateFlow(SyncState(lastSyncedAt = settingsStore.settings.value.lastSyncedAt))
     val state: StateFlow<SyncState> = _state
 
@@ -46,23 +56,36 @@ class VaultSyncManager(
         val settings = settingsStore.settings.value
         require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
         val client = AndroidVelaApiClient(settings.serverUrl, context)
-        val token = authenticatedToken(client, settings.bearerToken)
+        var token = authenticatedToken(client, settings.bearerToken)
         if (token != settings.bearerToken) {
             settingsStore.updateBearerToken(token)
         }
-        ensureShareKey(client, token)
+        ensureShareKey(client, token)?.let {
+            token = it
+            settingsStore.updateBearerToken(it)
+        }
         return try {
             block(client, token)
         } catch (e: ServerUnauthorizedException) {
             if (!e.isRecoverableTokenFailure() || settings.bearerToken.isBlank()) throw e
             settingsStore.updateBearerToken("")
+            client.clearLatestSessionToken()
             val freshToken = authenticatedToken(client, "")
             settingsStore.updateBearerToken(freshToken)
             block(client, freshToken)
+        } finally {
+            acceptRefreshedToken(client.latestSessionToken())
         }
     }
 
-    fun enrollWithCode(serverUrl: String, enrollmentCode: String): ByteArray {
+    /** Persist a replacement token before a dependent request or early return. */
+    fun acceptRefreshedToken(token: String?) {
+        token?.takeIf { it.isNotBlank() }?.let(settingsStore::updateBearerToken)
+    }
+
+    fun localVaultEpoch(): Long = settingsStore.settings.value.keyEpoch
+
+    fun enrollWithCode(serverUrl: String, enrollmentCode: String) {
         val payload = EnrollmentCodePayload.fromCode(serverUrl, enrollmentCode)
         val effectiveServerUrl = serverUrl.ifBlank { payload.serverUrl }
         if (effectiveServerUrl.isBlank()) {
@@ -82,9 +105,9 @@ class VaultSyncManager(
 
         val token = authenticateOrRegister(client)
         val capsule = client.getCapsule(token)
-        capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
-        return NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
+        val rms = NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
+        adoptRmsAtCurrentEpoch(client, capsule.newToken ?: token, rms)
     }
 
     // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
@@ -140,20 +163,20 @@ class VaultSyncManager(
         return client.collectEnrollmentResult(session.grantId, signature)
     }
 
-    /// Authenticate as the newly enrolled device and open the capsule sealed to
-    /// it. Returns the RMS.
-    fun finishV3Join(session: V3JoinSession, deviceId: String): ByteArray {
+    /// Authenticate as the newly enrolled device, open its capsule, and adopt
+    /// the RMS together with the server epoch it belongs to.
+    fun finishV3Join(session: V3JoinSession, deviceId: String) {
         val identity = identityStore.load() ?: error("This device has no identity")
         identityStore.save(identity.copy(deviceId = deviceId))
 
         val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
         val token = authenticateOrRegister(client)
         val capsule = client.getCapsule(token)
-        capsule.newToken?.let { updateServer(settingsStore.settings.value.serverUrl, it) }
 
         val handle = identityStore.handle() ?: error("This device has no identity")
-        return NativeVelaCore.identityOpenEnrollmentCapsule(handle, capsule.capsuleB64)
+        val rms = NativeVelaCore.identityOpenEnrollmentCapsule(handle, capsule.capsuleB64)
             ?: error("The vault key was not sealed to this device — enrollment aborted")
+        adoptRmsAtCurrentEpoch(client, capsule.newToken ?: token, rms)
     }
 
     /// Split the RMS into recovery shares (SPEC.md §4.3), register a WebAuthn
@@ -165,56 +188,74 @@ class VaultSyncManager(
     /// sync layer doesn't need an Activity context for the Credential Manager
     /// UI — it receives the already-unwrapped creation options and returns
     /// the attestation response JSON.
-    suspend fun setupRecovery(performRegistration: suspend (JSONObject) -> JSONObject): List<String> {
-        check(security.session.value.unlocked) { "Unlock VELA before setting up recovery" }
-        val rms = security.currentRmsCopy() ?: error("No unlocked vault key")
-        val shares = try {
-            NativeVelaCore.splitRecovery(rms, threshold = 2, n = 3)
-                ?: error("Native VELA bridge could not split recovery shares")
-        } finally {
-            rms.fill(0)
+    suspend fun setupRecovery(performRegistration: suspend (JSONObject) -> JSONObject): List<String> =
+        recoverySetupMutex.withLock {
+            check(security.session.value.unlocked) { "Unlock VELA before setting up recovery" }
+            val rms = security.currentRmsCopy() ?: error("No unlocked vault key")
+            val shares = try {
+                NativeVelaCore.splitRecovery(rms, threshold = 2, n = 3)
+                    ?: error("Native VELA bridge could not split recovery shares")
+            } finally {
+                rms.fill(0)
+            }
+            check(shares.size == 3) { "Unexpected share count from split" }
+
+            val settings = settingsStore.settings.value
+            require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
+            val client = AndroidVelaApiClient(settings.serverUrl, context)
+            var token = authenticatedToken(client, settings.bearerToken)
+            if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
+            val localEpoch = settingsStore.settings.value.keyEpoch
+            val before = client.getVaultEpoch(token)
+            before.newToken?.let { token = it; settingsStore.updateBearerToken(it) }
+            check(before.state == "active" && before.epoch == localEpoch) {
+                "Vault key rotation changed this device's recovery epoch; sync and retry recovery setup"
+            }
+
+            val (startJson, tokenAfterStart) = client.startRecoveryWebAuthnRegistration(token)
+            tokenAfterStart?.let { token = it; settingsStore.updateBearerToken(it) }
+
+            val requestOptions = WebAuthnCeremony.unwrapPublicKey(startJson)
+            val credentialJson = performRegistration(requestOptions)
+
+            val (registered, tokenAfterFinish) =
+                client.finishRecoveryWebAuthnRegistration(token, credentialJson)
+            tokenAfterFinish?.let { token = it; settingsStore.updateBearerToken(it) }
+            check(registered) { "Recovery passkey registration was not confirmed by the server" }
+
+            client.putRecoveryShare(token, shares[1], localEpoch)?.let {
+                token = it
+                settingsStore.updateBearerToken(it)
+            }
+
+            // Do not hand old-epoch shares to cloud/contact channels if another
+            // device committed a rotation while the WebAuthn ceremony was open.
+            val after = client.getVaultEpoch(token)
+            after.newToken?.let { settingsStore.updateBearerToken(it) }
+            check(after.state == "active" && after.epoch == localEpoch) {
+                "Vault key rotation changed during recovery setup; sync and start again"
+            }
+
+            // Share 1 (cloud) and Share 3 (trusted contact) are handed back to
+            // the caller to distribute — there is no cloud-storage integration
+            // yet, so both are shown as plain text to copy/store manually.
+            listOf(shares[0], shares[2])
         }
-        check(shares.size == 3) { "Unexpected share count from split" }
-
-        val settings = settingsStore.settings.value
-        require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
-        val client = AndroidVelaApiClient(settings.serverUrl, context)
-        var token = authenticatedToken(client, settings.bearerToken)
-        if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
-
-        val (startJson, tokenAfterStart) = client.startRecoveryWebAuthnRegistration(token)
-        tokenAfterStart?.let { token = it; settingsStore.updateBearerToken(it) }
-
-        val requestOptions = WebAuthnCeremony.unwrapPublicKey(startJson)
-        val credentialJson = performRegistration(requestOptions)
-
-        val (registered, tokenAfterFinish) = client.finishRecoveryWebAuthnRegistration(token, credentialJson)
-        tokenAfterFinish?.let { token = it; settingsStore.updateBearerToken(it) }
-        check(registered) { "Recovery passkey registration was not confirmed by the server" }
-
-        client.putRecoveryShare(token, shares[1])?.let { settingsStore.updateBearerToken(it) }
-
-        // Share 1 (cloud) and Share 3 (trusted contact) are handed back to
-        // the caller to distribute — there is no cloud-storage integration
-        // yet, so both are shown as plain text to copy/store manually.
-        return listOf(shares[0], shares[2])
-    }
 
     /// Reconstruct the RMS on a brand-new device from Share 1 (pasted from
     /// wherever the user stored it) + Share 2 (released by the server after
     /// the WebAuthn assertion run by `performAssertion`), then register this
     /// device against the existing account — mirrors `enrollWithCode`'s
     /// bootstrap sequence, minus the RMS-capsule step since the RMS is
-    /// already in hand once the two shares are combined. Returns the
-    /// reconstructed RMS for the caller to adopt via
-    /// `SecureVaultManager.adoptRms` and protect locally.
+    /// already in hand once the two shares are combined. The reconstructed
+    /// RMS is adopted before its authenticated server epoch is persisted.
     suspend fun recoverAccount(
         serverUrl: String,
         userId: String,
         share1B64: String,
         deviceName: String?,
         performAssertion: suspend (JSONObject) -> JSONObject
-    ): ByteArray {
+    ) {
         val effectiveServerUrl = serverUrl.ifBlank { settingsStore.settings.value.serverUrl }
         require(effectiveServerUrl.isNotBlank()) { "Recovery requires a server URL" }
         updateServer(effectiveServerUrl, "")
@@ -242,8 +283,7 @@ class VaultSyncManager(
         identityStore.save(identity.copy(userId = userId, deviceId = deviceId))
 
         val token = authenticateOrRegister(client)
-        updateServer(effectiveServerUrl, token)
-        return rms
+        adoptRmsAtCurrentEpoch(client, token, rms)
     }
 
     // suspend, not a runBlocking-wrapped plain fun: the previous version
@@ -290,6 +330,7 @@ class VaultSyncManager(
             var token = authenticatedToken(client, settings.bearerToken)
             val manifestResult = getManifestWithTokenRetry(client, token, settings)
             val manifest = manifestResult.manifest
+            requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
             token = manifestResult.token
             val manifestToken = manifestResult.newToken
             manifestToken?.let { token = it }
@@ -323,6 +364,7 @@ class VaultSyncManager(
             var token = authenticatedToken(client, settings.bearerToken)
             val manifestResult = getManifestWithTokenRetry(client, token, settings)
             val manifest = manifestResult.manifest
+            requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
             token = manifestResult.token
             val manifestToken = manifestResult.newToken
             manifestToken?.let { token = it }
@@ -351,6 +393,7 @@ class VaultSyncManager(
         }
         val manifestResult = getManifestWithTokenRetry(client, token, settings)
         val manifest = manifestResult.manifest
+        requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
         token = manifestResult.token
         val manifestToken = manifestResult.newToken
         manifestToken?.let { token = it }
@@ -452,15 +495,23 @@ class VaultSyncManager(
     }
 
     /// Backfill a share keypair for identities created before sharing existed.
-    /// Generates the keypair locally, persists it, and registers the public half
-    /// with the server. A no-op once the identity already has a share key.
-    private fun ensureShareKey(client: AndroidVelaApiClient, token: String) {
-        val identity = identityStore.load() ?: return
-        if (identity.shareEkB64.isNotBlank()) return
-        // The new secret half stays native; only its public key comes back.
-        val shareEk = identityStore.rotateShareKey() ?: return
-        runCatching { client.putMyShareEk(token, shareEk) }
-    }
+    /// A failed server write leaves a durable pending marker, so the same key is
+    /// retried instead of being mistaken for a completed registration.
+    private fun ensureShareKey(client: AndroidVelaApiClient, token: String): String? =
+        synchronized(shareKeyRegistrationLock) {
+            val identity = identityStore.load() ?: return@synchronized null
+            val shareEk = when {
+                identity.shareEkB64.isBlank() ->
+                    // The new secret half stays native; only its public key comes back.
+                    identityStore.rotateShareKey() ?: return@synchronized null
+                identity.shareEkRegistrationPending -> identity.shareEkB64
+                else -> return@synchronized null
+            }
+
+            val registration = runCatching { client.putMyShareEk(token, shareEk) }
+            if (registration.isSuccess) identityStore.markShareKeyRegistered(shareEk)
+            registration.getOrNull()
+        }
 
     private fun authenticateOrRegister(client: AndroidVelaApiClient): String {
         var identity = identityStore.getOrCreate()
@@ -468,6 +519,7 @@ class VaultSyncManager(
             val registered = client.registerAccount(identity)
             identity = identity.copy(userId = registered.userId, deviceId = registered.deviceId)
             identityStore.save(identity)
+            settingsStore.updateKeyEpoch(1)
             registered.token?.takeIf { it.isNotBlank() }?.let { return it }
         }
 
@@ -489,6 +541,27 @@ class VaultSyncManager(
         )
         identityStore.save(identity.copy(userId = verified.userId))
         return verified.token
+    }
+
+    /** Install the RMS before advancing its epoch marker; the reverse can authorize stale keys. */
+    private fun adoptRmsAtCurrentEpoch(
+        client: AndroidVelaApiClient,
+        token: String,
+        rms: ByteArray,
+    ) {
+        try {
+            val epoch = client.getVaultEpoch(token)
+            check(epoch.state == "active") {
+                "Vault key rotation started during enrollment; retry after it completes."
+            }
+            security.adoptRms(rms)
+            settingsStore.updateKeyEpoch(epoch.epoch)
+            acceptRefreshedToken(epoch.newToken ?: token)
+        } finally {
+            // adoptRms also clears its input, but failures before adoption must
+            // not leave recovered key material waiting for garbage collection.
+            rms.fill(0)
+        }
     }
 
     private fun authenticatedToken(client: AndroidVelaApiClient, cachedToken: String): String =
@@ -531,14 +604,21 @@ class VaultSyncManager(
 
         val results = chunkIds.mapIndexed { index, chunkId ->
             async {
-                val token = tokenMutex.withLock { tokenRef }
-                val downloaded = client.getChunk(token, chunkId)
-                downloaded.newToken?.let { newToken ->
-                    tokenMutex.withLock { tokenRef = newToken }
+                // Keep the token read, request, and replacement atomic. Merely
+                // locking the reads lets every coroutine launch with the same
+                // token; the first renewal then revokes it under its siblings.
+                val downloaded = tokenMutex.withLock {
+                    client.getChunk(tokenRef, chunkId).also { response ->
+                        response.newToken?.let { tokenRef = it }
+                    }
                 }
                 val entry = manifest.chunks.firstOrNull { it.chunkId == chunkId }
                 val json = NativeVelaCore.decryptVaultChunkJson(
-                    rms, chunkId, downloaded.ciphertext, entry?.lamportClock ?: 0
+                    rms,
+                    chunkId,
+                    downloaded.ciphertext,
+                    entry?.lamportClock ?: 0,
+                    manifest.epoch,
                 ) ?: error("Native VELA bridge could not decrypt server vault chunk $chunkId")
                 Triple(index, json, Pair(chunkId, entry))
             }
@@ -592,19 +672,22 @@ class VaultSyncManager(
             val chunkId = vaultChunkId(index)
             val chunkLamport = lamportAssignments[index]
             val remote = manifestById[chunkId]
-            val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(rms, chunkId, chunk, chunkLamport)
+            val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(
+                rms, chunkId, chunk, chunkLamport, manifest.epoch
+            )
                 ?: error("Native VELA bridge is required for server sync")
             async {
-                val token = tokenMutex.withLock { tokenRef }
-                val uploaded = client.putChunk(
-                    token = token,
-                    chunkId = chunkId,
-                    ifMatch = remote?.version ?: 0,
-                    lamportClock = chunkLamport,
-                    ciphertext = Base64.getDecoder().decode(ciphertextB64)
-                )
-                uploaded.newToken?.let { newToken ->
-                    tokenMutex.withLock { tokenRef = newToken }
+                val uploaded = tokenMutex.withLock {
+                    client.putChunk(
+                        token = tokenRef,
+                        chunkId = chunkId,
+                        ifMatch = remote?.version ?: 0,
+                        lamportClock = chunkLamport,
+                        keyEpoch = manifest.epoch,
+                        ciphertext = Base64.getDecoder().decode(ciphertextB64)
+                    ).also { response ->
+                        response.newToken?.let { tokenRef = it }
+                    }
                 }
                 if (index == 0) uploaded.version else null
             }
@@ -626,11 +709,12 @@ class VaultSyncManager(
             val deleteTokenMutex = Mutex()
             staleChunks.map { (chunkId, version) ->
                 async {
-                    val t = deleteTokenMutex.withLock { deleteTokenRef }
-                    runCatching { client.deleteChunk(t, chunkId, version) }
-                        .getOrNull()?.let { newToken ->
-                            deleteTokenMutex.withLock { deleteTokenRef = newToken }
+                    deleteTokenMutex.withLock {
+                        runCatching {
+                            client.deleteChunk(deleteTokenRef, chunkId, version, manifest.epoch)
                         }
+                            .getOrNull()?.let { deleteTokenRef = it }
+                    }
                 }
             }.awaitAll()
             tokenMutex.withLock { tokenRef = deleteTokenMutex.withLock { deleteTokenRef } }

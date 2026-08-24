@@ -59,9 +59,12 @@ pub enum HostCommand {
     /// build's answer to the Tauri build's `backend-toast` event.
     ShowToast(String),
     /// Ask the human to approve or deny a presence-sensitive action (an in-core
-    /// login, a passkey use). Carries a reply channel back to the caller, which
-    /// blocks on it — the gpui build's answer to the Tauri app's modal.
+    /// login, a passkey use, a vault reset or key rotation). Carries the
+    /// action's title (the modal caption) plus a reply channel back to the
+    /// caller, which blocks on it — the gpui build's answer to the Tauri
+    /// app's modal.
     ConfirmPresence {
+        title: String,
         prompt: String,
         reply: std::sync::mpsc::Sender<Option<bool>>,
     },
@@ -70,6 +73,7 @@ pub enum HostCommand {
 /// One pending presence-confirmation, shown as a modal over the whole window.
 #[derive(Clone)]
 pub struct PresencePrompt {
+    pub title: String,
     pub prompt: String,
     pub reply: std::sync::mpsc::Sender<Option<bool>>,
 }
@@ -123,11 +127,12 @@ impl Host for GpuiHost {
     /// server's) until the human clicks Approve or Deny. A failed send — the
     /// window is gone — reads as "no way to ask", which
     /// [`vela_desktop_core::presence`] refuses.
-    fn confirm_presence(&self, prompt: &str) -> Option<bool> {
+    fn confirm_presence(&self, title: &str, prompt: &str) -> Option<bool> {
         let (tx, rx) = std::sync::mpsc::channel();
         if self
             .tx
             .send(HostCommand::ConfirmPresence {
+                title: title.to_string(),
                 prompt: prompt.to_string(),
                 reply: tx,
             })

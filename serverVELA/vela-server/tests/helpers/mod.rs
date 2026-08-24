@@ -40,5 +40,11 @@ pub async fn test_state_with_config(
 }
 
 pub async fn test_app() -> Router {
+    // Surface the lib's tracing::error! output (AppError::Internal logs detail
+    // there) so integration failures name the failing SQL instead of a bare 500.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .with_test_writer()
+        .try_init();
     routes::build(test_state().await)
 }
