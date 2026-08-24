@@ -224,7 +224,20 @@ final class Phase4Tests: XCTestCase {
             XCTAssertEqual(req.url?.path, "/recovery/share")
             if requestNumber == 1 {
                 XCTAssertEqual(req.httpMethod, "PUT")
-                let body = try XCTUnwrap(req.httpBody)
+                let body: Data
+                if let directBody = req.httpBody {
+                    body = directBody
+                } else {
+                    // URLSession converts request bodies to streams before a
+                    // custom URLProtocol sees them on current iOS runtimes.
+                    let stream = try XCTUnwrap(req.httpBodyStream)
+                    stream.open()
+                    defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    XCTAssertGreaterThan(count, 0)
+                    body = Data(buffer.prefix(max(count, 0)))
+                }
                 let json = try XCTUnwrap(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
                 XCTAssertEqual(json["share"] as? String, "share-two")
