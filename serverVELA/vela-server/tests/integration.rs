@@ -855,6 +855,301 @@ async fn seed_user_with_device(state: &vela_server::state::AppState) -> (Uuid, S
     (user_id, token)
 }
 
+fn sign_hybrid_message(secret_key: &[u8], message: &[u8]) -> String {
+    let secret_key = secret_key.to_vec();
+    let message = message.to_vec();
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let sk = vela_crypto::signing::HybridSigningKey::from_bytes(&secret_key).unwrap();
+            B64.encode(vela_crypto::signing::sign(&sk, &message).unwrap().to_bytes())
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+async fn fresh_challenge(app: &axum::Router) -> String {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/challenge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["challenge"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn v2_and_v3_enrollment_capsules_are_atomically_epoch_bound() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let primary_id = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    let (primary_vk, primary_sk) = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let (vk, sk) = vela_crypto::signing::generate_keypair().unwrap();
+            (vk.to_bytes().to_vec(), sk.into_bytes())
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, key_epoch, created_at) VALUES (?, 2, ?)",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(now.clone()),
+            ],
+        )
+        .await
+        .unwrap();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO devices (id, user_id, hybrid_ek, hybrid_vk, created_at)
+             VALUES (?, ?, ?, ?, ?)",
+            vec![
+                TursoValue::Text(primary_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(B64.encode(vec![0u8; 1600])),
+                TursoValue::Text(B64.encode(&primary_vk)),
+                TursoValue::Text(now),
+            ],
+        )
+        .await
+        .unwrap();
+    let token = issue_token(&state, user_id, primary_id);
+
+    // V3: a stale completion is rejected without consuming the already
+    // fingerprint-confirmed grant, then the same capsule succeeds at epoch 2.
+    let grant_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/enrollment-grant")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let grant_body = axum::body::to_bytes(grant_response.into_body(), 4096)
+        .await
+        .unwrap();
+    let grant_id = serde_json::from_slice::<serde_json::Value>(&grant_body).unwrap()["grant_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let v3_ek = vec![1u8; 1600];
+    let v3_vk = vec![2u8; 2624];
+    let claim = Request::builder()
+        .method("POST")
+        .uri(format!("/device/enrollment-grant/{grant_id}/claim"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "hybrid_ek": B64.encode(&v3_ek),
+                "hybrid_vk": B64.encode(&v3_vk),
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(claim).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let v3_capsule = vec![3u8; 96];
+    let v3_signature = sign_hybrid_message(
+        &primary_sk,
+        &vela_crypto::signing::enrollment_message(&v3_ek, &v3_vk, &v3_capsule),
+    );
+    let complete_v3 = |epoch| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/device/enrollment-grant/{grant_id}/complete"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "rms_capsule": B64.encode(&v3_capsule),
+                    "signature": v3_signature,
+                    "key_epoch": epoch,
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone().oneshot(complete_v3(0)).await.unwrap().status(),
+        StatusCode::BAD_REQUEST,
+        "v3 rejects the reserved epoch without consuming its grant"
+    );
+    let stale_v3 = app.clone().oneshot(complete_v3(1)).await.unwrap();
+    assert_eq!(stale_v3.status(), StatusCode::CONFLICT);
+    let stale_v3_body = axum::body::to_bytes(stale_v3.into_body(), 4096)
+        .await
+        .unwrap();
+    assert!(String::from_utf8_lossy(&stale_v3_body).contains("key epoch changed"));
+    assert_eq!(
+        app.clone().oneshot(complete_v3(3)).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "a future epoch cannot authorize v3 enrollment"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(complete_v3(2)).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "v3 completion must fail while rotation is freezing"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    let current_v3 = app.clone().oneshot(complete_v3(2)).await.unwrap();
+    let current_v3_status = current_v3.status();
+    let current_v3_body = axum::body::to_bytes(current_v3.into_body(), 4096)
+        .await
+        .unwrap();
+    assert_eq!(
+        current_v3_status,
+        StatusCode::OK,
+        "epoch mismatch must not consume the v3 grant: {}",
+        String::from_utf8_lossy(&current_v3_body)
+    );
+
+    // V2: signed-challenge enrollment has the same atomic epoch predicate.
+    let v2_ek = vec![4u8; 1600];
+    let v2_vk = vec![5u8; 2624];
+    let v2_capsule = vec![6u8; 96];
+    let v2_enrollment_signature = sign_hybrid_message(
+        &primary_sk,
+        &vela_crypto::signing::enrollment_message(&v2_ek, &v2_vk, &v2_capsule),
+    );
+    let enroll_v2 = |challenge_b64: String, epoch: i64| {
+        let challenge = B64.decode(&challenge_b64).unwrap();
+        let auth_signature = sign_hybrid_message(
+            &primary_sk,
+            &vela_crypto::signing::auth_message(&primary_id.to_string(), &challenge),
+        );
+        Request::builder()
+            .method("POST")
+            .uri("/device/enroll")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "enrolling_device_id": primary_id,
+                    "challenge": challenge_b64,
+                    "auth_signature": auth_signature,
+                    "new_device": {
+                        "hybrid_ek": B64.encode(&v2_ek),
+                        "hybrid_vk": B64.encode(&v2_vk),
+                        "rms_capsule": B64.encode(&v2_capsule),
+                        "signature": v2_enrollment_signature,
+                        "key_epoch": epoch,
+                    },
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 0))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST,
+        "v2 rejects the reserved epoch"
+    );
+    let stale_v2 = app
+        .clone()
+        .oneshot(enroll_v2(fresh_challenge(&app).await, 1))
+        .await
+        .unwrap();
+    assert_eq!(stale_v2.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 3))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT,
+        "a future epoch cannot authorize v2 enrollment"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing' WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 2))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT,
+        "v2 completion must fail while rotation is freezing"
+    );
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(enroll_v2(fresh_challenge(&app).await, 2))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+
+    let count = state
+        .sqldb
+        .query(
+            "SELECT COUNT(*) FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap()[0]
+        .i64(0)
+        .unwrap();
+    assert_eq!(count, 3, "only the primary and two current-epoch joins exist");
+}
+
 /// The secret the browser keeps to collect its capsule, and the hash it commits
 /// to at `start`.
 const POLL_SECRET: [u8; 32] = [3u8; 32];
@@ -2105,6 +2400,7 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
                             "hybrid_vk": B64.encode(vec![0u8; 2624]),
                             "rms_capsule": B64.encode(vec![0u8; 64]),
                             "signature": bad_sig,
+                            "key_epoch": 1,
                         },
                     }),
                 )

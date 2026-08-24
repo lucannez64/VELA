@@ -253,6 +253,8 @@ pub struct CompleteRequest {
     pub rms_capsule: String,
     /// The primary's signature over (claimed ek ‖ claimed vk ‖ capsule).
     pub signature: String,
+    /// Authenticated local epoch of the RMS sealed into `rms_capsule`.
+    pub key_epoch: i64,
 }
 
 #[derive(Serialize)]
@@ -272,14 +274,19 @@ pub async fn post_complete(
     let user_rows = state
         .sqldb
         .query(
-            "SELECT rekey_state FROM users WHERE id = ?",
+            "SELECT key_epoch, rekey_state FROM users WHERE id = ?",
             vec![TursoValue::Text(grant.user_id.clone())],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if user_rows.first().and_then(|row| row.text(0)).is_some() {
+    let current_epoch = user_rows.first().and_then(|row| row.i64(0));
+    let rotation_state = user_rows.first().and_then(|row| row.text(1));
+    if body.key_epoch < 1 {
+        return Err(AppError::BadRequest("key_epoch must be positive".into()));
+    }
+    if current_epoch != Some(body.key_epoch) || rotation_state.is_some() {
         return Err(AppError::Conflict(
-            "device enrollment is paused during vault key rotation".into(),
+            "device enrollment key epoch changed or rotation is in progress".into(),
         ));
     }
 
@@ -331,7 +338,8 @@ pub async fn post_complete(
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
          SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
          WHERE EXISTS (
-             SELECT 1 FROM users WHERE id = ? AND rekey_state IS NULL
+             SELECT 1 FROM users
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
          )",
         vec![
             TursoValue::Text(new_device_id.to_string()),
@@ -344,6 +352,7 @@ pub async fn post_complete(
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
             TursoValue::Text(grant.user_id.clone()),
+            TursoValue::Integer(body.key_epoch),
         ],
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
     if inserted == 0 {
@@ -357,7 +366,7 @@ pub async fn post_complete(
             .store
             .set_ex(&grant_key(grant_id), &grant_bytes, GRANT_TTL_SECS)?;
         return Err(AppError::Conflict(
-            "device enrollment is paused during vault key rotation".into(),
+            "device enrollment key epoch changed or rotation is in progress".into(),
         ));
     }
 

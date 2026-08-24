@@ -153,6 +153,66 @@ struct EnrollmentPackageLocator {
 
 const ENROLLMENT_CODE_V2_PREFIX: &str = "VELA-ENROLL:v2:";
 
+fn validate_enrollment_epoch(
+    local_epoch: i64,
+    server_epoch: i64,
+    rotation_state: &str,
+) -> Result<(), String> {
+    if local_epoch < 1 || server_epoch < 1 {
+        return Err("Device enrollment received an invalid vault key epoch".into());
+    }
+    if rotation_state != "active" {
+        return Err("Device enrollment is paused during vault key rotation".into());
+    }
+    if local_epoch != server_epoch {
+        return Err(format!(
+            "This device has authenticated vault key epoch {local_epoch}, but the account is at epoch {server_epoch}; sync before enrolling another device."
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn authenticated_enrollment_epoch(
+    state: &AppState,
+    client: &ApiClient,
+    token: &mut String,
+) -> Result<i64, String> {
+    let local_epoch = crate::sync::local_key_epoch(state)?;
+    if token.is_empty() {
+        let device_id = state
+            .store
+            .load_device_id()
+            .map_err(|e| format!("Failed to load device ID: {e}"))?;
+        *token = crate::sync::authenticate_for_sync(state, client, &device_id).await?;
+    }
+    let first_probe = client.get_key_epoch(token).await;
+    let (server_epoch, rotation_state, refreshed) = match first_probe {
+        Ok(probe) => probe,
+        Err(error) if error.to_string().contains("401") => {
+            let device_id = state
+                .store
+                .load_device_id()
+                .map_err(|e| format!("Failed to load device ID: {e}"))?;
+            *token = crate::sync::authenticate_for_sync(state, client, &device_id).await?;
+            client
+                .get_key_epoch(token)
+                .await
+                .map_err(|e| format!("Failed to validate the enrollment key epoch: {e}"))?
+        }
+        Err(error) => {
+            return Err(format!(
+                "Failed to validate the enrollment key epoch: {error}"
+            ))
+        }
+    };
+    if let Some(refreshed) = refreshed {
+        state.session.write().set_server_token(refreshed.clone());
+        *token = refreshed;
+    }
+    validate_enrollment_epoch(local_epoch, server_epoch, &rotation_state)?;
+    Ok(local_epoch)
+}
+
 /// Generate an enrollment invitation code that a second device can import.
 /// Real cryptographic ceremony against the real account: generates a fresh
 /// keypair for the new device, seals the RMS for transfer, signs the
@@ -164,6 +224,13 @@ pub async fn generate_enrollment_code(state: &AppState) -> Result<String, String
     if !state.is_unlocked() {
         return Err("Vault is locked. Please unlock before enrolling a new device.".to_string());
     }
+
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url.clone());
+    let mut token = state.get_session_token().unwrap_or_default();
+    // Authenticate the RMS-to-epoch binding before reading or sealing the RMS.
+    // The server repeats this comparison atomically with device insertion.
+    let key_epoch = authenticated_enrollment_epoch(state, &client, &mut token).await?;
 
     let rms: [u8; 32] = {
         let crypto_guard = state.crypto.read();
@@ -212,9 +279,6 @@ pub async fn generate_enrollment_code(state: &AppState) -> Result<String, String
     .map_err(|e| format!("Thread join error: {e}"))?
     .map_err(|e| format!("Signing failed: {e}"))?;
 
-    let server_url = state.server_url.read().clone();
-    let client = ApiClient::with_url(server_url.clone());
-
     let challenge_resp = client.get_challenge().await.map_err(|e| format!("Failed to get challenge: {e}"))?;
     let challenge_bytes =
         B64.decode(&challenge_resp.challenge).map_err(|_| "Invalid challenge encoding from server")?;
@@ -236,6 +300,7 @@ pub async fn generate_enrollment_code(state: &AppState) -> Result<String, String
             hybrid_ek: B64.encode(&new_identity.hybrid_ek),
             hybrid_vk: B64.encode(&new_identity.hybrid_vk),
             rms_capsule: B64.encode(&rms_capsule),
+            key_epoch,
             signature: B64.encode(&signature),
             device_name: Some("Pending Desktop Enrollment".to_string()),
             device_type: Some("desktop".to_string()),
@@ -669,5 +734,86 @@ mod tests {
             })
             .collect();
         assert_eq!(reassembled, code);
+    }
+
+    #[test]
+    fn enrollment_requires_matching_active_authenticated_epoch() {
+        assert!(validate_enrollment_epoch(2, 2, "active").is_ok());
+        assert!(validate_enrollment_epoch(1, 2, "active")
+            .unwrap_err()
+            .contains("sync before enrolling"));
+        assert!(validate_enrollment_epoch(3, 2, "active")
+            .unwrap_err()
+            .contains("sync before enrolling"));
+        assert!(validate_enrollment_epoch(2, 2, "freezing")
+            .unwrap_err()
+            .contains("paused"));
+        assert!(validate_enrollment_epoch(0, 0, "active")
+            .unwrap_err()
+            .contains("invalid"));
+        assert!(validate_enrollment_epoch(2, 2, "unknown")
+            .unwrap_err()
+            .contains("paused"));
+    }
+
+    #[tokio::test]
+    async fn stale_enrollment_preflight_fails_before_any_rms_is_sealed() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[31u8; 32]);
+        {
+            let crypto = state.crypto.read();
+            state.store.save_key_epoch(crypto.as_ref().unwrap(), 1).unwrap();
+        }
+        state.session.write().set_server_token("token".into());
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/epoch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "epoch": 2,
+                "state": "active",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::with_url(server.uri());
+        let mut token = "token".to_string();
+        let error = authenticated_enrollment_epoch(&state, &client, &mut token)
+            .await
+            .expect_err("stale RMS must not authorize enrollment");
+        assert!(error.contains("sync before enrolling"), "{error}");
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn unreadable_epoch_marker_stops_enrollment_before_server_preflight() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&[32u8; 32]);
+        state
+            .store
+            .save_key_epoch(&crate::crypto::Crypto::new(&[33u8; 32]), 2)
+            .unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/epoch"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::with_url(server.uri());
+        let mut token = "token".to_string();
+        assert!(authenticated_enrollment_epoch(&state, &client, &mut token)
+            .await
+            .is_err());
+        server.verify().await;
     }
 }

@@ -52,12 +52,14 @@ object NativeVelaCore {
         chunkId: String,
         vaultJson: String,
         lamportClock: Long,
+        keyEpoch: Long,
     ): String? {
         return callNative {
             val request = JSONObject()
                 .put("chunk_id", chunkId)
                 .put("vault_json", vaultJson)
                 .put("lamport_clock", lamportClock)
+                .put("key_epoch", keyEpoch)
                 .toString()
             val response = JSONObject(nativeEncryptVaultChunkJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
@@ -73,13 +75,15 @@ object NativeVelaCore {
         rms: ByteArray,
         chunkId: String,
         ciphertext: ByteArray,
-        lamportClock: Long = 0
+        lamportClock: Long = 0,
+        keyEpoch: Long,
     ): String? {
         return callNative {
             val request = JSONObject()
                 .put("chunk_id", chunkId)
                 .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
                 .put("lamport_clock", lamportClock)
+                .put("key_epoch", keyEpoch)
                 .toString()
             val response = JSONObject(nativeDecryptVaultChunkJson(rms, request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }

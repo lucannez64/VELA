@@ -501,7 +501,7 @@ fn log_sync_audit(state: &AppState, chunk_count: usize) {
     record_audit_event(state, AuditAction::VaultSync { chunk_count });
 }
 
-async fn authenticate_for_sync(
+pub(crate) async fn authenticate_for_sync(
     state: &AppState,
     client: &ApiClient,
     device_id: &str,

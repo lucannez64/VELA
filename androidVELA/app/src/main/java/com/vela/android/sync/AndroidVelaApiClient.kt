@@ -29,7 +29,35 @@ data class ChunkManifestEntry(
     val lastWriter: String?
 )
 
-data class SyncManifest(val chunks: List<ChunkManifestEntry>)
+data class SyncManifest(val epoch: Long, val chunks: List<ChunkManifestEntry>)
+
+internal fun parseSyncManifest(body: ByteArray): SyncManifest {
+    val root = JSONObject(body.toString(Charsets.UTF_8))
+    // Pre-epoch servers can only serve epoch 1. Once this device has adopted
+    // N>1, the local/manifest equality check rejects this legacy default.
+    val epoch = if (root.has("epoch")) root.getLong("epoch") else 1L
+    require(epoch >= 1) { "Sync manifest epoch must be positive" }
+    val chunksJson = root.optJSONArray("chunks") ?: org.json.JSONArray()
+    val chunks = buildList {
+        for (index in 0 until chunksJson.length()) {
+            val item = chunksJson.getJSONObject(index)
+            add(
+                ChunkManifestEntry(
+                    chunkId = item.getString("chunk_id"),
+                    version = item.optLong("version", 0),
+                    lamportClock = item.optLong("lamport_clock", 0),
+                    lastWriter = item.optString("last_writer").takeIf { it.isNotBlank() }
+                )
+            )
+        }
+    }
+    return SyncManifest(epoch = epoch, chunks = chunks)
+}
+
+internal fun vaultEpochHeaders(keyEpoch: Long): Map<String, String> {
+    require(keyEpoch >= 1) { "Vault key epoch must be positive" }
+    return mapOf("X-Vela-Epoch" to keyEpoch.toString())
+}
 
 data class DownloadedChunk(
     val ciphertext: ByteArray,
@@ -189,22 +217,7 @@ class AndroidVelaApiClient(
     fun getSyncManifest(token: String): Pair<SyncManifest, String?> {
         val response = request("GET", "/vault/sync", token)
         response.requireSuccess("Sync manifest request failed")
-        val root = JSONObject(response.body.toString(Charsets.UTF_8))
-        val chunksJson = root.optJSONArray("chunks") ?: org.json.JSONArray()
-        val chunks = buildList {
-            for (index in 0 until chunksJson.length()) {
-                val item = chunksJson.getJSONObject(index)
-                add(
-                    ChunkManifestEntry(
-                        chunkId = item.getString("chunk_id"),
-                        version = item.optLong("version", 0),
-                        lamportClock = item.optLong("lamport_clock", 0),
-                        lastWriter = item.optString("last_writer").takeIf { it.isNotBlank() }
-                    )
-                )
-            }
-        }
-        return SyncManifest(chunks) to response.newToken
+        return parseSyncManifest(response.body) to response.newToken
     }
 
     /** Current vault-key epoch and rotation state ("active" or "freezing"). */
@@ -310,6 +323,7 @@ class AndroidVelaApiClient(
         chunkId: String,
         ifMatch: Long,
         lamportClock: Long,
+        keyEpoch: Long,
         ciphertext: ByteArray
     ): UploadedChunk {
         val response = request(
@@ -317,7 +331,7 @@ class AndroidVelaApiClient(
             path = "/vault/chunk/$chunkId",
             token = token,
             body = ciphertext,
-            extraHeaders = mapOf(
+            extraHeaders = vaultEpochHeaders(keyEpoch) + mapOf(
                 "If-Match" to ifMatch.toString(),
                 "X-Lamport-Clock" to lamportClock.toString()
             )
@@ -327,12 +341,12 @@ class AndroidVelaApiClient(
         return UploadedChunk(version = version, newToken = response.newToken)
     }
 
-    fun deleteChunk(token: String, chunkId: String, ifMatch: Long): String? {
+    fun deleteChunk(token: String, chunkId: String, ifMatch: Long, keyEpoch: Long): String? {
         val response = request(
             method = "DELETE",
             path = "/vault/chunk/$chunkId",
             token = token,
-            extraHeaders = mapOf("If-Match" to ifMatch.toString())
+            extraHeaders = vaultEpochHeaders(keyEpoch) + mapOf("If-Match" to ifMatch.toString())
         )
         response.requireSuccess("Chunk delete failed")
         return response.newToken

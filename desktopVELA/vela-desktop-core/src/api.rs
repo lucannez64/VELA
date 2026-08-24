@@ -875,10 +875,12 @@ impl ApiClient {
         grant_id: &str,
         rms_capsule_b64: &str,
         signature_b64: &str,
+        key_epoch: i64,
     ) -> Result<(String, Option<String>)> {
         let body = serde_json::json!({
             "rms_capsule": rms_capsule_b64,
             "signature": signature_b64,
+            "key_epoch": key_epoch,
         });
         let url = format!(
             "{}/device/enrollment-grant/{}/complete",
@@ -1608,6 +1610,7 @@ pub struct NewDevicePayload {
     pub hybrid_ek: String,
     pub hybrid_vk: String,
     pub rms_capsule: String,
+    pub key_epoch: i64,
     pub signature: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,

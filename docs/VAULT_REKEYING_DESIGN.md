@@ -86,6 +86,12 @@ Chunks additionally carry their own `epoch` column — the server-side copy of
 what the AEAD already binds cryptographically — so the server can serve and
 clean up by epoch without decrypting anything.
 
+Device enrollment v2 and v3 carry the authenticated local epoch of the RMS
+being sealed. The approving desktop validates it against `GET /vault/epoch`
+before reading the RMS, and the server repeats `key_epoch = ? AND
+rekey_state IS NULL` atomically with insertion. A stale or mid-rotation
+approver therefore cannot create an active device carrying a retired RMS.
+
 ## 5. State machine & endpoints
 
 ```
@@ -269,7 +275,7 @@ CREATE INDEX idx_vault_chunks_user_epoch ON vault_chunks(user_id, epoch);
 3. ✅ **Desktop core** — `commands/rekey::rotate_vault_keys` orchestrating §6,
    restart-safe platform RMS persistence, and the §7.1 adoption hook before any
    sync read/write (settings UI action shipped in gpui; webview port pending).
-4. **Follow-ups** — Android epoch-aware chunk sync, mobile rekey-capsule
-   adoption (iOS can already enroll/recover directly into a rotated epoch),
+4. **Follow-ups** — mobile rekey-capsule adoption (Android and iOS can already
+   enroll/recover directly into a rotated epoch and perform epoch-bound sync),
    webview rotation UI, and ORAM shadow migration (the server currently refuses
    rotation while an account has ORAM buckets).

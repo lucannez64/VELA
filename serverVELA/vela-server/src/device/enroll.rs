@@ -49,6 +49,8 @@ pub struct NewDevicePayload {
     pub hybrid_ek: String,
     pub hybrid_vk: String,
     pub rms_capsule: String,
+    /// Authenticated local epoch of the RMS sealed into `rms_capsule`.
+    pub key_epoch: i64,
     pub signature: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
@@ -161,6 +163,10 @@ pub async fn post_enroll(
         &signature_bytes,
     )?;
 
+    if body.new_device.key_epoch < 1 {
+        return Err(AppError::BadRequest("key_epoch must be positive".into()));
+    }
+
     let new_device_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     let device_name = body
@@ -181,7 +187,8 @@ pub async fn post_enroll(
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
          SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
          WHERE EXISTS (
-             SELECT 1 FROM users WHERE id = ? AND rekey_state IS NULL
+             SELECT 1 FROM users
+             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
          )",
         vec![
             TursoValue::Text(new_device_id.to_string()),
@@ -194,11 +201,12 @@ pub async fn post_enroll(
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
             TursoValue::Text(device_a.user_id.to_string()),
+            TursoValue::Integer(body.new_device.key_epoch),
         ],
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
     if inserted == 0 {
         return Err(AppError::Conflict(
-            "device enrollment is paused during vault key rotation".into(),
+            "device enrollment key epoch changed or rotation is in progress".into(),
         ));
     }
 

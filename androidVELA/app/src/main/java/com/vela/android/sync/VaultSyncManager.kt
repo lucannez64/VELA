@@ -28,6 +28,14 @@ data class SyncState(
     val canResolveConflict: Boolean = false
 )
 
+internal fun requireMatchingSyncEpoch(manifestEpoch: Long, localEpoch: Long) {
+    require(manifestEpoch >= 1 && localEpoch >= 1) { "Vault key epochs must be positive" }
+    check(manifestEpoch == localEpoch) {
+        "This device has vault key epoch $localEpoch, but the sync manifest is for epoch " +
+            "$manifestEpoch; adopt the current vault key before syncing."
+    }
+}
+
 class VaultSyncManager(
     private val context: Context,
     private val settingsStore: SyncSettingsStore,
@@ -322,6 +330,7 @@ class VaultSyncManager(
             var token = authenticatedToken(client, settings.bearerToken)
             val manifestResult = getManifestWithTokenRetry(client, token, settings)
             val manifest = manifestResult.manifest
+            requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
             token = manifestResult.token
             val manifestToken = manifestResult.newToken
             manifestToken?.let { token = it }
@@ -355,6 +364,7 @@ class VaultSyncManager(
             var token = authenticatedToken(client, settings.bearerToken)
             val manifestResult = getManifestWithTokenRetry(client, token, settings)
             val manifest = manifestResult.manifest
+            requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
             token = manifestResult.token
             val manifestToken = manifestResult.newToken
             manifestToken?.let { token = it }
@@ -383,6 +393,7 @@ class VaultSyncManager(
         }
         val manifestResult = getManifestWithTokenRetry(client, token, settings)
         val manifest = manifestResult.manifest
+        requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
         token = manifestResult.token
         val manifestToken = manifestResult.newToken
         manifestToken?.let { token = it }
@@ -603,7 +614,11 @@ class VaultSyncManager(
                 }
                 val entry = manifest.chunks.firstOrNull { it.chunkId == chunkId }
                 val json = NativeVelaCore.decryptVaultChunkJson(
-                    rms, chunkId, downloaded.ciphertext, entry?.lamportClock ?: 0
+                    rms,
+                    chunkId,
+                    downloaded.ciphertext,
+                    entry?.lamportClock ?: 0,
+                    manifest.epoch,
                 ) ?: error("Native VELA bridge could not decrypt server vault chunk $chunkId")
                 Triple(index, json, Pair(chunkId, entry))
             }
@@ -657,7 +672,9 @@ class VaultSyncManager(
             val chunkId = vaultChunkId(index)
             val chunkLamport = lamportAssignments[index]
             val remote = manifestById[chunkId]
-            val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(rms, chunkId, chunk, chunkLamport)
+            val ciphertextB64 = NativeVelaCore.encryptVaultChunkJson(
+                rms, chunkId, chunk, chunkLamport, manifest.epoch
+            )
                 ?: error("Native VELA bridge is required for server sync")
             async {
                 val uploaded = tokenMutex.withLock {
@@ -666,6 +683,7 @@ class VaultSyncManager(
                         chunkId = chunkId,
                         ifMatch = remote?.version ?: 0,
                         lamportClock = chunkLamport,
+                        keyEpoch = manifest.epoch,
                         ciphertext = Base64.getDecoder().decode(ciphertextB64)
                     ).also { response ->
                         response.newToken?.let { tokenRef = it }
@@ -692,7 +710,9 @@ class VaultSyncManager(
             staleChunks.map { (chunkId, version) ->
                 async {
                     deleteTokenMutex.withLock {
-                        runCatching { client.deleteChunk(deleteTokenRef, chunkId, version) }
+                        runCatching {
+                            client.deleteChunk(deleteTokenRef, chunkId, version, manifest.epoch)
+                        }
                             .getOrNull()?.let { deleteTokenRef = it }
                     }
                 }

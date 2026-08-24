@@ -323,6 +323,7 @@ struct NewDeviceBody {
     hybrid_ek: String,
     hybrid_vk: String,
     rms_capsule: String,
+    key_epoch: i64,
     signature: String,
     device_name: Option<String>,
     device_type: Option<String>,
@@ -333,6 +334,9 @@ async fn post_enroll(State(db): State<MockDb>, body: axum::body::Bytes) -> Respo
         Ok(b) => b,
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "bad_request", "malformed enroll body"),
     };
+    if body.new_device.key_epoch != 1 {
+        return error_response(StatusCode::CONFLICT, "vault_rekeyed", "enrollment epoch mismatch");
+    }
     let challenge_bytes = match consume_challenge(&db, &body.challenge) {
         Ok(c) => c,
         Err(resp) => return resp,
@@ -489,6 +493,7 @@ async fn get_enrollment_claim(
 struct CompleteBody {
     rms_capsule: String,
     signature: String,
+    key_epoch: i64,
 }
 
 async fn post_enrollment_complete(
@@ -505,6 +510,9 @@ async fn post_enrollment_complete(
         Ok(b) => b,
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "bad_request", "malformed complete body"),
     };
+    if body.key_epoch != 1 {
+        return error_response(StatusCode::CONFLICT, "vault_rekeyed", "enrollment epoch mismatch");
+    }
 
     // Consume both together, so a replay finds nothing.
     let claim = {
@@ -671,7 +679,7 @@ async fn get_sync_manifest(State(db): State<MockDb>, headers: HeaderMap) -> Resp
         })
         .collect();
     entries.sort_by(|a, b| a["chunk_id"].as_str().cmp(&b["chunk_id"].as_str()));
-    ok_json(serde_json::json!({ "chunks": entries }))
+    ok_json(serde_json::json!({ "epoch": 1, "chunks": entries }))
 }
 
 async fn get_chunk(State(db): State<MockDb>, headers: HeaderMap, Path(chunk_id): Path<String>) -> Response {

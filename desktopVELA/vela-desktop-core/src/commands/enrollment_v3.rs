@@ -278,6 +278,14 @@ pub async fn confirm_enrollment(
         (pending.hybrid_ek.clone(), pending.hybrid_vk.clone())
     };
 
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+    let mut token = state.get_session_token().unwrap_or_default();
+    // Do not even read the RMS until its authenticated local epoch is proven
+    // current. The completion endpoint repeats this check atomically.
+    let key_epoch =
+        super::devices::authenticated_enrollment_epoch(state, &client, &mut token).await?;
+
     let rms: [u8; 32] = {
         let crypto_guard = state.crypto.read();
         let c = crypto_guard.as_ref().ok_or("Vault is locked")?;
@@ -311,10 +319,6 @@ pub async fn confirm_enrollment(
     .map_err(|e| format!("Thread join error: {e}"))?
     .map_err(|e| format!("Signing failed: {e}"))?;
 
-    let server_url = state.server_url.read().clone();
-    let client = ApiClient::with_url(server_url);
-    let token = state.get_session_token().ok_or("Not authenticated")?;
-
     // No key material in this call by design: the server enrols what it stored
     // at claim time, so the key the user just confirmed and the key that gets
     // enrolled are the same object.
@@ -324,6 +328,7 @@ pub async fn confirm_enrollment(
             grant_id,
             &B64.encode(&rms_capsule),
             &B64.encode(&signature),
+            key_epoch,
         )
         .await
         .map_err(|e| format!("Enrollment failed: {e}"))?;
