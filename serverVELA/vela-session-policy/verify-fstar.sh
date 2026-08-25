@@ -14,7 +14,7 @@ done
 cargo test
 
 cargo hax into \
-  -i '-** +vela_session_policy::parse_scope_claim +vela_session_policy::plan_grant +vela_session_policy::plan_device_token +vela_session_policy::plan_web_session_token +vela_session_policy::plan_renewal +vela_session_policy::authorize_route +vela_session_policy::renewal_escalates_authority +vela_session_policy::terminal_session_issues_token' \
+  -i '-** +vela_session_policy::parse_scope_claim +vela_session_policy::plan_grant +vela_session_policy::plan_device_token +vela_session_policy::plan_web_session_token +vela_session_policy::plan_renewal +vela_session_policy::authorize_route +vela_session_policy::clamp_web_ttl +vela_session_policy::ttl_clamp_can_be_violated +vela_session_policy::web_session_expired +vela_session_policy::renewal_escalates_authority +vela_session_policy::terminal_session_issues_token' \
   fstar --z3rlimit 100
 
 hax_lib_root=$(

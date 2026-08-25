@@ -111,6 +111,34 @@ pub fn revoked_device_ek_can_register(mut facts: EkRegistrationFacts) -> bool {
     ek_registration_is_authorized(facts)
 }
 
+// ── Binding-timestamp freshness (M25) ──────────────────────────────────────
+
+/// Minimum plausible length for a canonical RFC 3339 UTC rendering
+/// (`YYYY-MM-DDTHH:MM:SSZ` = 20 chars); the handler caps at 64.
+pub fn timestamp_format_plausible(len: usize) -> bool {
+    // Plain comparisons: range-`contains` has no hax F* prelude encoding.
+    len >= 20 && len <= 64
+}
+
+/// Strictly-fresh binding timestamp (M25).
+///
+/// Comparison is bytewise over the canonical RFC 3339 rendering: fixed-width
+/// big-endian fields make lexicographic byte order coincide with chrono-
+/// logical order, so acceptance forms a strict total order over bindings —
+/// update sequences cannot cycle, and a replay of the currently registered
+/// timestamp always loses (`identical_timestamp_can_be_fresher`).
+pub fn timestamp_is_fresher(candidate: &[u8], current: Option<&[u8]>) -> bool {
+    match current {
+        Some(current) => candidate > current,
+        None => true,
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn identical_timestamp_can_be_fresher(candidate: &[u8]) -> bool {
+    timestamp_is_fresher(candidate, Some(candidate))
+}
+
 // ── Capsule send ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,6 +247,28 @@ mod tests {
             plan_ek_registration(one_bit_off),
             EkRegistrationDecision::Reject
         );
+    }
+
+    #[test]
+    fn timestamp_freshness_is_strict_and_first_registration_always_fresh() {
+        assert!(timestamp_format_plausible("2026-01-01T00:00:00Z".len()));
+        assert!(!timestamp_format_plausible(3));
+
+        assert!(timestamp_is_fresher(b"2026-02-01T00:00:00Z", None));
+        assert!(timestamp_is_fresher(
+            b"2026-02-01T00:00:00Z",
+            Some(b"2026-01-01T00:00:00Z")
+        ));
+        // Equal loses; going backwards loses.
+        assert!(!timestamp_is_fresher(
+            b"2026-01-01T00:00:00Z",
+            Some(b"2026-01-01T00:00:00Z")
+        ));
+        assert!(!timestamp_is_fresher(
+            b"2025-12-31T23:59:59Z",
+            Some(b"2026-01-01T00:00:00Z")
+        ));
+        assert!(!identical_timestamp_can_be_fresher(b"2026-01-01T00:00:00Z"));
     }
 
     #[test]

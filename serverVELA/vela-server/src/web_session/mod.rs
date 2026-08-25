@@ -60,10 +60,9 @@ const PENDING_TTL_SECS: i64 = 5 * 60;
 /// RO snapshots seal the whole decrypted vault, so allow a generous ceiling.
 const MAX_CAPSULE_BYTES: usize = 16 * 1024 * 1024;
 
+/// M25: the clamp lives in the verified policy layer.
 fn clamp_ttl(requested: Option<i64>) -> i64 {
-    requested
-        .unwrap_or(DEFAULT_TTL_SECS)
-        .clamp(MIN_TTL_SECS, MAX_TTL_SECS)
+    vela_session_policy::clamp_web_ttl(requested)
 }
 
 fn decode_exact(b64: &str, len: usize, what: &str) -> Result<()> {
@@ -242,8 +241,13 @@ async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
     })
 }
 
+/// M25: the expiry decision lives in the verified policy layer; the
+/// handler converts the stored timestamp to unix seconds.
 fn is_expired(expires_at: Option<DateTime<Utc>>) -> bool {
-    expires_at.map(|e| Utc::now() > e).unwrap_or(false)
+    vela_session_policy::web_session_expired(
+        Utc::now().timestamp(),
+        expires_at.map(|e| e.timestamp()),
+    )
 }
 
 /// Verify the caller is the browser that started this session.

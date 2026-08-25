@@ -105,6 +105,10 @@ let revoked_device_ek_can_register (facts: t_EkRegistrationFacts)
   in
   ek_registration_is_authorized facts
 
+/// Minimum plausible length for a canonical RFC 3339 UTC rendering
+/// (`YYYY-MM-DDTHH:MM:SSZ` = 20 chars); the handler caps at 64.
+let timestamp_format_plausible (len: usize) : bool = len >=. mk_usize 20 && len <=. mk_usize 64
+
 type t_SendCapsuleFacts = {
   f_sender_authenticated:bool;
   f_recipient_registered:bool;

@@ -635,10 +635,11 @@ async fn authorize_ek_binding(
     )
     .is_ok();
 
-    let signed_at_is_fresher = match &current_since {
-        Some(current) => request.signed_at.as_bytes() > current.as_bytes(),
-        None => true,
-    };
+    // M25: the freshness relation lives in the verified policy layer.
+    let signed_at_is_fresher = vela_share_policy::timestamp_is_fresher(
+        request.signed_at.as_bytes(),
+        current_since.as_deref().map(|c| c.as_bytes()),
+    );
 
     match vela_share_policy::plan_ek_registration(EkRegistrationFacts {
         ek_size_valid,

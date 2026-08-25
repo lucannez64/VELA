@@ -432,6 +432,45 @@ pub enum RouteDecision {
     Reject,
 }
 
+// ── Web-session TTL and expiry (M25) ────────────────────────────────────────
+
+pub const DEFAULT_WEB_TTL_SECS: i64 = 30 * 60; // 30 minutes
+pub const MIN_WEB_TTL_SECS: i64 = 60;
+pub const MAX_WEB_TTL_SECS: i64 = 24 * 60 * 60; // 24 hours
+
+/// Clamp a browser-requested TTL to [60 s, 24 h], defaulting to 30 min.
+/// Written with comparisons only (no min/max) so hax extracts a decision
+/// that F* discharges without i64 op encoding.
+pub fn clamp_web_ttl(requested: Option<i64>) -> i64 {
+    let requested = match requested {
+        None => return DEFAULT_WEB_TTL_SECS,
+        Some(r) => r,
+    };
+    if requested < MIN_WEB_TTL_SECS {
+        MIN_WEB_TTL_SECS
+    } else if requested > MAX_WEB_TTL_SECS {
+        MAX_WEB_TTL_SECS
+    } else {
+        requested
+    }
+}
+
+/// A granted session past its expiry is terminal for admission purposes.
+/// `now` and `expires_at` are unix seconds. A missing expiry never expires
+/// here — pending-session reaping is a separate mechanism.
+pub fn web_session_expired(now: i64, expires_at: Option<i64>) -> bool {
+    match expires_at {
+        Some(expires_at) => now >= expires_at,
+        None => false,
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn ttl_clamp_can_be_violated(requested: Option<i64>) -> bool {
+    let clamped = clamp_web_ttl(requested);
+    clamped < MIN_WEB_TTL_SECS || clamped > MAX_WEB_TTL_SECS
+}
+
 pub fn route_is_authorized(scope: CapabilityScope, class: RouteClass) -> bool {
     scope == CapabilityScope::Device || class == RouteClass::Vault
 }

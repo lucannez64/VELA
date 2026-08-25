@@ -408,6 +408,42 @@ type t_RouteDecision =
   | RouteDecision_Allow : t_RoutePermit -> t_RouteDecision
   | RouteDecision_Reject : t_RouteDecision
 
+let v_DEFAULT_WEB_TTL_SECS: i64 = mk_i64 30 *! mk_i64 60
+
+let v_MIN_WEB_TTL_SECS: i64 = mk_i64 60
+
+let v_MAX_WEB_TTL_SECS: i64 = (mk_i64 24 *! mk_i64 60 <: i64) *! mk_i64 60
+
+/// Clamp a browser-requested TTL to [60 s, 24 h], defaulting to 30 min.
+/// Written with comparisons only (no min/max) so hax extracts a decision
+/// that F* discharges without i64 op encoding.
+let clamp_web_ttl (requested: Core_models.Option.t_Option i64) : i64 =
+  match requested <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_None  -> v_DEFAULT_WEB_TTL_SECS
+  | Core_models.Option.Option_Some r ->
+    let requested:i64 = r in
+    if requested <. v_MIN_WEB_TTL_SECS
+    then v_MIN_WEB_TTL_SECS
+    else if requested >. v_MAX_WEB_TTL_SECS then v_MAX_WEB_TTL_SECS else requested
+
+/// A granted session past its expiry is terminal for admission purposes.
+/// `now` and `expires_at` are unix seconds. A missing expiry never expires
+/// here — pending-session reaping is a separate mechanism.
+let web_session_expired (now: i64) (expires_at: Core_models.Option.t_Option i64) : bool =
+  match expires_at <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_Some expires_at -> now >=. expires_at
+  | Core_models.Option.Option_None  -> false
+
+let ttl_clamp_can_be_violated (requested: Core_models.Option.t_Option i64)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let clamped:i64 = clamp_web_ttl requested in
+  clamped <. v_MIN_WEB_TTL_SECS || clamped >. v_MAX_WEB_TTL_SECS
+
 let route_is_authorized (scope: t_CapabilityScope) (v_class: t_RouteClass) : bool =
   scope =. (CapabilityScope_Device <: t_CapabilityScope) ||
   v_class =. (RouteClass_Vault <: t_RouteClass)
