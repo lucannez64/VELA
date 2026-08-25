@@ -362,3 +362,25 @@ cd ../../libVELA/vela-sync-policy && ./verify-fstar.sh
 
 Expected: **8 Tamarin lemmas verified** and all F* verification conditions
 discharged.
+
+## Checking Path-ORAM stash dynamics (M24, statistical)
+
+Stash-overflow behavior is probabilistic and iterative — beyond both
+Dolev-Yao reachability (Tamarin) and hax's unencoded i64 loop internals — so
+it is verified **statistically over the production implementation**:
+`libVELA/vela-crypto/tests/oram_stash_bounds.rs` drives the real `PathOram`
+through a tree-structured fake server under thousands of randomized
+accesses. Hard invariants (round-trip integrity, bucket padding,
+unregister completeness, stash duplicate-freedom) hold on every cycle; the
+stochastic bound is asserted with wide margins per the classical analysis.
+The harness found and pinned three real defects (stale reads, unbounded
+stash growth, write-back clobbering of unread buckets) — all fixed in
+`oram.rs`.
+
+```bash
+./run-oram-stash-bounds-tests.sh
+```
+
+Expected: **4/4 tests passed**. See
+`oram-stash-bounds-statistical-results.md` for the tool-boundary discussion
+(EasyCrypt supermartingale proof explicitly out of scope).

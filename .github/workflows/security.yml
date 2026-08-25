@@ -111,6 +111,9 @@ jobs:
       - name: Prove the client sync-admission policy
         run: ./security/formal/run-sync-admission-proofs.sh
 
+      - name: Statistical stash-bounds verification over the real ORAM
+        run: ./security/formal/run-oram-stash-bounds-tests.sh
+
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
         run: |
           opam switch create vela-proverif ocaml-base-compiler.5.1.1 || true
