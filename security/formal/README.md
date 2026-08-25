@@ -7,7 +7,7 @@ epoch-rotation theories (`m11`, `m11b`, `m11c`), the M12 web-session
 capability lifecycle, the M13 permanent-device enrollment ceremony, the M14
 account-recovery lifecycle, the M15 client recovery boundary, the M16
 two-phase recovery-publication protocol, and the M17 crash/restart publication
-journal. Together they contain 209 lemmas: 204 verified and five
+journal. Together they contain 216 lemmas: 211 verified and five
 intentionally falsified impossibility claims.
 
 Read the assurance record for the family being changed:
@@ -32,6 +32,10 @@ Read the assurance record for the family being changed:
   covers durable client journaling, crashes at every external-effect boundary,
   same-split resume, abort limits, and stale-epoch retirement.
 
+[`web-session-pass-through-tamarin-results.md`](web-session-pass-through-tamarin-results.md)
+  covers dynamic route gating: a web-session token passes through to vault
+  routes only and is structurally blocked from permanent-account routes.
+
 | File | What it models |
 |---|---|
 | `m1_indomain.spthy` | in-domain checks only — **falsifies**, the impossibility result |
@@ -51,6 +55,7 @@ Read the assurance record for the family being changed:
 | `m11b_rekey_capsule_binding.spthy` | authenticated `{epoch, rotation_id, rms}` capsules over an adversarial transport, including relabel/replay attempts |
 | `m11c_rekey_mutation_authority.spthy` | atomic web, recovery, and enrollment authorization at the mutation boundary across epoch commits |
 | `m12_web_session_capability.spthy` | pending/granted/terminal web-session lifecycle, one-shot artifacts, scope preservation, and permanent-route separation |
+| `m20_web_session_pass_through.spthy` | web-session vault pass-through gating (M20) |
 | `m13_device_enrollment_ceremony.spthy` | opener-bound permanent-device claim, inspection, exact key/signature binding, atomic completion, result proof, and terminal states |
 | `m14_account_recovery_lifecycle.spthy` | attempt/credential-bound WebAuthn recovery, exact share release, one-shot enrollment grant, credential replacement, expiry, and epoch invalidation |
 | `m15_client_recovery_boundary.spthy` | adversarial cloud envelopes, exact account/epoch/channel binding, authenticated same-split Shamir reconstruction, and current-epoch RMS adoption |
@@ -270,3 +275,22 @@ conditions discharged. The enforced policy lives in
 `serverVELA/vela-share-policy`; the binding construction in
 `libVELA/vela-crypto/src/signing.rs`; enforcement in
 `serverVELA/vela-server/src/share/mod.rs` and `src/account/mod.rs`.
+
+## Checking the web-session pass-through gating (M20)
+
+M20 proves the final credential-release property: a web-session token grants
+pass-through access to vault routes only and is structurally blocked from
+permanent-account routes (recovery, device enrollment, account deletion). The
+gating is `vela-session-policy::authorize_route` /
+`route_is_authorized = scope == Device || class == Vault`, enforced by the
+`DeviceSession` extractor in `serverVELA/vela-server/src/middleware.rs`.
+M12 covers the capability lifecycle and proves issued tokens carry the `web`
+scope; M20 proves what that scope *allows*. Token reuse (renewal) is
+single-use here to keep the state space finite — M12 already covers reuse, and
+the gating depends only on the scope M12 proves is `web`.
+
+```bash
+./run-web-session-pass-through-proofs.sh
+```
+
+Expected: **7 Tamarin lemmas verified**.

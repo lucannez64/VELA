@@ -1,0 +1,89 @@
+theory M20_WebSessionPassThrough
+/*
+  Dynamic route gating for web-session tokens (M20).
+
+  A web session token grants pass-through access to vault routes only — the
+  browser can read and (for RW) write vault chunks through the server, but the
+  same token can never authorize a permanent-account action (recovery, device
+  enrollment, account deletion). A device token retains full access.
+
+  This models authorize_route(scope, class) enforced by the DeviceSession
+  extractor in middleware.rs. The authorization policy is encoded in the rule
+  structure: vault routes accept any token; account routes accept only device
+  tokens. This is exactly `scope == Device || class == Vault`.
+
+  Token reuse (renewal) is modeled by M12; here each token is single-use to
+  keep the route-gating decision in a finite state space. The gating property
+  is independent of reuse: the decision depends only on the scope issued to the
+  token, which M12 already proves is 'web' for web sessions.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+/* Token issuance. The scope is bound by the M12 lifecycle. */
+rule IssueWebToken:
+    [ Fr(~token) ]
+  --[ TokenIssued(~token, 'web') ]->
+    [ Token(~token, 'web') ]
+
+rule IssueDeviceToken:
+    [ Fr(~token) ]
+  --[ TokenIssued(~token, 'device') ]->
+    [ Token(~token, 'device') ]
+
+/* Vault pass-through: any token — web or device — may access a vault route.
+   This is the "dynamic pass-through" by which the browser reaches vault
+   chunks through the server using a web session token. */
+rule AccessVault:
+    [ Token(T, Scope) ]
+  --[ RouteAccessed(T, Scope, 'vault') ]->
+    []
+
+/* Permanent-account routes: device tokens only. No rule exists for web tokens
+   here, which is the entire point — the gating is structural. */
+rule AccessAccount:
+    [ Token(T, 'device') ]
+  --[ RouteAccessed(T, 'device', 'account') ]->
+    []
+
+/* ── Pass-through gating ──────────────────────────────────────────────────── */
+
+lemma web_session_passes_through_to_vault:
+  "All T #i.
+     RouteAccessed(T, 'web', 'vault') @ i
+     ==> Ex #j. TokenIssued(T, 'web') @ j & #j < #i"
+
+lemma web_session_blocked_from_account_routes:
+  "All T #i.
+     TokenIssued(T, 'web') @ i
+     ==> not (Ex #j. RouteAccessed(T, 'web', 'account') @ j)"
+
+lemma device_tokens_retain_full_access:
+  "All T C #i.
+     RouteAccessed(T, 'device', C) @ i
+     ==> Ex #j. TokenIssued(T, 'device') @ j & #j < #i"
+
+lemma account_routes_require_device_token:
+  "All T Scope #i.
+     RouteAccessed(T, Scope, 'account') @ i
+     ==> Scope = 'device'"
+
+lemma vault_routes_accept_any_token:
+  "All T Scope #i.
+     RouteAccessed(T, Scope, 'vault') @ i
+     ==> Ex #j. TokenIssued(T, Scope) @ j & #j < #i"
+
+lemma pass_through_reachable:
+  exists-trace
+  "Ex T #i #j.
+     TokenIssued(T, 'web') @ i &
+     RouteAccessed(T, 'web', 'vault') @ j & #i < #j"
+
+lemma device_full_access_reachable:
+  exists-trace
+  "Ex T C #i #j.
+     TokenIssued(T, 'device') @ i &
+     RouteAccessed(T, 'device', C) @ j & #i < #j"
+
+end

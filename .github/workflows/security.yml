@@ -102,6 +102,9 @@ jobs:
       - name: Prove the cross-user share-channel binding integrity
         run: ./security/formal/run-share-channel-proofs.sh
 
+      - name: Prove the web-session vault pass-through gating
+        run: ./security/formal/run-web-session-pass-through-proofs.sh
+
       - name: Exhaust the bounded model against real handlers and Turso
         run: |
           cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
