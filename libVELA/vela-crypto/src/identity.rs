@@ -180,6 +180,13 @@ impl DeviceIdentity {
         Ok(signing::sign(&self.signing_sk, &message)?.to_bytes().to_vec())
     }
 
+    /// Sign a share-key binding (M19): proves this device's identity key
+    /// authorizes registering `share_ek` at `signed_at`.
+    pub fn sign_share_ek_binding(&self, share_ek: &[u8], signed_at: &str) -> Result<Vec<u8>> {
+        let message = signing::share_ek_binding_message(share_ek, signed_at);
+        Ok(signing::sign(&self.signing_sk, &message)?.to_bytes().to_vec())
+    }
+
     /// Open a capsule another user sealed to this device's share key.
     pub fn open_share(&self, capsule: &[u8]) -> Result<Vec<u8>> {
         kem::open_share(&self.share_dk, capsule)

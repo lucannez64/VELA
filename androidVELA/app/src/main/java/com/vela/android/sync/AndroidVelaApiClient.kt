@@ -179,8 +179,11 @@ class AndroidVelaApiClient(
             .put("hybrid_vk", identity.hybridVkB64)
             .put("device_name", android.os.Build.MODEL ?: "Android")
             .put("device_type", "android")
-        if (identity.shareEkB64.isNotBlank()) {
+        if (identity.shareEkB64.isNotBlank() && !identity.shareEkSignature.isNullOrBlank()) {
+            // M19: the initial share key must arrive device-signed.
             bodyObj.put("share_ek", identity.shareEkB64)
+                .put("share_ek_signed_at", identity.shareEkSignedAt)
+                .put("share_ek_signature", identity.shareEkSignature)
         }
         val body = bodyObj.toString().toByteArray(Charsets.UTF_8)
         val response = request("POST", "/account/register", token = "", body = body, contentType = "application/json")
@@ -474,9 +477,12 @@ class AndroidVelaApiClient(
 
     /// Register (or update) the caller's own share encapsulation key. Backfill
     /// path for accounts created before share keys existed.
-    fun putMyShareEk(token: String, shareEkB64: String): String? {
+    fun putMyShareEk(token: String, shareEkB64: String, deviceId: String, signedAt: String, signature: String): String? {
         val body = JSONObject()
             .put("share_ek", shareEkB64)
+            .put("device_id", deviceId)
+            .put("signed_at", signedAt)
+            .put("signature", signature)
             .toString()
             .toByteArray(Charsets.UTF_8)
         val response = request("PUT", "/share/my-ek", token, body, contentType = "application/json")

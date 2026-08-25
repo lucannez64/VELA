@@ -436,6 +436,14 @@ pub unsafe extern "C" fn vela_ffi_identity_rotate_share_key(
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_sign_share_ek_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| identity_sign_share_ek_impl(c_str(request_json)?))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn vela_ffi_identity_sign_json(request_json: *const c_char) -> *mut c_char {
     json_result(|| identity_sign_impl(c_str(request_json)?))
 }
@@ -788,6 +796,24 @@ fn identity_sign_impl(request_json: &str) -> FfiResult<AuthSignatureResponse> {
     let challenge = B64.decode(req.challenge_b64.as_bytes())?;
     let signature = vela_crypto::identity::with_identity(req.handle, |identity| {
         identity.sign_auth(&req.device_id, &challenge)
+    })?;
+    Ok(AuthSignatureResponse {
+        signature_b64: B64.encode(signature),
+    })
+}
+
+/// Sign a share-key binding with the identity held under `handle` (M19).
+fn identity_sign_share_ek_impl(request_json: &str) -> FfiResult<AuthSignatureResponse> {
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        share_ek_b64: String,
+        signed_at: String,
+    }
+    let req: Request = serde_json::from_str(request_json)?;
+    let ek = B64.decode(req.share_ek_b64.as_bytes())?;
+    let signature = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.sign_share_ek_binding(&ek, &req.signed_at)
     })?;
     Ok(AuthSignatureResponse {
         signature_b64: B64.encode(signature),

@@ -292,7 +292,7 @@ pub(crate) fn verify_enrollment_result_signature(
     )
 }
 
-fn verify_hybrid_signature(
+pub(crate) fn verify_hybrid_signature(
     verifying_key_bytes: &[u8],
     message: &[u8],
     signature_bytes: &[u8],

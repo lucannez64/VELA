@@ -82,12 +82,18 @@ actor VelaClient {
     }
 
     func register(hybridEK: String, hybridVK: String, deviceName: String, deviceType: String = "ios",
-                  shareEK: String? = nil) async throws -> RegisterResponse {
+                  shareEK: String? = nil, shareEKSignedAt: String? = nil,
+                  shareEKSignature: String? = nil) async throws -> RegisterResponse {
         var body: [String: Any] = [
             "hybrid_ek": hybridEK, "hybrid_vk": hybridVK,
             "device_name": deviceName, "device_type": deviceType,
         ]
-        if let shareEK = shareEK { body["share_ek"] = shareEK }
+        // M19: an initial share key must arrive device-signed.
+        if let shareEK = shareEK {
+            body["share_ek"] = shareEK
+            body["share_ek_signed_at"] = shareEKSignedAt ?? ""
+            body["share_ek_signature"] = shareEKSignature ?? ""
+        }
         let resp: RegisterResponse = try await request("POST", "/account/register", json: body, auth: false)
         if let t = resp.token { token = t }
         return resp
@@ -256,11 +262,15 @@ actor VelaClient {
                                                   json: ["capsule": capsuleBase64], auth: true)
     }
 
-    /// Register (or update) the caller's own share encapsulation key. Backfill
-    /// path for accounts created before share keys existed.
-    func putMyShareEK(_ shareEK: String) async throws {
+    /// Register (or update) the caller's own share encapsulation key.
+    /// M19: requires a binding signature from one of the account's devices.
+    func putMyShareEK(_ shareEK: String, deviceID: String, signedAt: String,
+                      signature: String) async throws {
         let _: EmptyResponse = try await request("PUT", "/share/my-ek",
-                                                  json: ["share_ek": shareEK], auth: true)
+                                                  json: ["share_ek": shareEK,
+                                                         "device_id": deviceID,
+                                                         "signed_at": signedAt,
+                                                         "signature": signature], auth: true)
     }
 
     struct WebKeysResponse: Decodable { let ephemeral_pk: String; let web_vk: String }

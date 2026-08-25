@@ -103,12 +103,22 @@ async fn register_with_server(
 
     let identity = crypto::generate_identity_keypair()?;
 
+    // M19: provision the share key only through a device-signed binding.
+    let signed_at = chrono::Utc::now().to_rfc3339();
+    let share_ek_signature = crypto::sign_share_ek_binding(
+        &identity.hybrid_sk,
+        &identity.share_ek,
+        &signed_at,
+    )?;
+
     let register_req = RegisterRequest {
         hybrid_ek: B64.encode(&identity.hybrid_ek),
         hybrid_vk: B64.encode(&identity.hybrid_vk),
         device_name: Some(device_name.to_string()),
         device_type: Some("desktop".to_string()),
         share_ek: Some(B64.encode(&identity.share_ek)),
+        share_ek_signed_at: Some(signed_at),
+        share_ek_signature: Some(share_ek_signature),
     };
 
     let register_resp = client

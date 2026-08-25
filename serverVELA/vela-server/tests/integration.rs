@@ -2093,6 +2093,109 @@ fn possession_proof_client_side(
     *hasher.finalize().as_bytes()
 }
 
+/// M19: share-key registration requires a device-signed binding. A database
+/// write or a stolen session token alone must not repoint an account's
+/// sharing key, and replayed older bindings must fail the monotonic check.
+#[tokio::test]
+async fn share_ek_registration_requires_device_signed_binding() {
+    use vela_server::auth::token::TokenScope;
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+
+    // An enrolled device with keys we control in the test.
+    let (vk, sk) = vela_crypto::signing::generate_keypair().unwrap();
+    let device_id = Uuid::new_v4();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO devices (id, user_id, device_name, device_type, last_active,
+                hybrid_ek, hybrid_vk, enrolled_by, created_at)
+             VALUES (?, ?, 'test', 'desktop', NULL, ?, ?, NULL, ?)",
+            vec![
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(crate_b64(&[1u8; 16])),
+                TursoValue::Text(crate_b64(&vk.to_bytes())),
+                TursoValue::Text(chrono::Utc::now().to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let token = token_for(&state, user_id, device_id, TokenScope::Device);
+    let share_ek = B64.encode([9u8; 1568 + 32]);
+    let sign_binding = |ek_b64: &str, signed_at: &str, sk: &vela_crypto::signing::HybridSigningKey| {
+        let ek = B64.decode(ek_b64.as_bytes()).unwrap();
+        let message = vela_crypto::signing::share_ek_binding_message(&ek, signed_at);
+        B64.encode(vela_crypto::signing::sign(sk, &message).unwrap().to_bytes())
+    };
+    let put = |body: serde_json::Value| {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/share/my-ek")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+    };
+
+    // Unsigned or forged bindings are rejected outright.
+    let resp = put(json!({ "share_ek": share_ek, "device_id": device_id,
+        "signed_at": "2026-01-01T00:00:00Z", "signature": B64.encode([0u8; 8]) }))
+        .await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // A valid binding registers.
+    let t1 = "2026-01-01T00:00:00Z";
+    let sig1 = sign_binding(&share_ek, t1, &sk);
+    let resp = put(json!({ "share_ek": share_ek, "device_id": device_id,
+        "signed_at": t1, "signature": sig1 })).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let rows = state.sqldb.query(
+        "SELECT share_ek, share_ek_since FROM users WHERE id = ?",
+        vec![TursoValue::Text(user_id.to_string())],
+    ).await.unwrap();
+    let row = rows.first().unwrap();
+    assert_eq!(row.text(0), Some(share_ek.as_str()));
+    assert_eq!(row.text(1), Some(t1));
+
+    // Replaying the same (older-or-equal) binding is a no-op rejection.
+    let resp = put(json!({ "share_ek": share_ek, "device_id": device_id,
+        "signed_at": t1, "signature": sig1 })).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // A fresher binding over the same key updates it.
+    let t2 = "2026-02-01T00:00:00Z";
+    let sig2 = sign_binding(&share_ek, t2, &sk);
+    let resp = put(json!({ "share_ek": share_ek, "device_id": device_id,
+        "signed_at": t2, "signature": sig2 })).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Recipients' EK fetch exposes the binding instant for sender pinning.
+    let reader_token = token_for(&state, user_id, device_id, TokenScope::Device);
+    let resp = app.clone().oneshot(
+        Request::builder()
+            .method("GET")
+            .uri(format!("/share/recipient/{user_id}/ek"))
+            .header("Authorization", format!("Bearer {reader_token}"))
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(body["signed_at"].as_str(), Some(t2));
+}
+
 fn crate_b64(bytes: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(bytes)

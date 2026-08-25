@@ -476,6 +476,19 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityS
     jni_string(&mut env, &response)
 }
 
+/// Sign a share-key binding with the identity held under `handle` (M19).
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentitySignShareEkJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_sign_share_ek(request)
+    });
+    jni_string(&mut env, &response)
+}
+
 // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────────
 
 #[no_mangle]
@@ -933,6 +946,24 @@ fn identity_sign(request_json: &str) -> anyhow_like::Result<AuthSignatureRespons
     let challenge = B64.decode(request.challenge_b64.as_bytes())?;
     let signature = vela_crypto::identity::with_identity(request.handle, |identity| {
         identity.sign_auth(&request.device_id, &challenge)
+    })?;
+    Ok(AuthSignatureResponse {
+        signature: B64.encode(signature),
+    })
+}
+
+/// Sign a share-key binding with the identity held under `handle` (M19).
+fn identity_sign_share_ek(request_json: &str) -> anyhow_like::Result<AuthSignatureResponse> {
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        share_ek_b64: String,
+        signed_at: String,
+    }
+    let request: Request = serde_json::from_str(request_json)?;
+    let ek = B64.decode(request.share_ek_b64.as_bytes())?;
+    let signature = vela_crypto::identity::with_identity(request.handle, |identity| {
+        identity.sign_share_ek_binding(&ek, &request.signed_at)
     })?;
     Ok(AuthSignatureResponse {
         signature: B64.encode(signature),

@@ -244,6 +244,19 @@ object NativeVelaCore {
         response.getString("signature")
     }
 
+    /// Sign a share-key binding with the identity held under [handle] (M19).
+    fun identitySignShareEkBinding(handle: Long, shareEkB64: String, signedAt: String): String? =
+        callNative {
+            val request = JSONObject()
+                .put("handle", handle)
+                .put("share_ek_b64", shareEkB64)
+                .put("signed_at", signedAt)
+                .toString()
+            val response = JSONObject(nativeIdentitySignShareEkJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            response.getString("signature")
+        }
+
     /// This device's own enrollment fingerprint (v3, audit P-1).
     ///
     /// Takes only the handle, and that is the point: the value shown to the
@@ -438,6 +451,7 @@ object NativeVelaCore {
     private external fun nativeIdentityOpenJson(sealKey: ByteArray, requestJson: String): String
     private external fun nativeIdentityRotateShareKeyJson(sealKey: ByteArray, requestJson: String): String
     private external fun nativeIdentitySignJson(requestJson: String): String
+    private external fun nativeIdentitySignShareEkJson(requestJson: String): String
     private external fun nativeIdentityOpenShareJson(requestJson: String): String
     private external fun nativeIdentityEnrollmentFingerprintJson(requestJson: String): String
     private external fun nativeIdentitySignEnrollmentResultJson(requestJson: String): String

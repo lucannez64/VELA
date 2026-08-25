@@ -133,6 +133,8 @@ impl TursoDb {
             "ALTER TABLE users ADD COLUMN recovery_pending_split_id TEXT",
             "ALTER TABLE users ADD COLUMN recovery_pending_epoch INTEGER",
             "ALTER TABLE users ADD COLUMN recovery_pending_auth_hash TEXT",
+            "ALTER TABLE users ADD COLUMN share_ek_since TEXT",
+            "ALTER TABLE users ADD COLUMN share_ek_device_id TEXT",
             "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
@@ -292,6 +294,7 @@ CREATE TABLE IF NOT EXISTS users (
     recovery_split_id TEXT, recovery_pending_share TEXT,
     recovery_pending_split_id TEXT, recovery_pending_epoch INTEGER,
     recovery_pending_auth_hash TEXT,
+    share_ek_since TEXT, share_ek_device_id TEXT,
     key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
     rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT,
     last_rekey_id TEXT, last_rekey_epoch INTEGER);

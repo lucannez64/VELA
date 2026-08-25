@@ -136,6 +136,8 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         "ALTER TABLE users ADD COLUMN recovery_pending_auth_hash TEXT",
         (),
     );
+    let _ = db.execute("ALTER TABLE users ADD COLUMN share_ek_since TEXT", ());
+    let _ = db.execute("ALTER TABLE users ADD COLUMN share_ek_device_id TEXT", ());
     let _ = db.execute(
         "ALTER TABLE users ADD COLUMN recovery_webauthn_credential TEXT",
         (),

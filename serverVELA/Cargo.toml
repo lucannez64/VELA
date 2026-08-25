@@ -1,5 +1,5 @@
 [workspace]
-members = ["vela-enrollment-policy", "vela-recovery-policy", "vela-rekey-policy", "vela-session-policy", "vela-server"]
+members = ["vela-enrollment-policy", "vela-recovery-policy", "vela-rekey-policy", "vela-session-policy", "vela-share-policy", "vela-server"]
 resolver = "2"
 
 [profile.release]

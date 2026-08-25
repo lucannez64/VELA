@@ -42,6 +42,10 @@ pub struct RegisterRequest {
     pub device_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub share_ek: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_ek_signed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_ek_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1257,13 +1261,25 @@ impl ApiClient {
 
     /// Register (or update) the caller's own share encapsulation key. Backfill
     /// path for accounts created before share keys existed.
-    pub async fn put_my_share_ek(&self, token: &str, share_ek: &str) -> Result<Option<String>> {
+    pub async fn put_my_share_ek(
+        &self,
+        token: &str,
+        share_ek: &str,
+        device_id: &str,
+        signed_at: &str,
+        signature: &str,
+    ) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
                     .put(format!("{}/share/my-ek", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({ "share_ek": share_ek }))
+                    .json(&serde_json::json!({
+                        "share_ek": share_ek,
+                        "device_id": device_id,
+                        "signed_at": signed_at,
+                        "signature": signature,
+                    }))
             })
             .await?;
 

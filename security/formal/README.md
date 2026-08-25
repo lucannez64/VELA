@@ -248,3 +248,25 @@ Expected: **15 Tamarin lemmas verified**. The shared Rust policy is
 `vela-crypto::recovery` (`seal_contact_share`, `open_contact_share_response`)
 and the WebAuthn-free enrollment path in the server's possession-proof
 endpoints (`/recovery/initiate-proof`, `/recovery/recover/proof`).
+
+## Checking the cross-user share channel
+
+M19 proves the item-sharing protocol: the pre-M19 registry's key-substitution
+attack is demonstrated reachable in `m19a_ek_registry_baseline.spthy`
+(falsification baseline), and `m19b_share_channel.spthy` proves the fixed
+design — share keys register only under a device-signed binding
+(`vela share-ek binding v1`, monotonic timestamps), items are sealed only
+under registered bindings, deliveries trace to sends, and the honest
+exchange is reachable.
+
+```bash
+./run-share-channel-proofs.sh
+cd ../../serverVELA/vela-share-policy
+./verify-fstar.sh
+```
+
+Expected: **2 + 5 Tamarin lemmas verified** and all F* verification
+conditions discharged. The enforced policy lives in
+`serverVELA/vela-share-policy`; the binding construction in
+`libVELA/vela-crypto/src/signing.rs`; enforcement in
+`serverVELA/vela-server/src/share/mod.rs` and `src/account/mod.rs`.

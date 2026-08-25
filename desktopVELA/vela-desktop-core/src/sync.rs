@@ -660,7 +660,35 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
     }
 
     let (share_ek, share_dk) = crypto::generate_share_keypair();
-    if let Err(e) = client.put_my_share_ek(token, &B64.encode(&share_ek)).await {
+    // M19: the registration must be signed by this device's identity key and
+    // carries a monotonic timestamp, so a stolen session token alone cannot
+    // point this account's sharing key at an attacker-chosen capsule key.
+    let device_id = match state.store.load_device_id() {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!("Share key backfill: could not load device ID: {}", e);
+            return;
+        }
+    };
+    let signed_at = chrono::Utc::now().to_rfc3339();
+    let signature =
+        match crypto::sign_share_ek_binding(&keys.hybrid_sk, &share_ek, &signed_at) {
+            Ok(signature) => signature,
+            Err(e) => {
+                tracing::warn!("Share key backfill: signing failed: {}", e);
+                return;
+            }
+        };
+    if let Err(e) = client
+        .put_my_share_ek(
+            token,
+            &B64.encode(&share_ek),
+            &device_id,
+            &signed_at,
+            &signature,
+        )
+        .await
+    {
         tracing::warn!("Share key backfill: server registration failed: {}", e);
         return;
     }

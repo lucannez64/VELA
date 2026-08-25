@@ -723,7 +723,22 @@ class VaultSyncManager(
                 else -> return@synchronized null
             }
 
-            val registration = runCatching { client.putMyShareEk(token, shareEk) }
+            // M19: the registration must be signed by this device's identity
+            // key with a monotonic timestamp, so a stolen session token alone
+            // cannot repoint the account's sharing key.
+            val registration = runCatching {
+                val deviceId = identity.deviceId
+                    ?: error("Server identity has no device id")
+                val signedAt = java.time.Instant.now().toString()
+                val identityHandle = identityStore.handle()
+                    ?: error("Device identity is unavailable; re-enroll this device")
+                val signature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(
+                    handle = identityHandle,
+                    shareEkB64 = shareEk,
+                    signedAt = signedAt,
+                ) ?: error("Native VELA bridge cannot sign the share-key binding")
+                client.putMyShareEk(token, shareEk, deviceId, signedAt, signature)
+            }
             if (registration.isSuccess) identityStore.markShareKeyRegistered(shareEk)
             registration.getOrNull()
         }

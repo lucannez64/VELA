@@ -103,8 +103,19 @@ final class AccountViewModel: ObservableObject {
             }
             let base = try Self.validatedBase(serverURL)
             let client = VelaClient(baseURL: base)
+            // M19: sign the initial share-key binding while the fresh identity
+            // is still open; the server verifies it against hybridVK.
+            let shareEKSignedAt = ISO8601DateFormatter().string(from: Date())
+            let shareEKSignature = identity.shareEK.isEmpty
+                ? nil
+                : VelaCoreFFI.identitySignShareEkBinding(
+                    handle: identity.handle,
+                    shareEKBase64: identity.shareEK,
+                    signedAt: shareEKSignedAt)
             let resp = try await client.register(hybridEK: identity.hybridEK, hybridVK: identity.hybridVK,
-                                                  deviceName: deviceName, shareEK: identity.shareEK)
+                                                  deviceName: deviceName, shareEK: identity.shareEK,
+                                                  shareEKSignedAt: shareEKSignedAt,
+                                                  shareEKSignature: shareEKSignature)
             let token = await client.currentToken ?? resp.token
             var state = AccountState(
                 serverURL: serverURL, userID: resp.user_id, deviceID: resp.device_id,
@@ -173,7 +184,17 @@ final class AccountViewModel: ObservableObject {
               let rotated = VelaCoreFFI.identityRotateShareKey(
                 sealKey: store.sealKey(), handle: identity.handle) else { return }
         do {
-            try await client.putMyShareEK(rotated.shareEK)
+            // M19: the registration must be signed by this device's identity
+            // key with a monotonic timestamp.
+            guard let deviceID = state.deviceID else {
+                throw Failure("this device is not enrolled")
+            }
+            let signedAt = ISO8601DateFormatter().string(from: Date())
+            guard let signature = VelaCoreFFI.identitySignShareEkBinding(
+                handle: identity.handle, shareEKBase64: rotated.shareEK, signedAt: signedAt)
+            else { throw Failure("could not sign the share-key binding") }
+            try await client.putMyShareEK(
+                rotated.shareEK, deviceID: deviceID, signedAt: signedAt, signature: signature)
             state.shareEK = rotated.shareEK
             state.sealedIdentity = rotated.sealed
             try store.save(state)

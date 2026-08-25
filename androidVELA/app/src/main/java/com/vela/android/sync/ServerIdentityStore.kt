@@ -26,7 +26,10 @@ data class ServerIdentity(
     val hybridVkB64: String,
     val shareEkB64: String = "",
     val sealedB64: String = "",
-    val shareEkRegistrationPending: Boolean = false
+    val shareEkRegistrationPending: Boolean = false,
+    /** M19: device-signed binding metadata for the initial share key. */
+    val shareEkSignedAt: String? = null,
+    val shareEkSignature: String? = null,
 )
 
 class ServerIdentityStore(context: Context) {
@@ -50,13 +53,23 @@ class ServerIdentityStore(context: Context) {
         val created = NativeVelaCore.identityCreate(sealKey())
             ?: error("Native VELA bridge cannot generate server identity")
         handle = created
+        // M19: sign the initial share-key binding now, while the identity is
+        // open; the signature travels with the publics to registration.
+        val signedAt = java.time.Instant.now().toString()
+        val shareEkSignature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(
+            handle = created.handle,
+            shareEkB64 = created.shareEkB64,
+            signedAt = signedAt,
+        )
         val identity = ServerIdentity(
             userId = null,
             deviceId = null,
             hybridEkB64 = created.hybridEkB64,
             hybridVkB64 = created.hybridVkB64,
             shareEkB64 = created.shareEkB64,
-            sealedB64 = created.sealedB64
+            sealedB64 = created.sealedB64,
+            shareEkSignedAt = signedAt,
+            shareEkSignature = shareEkSignature,
         )
         save(identity)
         return identity
@@ -77,13 +90,23 @@ class ServerIdentityStore(context: Context) {
         val created = NativeVelaCore.identityCreate(sealKey())
             ?: error("Native VELA bridge cannot generate a device identity")
         handle = created
+        // M19: sign the initial share-key binding now, while the identity is
+        // open; the signature travels with the publics to registration.
+        val signedAt = java.time.Instant.now().toString()
+        val shareEkSignature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(
+            handle = created.handle,
+            shareEkB64 = created.shareEkB64,
+            signedAt = signedAt,
+        )
         val identity = ServerIdentity(
             userId = null,
             deviceId = null,
             hybridEkB64 = created.hybridEkB64,
             hybridVkB64 = created.hybridVkB64,
             shareEkB64 = created.shareEkB64,
-            sealedB64 = created.sealedB64
+            sealedB64 = created.sealedB64,
+            shareEkSignedAt = signedAt,
+            shareEkSignature = shareEkSignature,
         )
         save(identity)
         return identity

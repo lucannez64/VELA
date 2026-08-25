@@ -275,6 +275,21 @@ pub fn decrypt_rms_capsule(transfer_key: &[u8; 32], capsule: &[u8]) -> Result<[u
 }
 
 /// Sign a server-issued challenge for authentication.
+/// Sign a share-key binding (M19): authorizes registering `share_ek` at
+/// `signed_at` under this device's hybrid identity key.
+pub fn sign_share_ek_binding(
+    hybrid_sk: &[u8],
+    share_ek: &[u8],
+    signed_at: &str,
+) -> Result<String, String> {
+    let sk = signing::HybridSigningKey::from_bytes(hybrid_sk)
+        .map_err(|e| format!("Failed to decode signing key: {e}"))?;
+    let message = signing::share_ek_binding_message(share_ek, signed_at);
+    let signature = signing::sign(&sk, &message)
+        .map_err(|e| format!("Failed to sign share-key binding: {e}"))?;
+    Ok(B64.encode(signature.to_bytes()))
+}
+
 pub fn create_auth_signature(
     hybrid_sk: &[u8],
     challenge: &[u8],

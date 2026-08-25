@@ -163,6 +163,13 @@ enum VelaCoreFFI {
         return field(response, "signature_b64")
     }
 
+    /// Sign a share-key binding with the identity held under `handle` (M19).
+    static func identitySignShareEkBinding(handle: UInt64, shareEKBase64: String, signedAt: String) -> String? {
+        let request = json(["handle": handle, "share_ek_b64": shareEKBase64, "signed_at": signedAt])
+        let response = request.withCString { consume(vela_ffi_identity_sign_share_ek_json($0)) }
+        return field(response, "signature_b64")
+    }
+
     /// Open a capsule sealed to this device's share key.
     static func identityOpenShare(handle: UInt64, capsuleBase64: String) -> String? {
         let request = json(["handle": handle, "capsule_b64": capsuleBase64])

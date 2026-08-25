@@ -20,6 +20,7 @@ vela-enrollment-policy = { path = "../vela-enrollment-policy" }
 vela-recovery-policy = { path = "../vela-recovery-policy" }
 vela-rekey-policy = { path = "../vela-rekey-policy" }
 vela-session-policy = { path = "../vela-session-policy" }
+vela-share-policy = { path = "../vela-share-policy" }
 
 # ── Web framework ──────────────────────────────────────────────────────────────
 axum              = { version = "0.7", features = ["macros", "multipart"] }
