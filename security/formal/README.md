@@ -293,4 +293,28 @@ the gating depends only on the scope M12 proves is `web`.
 ./run-web-session-pass-through-proofs.sh
 ```
 
-Expected: **7 Tamarin lemmas verified**.
+Expected: **7 Tamarin lemmas verified**. The shared Rust policy is
+`vela-session-policy::authorize_route`; the Tamarin model proves the
+structural gating (`m20_web_session_pass_through.spthy`).
+
+## Checking the linked-item revocation finality (M21 follow-up)
+
+M21 closes M20's pass-through story with the **revocation side**: once a linked
+share's capsule is revoked (`revoke = true` with the original `capsule` ETag),
+the server's `get_linked_items` SQL filter excludes it (`revoked = 0`), and the
+server-side `PUT /share/linked` requires the session user to match the link's
+`sender_user_id`. The formal model proves that after `LinkRevoked`, no
+`LinkRead` for the same `(sender, recipient, capsule)` tuple can exist in any
+trace (structural finality, linear live token consumed by revocation). The
+sender-only provenance (`only_sender_can_revoke_link`) is enforced by the
+`DeviceSession` identity binding (`!DevKey(S, X)` in the model).
+
+```bash
+./run-link-revocation-finality-proofs.sh
+```
+
+Expected: **2 Tamarin lemmas verified**. The enforced rules live in
+`vela-share-policy::plan_link_mutation`; the server predicates live in
+`share/mod.rs` (sender identity match for updates/deletes, `revoked = 0` filter,
+ETag `If-Match` comparison). The shared channel's complete verified stack is
+M19 (binding integrity) + M20 (route gating) + M21 (revocation finality).

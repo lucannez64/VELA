@@ -105,6 +105,9 @@ jobs:
       - name: Prove the web-session vault pass-through gating
         run: ./security/formal/run-web-session-pass-through-proofs.sh
 
+      - name: Prove linked-item revocation finality
+        run: ./security/formal/run-link-revocation-finality-proofs.sh
+
       - name: Exhaust the bounded model against real handlers and Turso
         run: |
           cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
