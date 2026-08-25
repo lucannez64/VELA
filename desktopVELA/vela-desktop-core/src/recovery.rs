@@ -2,8 +2,8 @@
 //! locally-cached-shares side of account recovery setup (SPEC.md §4.3): the
 //! RMS is split into a Shamir 2-of-3 scheme and each share delivered to its
 //! own channel (cloud remote / server, gated by a WebAuthn credential /
-//! shown to the user for a trusted contact). Any 2 of 3 shares reconstruct
-//! the RMS.
+//! sealed into an authenticated envelope for the trusted contact's key).
+//! Any two distinct channels reconstruct the RMS (M18).
 //!
 //! All three delivery channels live here, so either front end can drive a
 //! complete 2-of-3 setup: cloud backup over rclone, the security-key share
@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiClient, RecoveryRecoverRequest, RecoveryShareData};
 use crate::AppState;
+use vela_crypto::recovery::RecoveryShareChannel;
 
 const RECOVERY_SETUP_FILE: &str = "recovery_setup.enc";
 
@@ -30,21 +31,94 @@ pub(crate) fn retire_recovery_setup(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+/// Abandon an incomplete setup without claiming that its publication reached
+/// the active server/cloud state. Immutable cloud candidates and a staged
+/// server candidate are harmless: readers ignore them and a later setup may
+/// replace the pending server slot.
+pub fn discard_recovery_setup(state: &AppState) -> Result<(), String> {
+    if state.is_unlocked() {
+        let pending = load_pending_checked(state)?;
+        if pending.server_finalized || pending.cloud_active {
+            return Err(
+                "Recovery publication was already finalized; resume cloud promotion instead of discarding it"
+                    .into(),
+            );
+        }
+    }
+    retire_recovery_setup(state)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PendingRecoveryShares {
+    /// Account which owns this journal. A copied journal must never publish
+    /// shares into whichever account happens to be signed in now.
+    #[serde(default)]
+    account_id: Option<String>,
     /// Authenticated local key epoch whose RMS produced all three shares.
     /// `None` is the pre-epoch on-disk shape and is accepted only at epoch 1.
     #[serde(default)]
     key_epoch: Option<i64>,
+    /// Fresh identifier for this exact Shamir polynomial (M16).
+    #[serde(default)]
+    split_id: Option<String>,
     share1: Option<Vec<u8>>,
     share2: Option<Vec<u8>>,
     share3: Option<Vec<u8>>,
     #[serde(default)]
     cloud_backup_delivered: bool,
+    /// Remote holding the immutable candidate, needed to publish the active
+    /// pointer only after the server finalizes this exact split.
+    #[serde(default)]
+    cloud_remote: Option<String>,
     #[serde(default)]
     security_key_delivered: bool,
     #[serde(default)]
     trusted_contact_acknowledged: bool,
+    /// KEM public key the Share 3 envelope was sealed for (M18). Presence is
+    /// what distinguishes an authenticated handoff from a raw manual copy.
+    #[serde(default)]
+    contact_recipient_key: Option<String>,
+    /// Post-prerequisite commits used to resume the same split after a crash.
+    #[serde(default)]
+    server_finalized: bool,
+    #[serde(default)]
+    cloud_active: bool,
+}
+
+fn publication_facts(
+    pending: &PendingRecoveryShares,
+    account_id: &str,
+    current_epoch: i64,
+    account_epoch_active: bool,
+) -> vela_client_recovery_policy::PublicationFacts {
+    vela_client_recovery_policy::PublicationFacts {
+        journal_present: pending.share1.is_some()
+            || pending.server_finalized
+            || pending.cloud_active,
+        account_matches: pending.account_id.as_deref() == Some(account_id),
+        split_id_present: pending.split_id.is_some(),
+        cloud_share_present: pending.share1.is_some(),
+        server_share_present: pending.share2.is_some(),
+        journal_epoch: pending.key_epoch.unwrap_or(0),
+        current_epoch,
+        account_epoch_active,
+        server_staged: pending.security_key_delivered,
+        cloud_candidate_durable: pending.cloud_backup_delivered,
+        server_finalized: pending.server_finalized,
+        cloud_active: pending.cloud_active,
+    }
+}
+
+fn authorize_publication_action(
+    pending: &PendingRecoveryShares,
+    account_id: &str,
+    current_epoch: i64,
+    action: vela_client_recovery_policy::PublicationAction,
+) -> Result<(), String> {
+    let facts = publication_facts(pending, account_id, current_epoch, true);
+    vela_client_recovery_policy::publication_action_is_authorized(facts, action)
+        .then_some(())
+        .ok_or_else(|| format!("Recovery publication journal rejected {action:?}"))
 }
 
 /// Epoch authenticated by the currently unlocked RMS, rather than the
@@ -124,21 +198,23 @@ pub struct RecoveryStatus {
 }
 
 fn load_pending(state: &AppState) -> PendingRecoveryShares {
+    load_pending_checked(state).unwrap_or_default()
+}
+
+fn load_pending_checked(state: &AppState) -> Result<PendingRecoveryShares, String> {
     let path = state.store.store_path().join(RECOVERY_SETUP_FILE);
     if !path.exists() {
-        return PendingRecoveryShares::default();
+        return Ok(PendingRecoveryShares::default());
     }
     let crypto = state.crypto.read();
-    let Some(crypto) = crypto.as_ref() else {
-        return PendingRecoveryShares::default();
-    };
-    let Ok(ciphertext) = std::fs::read(&path) else {
-        return PendingRecoveryShares::default();
-    };
-    let Ok(plaintext) = crypto.decrypt_vault(&ciphertext) else {
-        return PendingRecoveryShares::default();
-    };
-    serde_json::from_slice(&plaintext).unwrap_or_default()
+    let crypto = crypto.as_ref().ok_or("Vault is locked")?;
+    let ciphertext = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read recovery publication journal: {e}"))?;
+    let plaintext = crypto
+        .decrypt_vault(&ciphertext)
+        .map_err(|e| format!("Recovery publication journal could not be decrypted: {e}"))?;
+    serde_json::from_slice(&plaintext)
+        .map_err(|e| format!("Recovery publication journal is malformed: {e}"))
 }
 
 fn save_pending(state: &AppState, pending: &PendingRecoveryShares) -> Result<(), String> {
@@ -156,7 +232,17 @@ fn save_pending(state: &AppState, pending: &PendingRecoveryShares) -> Result<(),
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
     }
-    std::fs::write(path, ciphertext).map_err(|e| e.to_string())
+    crate::store::write_secret_file(&path, &ciphertext).map_err(|e| e.to_string())?;
+    // This journal is an ordering boundary, not a cache: commit the phase to
+    // stable storage before the next external effect can begin.
+    std::fs::File::open(&path)
+        .and_then(|file| file.sync_all())
+        .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    std::fs::File::open(state.store.store_path())
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Split the RMS into a 2-of-3 Shamir scheme exactly once per vault, caching
@@ -166,13 +252,44 @@ fn save_pending(state: &AppState, pending: &PendingRecoveryShares) -> Result<(),
 /// one another's share.
 pub(crate) fn ensure_shares_split(state: &AppState) -> Result<(), String> {
     let current_epoch = authenticated_local_epoch(state)?;
-    let mut pending = load_pending(state);
+    let account_id = state
+        .store
+        .load_user_id()
+        .map_err(|e| format!("Failed to load account ID: {e}"))?;
+    let mut pending = load_pending_checked(state)?;
     if pending.share1.is_some() && pending.share2.is_some() && pending.share3.is_some() {
-        if pending.key_epoch == Some(current_epoch) {
-            return Ok(());
+        let legacy_account = pending.account_id.is_none();
+        if pending.key_epoch == Some(current_epoch)
+            && (legacy_account || pending.account_id.as_deref() == Some(account_id.as_str()))
+        {
+            pending.account_id = Some(account_id.clone());
+            if pending.split_id.is_some() {
+                if legacy_account {
+                    save_pending(state, &pending)?;
+                }
+                return Ok(());
+            }
+            // A cached pre-M16 split has no publication identity. Reuse the
+            // share material but require every channel to be republished.
+            pending.split_id = Some(uuid::Uuid::new_v4().to_string());
+            pending.cloud_backup_delivered = false;
+            pending.cloud_remote = None;
+            pending.security_key_delivered = false;
+            pending.trusted_contact_acknowledged = false;
+            pending.server_finalized = false;
+            pending.cloud_active = false;
+            return save_pending(state, &pending);
         }
         if pending.key_epoch.is_none() && current_epoch == 1 {
+            pending.account_id = Some(account_id.clone());
             pending.key_epoch = Some(1);
+            pending.split_id = Some(uuid::Uuid::new_v4().to_string());
+            pending.cloud_backup_delivered = false;
+            pending.cloud_remote = None;
+            pending.security_key_delivered = false;
+            pending.trusted_contact_acknowledged = false;
+            pending.server_finalized = false;
+            pending.cloud_active = false;
             return save_pending(state, &pending);
         }
         // Never redistribute a complete split derived from another epoch.
@@ -195,13 +312,18 @@ pub(crate) fn ensure_shares_split(state: &AppState) -> Result<(), String> {
     pending.share1 = Some(shares[0].to_bytes());
     pending.share2 = Some(shares[1].to_bytes());
     pending.share3 = Some(shares[2].to_bytes());
+    pending.account_id = Some(account_id);
     pending.key_epoch = Some(current_epoch);
+    pending.split_id = Some(uuid::Uuid::new_v4().to_string());
     // A fresh split draws a new random polynomial, so shares delivered from
     // an earlier split can no longer combine with these — every channel has
     // to be redone against the new split.
     pending.cloud_backup_delivered = false;
+    pending.cloud_remote = None;
     pending.security_key_delivered = false;
     pending.trusted_contact_acknowledged = false;
+    pending.server_finalized = false;
+    pending.cloud_active = false;
     save_pending(state, &pending)
 }
 
@@ -221,26 +343,43 @@ pub(crate) async fn deliver_security_key_share(
     state.ensure_unlocked_since(generation)?;
     ensure_shares_split(state)?;
     let key_epoch = authenticated_local_epoch(state)?;
-    let share2 = {
+    let (share2, split_id) = {
         let pending = load_pending(state);
         require_pending_epoch(&pending, key_epoch)?;
-        pending
-            .share2
-            .clone()
-            .ok_or("Recovery share was not generated")?
+        (
+            pending
+                .share2
+                .clone()
+                .ok_or("Recovery share was not generated")?,
+            pending
+                .split_id
+                .clone()
+                .ok_or("Recovery split ID was not generated")?,
+        )
     };
 
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
     let mut current_token = token.to_string();
-    revalidate_recovery_epoch(
-        state,
-        &client,
-        &mut current_token,
+    revalidate_recovery_epoch(state, &client, &mut current_token, key_epoch, generation).await?;
+    let account_id = state
+        .store
+        .load_user_id()
+        .map_err(|e| format!("Failed to load account ID: {e}"))?;
+    authorize_publication_action(
+        &load_pending_checked(state)?,
+        &account_id,
         key_epoch,
-        generation,
-    )
-    .await?;
+        vela_client_recovery_policy::PublicationAction::StageServer,
+    )?;
+    // M18: stage the blind RMS commitment together with the share. Once the
+    // split is finalized, any two-share pair — not just this server share —
+    // can prove possession of the RMS for enrollment without WebAuthn.
+    let possession_hash = {
+        let crypto = state.crypto.read();
+        let crypto = crypto.as_ref().ok_or("Vault is locked")?;
+        vela_crypto::recovery::rms_possession_hash(&crypto.rms())
+    };
     let share_b64 = B64.encode(&share2);
     let refreshed = client
         .put_recovery_share(
@@ -248,6 +387,8 @@ pub(crate) async fn deliver_security_key_share(
             RecoveryShareData {
                 share: share_b64,
                 key_epoch,
+                split_id,
+                possession_hash: B64.encode(possession_hash),
             },
         )
         .await
@@ -256,16 +397,9 @@ pub(crate) async fn deliver_security_key_share(
         state.session.write().set_server_token(refreshed.clone());
         current_token = refreshed;
     }
-    revalidate_recovery_epoch(
-        state,
-        &client,
-        &mut current_token,
-        key_epoch,
-        generation,
-    )
-    .await?;
+    revalidate_recovery_epoch(state, &client, &mut current_token, key_epoch, generation).await?;
 
-    let mut pending = load_pending(state);
+    let mut pending = load_pending_checked(state)?;
     require_pending_epoch(&pending, key_epoch)?;
     pending.security_key_delivered = true;
     save_pending(state, &pending)
@@ -342,49 +476,100 @@ pub(crate) fn remint_recovery_setup(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
-/// Share 3, base64, for the user to hand to their trusted contact.
+/// Share 3 sealed into an authenticated, recipient-bound envelope.
+///
+/// Replaces the manual copy flow: the caller supplies the trusted contact's
+/// KEM public key, and the result is a self-describing JSON handoff that only
+/// the holder of that key can open. It is bound to this exact account, epoch,
+/// Shamir split, and share coordinate; nothing useful leaks if it is forwarded
+/// or stored anywhere.
 ///
 /// Splitting on demand (rather than at account creation) is what lets the
 /// three methods be enabled in any order against one split: `ensure_shares_
-/// split` is idempotent while a setup is in progress, so reading this does
+/// split` is idempotent while a setup is in progress, so sealing this does
 /// not invalidate a share already delivered elsewhere.
-///
-/// This returns key material to the caller by design — that is the whole
-/// mechanism — so it is the one recovery call a UI must not log, cache, or
-/// leave on screen after the user has copied it.
-pub async fn get_trusted_contact_share(state: &AppState) -> Result<String, String> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactShareHandoff {
+    pub version: u32,
+    pub account_id: String,
+    pub key_epoch: i64,
+    pub split_id: String,
+    pub coordinate: u8,
+    pub envelope_b64: String,
+}
+
+pub async fn seal_trusted_contact_share(
+    state: &AppState,
+    contact_public_key_b64: &str,
+) -> Result<ContactShareHandoff, String> {
+    use vela_crypto::kem::HybridPublicKey;
     let _delivery_guard = state.sync_mutex.lock().await;
     let generation = state.session_generation();
     state.ensure_unlocked_since(generation)?;
     ensure_shares_split(state)?;
     let key_epoch = authenticated_local_epoch(state)?;
-    let pending = load_pending(state);
+    let mut pending = load_pending_checked(state)?;
     require_pending_epoch(&pending, key_epoch)?;
+
+    let pk_bytes = B64
+        .decode(contact_public_key_b64)
+        .map_err(|_| "Contact public key is not valid base64".to_string())?;
+    let recipient = HybridPublicKey::from_bytes(&pk_bytes)
+        .map_err(|e| format!("Invalid contact public key: {e}"))?;
+
+    // Rotation takes the same mutex; re-check external state before handing
+    // out key material, exactly like every other channel delivery.
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
     let mut token = state
         .get_session_token()
         .ok_or_else(|| "No session token available".to_string())?;
-    revalidate_recovery_epoch(
-        state,
-        &client,
-        &mut token,
+    revalidate_recovery_epoch(state, &client, &mut token, key_epoch, generation).await?;
+
+    let account_id = state
+        .store
+        .load_user_id()
+        .map_err(|e| format!("Failed to load account ID: {e}"))?;
+    let split_id = pending
+        .split_id
+        .clone()
+        .ok_or("Recovery split ID was not generated")?;
+    let share3_bytes = pending.share3.clone().ok_or("Recovery share was not generated")?;
+    let share3 = vela_crypto::shamir::Share::from_bytes(&share3_bytes)
+        .map_err(|e| format!("Cached recovery share is malformed: {e}"))?;
+
+    let context = vela_crypto::recovery::ContactShareContext {
+        account_id: account_id.as_str(),
         key_epoch,
-        generation,
-    )
-    .await?;
-    let share3 = pending.share3.ok_or("Recovery share was not generated")?;
-    Ok(B64.encode(&share3))
+        split_id: Some(split_id.as_str()),
+        coordinate: share3.x,
+    };
+    let envelope = vela_crypto::recovery::seal_contact_share(&recipient, &context, &share3)
+        .map_err(|e| format!("Failed to seal the trusted-contact envelope: {e}"))?;
+
+    // Record the recipient binding so status/planners can see the channel is
+    // no longer a manual copy flow.
+    pending.contact_recipient_key = Some(contact_public_key_b64.to_string());
+    save_pending(state, &pending)?;
+
+    Ok(ContactShareHandoff {
+        version: 1,
+        account_id,
+        key_epoch,
+        split_id,
+        coordinate: share3.x,
+        envelope_b64: B64.encode(&envelope),
+    })
 }
 
-/// Mark the trusted-contact share as handed over. The app cannot verify that
-/// it actually was — there is no channel to check — so this records the
+/// Mark the trusted-contact envelope as handed over. The app cannot verify
+/// that it actually was — there is no channel to check — so this records the
 /// user's word for it, which is what the 2-of-3 progress count reads.
 pub async fn acknowledge_trusted_contact_share(state: &AppState) -> Result<(), String> {
     let _delivery_guard = state.sync_mutex.lock().await;
     let generation = state.session_generation();
     state.ensure_unlocked_since(generation)?;
-    let mut pending = load_pending(state);
+    let mut pending = load_pending_checked(state)?;
     let key_epoch = authenticated_local_epoch(state)?;
     require_pending_epoch(&pending, key_epoch)?;
     let server_url = state.server_url.read().clone();
@@ -392,16 +577,27 @@ pub async fn acknowledge_trusted_contact_share(state: &AppState) -> Result<(), S
     let mut token = state
         .get_session_token()
         .ok_or_else(|| "No session token available".to_string())?;
-    revalidate_recovery_epoch(
-        state,
-        &client,
-        &mut token,
-        key_epoch,
-        generation,
-    )
-    .await?;
+    revalidate_recovery_epoch(state, &client, &mut token, key_epoch, generation).await?;
     pending.trusted_contact_acknowledged = true;
     save_pending(state, &pending)
+}
+
+/// Generate the ephemeral request keypair shown to a trusted contact during
+/// recovery. The requester keeps the secret key in memory only; the public
+/// key is handed to the contact, who re-seals their held share to it.
+#[derive(serde::Serialize)]
+pub struct RecoveryRequest {
+    pub public_key_b64: String,
+    pub secret_key_b64: String,
+}
+
+pub fn generate_recovery_request() -> Result<RecoveryRequest, String> {
+    use vela_crypto::kem::{self};
+    let (pk, sk) = kem::generate_keypair();
+    Ok(RecoveryRequest {
+        public_key_b64: B64.encode(pk.to_bytes()),
+        secret_key_b64: B64.encode(sk.to_bytes()),
+    })
 }
 
 /// End setup by dropping the cached shares.
@@ -418,12 +614,106 @@ pub async fn finalize_recovery_setup(state: &AppState) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
     }
-    let mut pending = load_pending(state);
+    let mut pending = load_pending_checked(state)?;
     let current_epoch = authenticated_local_epoch(state)?;
     if pending.key_epoch.is_none() && current_epoch == 1 {
         pending.key_epoch = Some(1);
     }
     require_pending_epoch(&pending, current_epoch)?;
+    if pending.cloud_active
+        && pending.share1.is_none()
+        && pending.share2.is_none()
+        && pending.share3.is_none()
+    {
+        return Ok(());
+    }
+    if !pending.security_key_delivered || !pending.cloud_backup_delivered {
+        return Err(
+            "Publish both the server share and cloud backup before finalizing recovery".into(),
+        );
+    }
+    let split_id = pending
+        .split_id
+        .clone()
+        .ok_or("Recovery split ID was not generated")?;
+    let share1 = pending
+        .share1
+        .clone()
+        .ok_or("Recovery cloud share was not generated")?;
+    let remote = pending
+        .cloud_remote
+        .clone()
+        .ok_or("Recovery cloud remote was not recorded")?;
+    let user_id = state
+        .store
+        .load_user_id()
+        .map_err(|e| format!("Failed to load account ID: {e}"))?;
+    if pending.account_id.is_none() {
+        pending.account_id = Some(user_id.clone());
+        save_pending(state, &pending)?;
+    }
+    let client = ApiClient::with_url(state.server_url.read().clone());
+    let mut token = state
+        .get_session_token()
+        .ok_or_else(|| "No session token available".to_string())?;
+    revalidate_recovery_epoch(state, &client, &mut token, current_epoch, generation).await?;
+    if !pending.server_finalized {
+        authorize_publication_action(
+            &pending,
+            &user_id,
+            current_epoch,
+            vela_client_recovery_policy::PublicationAction::FinalizeServer,
+        )?;
+        if let Some(refreshed) = client
+            .finalize_recovery_share(&token, current_epoch, &split_id)
+            .await
+            .map_err(|e| format!("Failed to finalize recovery publication: {e}"))?
+        {
+            state.session.write().set_server_token(refreshed.clone());
+            token = refreshed;
+        }
+        // Commit this before cloud promotion. A restart now must promote this
+        // exact split and is no longer allowed to discard the journal.
+        pending.server_finalized = true;
+        save_pending(state, &pending)?;
+    }
+
+    if !pending.cloud_active {
+        authorize_publication_action(
+            &pending,
+            &user_id,
+            current_epoch,
+            vela_client_recovery_policy::PublicationAction::PromoteCloudActive,
+        )?;
+        // Only the winner writes the mutable active pointer. Losing candidates
+        // remain at immutable split-specific paths and are ignored by recovery.
+        let active_envelope = serde_json::json!({
+            "version": 3,
+            "user_id": user_id,
+            "key_epoch": current_epoch,
+            "split_id": split_id,
+            "status": "active",
+            "share_b64": B64.encode(&share1),
+        });
+        let active_payload = serde_json::to_vec(&active_envelope).map_err(|e| e.to_string())?;
+        let active_path = cloud_backup_active_remote_path(&user_id)?;
+        tokio::task::spawn_blocking(move || {
+            crate::rclone::upload_bytes(&remote, &active_path, &active_payload)
+        })
+        .await
+        .map_err(|e| format!("Active recovery pointer upload panicked: {e}"))??;
+        revalidate_recovery_epoch(state, &client, &mut token, current_epoch, generation).await?;
+        pending.cloud_active = true;
+        save_pending(state, &pending)?;
+    }
+
+    authorize_publication_action(
+        &pending,
+        &user_id,
+        current_epoch,
+        vela_client_recovery_policy::PublicationAction::Complete,
+    )?;
+
     pending.share1 = None;
     pending.share2 = None;
     pending.share3 = None;
@@ -434,7 +724,8 @@ pub async fn finalize_recovery_setup(state: &AppState) -> Result<(), String> {
 ///
 /// Nothing sends it yet: this records who the user nominated so the UI can
 /// list them, and no share travels with it. The share itself goes through
-/// [`get_trusted_contact_share`], out of band, by hand.
+/// [`seal_trusted_contact_share`], sealed to the contact's KEM public key
+/// and handed over as an authenticated envelope.
 pub async fn send_recovery_invite(state: &AppState, email: &str) -> Result<(), String> {
     let email = email.trim().to_lowercase();
     if !email.contains('@') || email.len() > 254 {
@@ -594,12 +885,25 @@ fn validate_user_id_for_path(user_id: &str) -> Result<(), String> {
 }
 
 /// `<per-account dir>/<file>` under the VELA prefix on the chosen remote.
-fn cloud_backup_remote_path(user_id: &str, key_epoch: i64) -> Result<String, String> {
+fn cloud_backup_candidate_remote_path(
+    user_id: &str,
+    key_epoch: i64,
+    split_id: &str,
+) -> Result<String, String> {
     validate_user_id_for_path(user_id)?;
     if key_epoch < 1 {
         return Err("Invalid recovery-share key epoch".to_string());
     }
-    Ok(format!("VELA/{user_id}/recovery-share-{key_epoch}.json"))
+    let split_id =
+        uuid::Uuid::parse_str(split_id).map_err(|_| "Invalid recovery split ID".to_string())?;
+    Ok(format!(
+        "VELA/{user_id}/recovery-share-{key_epoch}-{split_id}.json"
+    ))
+}
+
+fn cloud_backup_active_remote_path(user_id: &str) -> Result<String, String> {
+    validate_user_id_for_path(user_id)?;
+    Ok(format!("VELA/{user_id}/recovery-share-active.json"))
 }
 
 fn is_cloud_backup_file(entry: &str) -> bool {
@@ -607,6 +911,7 @@ fn is_cloud_backup_file(entry: &str) -> bool {
         return false;
     };
     file_name == LEGACY_ACCOUNT_CLOUD_BACKUP_FILE_NAME
+        || file_name == "recovery-share-active.json"
         || file_name
             .strip_prefix("recovery-share-")
             .and_then(|suffix| suffix.strip_suffix(".json"))
@@ -615,11 +920,14 @@ fn is_cloud_backup_file(entry: &str) -> bool {
 
 #[derive(Debug, Clone, Deserialize)]
 struct CloudBackupEnvelope {
-    #[allow(dead_code)]
     version: u8,
     user_id: String,
     #[serde(default = "default_recovery_key_epoch")]
     key_epoch: i64,
+    #[serde(default)]
+    split_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
     share_b64: String,
 }
 
@@ -631,6 +939,8 @@ fn default_recovery_key_epoch() -> i64 {
 pub struct CloudRecoveryShare {
     pub user_id: String,
     pub key_epoch: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_id: Option<String>,
     pub share_b64: String,
 }
 
@@ -716,10 +1026,37 @@ fn parse_cloud_backup_envelope(bytes: &[u8]) -> Result<CloudRecoveryShare, Strin
     if envelope.key_epoch < 1 {
         return Err("Invalid cloud backup file: key_epoch must be positive".into());
     }
+    let split_id = envelope
+        .split_id
+        .as_deref()
+        .map(|raw| {
+            uuid::Uuid::parse_str(raw)
+                .map(|id| id.to_string())
+                .map_err(|_| "Invalid cloud backup file: split_id is not a UUID".to_string())
+        })
+        .transpose()?;
+    match envelope.version {
+        1 | 2 => {
+            if envelope.status.as_deref() == Some("candidate") {
+                return Err("staged recovery candidate is not active".into());
+            }
+        }
+        3 => {
+            if envelope.status.as_deref() != Some("active") {
+                return Err("version 3 cloud backup is not the active pointer".into());
+            }
+            let split_id = split_id
+                .as_deref()
+                .ok_or("version 3 cloud backup has no split_id")?;
+            debug_assert!(uuid::Uuid::parse_str(split_id).is_ok());
+        }
+        _ => return Err("Unsupported cloud backup version".into()),
+    }
 
     Ok(CloudRecoveryShare {
         user_id: envelope.user_id,
         key_epoch: envelope.key_epoch,
+        split_id,
         share_b64: envelope.share_b64,
     })
 }
@@ -727,11 +1064,15 @@ fn parse_cloud_backup_envelope(bytes: &[u8]) -> Result<CloudRecoveryShare, Strin
 fn newest_cloud_shares(shares: Vec<CloudRecoveryShare>) -> Vec<CloudRecoveryShare> {
     let mut newest_by_account = std::collections::BTreeMap::new();
     for share in shares {
-        let replace = newest_by_account
-            .get(&share.user_id)
-            .map_or(true, |current: &CloudRecoveryShare| {
-                current.key_epoch < share.key_epoch
-            });
+        let replace =
+            newest_by_account
+                .get(&share.user_id)
+                .map_or(true, |current: &CloudRecoveryShare| {
+                    current.key_epoch < share.key_epoch
+                        || (current.key_epoch == share.key_epoch
+                            && current.split_id.is_none()
+                            && share.split_id.is_some())
+                });
         if replace {
             newest_by_account.insert(share.user_id.clone(), share);
         }
@@ -761,6 +1102,7 @@ pub async fn complete_account_recovery_with_credential(
     user_id: String,
     share1_b64: String,
     share1_key_epoch: i64,
+    share1_split_id: Option<String>,
     credential: serde_json::Value,
     recovery_id: Option<String>,
     password: String,
@@ -783,6 +1125,7 @@ pub async fn complete_account_recovery_with_credential(
         user_id,
         share1_b64,
         share1_key_epoch,
+        share1_split_id,
         recover_resp,
         password,
         device_name,
@@ -795,13 +1138,11 @@ pub async fn complete_account_recovery(
     user_id: String,
     share1_b64: String,
     share1_key_epoch: i64,
+    share1_split_id: Option<String>,
     recover_resp: crate::api::RecoveryRecoverResponse,
     password: String,
     device_name: Option<String>,
 ) -> Result<(), String> {
-    use crate::api::{EnrollDeviceViaRecoveryRequest, VerifyRequest};
-    use crate::audit::{record_audit_event, AuditAction};
-    use crate::crypto;
     use vela_crypto::shamir::Share;
 
     if share1_key_epoch != recover_resp.key_epoch {
@@ -825,8 +1166,195 @@ pub async fn complete_account_recovery(
     let share2 = Share::from_bytes(&share2_bytes).map_err(|e| format!("Invalid Share 2: {e}"))?;
 
     // ── combine shares → RMS ────────────────────────────────────────────────
-    let rms = crypto::Crypto::reconstruct_recovery(&[share1, share2])
-        .map_err(|e| format!("Failed to reconstruct vault key: {e}"))?;
+    // The shared verified boundary checks account, epoch, channel, distinct
+    // coordinates, and authenticated share format before interpolation. The
+    // Shamir implementation then authenticates both shares under the same RMS.
+    let recovered = vela_crypto::recovery::reconstruct_account_recovery(
+        &user_id,
+        vela_crypto::recovery::BoundRecoveryShare {
+            account_id: &user_id,
+            key_epoch: share1_key_epoch,
+            split_id: share1_split_id.as_deref(),
+            channel: vela_crypto::recovery::RecoveryShareChannel::Cloud,
+            recipient_bound: false,
+            share: &share1,
+        },
+        vela_crypto::recovery::BoundRecoveryShare {
+            account_id: &user_id,
+            key_epoch: recover_resp.key_epoch,
+            split_id: recover_resp.split_id.as_deref(),
+            channel: vela_crypto::recovery::RecoveryShareChannel::Server,
+            recipient_bound: false,
+            share: &share2,
+        },
+    )
+    .map_err(|e| format!("Failed to reconstruct vault key: {e}"))?;
+    let rms = recovered.rms;
+    debug_assert_eq!(recovered.key_epoch, recover_resp.key_epoch);
+
+    finish_recovered_device_setup(
+        state,
+        &client,
+        &user_id,
+        rms,
+        recover_resp.recovery_grant.parse().map_err(|e| format!("Invalid recovery grant: {e}"))?,
+        password,
+        device_name,
+    )
+    .await
+}
+
+/// Complete a recovery that used a trusted-contact share instead of the
+/// WebAuthn-released server share (M18): cloud + contact, or server + contact
+/// when the caller already holds Share 2 out of band.
+///
+/// The server never releases its share on this path. Instead the reconstructed
+/// RMS proves itself: the client fetches a fresh challenge
+/// (`/recovery/initiate-proof`), opens the contact's response envelope with
+/// this device's ephemeral request key, reconstructs through the verified
+/// pair-selection policy, and redeems a challenge-bound possession proof for
+/// a single-use enrollment grant.
+pub async fn complete_account_recovery_with_contact(
+    state: &AppState,
+    user_id: String,
+    first_share_b64: String,
+    first_share_key_epoch: i64,
+    first_share_split_id: Option<String>,
+    first_share_channel: RecoveryShareChannelParam,
+    request_secret_key_b64: String,
+    contact_response_json: String,
+    password: String,
+    device_name: Option<String>,
+) -> Result<(), String> {
+    use vela_crypto::kem::HybridSecretKey;
+    use vela_crypto::shamir::Share;
+
+    let server_url = state.server_url.read().clone();
+    let client = ApiClient::with_url(server_url);
+
+    let attempt = client
+        .initiate_possession_recovery(&user_id)
+        .await
+        .map_err(|e| format!("Failed to start possession recovery: {e}"))?;
+    let challenge = B64
+        .decode(&attempt.challenge_b64)
+        .map_err(|_| "Invalid possession challenge encoding".to_string())?;
+
+    // The contact's response carries plaintext context metadata next to the
+    // sealed envelope. The metadata is untrusted input: it is bound as AEAD
+    // associated data, so any relabelling simply fails to open.
+    #[derive(Deserialize)]
+    struct ContactResponse {
+        account_id: String,
+        key_epoch: i64,
+        split_id: Option<String>,
+        coordinate: u8,
+        envelope_b64: String,
+    }
+    let response: ContactResponse = serde_json::from_str(&contact_response_json)
+        .map_err(|e| format!("Invalid trusted-contact response: {e}"))?;
+    let sk_bytes = B64
+        .decode(&request_secret_key_b64)
+        .map_err(|_| "Invalid recovery request secret key encoding".to_string())?;
+    let request_sk = HybridSecretKey::from_bytes(&sk_bytes)
+        .map_err(|e| format!("Invalid recovery request secret key: {e}"))?;
+    let envelope_bytes = B64
+        .decode(&response.envelope_b64)
+        .map_err(|_| "Invalid contact envelope encoding".to_string())?;
+    let context = vela_crypto::recovery::ContactShareContext {
+        account_id: response.account_id.as_str(),
+        key_epoch: response.key_epoch,
+        split_id: response.split_id.as_deref(),
+        coordinate: response.coordinate,
+    };
+    let contact_share = vela_crypto::recovery::open_contact_share_response(
+        &request_sk,
+        &context,
+        &envelope_bytes,
+    )
+    .map_err(|e| format!("The trusted-contact response could not be authenticated: {e}"))?;
+
+    let first_bytes = B64
+        .decode(&first_share_b64)
+        .map_err(|_| "Invalid Share encoding".to_string())?;
+    let first_share =
+        Share::from_bytes(&first_bytes).map_err(|e| format!("Invalid recovery share: {e}"))?;
+    let channel = match first_share_channel {
+        RecoveryShareChannelParam::Cloud => RecoveryShareChannel::Cloud,
+        RecoveryShareChannelParam::Server => RecoveryShareChannel::Server,
+    };
+
+    // The verified boundary enforces same account/epoch/split, distinct
+    // channels and coordinates, and an envelope-bound contact share.
+    let recovered = vela_crypto::recovery::reconstruct_account_recovery(
+        &user_id,
+        vela_crypto::recovery::BoundRecoveryShare {
+            account_id: &user_id,
+            key_epoch: first_share_key_epoch,
+            split_id: first_share_split_id.as_deref(),
+            channel,
+            recipient_bound: false,
+            share: &first_share,
+        },
+        vela_crypto::recovery::BoundRecoveryShare {
+            account_id: response.account_id.as_str(),
+            key_epoch: response.key_epoch,
+            split_id: response.split_id.as_deref(),
+            channel: RecoveryShareChannel::TrustedContact,
+            recipient_bound: true,
+            share: &contact_share,
+        },
+    )
+    .map_err(|e| format!("Failed to reconstruct vault key: {e}"))?;
+    if recovered.key_epoch != attempt.key_epoch {
+        return Err(format!(
+            "Recovery shares belong to vault epoch {}, but the account commitment is at epoch {}; ask your contact for the current split",
+            recovered.key_epoch, attempt.key_epoch
+        ));
+    }
+
+    // Prove possession of the reconstructed RMS for exactly this attempt.
+    let possession_hash = vela_crypto::recovery::rms_possession_hash(&recovered.rms);
+    let proof = vela_crypto::recovery::rms_possession_proof(
+        &possession_hash,
+        &user_id,
+        &attempt.recovery_id.to_string(),
+        &challenge,
+        attempt.key_epoch,
+    );
+    let grant = client
+        .recover_with_possession_proof(&user_id, &attempt.recovery_id.to_string(), &B64.encode(proof))
+        .await
+        .map_err(|e| format!("Possession proof rejected: {e}"))?;
+
+    finish_recovered_device_setup(state, &client, &user_id, recovered.rms, grant.recovery_grant, password, device_name).await?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+pub enum RecoveryShareChannelParam {
+    Cloud,
+    Server,
+}
+
+/// Everything both completion paths share after the RMS exists and a single-use
+/// recovery grant is in hand: enroll this device, authenticate it, adopt the
+/// RMS, and download the vault.
+async fn finish_recovered_device_setup(
+    state: &AppState,
+    client: &ApiClient,
+    user_id: &str,
+    rms: [u8; 32],
+    recovery_grant: uuid::Uuid,
+    password: String,
+    device_name: Option<String>,
+) -> Result<(), String> {
+    use crate::api::{EnrollDeviceViaRecoveryRequest, VerifyRequest};
+    use crate::audit::{record_audit_event, AuditAction};
+    use crate::crypto;
+
+    let user_id = user_id.to_string();
+    let recovery_grant = recovery_grant.to_string();
 
     // ── generate this device's identity keypair ─────────────────────────────
     let new_identity = tokio::task::spawn_blocking(crypto::generate_identity_keypair)
@@ -837,7 +1365,7 @@ pub async fn complete_account_recovery(
     let enroll_resp = client
         .enroll_device_via_recovery(&EnrollDeviceViaRecoveryRequest {
             user_id: user_id.clone(),
-            recovery_grant: recover_resp.recovery_grant,
+            recovery_grant,
             hybrid_ek: B64.encode(&new_identity.hybrid_ek),
             hybrid_vk: B64.encode(&new_identity.hybrid_vk),
             device_name: device_name.or_else(|| Some("Recovered Device".to_string())),
@@ -938,13 +1466,19 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     state.ensure_unlocked_since(generation)?;
     ensure_shares_split(state)?;
     let key_epoch = authenticated_local_epoch(state)?;
-    let share1 = {
+    let (share1, split_id) = {
         let pending = load_pending(state);
         require_pending_epoch(&pending, key_epoch)?;
-        pending
-            .share1
-            .clone()
-            .ok_or("Recovery share was not generated")?
+        (
+            pending
+                .share1
+                .clone()
+                .ok_or("Recovery share was not generated")?,
+            pending
+                .split_id
+                .clone()
+                .ok_or("Recovery split ID was not generated")?,
+        )
     };
     let user_id = state
         .store
@@ -955,14 +1489,13 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     let mut token = state
         .get_session_token()
         .ok_or_else(|| "No session token available".to_string())?;
-    revalidate_recovery_epoch(
-        state,
-        &client,
-        &mut token,
+    revalidate_recovery_epoch(state, &client, &mut token, key_epoch, generation).await?;
+    authorize_publication_action(
+        &load_pending_checked(state)?,
+        &user_id,
         key_epoch,
-        generation,
-    )
-    .await?;
+        vela_client_recovery_policy::PublicationAction::UploadCloudCandidate,
+    )?;
 
     // Deliberately not further "encrypted" beyond this envelope: a lone
     // Shamir share (below the 2-of-3 threshold) is information-theoretically
@@ -974,14 +1507,16 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     // identify the account from Share 1 alone, without the user having to
     // remember/re-enter their account ID.
     let envelope = serde_json::json!({
-        "version": 2,
+        "version": 3,
         "user_id": user_id,
         "key_epoch": key_epoch,
+        "split_id": split_id,
+        "status": "candidate",
         "share_b64": B64.encode(&share1),
     });
     let payload = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
 
-    let remote_path = cloud_backup_remote_path(&user_id, key_epoch)?;
+    let remote_path = cloud_backup_candidate_remote_path(&user_id, key_epoch, &split_id)?;
     let remote_for_task = remote.clone();
     let path_for_task = remote_path.clone();
     tokio::task::spawn_blocking(move || {
@@ -993,18 +1528,15 @@ pub async fn setup_cloud_backup_recovery(state: &AppState, remote: String) -> Re
     // A different device can rotate while rclone is blocked on network I/O.
     // Do not claim this upload is a live recovery method unless the account is
     // still active at the epoch which produced it.
-    revalidate_recovery_epoch(
-        state,
-        &client,
-        &mut token,
-        key_epoch,
-        generation,
-    )
-    .await?;
+    revalidate_recovery_epoch(state, &client, &mut token, key_epoch, generation).await?;
 
-    let mut pending = load_pending(state);
+    let mut pending = load_pending_checked(state)?;
     require_pending_epoch(&pending, key_epoch)?;
+    if pending.split_id.as_deref() != Some(split_id.as_str()) {
+        return Err("Another local recovery split replaced this cloud candidate".into());
+    }
     pending.cloud_backup_delivered = true;
+    pending.cloud_remote = Some(remote.clone());
     save_pending(state, &pending)?;
 
     // Best-effort migration off the legacy shared path: if it currently
@@ -1052,22 +1584,45 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
+    fn corrupt_publication_journal_never_mints_a_replacement_split() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        state.unlock_for_test(&[41u8; 32]);
+        let path = state.store.store_path().join(RECOVERY_SETUP_FILE);
+        std::fs::write(&path, b"not-an-encrypted-journal").expect("corrupt fixture");
+
+        let error = ensure_shares_split(&state)
+            .expect_err("corruption must not be treated as an absent journal");
+        assert!(error.contains("could not be decrypted"));
+        assert_eq!(
+            std::fs::read(path).expect("journal retained"),
+            b"not-an-encrypted-journal"
+        );
+    }
+
+    #[test]
     fn per_account_path_contains_the_user_id() {
-        let path = cloud_backup_remote_path("9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607", 7).unwrap();
+        let path = cloud_backup_candidate_remote_path(
+            "9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607",
+            7,
+            "11111111-1111-1111-1111-111111111111",
+        )
+        .unwrap();
         assert_eq!(
             path,
-            "VELA/9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607/recovery-share-7.json"
+            "VELA/9f1c3b2a-4d5e-4f60-8a71-b2c3d4e5f607/recovery-share-7-11111111-1111-1111-1111-111111111111.json"
         );
     }
 
     #[test]
     fn per_account_path_rejects_path_traversal_and_separators() {
-        assert!(cloud_backup_remote_path("..", 1).is_err());
-        assert!(cloud_backup_remote_path("../other/recovery-share", 1).is_err());
-        assert!(cloud_backup_remote_path("a/b", 1).is_err());
-        assert!(cloud_backup_remote_path("a\\b", 1).is_err());
-        assert!(cloud_backup_remote_path("", 1).is_err());
-        assert!(cloud_backup_remote_path("valid-user", 0).is_err());
+        let split = "11111111-1111-1111-1111-111111111111";
+        assert!(cloud_backup_candidate_remote_path("..", 1, split).is_err());
+        assert!(cloud_backup_candidate_remote_path("../other/recovery-share", 1, split).is_err());
+        assert!(cloud_backup_candidate_remote_path("a/b", 1, split).is_err());
+        assert!(cloud_backup_candidate_remote_path("a\\b", 1, split).is_err());
+        assert!(cloud_backup_candidate_remote_path("", 1, split).is_err());
+        assert!(cloud_backup_candidate_remote_path("valid-user", 0, split).is_err());
     }
 
     #[test]
@@ -1085,6 +1640,7 @@ mod tests {
         let response = crate::api::RecoveryRecoverResponse {
             share: "unused".into(),
             key_epoch: 8,
+            split_id: None,
             recovery_grant: "unused".into(),
         };
 
@@ -1093,6 +1649,7 @@ mod tests {
             "user".into(),
             "unused".into(),
             7,
+            None,
             response,
             "password".into(),
             None,
@@ -1101,6 +1658,59 @@ mod tests {
         .expect_err("mixed-epoch shares must fail before reconstruction");
         assert!(error.contains("epoch 7"), "unexpected error: {error}");
         assert!(error.contains("epoch 8"), "unexpected error: {error}");
+    }
+
+    #[tokio::test]
+    async fn contact_pair_recovery_rejects_unauthenticated_contact_envelopes() {
+        use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+
+        // Server: only the possession initiation is mocked. A legitimate
+        // ceremony would then authenticate the contact envelope locally —
+        // which fails here before any further network call can happen.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/recovery/initiate-proof"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "recovery_id": "22222222-2222-2222-2222-222222222222",
+                "challenge_b64": B64.encode([9u8; 32]),
+                "key_epoch": 4,
+            })))
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = Arc::new(AppState::for_test(dir.path()));
+        *state.server_url.write() = server.uri();
+
+        let (_request_pk, request_sk) = vela_crypto::kem::generate_keypair();
+        // An envelope that was never sealed by the trusted contact: the
+        // AEAD binding to account/epoch/split/coordinate must reject it.
+        let contact_response = serde_json::json!({
+            "account_id": "user",
+            "key_epoch": 4,
+            "split_id": "33333333-3333-3333-3333-333333333333",
+            "coordinate": 3,
+            "envelope_b64": B64.encode([1u8; 64]),
+        });
+
+        let error = complete_account_recovery_with_contact(
+            &state,
+            "user".into(),
+            "AAAA".into(),
+            4,
+            Some("33333333-3333-3333-3333-333333333333".into()),
+            RecoveryShareChannelParam::Cloud,
+            B64.encode(request_sk.to_bytes()),
+            contact_response.to_string(),
+            "password".into(),
+            None,
+        )
+        .await
+        .expect_err("forged contact envelope must fail closed");
+        assert!(
+            error.contains("could not be authenticated"),
+            "unexpected error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1128,14 +1738,8 @@ mod tests {
                 .await;
             let client = ApiClient::new(&server.uri());
             let mut token = "token".to_string();
-            revalidate_recovery_epoch(
-                &state,
-                &client,
-                &mut token,
-                3,
-                state.session_generation(),
-            )
-            .await
+            revalidate_recovery_epoch(&state, &client, &mut token, 3, state.session_generation())
+                .await
         }
 
         probe(3, "active").await.expect("matching active epoch");
@@ -1178,10 +1782,42 @@ mod tests {
     }
 
     #[test]
+    fn version_three_requires_an_active_split_bound_pointer() {
+        let valid = serde_json::json!({
+            "version": 3,
+            "user_id": "user-y",
+            "key_epoch": 7,
+            "split_id": "35E9710A-938B-4A95-AE25-61F8C3C71B97",
+            "status": "active",
+            "share_b64": "AAAA",
+        });
+        let parsed = parse_cloud_backup_envelope(&serde_json::to_vec(&valid).unwrap()).unwrap();
+        assert_eq!(
+            parsed.split_id.as_deref(),
+            Some("35e9710a-938b-4a95-ae25-61f8c3c71b97")
+        );
+
+        for invalid in [
+            serde_json::json!({
+                "version": 3, "user_id": "user-y", "key_epoch": 7,
+                "status": "active", "share_b64": "AAAA",
+            }),
+            serde_json::json!({
+                "version": 3, "user_id": "user-y", "key_epoch": 7,
+                "split_id": "11111111-1111-1111-1111-111111111111",
+                "status": "candidate", "share_b64": "AAAA",
+            }),
+        ] {
+            assert!(parse_cloud_backup_envelope(&serde_json::to_vec(&invalid).unwrap()).is_err());
+        }
+    }
+
+    #[test]
     fn cloud_scan_keeps_only_the_highest_epoch_per_account() {
         let share = |user_id: &str, key_epoch: i64| CloudRecoveryShare {
             user_id: user_id.into(),
             key_epoch,
+            split_id: None,
             share_b64: format!("share-{key_epoch}"),
         };
         let shares = newest_cloud_shares(vec![
@@ -1276,7 +1912,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_epoch_one_setup_can_still_be_finalized() {
+    async fn incomplete_legacy_epoch_one_setup_cannot_be_finalized() {
         let dir = tempfile::tempdir().expect("tempdir");
         let state = Arc::new(AppState::for_test(dir.path()));
         state.unlock_for_test(&[29u8; 32]);
@@ -1285,14 +1921,17 @@ mod tests {
         pending.key_epoch = None;
         save_pending(&state, &pending).expect("save legacy shape");
 
-        finalize_recovery_setup(&state)
+        let error = finalize_recovery_setup(&state)
             .await
-            .expect("legacy epoch-one finalize");
-        let finalized = load_pending(&state);
-        assert_eq!(finalized.key_epoch, Some(1));
-        assert!(finalized.share1.is_none());
-        assert!(finalized.share2.is_none());
-        assert!(finalized.share3.is_none());
+            .expect_err("an incomplete legacy split must not be reported finalized");
+        assert!(error.contains("server share and cloud backup"));
+        let retained = load_pending(&state);
+        assert_eq!(retained.key_epoch, None);
+        assert!(retained.share1.is_some());
+        assert!(retained.share2.is_some());
+        assert!(retained.share3.is_some());
+        discard_recovery_setup(&state).expect("discard incomplete setup");
+        assert!(!state.store.store_path().join(RECOVERY_SETUP_FILE).exists());
     }
 
     #[test]
@@ -1334,7 +1973,10 @@ mod tests {
         save_pending(&state, &pending).expect("save tampered split");
 
         let err = remint_recovery_setup(&state).expect_err("verification must refuse");
-        assert!(err.contains("failed verification"), "unexpected error: {err}");
+        assert!(
+            err.contains("failed verification"),
+            "unexpected error: {err}"
+        );
         assert!(
             !state.store.store_path().join(RECOVERY_SETUP_FILE).exists(),
             "the unverified split must be deleted, not kept for delivery"

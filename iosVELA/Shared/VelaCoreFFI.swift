@@ -46,6 +46,33 @@ enum VelaCoreFFI {
         consume(vela_ffi_version())
     }
 
+    /// Next action from the shared hax-verified recovery publication reducer.
+    static func planRecoveryPublication(
+        _ journal: RecoveryPublicationJournal,
+        currentEpoch: Int,
+        accountMatches: Bool,
+        accountEpochActive: Bool
+    ) -> String? {
+        let request = json([
+            "journal_present": true,
+            "account_matches": accountMatches,
+            "split_id_present": !journal.splitID.isEmpty,
+            "cloud_share_present": !journal.cloudShareBase64.isEmpty,
+            "server_share_present": !journal.serverShareBase64.isEmpty,
+            "journal_epoch": journal.keyEpoch,
+            "current_epoch": currentEpoch,
+            "account_epoch_active": accountEpochActive,
+            "server_staged": journal.serverStaged,
+            "cloud_candidate_durable": journal.cloudCandidateDurable,
+            "server_finalized": journal.serverFinalized,
+            "cloud_active": journal.cloudActive,
+        ])
+        let response = request.withCString {
+            consume(vela_ffi_plan_recovery_publication_json($0))
+        }
+        return field(response, "action")
+    }
+
     // MARK: - Identity & auth
     //
     // The device signing key and the share decapsulation key never cross this
@@ -330,6 +357,58 @@ enum VelaCoreFFI {
         let request = json(["shares_b64": sharesBase64])
         let response = request.withCString { consume(vela_ffi_combine_recovery_json($0)) }
         return field(response, "rms_b64")
+    }
+
+    /// Production recovery boundary shared with desktop and Android. The Rust
+    /// policy requires exact account/epoch/channel binding and authenticated
+    /// shares before it returns an RMS. M18: accepts channel-tagged bound
+    /// shares for any distinct-channel pair (cloud + server, cloud +
+    /// trusted contact, server + trusted contact).
+    static func combinePairRecovery(
+        requestedUserID: String,
+        firstShareBase64: String,
+        firstChannel: String,
+        firstAccountID: String,
+        firstKeyEpoch: Int,
+        firstSplitID: String?,
+        secondShareBase64: String,
+        secondChannel: String,
+        secondAccountID: String,
+        secondKeyEpoch: Int,
+        secondSplitID: String?,
+        secondRecipientBound: Bool
+    ) -> String? {
+        var payload: [String: Any] = [
+            "shares_b64": [firstShareBase64, secondShareBase64],
+            "requested_user_id": requestedUserID
+        ]
+        var first: [String: Any] = [
+            "share_b64": firstShareBase64,
+            "channel": firstChannel,
+            "account_id": firstAccountID,
+            "key_epoch": firstKeyEpoch
+        ]
+        if let s = firstSplitID { first["split_id"] = s }
+        var second: [String: Any] = [
+            "share_b64": secondShareBase64,
+            "channel": secondChannel,
+            "account_id": secondAccountID,
+            "key_epoch": secondKeyEpoch,
+            "recipient_bound": secondRecipientBound
+        ]
+        if let s = secondSplitID { second["split_id"] = s }
+        payload["bound_shares"] = [first, second]
+        let request = json(payload)
+        let response = request.withCString { consume(vela_ffi_combine_recovery_json($0)) }
+        return field(response, "rms_b64")
+    }
+
+    /// Blind RMS-possession commitment staged with the server share (M18).
+    static func rmsPossessionHash(rms: Data) -> String? {
+        let response = withRmsBytes(rms) { rmsPtr, rmsLen in
+            consume(vela_ffi_rms_possession_hash_json(rmsPtr, rmsLen))
+        }
+        return field(response, "hash_b64")
     }
 
     static func passwordStrengthJSON(_ password: String) -> String {

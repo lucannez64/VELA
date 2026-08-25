@@ -26,51 +26,110 @@ const TABLES: &[Table] = &[
     Table {
         name: "users",
         cols: &[
-            "id", "recovery_share", "recovery_auth_hash", "created_at",
-            "recovery_webauthn_credential", "share_ek", "recovery_webauthn_cred_id",
-            "key_epoch", "rekey_state", "rekey_started_at", "rekey_starter", "rekey_id",
-            "last_rekey_id", "last_rekey_epoch",
+            "id",
+            "recovery_share",
+            "recovery_auth_hash",
+            "created_at",
+            "recovery_webauthn_credential",
+            "share_ek",
+            "recovery_webauthn_cred_id",
+            "key_epoch",
+            "rekey_state",
+            "rekey_started_at",
+            "rekey_starter",
+            "rekey_id",
+            "last_rekey_id",
+            "last_rekey_epoch",
         ],
     },
     Table {
         name: "devices",
         cols: &[
-            "id", "user_id", "device_name", "device_type", "last_active",
-            "hybrid_ek", "hybrid_vk", "enrolled_by", "rms_capsule", "revoked",
-            "revoked_at", "revoked_by", "created_at", "rms_capsule_epoch", "rekey_capable",
+            "id",
+            "user_id",
+            "device_name",
+            "device_type",
+            "last_active",
+            "hybrid_ek",
+            "hybrid_vk",
+            "enrolled_by",
+            "rms_capsule",
+            "revoked",
+            "revoked_at",
+            "revoked_by",
+            "created_at",
+            "rms_capsule_epoch",
+            "rekey_capable",
         ],
     },
     Table {
         name: "vault_chunks",
         cols: &[
-            "chunk_id", "user_id", "version", "lamport_clock", "last_writer",
-            "ciphertext", "created_at", "updated_at", "epoch",
+            "chunk_id",
+            "user_id",
+            "version",
+            "lamport_clock",
+            "last_writer",
+            "ciphertext",
+            "created_at",
+            "updated_at",
+            "epoch",
         ],
     },
     Table {
         name: "oram_buckets",
         cols: &[
-            "user_id", "tree_id", "bucket_index", "version", "lamport_clock",
-            "last_writer", "ciphertext", "created_at", "updated_at", "epoch",
+            "user_id",
+            "tree_id",
+            "bucket_index",
+            "version",
+            "lamport_clock",
+            "last_writer",
+            "ciphertext",
+            "created_at",
+            "updated_at",
+            "epoch",
         ],
     },
     Table {
         name: "share_inbox",
-        cols: &["id", "sender_user_id", "recipient_user_id", "capsule", "created_at"],
+        cols: &[
+            "id",
+            "sender_user_id",
+            "recipient_user_id",
+            "capsule",
+            "created_at",
+        ],
     },
     Table {
         name: "shared_items",
         cols: &[
-            "id", "sender_user_id", "recipient_user_id", "capsule", "created_at",
-            "updated_at", "revoked",
+            "id",
+            "sender_user_id",
+            "recipient_user_id",
+            "capsule",
+            "created_at",
+            "updated_at",
+            "revoked",
         ],
     },
     Table {
         name: "web_sessions",
         cols: &[
-            "id", "user_id", "approver_user_id", "poll_secret_hash", "ephemeral_pk",
-            "web_vk", "link_nonce", "mode", "status", "capsule", "approved_by",
-            "created_at", "expires_at", "key_epoch",
+            "id",
+            "user_id",
+            "approver_user_id",
+            "poll_secret_hash",
+            "ephemeral_pk",
+            "web_vk",
+            "link_nonce",
+            "mode",
+            "status",
+            "capsule",
+            "approved_by",
+            "created_at",
+            "expires_at",
+            "key_epoch",
         ],
     },
 ];
@@ -81,7 +140,9 @@ fn cell_to_json(v: &stoolap::Value) -> J {
     match v {
         Value::Null(_) => J::Null,
         Value::Integer(i) => J::Number((*i).into()),
-        Value::Float(f) => serde_json::Number::from_f64(*f).map(J::Number).unwrap_or(J::Null),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(J::Number)
+            .unwrap_or(J::Null),
         Value::Text(s) => J::String(s.to_string()),
         Value::Boolean(b) => J::Bool(*b),
         Value::Timestamp(ts) => J::String(ts.to_rfc3339()),
@@ -127,10 +188,18 @@ fn main() {
                     stoolap::Value::Null(_) => "NULL".to_string(),
                     stoolap::Value::Integer(x) => x.to_string(),
                     stoolap::Value::Float(f) => f.to_string(),
-                    stoolap::Value::Boolean(b) => if *b { "1".into() } else { "0".into() },
+                    stoolap::Value::Boolean(b) => {
+                        if *b {
+                            "1".into()
+                        } else {
+                            "0".into()
+                        }
+                    }
                     stoolap::Value::Timestamp(ts) => sql_escape(&ts.to_rfc3339()),
                     stoolap::Value::Text(s) => sql_escape(s),
-                    stoolap::Value::Extension(bytes) => sql_escape(&format!("\\x{}", B64.encode(bytes))),
+                    stoolap::Value::Extension(bytes) => {
+                        sql_escape(&format!("\\x{}", B64.encode(bytes)))
+                    }
                 };
                 arr.push(j);
                 vals.push(lit);
@@ -171,6 +240,8 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT UNIQUE NOT NULL, recovery_share TEXT, recovery_auth_hash TEXT,
     created_at TEXT NOT NULL, recovery_webauthn_credential TEXT,
     share_ek TEXT, recovery_webauthn_cred_id TEXT,
+    recovery_split_id TEXT, recovery_pending_share TEXT,
+    recovery_pending_split_id TEXT, recovery_pending_epoch INTEGER,
     key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
     rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT,
     last_rekey_id TEXT, last_rekey_epoch INTEGER);
@@ -225,7 +296,10 @@ COMMIT;
     for (name, (src, js)) in &report {
         let ok = src == js;
         all_ok &= ok;
-        println!("  parity {name}: source={src} exported={js} -> {}", if ok { "OK" } else { "MISMATCH" });
+        println!(
+            "  parity {name}: source={src} exported={js} -> {}",
+            if ok { "OK" } else { "MISMATCH" }
+        );
     }
     // simple non-crypto content hash: FNV-1a over the seed string
     let mut hash: u64 = 0xcbf29ce484222325;

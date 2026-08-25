@@ -391,13 +391,29 @@ actor VelaClient {
 
     // MARK: - Recovery share
 
-    func putRecoveryShare(_ shareBase64: String, keyEpoch: Int) async throws {
+    func putRecoveryShare(_ shareBase64: String, keyEpoch: Int, splitID: String, possessionHashBase64: String) async throws {
         guard keyEpoch >= 1 else {
             throw ServerError(status: 0, body: "recovery share epoch must be positive")
         }
+        guard !splitID.isEmpty else {
+            throw ServerError(status: 0, body: "recovery split ID is required")
+        }
+        guard !possessionHashBase64.isEmpty else {
+            throw ServerError(status: 0, body: "RMS possession hash is required")
+        }
         let _: EmptyResponse = try await request(
             "PUT", "/recovery/share",
-            json: ["share": shareBase64, "key_epoch": keyEpoch], auth: true)
+            json: ["share": shareBase64, "key_epoch": keyEpoch, "split_id": splitID,
+                   "possession_hash": possessionHashBase64], auth: true)
+    }
+
+    func finalizeRecoveryShare(keyEpoch: Int, splitID: String) async throws {
+        guard keyEpoch >= 1, !splitID.isEmpty else {
+            throw ServerError(status: 0, body: "valid recovery epoch and split ID are required")
+        }
+        let _: EmptyResponse = try await request(
+            "POST", "/recovery/share/finalize",
+            json: ["key_epoch": keyEpoch, "split_id": splitID], auth: true)
     }
 
     struct RecoveryShareResponse: Decodable { let share: String }
@@ -459,6 +475,7 @@ actor VelaClient {
         let shareBase64: String
         let recoveryGrant: String
         let keyEpoch: Int
+        let splitID: String?
     }
 
     /// Submits the WebAuthn assertion; the server releases Share 2 plus a
@@ -470,14 +487,19 @@ actor VelaClient {
         let (data, _) = try await requestRaw(
             "POST", "/recovery/recover", body: bodyData,
             headers: ["Content-Type": "application/json"], auth: false)
-        struct Resp: Decodable { let share: String; let recovery_grant: String; let key_epoch: Int }
+        struct Resp: Decodable {
+            let share: String
+            let recovery_grant: String
+            let key_epoch: Int
+            let split_id: String?
+        }
         let resp = try JSONDecoder().decode(Resp.self, from: data)
         guard resp.key_epoch >= 1 else {
             throw ServerError(status: 0, body: "server returned an invalid recovery epoch")
         }
         return RecoveryRecoverResult(
             shareBase64: resp.share, recoveryGrant: resp.recovery_grant,
-            keyEpoch: resp.key_epoch)
+            keyEpoch: resp.key_epoch, splitID: resp.split_id)
     }
 
     /// Registers this device's identity key against an existing account once

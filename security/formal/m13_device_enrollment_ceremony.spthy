@@ -1,0 +1,189 @@
+theory M13_DeviceEnrollmentCeremony
+/*
+  Permanent-device enrollment v3.
+
+  A grant is linear and bound to its opening device. The first joining device
+  fixes the public keys. The opener inspects those exact keys and produces a
+  signature binding them to the capsule. Completion consumes the confirmed
+  ceremony and preserves the same keys in the enrolled row and result. Result
+  collection requires the joining key. Revocation, expiry, and epoch commit
+  consume an authority needed by completion.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+functions: primary_sig/6 [private]
+
+rule OpenGrant:
+    [ Fr(~grant), Fr(~user), Fr(~opener), Fr(~primary_key), Fr(~epoch) ]
+  --[ GrantOpened(~grant, ~user, ~opener, ~epoch) ]->
+    [ Open(~grant, ~user, ~opener, ~epoch),
+      ActiveEpoch(~user, ~epoch), ActiveOpener(~user, ~opener),
+      !OpeningKey(~user, ~opener, ~primary_key) ]
+
+rule FirstClaimWins:
+    [ Open(G, U, D, E), Fr(~ek), Fr(~vk), Fr(~joining_key) ]
+  --[ DeviceClaimed(G, ~ek, ~vk) ]->
+    [ Claimed(G, U, D, E, ~ek, ~vk, ~joining_key),
+      !JoiningKey(G, ~vk, ~joining_key) ]
+
+rule InspectClaim:
+    [ Claimed(G, U, D, E, EK, VK, JK) ]
+  --[ ClaimInspected(G, U, D, EK, VK) ]->
+    [ Inspected(G, U, D, E, EK, VK, JK) ]
+
+rule ConfirmClaim:
+    [ Claimed(G, U, D, E, EK, VK, JK), !OpeningKey(U, D, PK), Fr(~capsule) ]
+  --[ HumanConfirmed(G, U, D, EK, VK),
+      PrimarySigned(G, U, D, EK, VK, ~capsule) ]->
+    [ Confirmed(G, U, D, E, EK, VK, JK, ~capsule,
+                primary_sig(PK, G, EK, VK, ~capsule, E)) ]
+
+rule ConfirmInspectedClaim:
+    [ Inspected(G, U, D, E, EK, VK, JK), !OpeningKey(U, D, PK), Fr(~capsule) ]
+  --[ HumanConfirmed(G, U, D, EK, VK),
+      PrimarySigned(G, U, D, EK, VK, ~capsule) ]->
+    [ Confirmed(G, U, D, E, EK, VK, JK, ~capsule,
+                primary_sig(PK, G, EK, VK, ~capsule, E)) ]
+
+rule CompleteEnrollment:
+    [ Confirmed(G, U, D, E, EK, VK, JK, C, primary_sig(PK, G, EK, VK, C, E)),
+      !OpeningKey(U, D, PK), ActiveEpoch(U, E), ActiveOpener(U, D), Fr(~new_device) ]
+  --[ EnrollmentCompleted(G, U, D, ~new_device, E, EK, VK, C),
+      DeviceEnrolled(G, U, ~new_device, EK, VK) ]->
+    [ ResultReady(G, U, ~new_device, VK, JK),
+      ActiveEpoch(U, E), ActiveOpener(U, D) ]
+
+rule CollectResult:
+    [ ResultReady(G, U, New, VK, JK), !JoiningKey(G, VK, JK) ]
+  --[ JoiningKeyProved(G, VK, JK), ResultCollected(G, U, New, VK) ]->
+    [ ResultCollectedState(G, U, New, VK) ]
+
+rule RevokeOpenerBeforeClaim:
+    [ Open(G, U, D, E), ActiveOpener(U, D) ]
+  --[ OpenerRevoked(G, U, D) ]->
+    [ Revoked(G) ]
+
+rule RevokeOpenerAfterClaim:
+    [ Claimed(G, U, D, E, EK, VK, JK), ActiveOpener(U, D) ]
+  --[ OpenerRevoked(G, U, D) ]->
+    [ Revoked(G) ]
+
+rule RevokeOpenerAfterInspection:
+    [ Inspected(G, U, D, E, EK, VK, JK), ActiveOpener(U, D) ]
+  --[ OpenerRevoked(G, U, D) ]->
+    [ Revoked(G) ]
+
+rule RevokeOpenerAfterConfirm:
+    [ Confirmed(G, U, D, E, EK, VK, JK, C, Sig), ActiveOpener(U, D) ]
+  --[ OpenerRevoked(G, U, D) ]->
+    [ Revoked(G) ]
+
+rule ExpireOpen:
+    [ Open(G, U, D, E) ]
+  --[ CeremonyExpired(G) ]->
+    [ Expired(G) ]
+
+rule ExpireClaimed:
+    [ Claimed(G, U, D, E, EK, VK, JK) ]
+  --[ CeremonyExpired(G) ]->
+    [ Expired(G) ]
+
+rule ExpireInspected:
+    [ Inspected(G, U, D, E, EK, VK, JK) ]
+  --[ CeremonyExpired(G) ]->
+    [ Expired(G) ]
+
+rule ExpireConfirmed:
+    [ Confirmed(G, U, D, E, EK, VK, JK, C, Sig) ]
+  --[ CeremonyExpired(G) ]->
+    [ Expired(G) ]
+
+rule CommitEpoch:
+    [ ActiveEpoch(U, E), Fr(~next_epoch) ]
+  --[ EpochCommitted(U, E, ~next_epoch) ]->
+    [ ActiveEpoch(U, ~next_epoch) ]
+
+lemma first_claim_is_unique:
+  "All G EK1 VK1 EK2 VK2 #i #j.
+     DeviceClaimed(G, EK1, VK1) @ i & DeviceClaimed(G, EK2, VK2) @ j
+     ==> #i = #j & EK1 = EK2 & VK1 = VK2"
+
+lemma inspection_is_bound_to_the_opener:
+  "All G U D EK VK #i.
+     ClaimInspected(G, U, D, EK, VK) @ i
+     ==> Ex E #j. GrantOpened(G, U, D, E) @ j & #j < #i"
+
+lemma completion_requires_human_confirmation:
+  "All G U D New E EK VK C #i.
+     EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ i
+     ==> Ex #j. HumanConfirmed(G, U, D, EK, VK) @ j & #j < #i"
+
+lemma completion_requires_the_primary_binding:
+  "All G U D New E EK VK C #i.
+     EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ i
+     ==> Ex #j. PrimarySigned(G, U, D, EK, VK, C) @ j & #j < #i"
+
+lemma enrolled_keys_are_exactly_the_claimed_keys:
+  "All G U New EK VK #i.
+     DeviceEnrolled(G, U, New, EK, VK) @ i
+     ==> Ex #j. DeviceClaimed(G, EK, VK) @ j & #j < #i"
+
+lemma at_most_one_completion_per_grant:
+  "All G U1 D1 N1 E1 EK1 VK1 C1 U2 D2 N2 E2 EK2 VK2 C2 #i #j.
+     EnrollmentCompleted(G, U1, D1, N1, E1, EK1, VK1, C1) @ i &
+     EnrollmentCompleted(G, U2, D2, N2, E2, EK2, VK2, C2) @ j
+     ==> #i = #j"
+
+lemma at_most_one_device_per_grant:
+  "All G U1 N1 EK1 VK1 U2 N2 EK2 VK2 #i #j.
+     DeviceEnrolled(G, U1, N1, EK1, VK1) @ i &
+     DeviceEnrolled(G, U2, N2, EK2, VK2) @ j
+     ==> #i = #j & N1 = N2"
+
+lemma result_requires_completion:
+  "All G U New VK #i.
+     ResultCollected(G, U, New, VK) @ i
+     ==> Ex D E EK C #j.
+           EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ j & #j < #i"
+
+lemma result_requires_the_claimed_key:
+  "All G U New VK #i.
+     ResultCollected(G, U, New, VK) @ i
+     ==> Ex JK #j. JoiningKeyProved(G, VK, JK) @ j & #j = #i"
+
+lemma result_key_is_exactly_the_claimed_key:
+  "All G U New VK #i.
+     ResultCollected(G, U, New, VK) @ i
+     ==> Ex EK #j. DeviceClaimed(G, EK, VK) @ j & #j < #i"
+
+lemma revocation_blocks_later_completion:
+  "All G U D #i #j New E EK VK C.
+     OpenerRevoked(G, U, D) @ i &
+     EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ j
+     ==> not (#i < #j)"
+
+lemma expiry_blocks_later_completion:
+  "All G #i #j U D New E EK VK C.
+     CeremonyExpired(G) @ i &
+     EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ j
+     ==> not (#i < #j)"
+
+lemma epoch_commit_blocks_stale_completion:
+  "All U E Next G D New EK VK C #i #j.
+     EpochCommitted(U, E, Next) @ i &
+     EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ j
+     ==> not (#i < #j)"
+
+lemma legitimate_ceremony_is_reachable:
+  exists-trace
+  "Ex G U D New E EK VK C #i #j.
+     ClaimInspected(G, U, D, EK, VK) @ i &
+     EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ j & #i < #j"
+
+lemma legitimate_result_collection_is_reachable:
+  exists-trace
+  "Ex G U New VK #i. ResultCollected(G, U, New, VK) @ i"
+
+end

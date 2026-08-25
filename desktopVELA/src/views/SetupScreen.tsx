@@ -119,7 +119,9 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
     }
   };
 
-  const completedSteps = Object.values(recoverySteps).filter(Boolean).length;
+  const requiredStepsCompleted = Number(recoverySteps.cloudBackup)
+    + Number(recoverySteps.securityKey);
+  const publicationReady = requiredStepsCompleted === 2;
 
   const handleOpenCloudBackupPicker = async () => {
     setCloudBackupError('');
@@ -155,11 +157,12 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
   };
 
   const handleFinishRecoverySetup = async () => {
+    setRecoveryError('');
     try {
       await invoke('finalize_recovery_setup');
     } catch (e) {
-      // Best-effort cleanup of the local pending-shares cache — the shares
-      // that were actually delivered are unaffected either way.
+      setRecoveryError(e instanceof Error ? e.message : String(e));
+      return;
     }
     onStepChange('complete');
   };
@@ -179,10 +182,7 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
   /// keeps "later" from meaning "never".
   const handleDeferRecoverySetup = async () => {
     try {
-      // Drop the half-finished split rather than leaving shares cached: a
-      // partial setup that is never completed is not worth keeping on disk,
-      // and starting again later re-splits from scratch anyway.
-      await invoke('finalize_recovery_setup');
+      await invoke('discard_recovery_setup');
     } catch (e) {
       // Best-effort, same as the completed path.
     }
@@ -589,25 +589,25 @@ export default function SetupScreen({ step, onStepChange, onComplete }: Props) {
           <div className="mb-6">
             <div className="flex justify-between text-sm text-on-surface-variant mb-2">
               <span>Recovery setup progress</span>
-              <span>{completedSteps >= 2 ? '2/2 complete' : `${completedSteps}/2 required`}</span>
+              <span>{publicationReady ? '2/2 complete' : `${requiredStepsCompleted}/2 required`}</span>
             </div>
             <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
               <div
                 className="h-full bg-primary rounded-full transition-all"
-                style={{ width: `${Math.min(completedSteps, 2) / 2 * 100}%` }}
+                style={{ width: `${requiredStepsCompleted / 2 * 100}%` }}
               />
             </div>
           </div>
 
           <button
             onClick={handleFinishRecoverySetup}
-            disabled={completedSteps < 2}
+            disabled={!publicationReady}
             className="w-full py-4 px-6 bg-gradient-to-r from-primary to-primary-dim text-on-primary font-bold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Continue
           </button>
 
-          {completedSteps < 2 && (
+          {!publicationReady && (
             <div className="mt-4">
               {!confirmingDefer ? (
                 <button

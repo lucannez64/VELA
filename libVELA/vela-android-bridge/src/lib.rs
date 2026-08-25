@@ -259,13 +259,66 @@ struct SplitRecoveryResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct CombineShareInput {
+    share_b64: String,
+    /// One of "cloud", "server", "trusted_contact" (M18 pair selection).
+    channel: String,
+    account_id: String,
+    key_epoch: i64,
+    #[serde(default)]
+    split_id: Option<String>,
+    #[serde(default)]
+    recipient_bound: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct CombineRecoveryRequest {
     shares_b64: Vec<String>,
+    #[serde(default)]
+    requested_user_id: Option<String>,
+    #[serde(default)]
+    cloud_user_id: Option<String>,
+    #[serde(default)]
+    cloud_key_epoch: Option<i64>,
+    #[serde(default)]
+    cloud_split_id: Option<String>,
+    #[serde(default)]
+    server_user_id: Option<String>,
+    #[serde(default)]
+    server_key_epoch: Option<i64>,
+    #[serde(default)]
+    server_split_id: Option<String>,
+    /// M18: channel-tagged bound shares. When present, exactly these two are
+    /// reconstructed through the verified pair-selection policy; the legacy
+    /// flat fields above remain for pre-M18 callers pinned to cloud+server.
+    #[serde(default)]
+    bound_shares: Vec<CombineShareInput>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CombineRecoveryResponse {
     rms_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PublicationPlanRequest {
+    journal_present: bool,
+    account_matches: bool,
+    split_id_present: bool,
+    cloud_share_present: bool,
+    server_share_present: bool,
+    journal_epoch: i64,
+    current_epoch: i64,
+    account_epoch_active: bool,
+    server_staged: bool,
+    cloud_candidate_durable: bool,
+    server_finalized: bool,
+    cloud_active: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PublicationPlanResponse {
+    action: String,
 }
 
 #[no_mangle]
@@ -467,7 +520,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityO
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| identity_open_share(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_open_share(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -487,7 +542,9 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityF
     _object: JObject,
     request_json: JString,
 ) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| identity_forget_all(request));
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_forget_all(request)
+    });
     jni_string(&mut env, &response)
 }
 
@@ -572,6 +629,35 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeCombineRe
     jni_string(&mut env, &response)
 }
 
+/// Blind RMS-possession commitment for the reconstructed RMS (M18).
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeRmsPossessionHashJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    rms: JByteArray,
+) -> jstring {
+    // No request JSON on this call; pass an empty JString via the shared
+    // secret-carrying helper by reusing the raw-secret extraction directly.
+    let response = match jni_secret_bytes(&mut env, &rms) {
+        Ok(bytes) => match rms_possession_hash_bytes(&bytes) {
+            Ok(hash_b64) => serde_json::json!({ "hash_b64": hash_b64 }).to_string(),
+            Err(error) => error_json(&error.to_string()),
+        },
+        Err(error) => error_json(&error.to_string()),
+    };
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativePlanRecoveryPublicationJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, plan_recovery_publication_json);
+    jni_string(&mut env, &response)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn vela_bridge_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
@@ -586,8 +672,7 @@ pub unsafe extern "C" fn vela_bridge_free_string(ptr: *mut c_char) {
 pub unsafe extern "C" fn vela_bridge_free_bytes(buffer: VelaByteBuffer) {
     if !buffer.ptr.is_null() && buffer.len > 0 {
         drop(Box::from_raw(std::slice::from_raw_parts_mut(
-            buffer.ptr,
-            buffer.len,
+            buffer.ptr, buffer.len,
         )));
     }
 }
@@ -641,7 +726,10 @@ fn decode_rms(input: &str) -> anyhow_like::Result<[u8; 32]> {
 }
 
 /// RMS handed over as raw bytes (JNI path, audit C-1).
-fn encrypt_vault_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {
+fn encrypt_vault_with_rms(
+    rms: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<EncryptVaultResponse> {
     let request: EncryptVaultRequest = serde_json::from_str(request_json)?;
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let _: VaultStore = serde_json::from_str(&request.vault_json)?;
@@ -652,7 +740,10 @@ fn encrypt_vault_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result
     })
 }
 
-fn decrypt_vault_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<DecryptVaultResponse> {
+fn decrypt_vault_with_rms(
+    rms: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<DecryptVaultResponse> {
     let request: DecryptVaultRequest = serde_json::from_str(request_json)?;
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
@@ -663,13 +754,15 @@ fn decrypt_vault_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result
     })
 }
 
-fn encrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {
+fn encrypt_vault_chunk_with_rms(
+    rms: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<EncryptVaultResponse> {
     let request: EncryptChunkRequest = serde_json::from_str(request_json)?;
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let _: VaultStore = serde_json::from_str(&request.vault_json)?;
     let key = chunk_key(&rms, &request.chunk_id);
-    let epoch = u64::try_from(request.key_epoch)
-        .map_err(|_| "vault key epoch must be positive")?;
+    let epoch = u64::try_from(request.key_epoch).map_err(|_| "vault key epoch must be positive")?;
     let ciphertext = rekey::seal_fleet_chunk(
         &key,
         request.vault_json.as_bytes(),
@@ -682,13 +775,15 @@ fn encrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::
     })
 }
 
-fn decrypt_vault_chunk_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<DecryptVaultResponse> {
+fn decrypt_vault_chunk_with_rms(
+    rms: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<DecryptVaultResponse> {
     let request: DecryptChunkRequest = serde_json::from_str(request_json)?;
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &request.chunk_id);
-    let epoch = u64::try_from(request.key_epoch)
-        .map_err(|_| "vault key epoch must be positive")?;
+    let epoch = u64::try_from(request.key_epoch).map_err(|_| "vault key epoch must be positive")?;
     let plaintext = rekey::open_fleet_chunk(
         &key,
         &ciphertext,
@@ -713,13 +808,26 @@ fn web_session_chunk_keys_with_rms(
     Ok(WebSessionChunkKeysResponse { chunk_keys })
 }
 
-fn split_recovery_with_rms(rms: &[u8], request_json: &str) -> anyhow_like::Result<SplitRecoveryResponse> {
+fn split_recovery_with_rms(
+    rms: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<SplitRecoveryResponse> {
     let request: SplitRecoveryRequest = serde_json::from_str(request_json)?;
     let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
     let shares = shamir::split(&rms, request.threshold, request.n)?;
     Ok(SplitRecoveryResponse {
         shares_b64: shares.iter().map(|s| B64.encode(s.to_bytes())).collect(),
     })
+}
+
+/// Blind RMS-possession commitment (M18). Staged with the server share so
+/// any two-share pair can prove RMS possession for enrollment without WebAuthn.
+fn rms_possession_hash_bytes(rms: &[u8]) -> anyhow_like::Result<String> {
+    if rms.len() != 32 {
+        return Err("rms must be exactly 32 bytes".into());
+    }
+    let rms: [u8; 32] = rms.try_into().expect("length checked");
+    Ok(B64.encode(vela_crypto::recovery::rms_possession_hash(&rms)))
 }
 
 fn encrypt_vault_json(request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {
@@ -785,7 +893,10 @@ fn identity_create(seal_key: &[u8], _request: &str) -> anyhow_like::Result<Ident
     identity_response(vela_crypto::identity::DeviceIdentity::generate()?, seal_key)
 }
 
-fn identity_import(seal_key: &[u8], request_json: &str) -> anyhow_like::Result<IdentityHandleResponse> {
+fn identity_import(
+    seal_key: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<IdentityHandleResponse> {
     let request: IdentityImportRequest = serde_json::from_str(request_json)?;
     let signing_sk = B64.decode(request.hybrid_sk_b64.as_bytes())?;
     let share_dk = if request.share_dk_b64.is_empty() {
@@ -806,7 +917,10 @@ fn identity_import(seal_key: &[u8], request_json: &str) -> anyhow_like::Result<I
     identity_response(identity, seal_key)
 }
 
-fn identity_open(seal_key: &[u8], request_json: &str) -> anyhow_like::Result<IdentityHandleResponse> {
+fn identity_open(
+    seal_key: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<IdentityHandleResponse> {
     let request: IdentityOpenRequest = serde_json::from_str(request_json)?;
     let sealed = B64.decode(request.sealed_b64.as_bytes())?;
     let key = raw_key32(seal_key)?;
@@ -980,9 +1094,131 @@ fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecov
             Ok(shamir::Share::from_bytes(&bytes)?)
         })
         .collect::<anyhow_like::Result<_>>()?;
-    let secret = shamir::reconstruct(&shares, 32)?;
+    let binding = (
+        request.requested_user_id.as_deref(),
+        request.cloud_user_id.as_deref(),
+        request.cloud_key_epoch,
+        request.server_user_id.as_deref(),
+        request.server_key_epoch,
+    );
+    // M18: channel-tagged bound shares go through the verified pair-selection
+    // policy, which admits every distinct-channel pair (cloud + server,
+    // cloud + trusted contact, server + trusted contact).
+    if !request.bound_shares.is_empty() {
+        let requested = request
+            .requested_user_id
+            .as_deref()
+            .ok_or("requested_user_id is required for bound account recovery")?;
+        if request.bound_shares.len() != 2 || shares.len() != 2 {
+            return Err("bound account recovery requires exactly two shares".into());
+        }
+        let channel = |name: &str| match name {
+            "cloud" => Ok(vela_crypto::recovery::RecoveryShareChannel::Cloud),
+            "server" => Ok(vela_crypto::recovery::RecoveryShareChannel::Server),
+            "trusted_contact" => Ok(vela_crypto::recovery::RecoveryShareChannel::TrustedContact),
+            other => Err(format!("unknown recovery share channel {other:?}")),
+        };
+        let first = &request.bound_shares[0];
+        let second = &request.bound_shares[1];
+        let recovered = vela_crypto::recovery::reconstruct_account_recovery(
+            requested,
+            vela_crypto::recovery::BoundRecoveryShare {
+                account_id: first.account_id.as_str(),
+                key_epoch: first.key_epoch,
+                split_id: first.split_id.as_deref(),
+                channel: channel(&first.channel)?,
+                recipient_bound: first.recipient_bound,
+                share: &shares[0],
+            },
+            vela_crypto::recovery::BoundRecoveryShare {
+                account_id: second.account_id.as_str(),
+                key_epoch: second.key_epoch,
+                split_id: second.split_id.as_deref(),
+                channel: channel(&second.channel)?,
+                recipient_bound: second.recipient_bound,
+                share: &shares[1],
+            },
+        )?;
+        return Ok(CombineRecoveryResponse {
+            rms_b64: B64.encode(recovered.rms),
+        });
+    }
+    let secret = match binding {
+        (
+            Some(requested),
+            Some(cloud_user),
+            Some(cloud_epoch),
+            Some(server_user),
+            Some(server_epoch),
+        ) => {
+            if shares.len() != 2 {
+                return Err("bound account recovery requires exactly two shares".into());
+            }
+            vela_crypto::recovery::reconstruct_account_recovery(
+                requested,
+                vela_crypto::recovery::BoundRecoveryShare {
+                    account_id: cloud_user,
+                    key_epoch: cloud_epoch,
+                    split_id: request.cloud_split_id.as_deref(),
+                    channel: vela_crypto::recovery::RecoveryShareChannel::Cloud,
+                    recipient_bound: false,
+                    share: &shares[0],
+                },
+                vela_crypto::recovery::BoundRecoveryShare {
+                    account_id: server_user,
+                    key_epoch: server_epoch,
+                    split_id: request.server_split_id.as_deref(),
+                    channel: vela_crypto::recovery::RecoveryShareChannel::Server,
+                    recipient_bound: false,
+                    share: &shares[1],
+                },
+            )?
+            .rms
+            .to_vec()
+        }
+        (None, None, None, None, None) => shamir::reconstruct(&shares, 32)?,
+        _ => return Err("incomplete account/epoch recovery binding".into()),
+    };
     Ok(CombineRecoveryResponse {
         rms_b64: B64.encode(secret),
+    })
+}
+
+fn plan_recovery_publication_json(
+    request_json: &str,
+) -> anyhow_like::Result<PublicationPlanResponse> {
+    let request: PublicationPlanRequest = serde_json::from_str(request_json)?;
+    let action = vela_client_recovery_policy::plan_publication_resume(
+        vela_client_recovery_policy::PublicationFacts {
+            journal_present: request.journal_present,
+            account_matches: request.account_matches,
+            split_id_present: request.split_id_present,
+            cloud_share_present: request.cloud_share_present,
+            server_share_present: request.server_share_present,
+            journal_epoch: request.journal_epoch,
+            current_epoch: request.current_epoch,
+            account_epoch_active: request.account_epoch_active,
+            server_staged: request.server_staged,
+            cloud_candidate_durable: request.cloud_candidate_durable,
+            server_finalized: request.server_finalized,
+            cloud_active: request.cloud_active,
+        },
+    );
+    Ok(PublicationPlanResponse {
+        action: match action {
+            vela_client_recovery_policy::PublicationAction::StageServer => "stage_server",
+            vela_client_recovery_policy::PublicationAction::UploadCloudCandidate => {
+                "upload_cloud_candidate"
+            }
+            vela_client_recovery_policy::PublicationAction::FinalizeServer => "finalize_server",
+            vela_client_recovery_policy::PublicationAction::PromoteCloudActive => {
+                "promote_cloud_active"
+            }
+            vela_client_recovery_policy::PublicationAction::Complete => "complete",
+            vela_client_recovery_policy::PublicationAction::Retire => "retire",
+            vela_client_recovery_policy::PublicationAction::Reject => "reject",
+        }
+        .to_string(),
     })
 }
 
@@ -1195,6 +1431,39 @@ mod tests {
     use super::*;
     use std::ffi::CString;
 
+    #[test]
+    fn verified_publication_planner_advances_and_retires_exact_journals() {
+        let request = |current_epoch, server_staged| {
+            serde_json::json!({
+                "journal_present": true, "account_matches": true,
+                "split_id_present": true, "cloud_share_present": true,
+                "server_share_present": true, "journal_epoch": 7,
+                "current_epoch": current_epoch, "account_epoch_active": true,
+                "server_staged": server_staged, "cloud_candidate_durable": false,
+                "server_finalized": false, "cloud_active": false
+            })
+            .to_string()
+        };
+        assert_eq!(
+            plan_recovery_publication_json(&request(7, false))
+                .unwrap()
+                .action,
+            "stage_server"
+        );
+        assert_eq!(
+            plan_recovery_publication_json(&request(7, true))
+                .unwrap()
+                .action,
+            "upload_cloud_candidate"
+        );
+        assert_eq!(
+            plan_recovery_publication_json(&request(8, true))
+                .unwrap()
+                .action,
+            "retire"
+        );
+    }
+
     /// Enrollment v3 (audit P-1): the three calls the joining side runs.
     ///
     /// These go through the plain impls rather than the JNI wrappers, which
@@ -1210,10 +1479,9 @@ mod tests {
         let hybrid_ek = B64.decode(&created.hybrid_ek_b64).unwrap();
         let hybrid_vk = B64.decode(&created.hybrid_vk_b64).unwrap();
 
-        let fp = identity_enrollment_fingerprint(
-            &serde_json::json!({ "handle": handle }).to_string(),
-        )
-        .expect("fingerprint");
+        let fp =
+            identity_enrollment_fingerprint(&serde_json::json!({ "handle": handle }).to_string())
+                .expect("fingerprint");
         assert_eq!(
             fp.fingerprint,
             vela_crypto::verification::enrollment_fingerprint(&hybrid_vk),
@@ -1229,7 +1497,11 @@ mod tests {
         )
         .unwrap();
         let parsed = vela_crypto::signing::HybridSignature::from_bytes(
-            B64.decode(&sig.signature).unwrap().as_slice().try_into().unwrap(),
+            B64.decode(&sig.signature)
+                .unwrap()
+                .as_slice()
+                .try_into()
+                .unwrap(),
         )
         .unwrap();
         assert!(vela_crypto::signing::verify(
@@ -1277,7 +1549,10 @@ mod tests {
     fn byte_buffers_survive_a_round_trip_with_spare_capacity() {
         let mut bytes = Vec::with_capacity(4096);
         bytes.extend_from_slice(b"ciphertext");
-        assert!(bytes.capacity() > bytes.len(), "the case that used to be UB");
+        assert!(
+            bytes.capacity() > bytes.len(),
+            "the case that used to be UB"
+        );
 
         let buffer = vec_to_buffer(bytes);
         assert_eq!(buffer.len, b"ciphertext".len());
@@ -1328,9 +1603,11 @@ mod tests {
         assert_eq!(decrypted.vault_json, vault_json);
 
         // Whole-vault path too.
-        let encrypted =
-            encrypt_vault_with_rms(&rms, &serde_json::json!({ "vault_json": vault_json }).to_string())
-                .expect("encrypt vault");
+        let encrypted = encrypt_vault_with_rms(
+            &rms,
+            &serde_json::json!({ "vault_json": vault_json }).to_string(),
+        )
+        .expect("encrypt vault");
         let decrypted = decrypt_vault_with_rms(
             &rms,
             &serde_json::json!({ "ciphertext_b64": encrypted.ciphertext_b64 }).to_string(),
@@ -1375,8 +1652,14 @@ mod tests {
             )
         };
         assert_eq!(decrypt(2).unwrap().vault_json, vault_json);
-        assert!(decrypt(1).is_err(), "an epoch-2 chunk must not open as epoch 1");
-        assert!(decrypt(3).is_err(), "an epoch-2 chunk must not open as epoch 3");
+        assert!(
+            decrypt(1).is_err(),
+            "an epoch-2 chunk must not open as epoch 1"
+        );
+        assert!(
+            decrypt(3).is_err(),
+            "an epoch-2 chunk must not open as epoch 3"
+        );
         for (candidate_rms, chunk_id, lamport) in [
             ([9u8; 32], "vault-data-000000", 9),
             (rms, "vault-data-000001", 9),
@@ -1490,6 +1773,57 @@ mod tests {
     }
 
     #[test]
+    fn bound_recovery_rejects_cross_account_and_mixed_epoch_inputs() {
+        let rms = [10u8; 32];
+        let shares = split_recovery_with_rms(
+            &rms,
+            &serde_json::json!({ "threshold": 2, "n": 3 }).to_string(),
+        )
+        .unwrap();
+        let request = |cloud_user: &str, cloud_epoch: i64, server_split: &str| {
+            serde_json::json!({
+                "shares_b64": shares.shares_b64[..2].to_vec(),
+                "requested_user_id": "account-a",
+                "cloud_user_id": cloud_user,
+                "cloud_key_epoch": cloud_epoch,
+                "cloud_split_id": "11111111-1111-1111-1111-111111111111",
+                "server_user_id": "account-a",
+                "server_key_epoch": 4,
+                "server_split_id": server_split
+            })
+            .to_string()
+        };
+
+        assert_eq!(
+            combine_recovery_bytes(&request(
+                "account-a",
+                4,
+                "11111111-1111-1111-1111-111111111111",
+            ))
+            .unwrap(),
+            rms
+        );
+        assert!(combine_recovery_bytes(&request(
+            "account-b",
+            4,
+            "11111111-1111-1111-1111-111111111111",
+        ))
+        .is_err());
+        assert!(combine_recovery_bytes(&request(
+            "account-a",
+            3,
+            "11111111-1111-1111-1111-111111111111",
+        ))
+        .is_err());
+        assert!(combine_recovery_bytes(&request(
+            "account-a",
+            4,
+            "22222222-2222-2222-2222-222222222222",
+        ))
+        .is_err());
+    }
+
+    #[test]
     fn encrypt_decrypt_vault_json_round_trips_through_crypto() {
         let rms = [7u8; 32];
         let vault_json = r#"{"items":[],"tombstones":[]}"#;
@@ -1594,7 +1928,10 @@ mod tests {
 
         let forget_request = serde_json::json!({ "handle": created.handle }).to_string();
         assert!(identity_forget(&forget_request).unwrap().ok);
-        assert!(identity_sign(&sign_request).is_err(), "a forgotten handle cannot sign");
+        assert!(
+            identity_sign(&sign_request).is_err(),
+            "a forgotten handle cannot sign"
+        );
     }
 
     /// Reopening the sealed blob has to yield the same device, or an app restart

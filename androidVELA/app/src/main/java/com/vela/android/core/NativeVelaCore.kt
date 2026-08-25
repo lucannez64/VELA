@@ -15,6 +15,38 @@ object NativeVelaCore {
         return callNative { nativeVersion() }
     }
 
+    fun planRecoveryPublication(
+        accountMatches: Boolean,
+        journalEpoch: Long,
+        currentEpoch: Long,
+        accountEpochActive: Boolean,
+        splitIdPresent: Boolean,
+        cloudSharePresent: Boolean,
+        serverSharePresent: Boolean,
+        serverStaged: Boolean,
+        cloudCandidateDurable: Boolean,
+        serverFinalized: Boolean,
+        cloudActive: Boolean,
+    ): String? = callNative {
+        val request = JSONObject()
+            .put("journal_present", true)
+            .put("account_matches", accountMatches)
+            .put("split_id_present", splitIdPresent)
+            .put("cloud_share_present", cloudSharePresent)
+            .put("server_share_present", serverSharePresent)
+            .put("journal_epoch", journalEpoch)
+            .put("current_epoch", currentEpoch)
+            .put("account_epoch_active", accountEpochActive)
+            .put("server_staged", serverStaged)
+            .put("cloud_candidate_durable", cloudCandidateDurable)
+            .put("server_finalized", serverFinalized)
+            .put("cloud_active", cloudActive)
+            .toString()
+        val response = JSONObject(nativePlanRecoveryPublicationJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("action")
+    }
+
     // The RMS crosses JNI as a ByteArray, never as a base64 String: JVM strings
     // are immutable, may be interned, are never zeroized, and survive in heap
     // dumps and crash reports (audit C-1). Callers wipe their array with
@@ -329,6 +361,64 @@ object NativeVelaCore {
         }
     }
 
+    fun combinePairRecovery(
+        requestedUserId: String,
+        firstShareB64: String,
+        firstChannel: String,
+        firstAccountId: String,
+        firstKeyEpoch: Long,
+        firstSplitId: String?,
+        secondShareB64: String,
+        secondChannel: String,
+        secondAccountId: String,
+        secondKeyEpoch: Long,
+        secondSplitId: String?,
+        secondRecipientBound: Boolean
+    ): ByteArray? {
+        return callNative {
+            val request = JSONObject()
+                .put("shares_b64", org.json.JSONArray(listOf(firstShareB64, secondShareB64)))
+                .put("requested_user_id", requestedUserId)
+                .put(
+                    "bound_shares",
+                    org.json.JSONArray(
+                        listOf(
+                            JSONObject()
+                                .put("share_b64", firstShareB64)
+                                .put("channel", firstChannel)
+                                .put("account_id", firstAccountId)
+                                .put("key_epoch", firstKeyEpoch)
+                                .put("split_id", firstSplitId ?: JSONObject.NULL),
+                            JSONObject()
+                                .put("share_b64", secondShareB64)
+                                .put("channel", secondChannel)
+                                .put("account_id", secondAccountId)
+                                .put("key_epoch", secondKeyEpoch)
+                                .put("split_id", secondSplitId ?: JSONObject.NULL)
+                                .put("recipient_bound", secondRecipientBound),
+                        )
+                    )
+                )
+                .toString()
+            val rms = ByteArray(32)
+            val response = JSONObject(nativeCombineRecoveryJson(request, rms))
+            response.optString("error").takeIf { it.isNotBlank() }?.let {
+                rms.fill(0)
+                error(it)
+            }
+            rms
+        }
+    }
+
+    /** Blind RMS-possession commitment staged with the server share (M18). */
+    fun rmsPossessionHash(rms: ByteArray): String? {
+        return callNative {
+            val response = JSONObject(nativeRmsPossessionHashJson(rms))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            response.getString("hash_b64")
+        }
+    }
+
     private inline fun <T> callNative(block: () -> T): T? {
         if (!loaded) return null
         return runCatching(block).getOrElse { error("Native VELA bridge call failed: ${it.message}") }
@@ -357,4 +447,6 @@ object NativeVelaCore {
     private external fun nativeSealShareJson(requestJson: String): String
     private external fun nativeSplitRecoveryJson(rms: ByteArray, requestJson: String): String
     private external fun nativeCombineRecoveryJson(requestJson: String, rmsOut: ByteArray): String
+    private external fun nativeRmsPossessionHashJson(rms: ByteArray): String
+    private external fun nativePlanRecoveryPublicationJson(requestJson: String): String
 }

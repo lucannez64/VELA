@@ -1775,6 +1775,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
+name = "hax-lib"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01a33cb227f97ee5c419064c31d7c55a7d895f28d8019ccdadc311cc036500c4"
+dependencies = [
+ "hax-lib-macros",
+ "num-bigint",
+ "num-traits",
+]
+
+[[package]]
+name = "hax-lib-macros"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28da835a5f153e9f3d0cc1f42ee605a1cfa9093c93348193793d60a1b0908b51"
+dependencies = [
+ "hax-lib-macros-types",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "hax-lib-macros-types"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eed327e9a28d6ee018a4a9ba842d4ee27e378c8a591d2beb6f42f32b24a02fcb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3104,6 +3141,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "proc-macro-error-attr2"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "proc-macro-error2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
+dependencies = [
+ "proc-macro-error-attr2",
+ "proc-macro2",
+ "quote",
  "syn 2.0.117",
 ]
 
@@ -5048,6 +5107,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "vela-client-recovery-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
+]
+
+[[package]]
 name = "vela-crypto"
 version = "0.1.0"
 dependencies = [
@@ -5062,8 +5128,30 @@ dependencies = [
  "rand_core 0.6.4",
  "sha2",
  "thiserror 1.0.69",
+ "vela-client-recovery-policy",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "vela-enrollment-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
+]
+
+[[package]]
+name = "vela-recovery-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
+]
+
+[[package]]
+name = "vela-rekey-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
 ]
 
 [[package]]
@@ -5109,8 +5197,19 @@ dependencies = [
  "url",
  "uuid",
  "vela-crypto",
+ "vela-enrollment-policy",
+ "vela-recovery-policy",
+ "vela-rekey-policy",
+ "vela-session-policy",
  "webauthn-rs",
  "zstd",
+]
+
+[[package]]
+name = "vela-session-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
 ]
 
 [[package]]

@@ -19,6 +19,7 @@ pub mod kdf;
 pub mod kem;
 pub mod oram;
 pub mod password_kdf;
+pub mod recovery;
 pub mod rekey;
 pub mod shamir;
 pub mod signing;

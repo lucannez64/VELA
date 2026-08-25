@@ -177,12 +177,12 @@ pub async fn put_path(
     let (write_epoch, read_epoch) =
         crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared)
             .await?;
-    let authority_epoch = session.write_epoch_authority(write_epoch)?;
     if write_epoch != read_epoch {
         return Err(AppError::Rekeyed(
             "ORAM writes are unavailable while a re-key is in progress".into(),
         ));
     }
+    let mutation_permit = session.write_mutation_permit(write_epoch)?;
 
     let incoming: u64 = body.buckets.iter().map(|b| b.ciphertext.len() as u64).sum();
     crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), incoming).await?;
@@ -239,7 +239,7 @@ pub async fn put_path(
                     TursoValue::Text(now.clone()),
                     TursoValue::Text(now.clone()),
                     TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Integer(authority_epoch),
+                    TursoValue::Integer(mutation_permit.epoch()),
                 ],
             ).await.map_err(|e| AppError::Internal(e.to_string()))?;
             if inserted != 1 {
@@ -278,7 +278,7 @@ pub async fn put_path(
                         TursoValue::Integer(bucket_index_i64),
                         TursoValue::Integer(bucket.if_match),
                         TursoValue::Integer(write_epoch),
-                        TursoValue::Integer(authority_epoch),
+                        TursoValue::Integer(mutation_permit.epoch()),
                     ],
                 )
                 .await

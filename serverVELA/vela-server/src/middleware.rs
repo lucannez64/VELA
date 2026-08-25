@@ -16,6 +16,10 @@ use axum::{
     http::{request::Parts, HeaderMap, HeaderValue},
 };
 use chrono::Utc;
+use vela_rekey_policy::{
+    MutationAuthority, MutationDecision, MutationKind, MutationPermit, MutationRequest,
+};
+use vela_session_policy::{RenewalDecision, RouteClass, RouteDecision, TokenClaims};
 
 use crate::{
     auth::token::{TokenScope, TokenService},
@@ -112,32 +116,24 @@ impl FromRequestParts<AppState> for AuthSession {
             ));
         }
 
-        // ── 6. Token renewal (if expiry is ≤5 min away) ──────────────────────
-        let renewal_threshold = claims.exp - chrono::Duration::minutes(5);
-        let new_token = if now >= renewal_threshold {
-            let remaining_secs = (claims.hard_cap - now).num_seconds().max(0) as u64;
-            let old_ttl_secs = (claims.exp - now).num_seconds().max(0) as u64;
+        // ── 6. Verified token renewal ────────────────────────────────────────
+        let renewal = vela_session_policy::plan_renewal(
+            TokenClaims {
+                scope: claims.scope,
+                key_epoch: claims.key_epoch,
+                expires_at: claims.exp.timestamp(),
+                hard_cap: claims.hard_cap.timestamp(),
+            },
+            now.timestamp(),
+        );
+        let new_token = match renewal {
+            RenewalDecision::Renew(plan) => {
+                let old_ttl_secs = (claims.exp - now).num_seconds().max(0) as u64;
 
-            // Once `exp` is already pinned at the session's hard cap, issuing
-            // again produces an identical exp with a fresh jti — pure churn
-            // (a revoke + issue + track write on every single request for the
-            // rest of the session) with no extension benefit. Skip it; the
-            // current token rides out to the hard cap unchanged.
-            if remaining_secs > 0 && claims.exp < claims.hard_cap {
-                // Issue the replacement token BEFORE revoking the current
-                // one: if issuance fails, the client keeps its still-valid
-                // token instead of being locked out (old jti revoked with no
-                // replacement, forcing a full re-auth).
-                // `issue_scoped`, not `issue`: renewing with the default scope
-                // would launder an ephemeral web-session token into a device
-                // token every 10 minutes, quietly undoing the RT-4 boundary.
-                let (refreshed, new_jti) = ts.issue_scoped_at_epoch(
-                    claims.user_id,
-                    claims.device_id,
-                    Some(claims.hard_cap),
-                    claims.scope,
-                    claims.key_epoch,
-                )?;
+                // Sign the verified replacement before revoking the current
+                // JTI. The plan preserves scope, epoch, and hard cap exactly.
+                let (refreshed, new_jti) =
+                    ts.issue_from_plan(claims.user_id, claims.device_id, plan)?;
                 let _ =
                     rate_limit::track_device_jti(store, &claims.device_id.to_string(), &new_jti);
                 if old_ttl_secs > 0 {
@@ -145,11 +141,13 @@ impl FromRequestParts<AppState> for AuthSession {
                         store.set_ex(&format!("jti:revoked:{}", claims.jti), &[1u8], old_ttl_secs);
                 }
                 Some(refreshed)
-            } else {
-                None
             }
-        } else {
-            None
+            RenewalDecision::Keep => None,
+            RenewalDecision::Reject => {
+                return Err(AppError::Unauthorized(
+                    "token capability claims cannot be renewed".into(),
+                ));
+            }
         };
 
         Ok(AuthSession {
@@ -164,20 +162,27 @@ impl FromRequestParts<AppState> for AuthSession {
 }
 
 impl AuthSession {
-    /// Return the epoch which must still be current at a vault mutation's SQL
-    /// boundary. A legacy web token is epoch 1; device tokens follow the
-    /// request's already-resolved epoch (including device-only shadow writes).
-    pub fn write_epoch_authority(&self, resolved_epoch: i64) -> Result<i64, AppError> {
-        if self.scope != TokenScope::WebSession {
-            return Ok(resolved_epoch);
+    /// Return the verified permit whose epoch must still be current at an
+    /// ACTIVE vault mutation's atomic SQL boundary. A legacy web token is
+    /// epoch 1; device tokens follow the request's already-resolved epoch.
+    pub fn write_mutation_permit(&self, resolved_epoch: i64) -> Result<MutationPermit, AppError> {
+        let (authority_epoch, authority) = if self.scope == TokenScope::WebSession {
+            (self.key_epoch.unwrap_or(1), MutationAuthority::WebSession)
+        } else {
+            (resolved_epoch, MutationAuthority::Device)
+        };
+        let request = MutationRequest {
+            declared_epoch: resolved_epoch,
+            authority_epoch,
+            kind: MutationKind::Vault,
+            authority,
+        };
+        match vela_rekey_policy::plan_active_mutation(request) {
+            MutationDecision::Permit(permit) => Ok(permit),
+            MutationDecision::Reject => Err(AppError::Rekeyed(format!(
+                "caller authority is at vault epoch {authority_epoch}, not write epoch {resolved_epoch}"
+            ))),
         }
-        let token_epoch = self.key_epoch.unwrap_or(1);
-        if token_epoch != resolved_epoch {
-            return Err(AppError::Rekeyed(format!(
-                "web session was granted at vault epoch {token_epoch}, not write epoch {resolved_epoch}"
-            )));
-        }
-        Ok(token_epoch)
     }
 }
 
@@ -221,7 +226,9 @@ impl FromRequestParts<AppState> for DeviceSession {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let session = AuthSession::from_request_parts(parts, state).await?;
-        if session.scope != TokenScope::Device {
+        let route_permit =
+            vela_session_policy::authorize_route(session.scope, RouteClass::PermanentAccount);
+        if !matches!(route_permit, RouteDecision::Allow(_)) {
             tracing::warn!(
                 user_id = %session.user_id,
                 session_id = %session.device_id,

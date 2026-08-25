@@ -12,6 +12,7 @@ final class AccountViewModel: ObservableObject {
     @Published var recoveryShares: [String] = []   // shares to hand to the user after setup
 
     private let store: AccountStore
+    private let recoveryJournal = RecoveryPublicationJournalStore()
     private unowned let vault: VaultViewModel
     private let defaultServer: String
 
@@ -343,41 +344,114 @@ final class AccountViewModel: ObservableObject {
                     "This device has vault epoch \(localEpoch), but the server is "
                     + "\(initialEpoch.state) at epoch \(initialEpoch.epoch); sync before setting up recovery")
             }
-            guard let shares = VelaCoreFFI.splitRecovery(rms: rms, threshold: threshold, n: total),
-                  shares.count == total else {
-                throw Failure("recovery split failed")
+            var journal = try recoveryJournal.load()
+            if let existing = journal,
+               existing.accountID != account.userID || existing.keyEpoch != localEpoch {
+                // A rotation or account switch retires the old journal before
+                // any share from the new context can be published.
+                recoveryJournal.clear()
+                journal = nil
+            }
+            if journal == nil {
+                guard let shares = VelaCoreFFI.splitRecovery(
+                    rms: rms, threshold: threshold, n: total), shares.count == total else {
+                    throw Failure("recovery split failed")
+                }
+                guard let possessionHash = VelaCoreFFI.rmsPossessionHash(rms: rms) else {
+                    throw Failure("could not derive the RMS possession commitment")
+                }
+                journal = RecoveryPublicationJournal(
+                    accountID: account.userID,
+                    keyEpoch: localEpoch,
+                    splitID: UUID().uuidString.lowercased(),
+                    cloudShareBase64: shares[0],
+                    serverShareBase64: shares[1],
+                    trustedContactShareBase64: shares[2],
+                    possessionHashBase64: possessionHash)
+                // Write-ahead rule: this must survive before WebAuthn/server/cloud I/O.
+                try recoveryJournal.save(journal!)
+            }
+            guard var publication = journal else { throw Failure("recovery journal failed") }
+
+            if !publication.serverStaged {
+                try requireRecoveryAction(
+                    publication, account: account, currentEpoch: localEpoch,
+                    expected: "stage_server")
+                let startResp = try await client.startRecoveryWebAuthnRegistration()
+                let creationOptions = WebAuthnCeremony.unwrapPublicKey(startResp)
+                let credentialJSON = try await WebAuthnCeremony().register(optionsJSON: creationOptions)
+                let registered = try await client.finishRecoveryWebAuthnRegistration(credentialJSON: credentialJSON)
+                guard registered else { throw Failure("recovery passkey registration was not confirmed by the server") }
+
+                // Share 2 is gated by the passkey we just registered.
+                let recoveryEpoch = try await client.vaultEpoch()
+                await persistRenewedToken(from: client)
+                guard recoveryEpoch.state == "active", recoveryEpoch.epoch == localEpoch else {
+                    throw Failure("vault key rotation changed during recovery setup; start again")
+                }
+                try await client.putRecoveryShare(
+                    publication.serverShareBase64,
+                    keyEpoch: localEpoch,
+                    splitID: publication.splitID,
+                    possessionHashBase64: publication.possessionHashBase64)
+                await persistRenewedToken(from: client)
+                let afterSecurityKey = try await client.vaultEpoch()
+                await persistRenewedToken(from: client)
+                guard afterSecurityKey.state == "active", afterSecurityKey.epoch == localEpoch else {
+                    throw Failure("vault key rotation changed during recovery setup; start again")
+                }
+                publication.serverStaged = true
+                try recoveryJournal.save(publication)
             }
 
-            let startResp = try await client.startRecoveryWebAuthnRegistration()
-            let creationOptions = WebAuthnCeremony.unwrapPublicKey(startResp)
-            let credentialJSON = try await WebAuthnCeremony().register(optionsJSON: creationOptions)
-            let registered = try await client.finishRecoveryWebAuthnRegistration(credentialJSON: credentialJSON)
-            guard registered else { throw Failure("recovery passkey registration was not confirmed by the server") }
-
-            // Share 2 is gated by the passkey we just registered.
-            let recoveryEpoch = try await client.vaultEpoch()
-            await persistRenewedToken(from: client)
-            guard recoveryEpoch.state == "active", recoveryEpoch.epoch == localEpoch else {
-                throw Failure("vault key rotation changed during recovery setup; start again")
-            }
-            try await client.putRecoveryShare(shares[1], keyEpoch: localEpoch)
-            await persistRenewedToken(from: client)
-            let afterSecurityKey = try await client.vaultEpoch()
-            await persistRenewedToken(from: client)
-            guard afterSecurityKey.state == "active", afterSecurityKey.epoch == localEpoch else {
-                throw Failure("vault key rotation changed during recovery setup; start again")
+            if !publication.cloudCandidateDurable {
+                try requireRecoveryAction(
+                    publication, account: account, currentEpoch: localEpoch,
+                    expected: "upload_cloud_candidate")
+                try CloudRecoveryBackup.uploadCandidate(
+                    userID: account.userID,
+                    shareBase64: publication.cloudShareBase64,
+                    keyEpoch: localEpoch,
+                    splitID: publication.splitID)
+                let confirmedEpoch = try await client.vaultEpoch()
+                await persistRenewedToken(from: client)
+                guard confirmedEpoch.state == "active", confirmedEpoch.epoch == localEpoch else {
+                    throw Failure("vault key rotation changed during cloud backup; start recovery setup again")
+                }
+                publication.cloudCandidateDurable = true
+                try recoveryJournal.save(publication)
             }
 
-            try CloudRecoveryBackup.upload(
-                userID: account.userID, shareBase64: shares[0], keyEpoch: localEpoch)
-            let confirmedEpoch = try await client.vaultEpoch()
-            await persistRenewedToken(from: client)
-            guard confirmedEpoch.state == "active", confirmedEpoch.epoch == localEpoch else {
-                throw Failure("vault key rotation changed during cloud backup; start recovery setup again")
+            if !publication.serverFinalized {
+                try requireRecoveryAction(
+                    publication, account: account, currentEpoch: localEpoch,
+                    expected: "finalize_server")
+                try await client.finalizeRecoveryShare(
+                    keyEpoch: localEpoch, splitID: publication.splitID)
+                await persistRenewedToken(from: client)
+                publication.serverFinalized = true
+                try recoveryJournal.save(publication)
             }
+
+            if !publication.cloudActive {
+                try requireRecoveryAction(
+                    publication, account: account, currentEpoch: localEpoch,
+                    expected: "promote_cloud_active")
+                try CloudRecoveryBackup.promote(
+                    userID: account.userID,
+                    shareBase64: publication.cloudShareBase64,
+                    keyEpoch: localEpoch,
+                    splitID: publication.splitID)
+                publication.cloudActive = true
+                try recoveryJournal.save(publication)
+            }
+            try requireRecoveryAction(
+                publication, account: account, currentEpoch: localEpoch,
+                expected: "complete")
             // Share 3 (trusted contact) is shown to the user to distribute —
             // there is no automated channel for a trusted-contact handoff.
-            recoveryShares = [shares[2]]
+            recoveryShares = [publication.trustedContactShareBase64]
+            recoveryJournal.clear()
             AuditLog.shared.record("recovery_setup", "\(threshold)-of-\(total)")
             return "Recovery ready (\(threshold)-of-\(total)); Share 1 backed up to iCloud"
         }
@@ -388,7 +462,9 @@ final class AccountViewModel: ObservableObject {
     /// the WebAuthn assertion below), then register this device against the
     /// existing account and pull the vault down — the download side of
     /// `setupRecovery`, mirroring `joinWithCode`'s bootstrap sequence.
-    func restoreAccount(serverURL: String, userID: String, share1Base64: String,
+    func restoreAccount(serverURL: String, userID: String, cloudUserID: String,
+                         cloudSplitID: String?,
+                         share1Base64: String,
                          share1Epoch: Int?,
                          secure: VaultViewModel.UnlockMode, password: String?, deviceName: String) {
         run("Recovering account") { [self] in
@@ -400,12 +476,46 @@ final class AccountViewModel: ObservableObject {
             let credentialJSON = try await WebAuthnCeremony().assert(optionsJSON: requestOptions)
             let recoverResp = try await client.recoverAccount(
                 userID: userID, recoveryID: initiateResp.recoveryID, credentialJSON: credentialJSON)
-            if let share1Epoch, share1Epoch != recoverResp.keyEpoch {
+            guard let share1Epoch, share1Epoch >= 1 else {
+                throw Failure("the cloud recovery share must include a positive vault epoch")
+            }
+            if share1Epoch != recoverResp.keyEpoch {
                 throw Failure(
                     "the iCloud recovery share belongs to epoch \(share1Epoch), but the security-key share belongs to epoch \(recoverResp.keyEpoch)")
             }
+            let normalizedCloudSplitID: String?
+            if let raw = cloudSplitID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !raw.isEmpty {
+                guard let uuid = UUID(uuidString: raw) else {
+                    throw Failure("the iCloud recovery split ID is invalid")
+                }
+                normalizedCloudSplitID = uuid.uuidString.lowercased()
+            } else {
+                normalizedCloudSplitID = nil
+            }
+            let normalizedServerSplitID: String?
+            if let raw = recoverResp.splitID {
+                guard let uuid = UUID(uuidString: raw) else {
+                    throw Failure("the server recovery split ID is invalid")
+                }
+                normalizedServerSplitID = uuid.uuidString.lowercased()
+            } else {
+                normalizedServerSplitID = nil
+            }
 
-            guard let rmsB64 = VelaCoreFFI.combineRecovery(sharesBase64: [share1Base64, recoverResp.shareBase64]),
+            guard let rmsB64 = VelaCoreFFI.combinePairRecovery(
+                    requestedUserID: userID,
+                    firstShareBase64: share1Base64,
+                    firstChannel: "cloud",
+                    firstAccountID: cloudUserID,
+                    firstKeyEpoch: share1Epoch,
+                    firstSplitID: normalizedCloudSplitID,
+                    secondShareBase64: recoverResp.shareBase64,
+                    secondChannel: "server",
+                    secondAccountID: userID,
+                    secondKeyEpoch: recoverResp.keyEpoch,
+                    secondSplitID: normalizedServerSplitID,
+                    secondRecipientBound: false),
                   let rms = Data(base64Encoded: rmsB64) else {
                 throw Failure("couldn't reconstruct the vault key from the two shares")
             }
@@ -424,6 +534,14 @@ final class AccountViewModel: ObservableObject {
             }
             let verified = try await client.verify(deviceID: deviceID, challenge: challenge,
                                                     signature: signature, deviceName: deviceName, deviceType: "ios")
+
+            let currentEpoch = try await client.vaultEpoch()
+            guard currentEpoch.state == "active" else {
+                throw Failure("vault key rotation started during recovery; retry after it completes")
+            }
+            guard currentEpoch.epoch == recoverResp.keyEpoch else {
+                throw Failure("vault key epoch changed during recovery; discard the recovered key and retry")
+            }
 
             try vault.adoptVault(
                 rms: rms, keyEpoch: recoverResp.keyEpoch,
@@ -681,6 +799,7 @@ final class AccountViewModel: ObservableObject {
         }
         account = nil
         recoveryShares = []
+        recoveryJournal.clear()
         status = "Signed out"
         store.clear()
         if let loggingOut = loggingOut {
@@ -695,6 +814,22 @@ final class AccountViewModel: ObservableObject {
             state.token = token
             try? store.save(state)
             account = state
+        }
+    }
+
+    private func requireRecoveryAction(
+        _ journal: RecoveryPublicationJournal,
+        account: AccountState,
+        currentEpoch: Int,
+        expected: String
+    ) throws {
+        guard let action = VelaCoreFFI.planRecoveryPublication(
+            journal,
+            currentEpoch: currentEpoch,
+            accountMatches: journal.accountID == account.userID,
+            accountEpochActive: account.keyEpoch == currentEpoch),
+              action == expected else {
+            throw Failure("recovery publication journal rejected \(expected)")
         }
     }
 

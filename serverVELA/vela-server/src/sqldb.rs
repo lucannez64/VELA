@@ -128,6 +128,11 @@ impl TursoDb {
             "ALTER TABLE users ADD COLUMN rekey_id TEXT",
             "ALTER TABLE users ADD COLUMN last_rekey_id TEXT",
             "ALTER TABLE users ADD COLUMN last_rekey_epoch INTEGER",
+            "ALTER TABLE users ADD COLUMN recovery_split_id TEXT",
+            "ALTER TABLE users ADD COLUMN recovery_pending_share TEXT",
+            "ALTER TABLE users ADD COLUMN recovery_pending_split_id TEXT",
+            "ALTER TABLE users ADD COLUMN recovery_pending_epoch INTEGER",
+            "ALTER TABLE users ADD COLUMN recovery_pending_auth_hash TEXT",
             "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
@@ -284,6 +289,9 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT UNIQUE NOT NULL, recovery_share TEXT, recovery_auth_hash TEXT,
     created_at TEXT NOT NULL, recovery_webauthn_credential TEXT,
     share_ek TEXT, recovery_webauthn_cred_id TEXT,
+    recovery_split_id TEXT, recovery_pending_share TEXT,
+    recovery_pending_split_id TEXT, recovery_pending_epoch INTEGER,
+    recovery_pending_auth_hash TEXT,
     key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
     rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT,
     last_rekey_id TEXT, last_rekey_epoch INTEGER);
@@ -469,8 +477,8 @@ mod tests {
             "SELECT rekey_id, last_rekey_id, last_rekey_epoch FROM users LIMIT 0",
             vec![],
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         let indexes = db
             .query(

@@ -35,6 +35,7 @@ export default function RecoverySettings() {
   const [isSettingUpSecurityKey, setIsSettingUpSecurityKey] = useState(false);
 
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState('');
 
   const loadStatus = useCallback(async () => {
     try {
@@ -96,7 +97,9 @@ export default function RecoverySettings() {
   ] as const;
 
   const completedCount = methods.filter(m => m.done).length;
-  const configured = completedCount >= 2;
+  const requiredCount = Number(status.cloud_backup_delivered)
+    + Number(status.security_key_delivered);
+  const configured = requiredCount === 2;
 
   const handleStartEditing = () => {
     if (status.setup_in_progress) {
@@ -185,11 +188,13 @@ export default function RecoverySettings() {
 
   const handleFinish = async () => {
     setIsFinalizing(true);
+    setFinalizeError('');
     try {
       await invoke('finalize_recovery_setup');
     } catch (e) {
-      // Best-effort cleanup of the local pending-shares cache — the shares
-      // that were actually delivered are unaffected either way.
+      setFinalizeError(e instanceof Error ? e.message : String(e));
+      setIsFinalizing(false);
+      return;
     } finally {
       setIsFinalizing(false);
     }
@@ -436,23 +441,24 @@ export default function RecoverySettings() {
       <div>
         <div className="flex justify-between text-sm text-on-surface-variant mb-2">
           <span>Progress</span>
-          <span>{completedCount >= 2 ? '2/2 complete' : `${completedCount}/2 required`}</span>
+          <span>{configured ? '2/2 complete' : `${requiredCount}/2 required`}</span>
         </div>
         <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
           <div
             className="h-full bg-primary rounded-full transition-all"
-            style={{ width: `${Math.min(completedCount, 2) / 2 * 100}%` }}
+            style={{ width: `${requiredCount / 2 * 100}%` }}
           />
         </div>
       </div>
 
       <button
         onClick={handleFinish}
-        disabled={completedCount < 2 || isFinalizing}
+        disabled={!configured || isFinalizing}
         className="w-full py-3 bg-gradient-to-r from-primary to-primary-dim text-on-primary font-bold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isFinalizing ? 'Finishing...' : 'Finish recovery setup'}
       </button>
+      {finalizeError && <p className="text-sm text-error">{finalizeError}</p>}
 
       {showTrustedContact && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">

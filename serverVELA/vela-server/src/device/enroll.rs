@@ -8,6 +8,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
+use vela_rekey_policy::{MutationAuthority, MutationDecision, MutationKind, MutationRequest};
 
 use crate::{
     error::{AppError, Result},
@@ -166,6 +167,19 @@ pub async fn post_enroll(
     if body.new_device.key_epoch < 1 {
         return Err(AppError::BadRequest("key_epoch must be positive".into()));
     }
+    let permit = match vela_rekey_policy::plan_active_mutation(MutationRequest {
+        declared_epoch: body.new_device.key_epoch,
+        authority_epoch: body.new_device.key_epoch,
+        kind: MutationKind::Enrollment,
+        authority: MutationAuthority::Device,
+    }) {
+        MutationDecision::Permit(permit) => permit,
+        MutationDecision::Reject => {
+            return Err(AppError::BadRequest(
+                "device enrollment requires a positive device-authority epoch".into(),
+            ));
+        }
+    };
 
     let new_device_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
@@ -201,7 +215,7 @@ pub async fn post_enroll(
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
             TursoValue::Text(device_a.user_id.to_string()),
-            TursoValue::Integer(body.new_device.key_epoch),
+            TursoValue::Integer(permit.epoch()),
         ],
     ).await.map_err(|e| AppError::Internal(e.to_string()))?;
     if inserted == 0 {

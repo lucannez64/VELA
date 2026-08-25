@@ -5,6 +5,34 @@ import XCTest
 /// account persistence, and the URLSession client (via a mock protocol).
 final class Phase4Tests: XCTestCase {
 
+    func testRecoveryPublicationJournalResumesTheSameFinalizedSplit() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vela-recovery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = RecoveryPublicationJournalStore(directory: directory)
+        var expected = RecoveryPublicationJournal(
+            accountID: "account-1", keyEpoch: 7,
+            splitID: "0f8fad5b-d9cb-469f-a165-70867728950e",
+            cloudShareBase64: "cloud", serverShareBase64: "server",
+            trustedContactShareBase64: "contact")
+        try store.save(expected)
+        expected.serverStaged = true
+        expected.cloudCandidateDurable = true
+        expected.serverFinalized = true
+        try store.save(expected)
+
+        XCTAssertEqual(try RecoveryPublicationJournalStore(directory: directory).load(), expected)
+    }
+
+    func testRecoveryPublicationJournalRejectsImpossibleActiveState() throws {
+        let malformed = RecoveryPublicationJournal(
+            accountID: "account-1", keyEpoch: 7,
+            splitID: "0f8fad5b-d9cb-469f-a165-70867728950e",
+            cloudShareBase64: "cloud", serverShareBase64: "server",
+            trustedContactShareBase64: "contact", cloudActive: true)
+        XCTAssertThrowsError(try malformed.validate())
+    }
+
     // MARK: FFI
 
     func testRecoverySplitThenCombine() {
@@ -278,8 +306,8 @@ final class Phase4Tests: XCTestCase {
         var requestNumber = 0
         MockURLProtocol.handler = { req in
             requestNumber += 1
-            XCTAssertEqual(req.url?.path, "/recovery/share")
             if requestNumber == 1 {
+                XCTAssertEqual(req.url?.path, "/recovery/share")
                 XCTAssertEqual(req.httpMethod, "PUT")
                 let body: Data
                 if let directBody = req.httpBody {
@@ -299,7 +327,14 @@ final class Phase4Tests: XCTestCase {
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
                 XCTAssertEqual(json["share"] as? String, "share-two")
                 XCTAssertEqual(json["key_epoch"] as? Int, 4)
+                XCTAssertEqual(
+                    json["split_id"] as? String,
+                    "35E9710A-938B-4A95-AE25-61F8C3C71B97")
+            } else if requestNumber == 2 {
+                XCTAssertEqual(req.url?.path, "/recovery/share/finalize")
+                XCTAssertEqual(req.httpMethod, "POST")
             } else {
+                XCTAssertEqual(req.url?.path, "/recovery/share")
                 XCTAssertEqual(req.httpMethod, "DELETE")
                 XCTAssertEqual(req.value(forHTTPHeaderField: "X-Vela-Epoch"), "4")
             }
@@ -311,9 +346,14 @@ final class Phase4Tests: XCTestCase {
             baseURL: URL(string: "https://vault.example")!, token: "TOKEN",
             session: URLSession(configuration: config))
 
-        try await client.putRecoveryShare("share-two", keyEpoch: 4)
+        try await client.putRecoveryShare(
+            "share-two", keyEpoch: 4,
+            splitID: "35E9710A-938B-4A95-AE25-61F8C3C71B97",
+            possessionHashBase64: "cG9zc2Vzc2lvbg==")
+        try await client.finalizeRecoveryShare(
+            keyEpoch: 4, splitID: "35E9710A-938B-4A95-AE25-61F8C3C71B97")
         try await client.deleteRecoveryShare(keyEpoch: 4)
-        XCTAssertEqual(requestNumber, 2)
+        XCTAssertEqual(requestNumber, 3)
     }
 
     func testVaultWritesDeclareTheirEpoch() async throws {

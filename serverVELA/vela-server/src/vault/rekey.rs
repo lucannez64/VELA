@@ -35,6 +35,11 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::HashMap;
+use vela_rekey_policy::{
+    AbortDecision, AttemptAuthority, CommitDecision, CommitFacts, CommitReplayFacts, EpochRoute,
+    Phase as PolicyPhase, RekeyState as PolicyState, ShadowDecision, StartDecision, StartFacts,
+    TimeoutDecision, TimeoutFacts, WriteDecision,
+};
 
 use crate::{
     error::{AppError, Result},
@@ -145,18 +150,26 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|t| (Utc::now().signed_duration_since(t)).num_seconds() > REKEY_TIMEOUT_SECS)
         .unwrap_or(true);
-    if !expired {
+    let timeout = TimeoutFacts {
+        expired,
+        rotation_id_present: ks.rotation_id.is_some(),
+    };
+    let TimeoutDecision::Rollback(after) =
+        vela_rekey_policy::plan_timeout(ks.policy_state(), timeout)
+    else {
         return Ok(ks.clone_state());
-    }
-    tracing::warn!(user_id = %user_id, "re-key timed out; rolling back to epoch {}", ks.epoch);
-    let rotation_id = ks.rotation_id.as_deref().unwrap_or_default();
-    if !rollback_rekey(state, user_id, ks.epoch, rotation_id).await? {
+    };
+    let Some(rotation_id) = ks.rotation_id.as_deref() else {
+        return Ok(ks.clone_state());
+    };
+    tracing::warn!(user_id = %user_id, "re-key timed out; rolling back to epoch {}", after.epoch);
+    if !rollback_rekey(state, user_id, after.epoch, rotation_id).await? {
         // A commit or explicit abort won the transition while this request was
         // deciding the timeout. Return the state which actually won.
         return load_key_state(state, user_id).await;
     }
     Ok(KeyState {
-        epoch: ks.epoch,
+        epoch: after.epoch,
         freezing: false,
         started_at: None,
         starter: None,
@@ -167,6 +180,17 @@ async fn maybe_rollback(state: &AppState, user_id: &str, ks: &KeyState) -> Resul
 }
 
 impl KeyState {
+    fn policy_state(&self) -> PolicyState {
+        PolicyState {
+            epoch: self.epoch,
+            phase: if self.freezing {
+                PolicyPhase::Freezing
+            } else {
+                PolicyPhase::Active
+            },
+        }
+    }
+
     fn clone_state(&self) -> KeyState {
         KeyState {
             epoch: self.epoch,
@@ -224,16 +248,18 @@ async fn rollback_rekey(
         // Capsules are attempt output too. Removing them in the same
         // transition prevents their epoch tag from satisfying the next
         // attempt's completeness check at the same N -> N+1 boundary.
-        tx.execute(
-            "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
-             WHERE user_id = ? AND rms_capsule_epoch = ?",
-            vec![
-                TursoValue::Text(user_id.to_string()),
-                TursoValue::Integer(epoch + 1),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        if let Some(target_epoch) = vela_rekey_policy::next_epoch(epoch) {
+            tx.execute(
+                "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
+                 WHERE user_id = ? AND rms_capsule_epoch = ?",
+                vec![
+                    TursoValue::Text(user_id.to_string()),
+                    TursoValue::Integer(target_epoch),
+                ],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        }
     }
     tx.commit()
         .await
@@ -256,28 +282,20 @@ pub async fn resolve_write_epoch(
     declared: Option<i64>,
 ) -> Result<(i64, i64)> {
     let ks = maybe_rollback(state, user_id, &load_key_state(state, user_id).await?).await?;
-    if ks.freezing {
-        // Shadow writes only: the re-keyed copy of a chunk at the NEXT epoch.
-        match declared {
-            Some(e) if e == ks.epoch + 1 => Ok((ks.epoch + 1, ks.epoch)),
-            _ => Err(AppError::Rekeyed(format!(
-                "a re-key is in progress; writes require epoch {}",
-                ks.epoch + 1
-            ))),
+    match vela_rekey_policy::resolve_write_epoch(ks.policy_state(), declared) {
+        WriteDecision::Accept(route) => Ok((route.write_epoch, route.read_epoch)),
+        WriteDecision::Reject if ks.freezing => {
+            let required = vela_rekey_policy::next_epoch(ks.epoch)
+                .map(|epoch| epoch.to_string())
+                .unwrap_or_else(|| "no representable successor".to_string());
+            Err(AppError::Rekeyed(format!(
+                "a re-key is in progress; writes require epoch {required}"
+            )))
         }
-    } else {
-        match declared {
-            Some(e) if e == ks.epoch => Ok((ks.epoch, ks.epoch)),
-            // Headerless writes are tolerated only for pre-rekey accounts.
-            // After epoch 1 they are indistinguishable from an offline client
-            // encrypting with a retired RMS, so accepting them would let stale
-            // ciphertext overwrite the rotated vault.
-            None if ks.epoch == 1 => Ok((ks.epoch, ks.epoch)),
-            _ => Err(AppError::Rekeyed(format!(
-                "epoch mismatch: account is at {}; re-sync and adopt before writing",
-                ks.epoch
-            ))),
-        }
+        WriteDecision::Reject => Err(AppError::Rekeyed(format!(
+            "epoch mismatch: account is at {}; re-sync and adopt before writing",
+            ks.epoch
+        ))),
     }
 }
 
@@ -295,27 +313,32 @@ pub async fn ensure_shadow_writer(
     if write_epoch == read_epoch {
         return Ok(());
     }
-    if session.scope != crate::auth::token::TokenScope::Device {
+    let ks = load_key_state(state, &session.user_id.to_string()).await?;
+    let facts = attempt_authority(&ks, session, rotation_id);
+    let decision = vela_rekey_policy::authorize_shadow(
+        ks.policy_state(),
+        EpochRoute {
+            write_epoch,
+            read_epoch,
+        },
+        facts,
+    );
+    if decision == ShadowDecision::Allow {
+        return Ok(());
+    }
+    if !facts.device_scope {
         return Err(AppError::Forbidden(
             "temporary web sessions cannot write re-key shadows".into(),
         ));
     }
-    if rotation_id.is_none() {
+    if !facts.rotation_id_present {
         return Err(AppError::BadRequest(
             "X-Vela-Rekey-Id header is required for shadow writes".into(),
         ));
     }
-    let ks = load_key_state(state, &session.user_id.to_string()).await?;
-    if !ks.freezing
-        || ks.epoch + 1 != write_epoch
-        || ks.starter.as_deref() != Some(session.device_id.to_string().as_str())
-        || ks.rotation_id.as_deref() != rotation_id
-    {
-        return Err(AppError::Forbidden(
-            "only the device which started this re-key may write shadows".into(),
-        ));
-    }
-    Ok(())
+    Err(AppError::Forbidden(
+        "only the device which started this re-key may write shadows".into(),
+    ))
 }
 
 /// Refresh the inactivity deadline after a shadow write actually succeeded.
@@ -369,6 +392,19 @@ fn ensure_starter(ks: &KeyState, session: &AuthSession) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn attempt_authority(
+    ks: &KeyState,
+    session: &AuthSession,
+    rotation_id: Option<&str>,
+) -> AttemptAuthority {
+    AttemptAuthority {
+        device_scope: session.scope == crate::auth::token::TokenScope::Device,
+        starter_matches: ks.starter.as_deref() == Some(session.device_id.to_string().as_str()),
+        rotation_id_present: rotation_id.is_some(),
+        rotation_id_matches: ks.rotation_id.as_deref() == rotation_id,
+    }
 }
 
 fn require_rotation_id<'a>(headers: &'a HeaderMap, ks: &KeyState) -> Result<&'a str> {
@@ -431,11 +467,6 @@ pub async fn post_start(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if !oram.is_empty() {
-        return Err(AppError::Conflict(
-            "vault key rotation is unavailable while ORAM buckets exist".into(),
-        ));
-    }
 
     // A capsule is useful only when its target retained the matching private
     // key and has an adoption implementation. Unknown/legacy devices default
@@ -449,11 +480,6 @@ pub async fn post_start(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if !incapable.is_empty() {
-        return Err(AppError::Conflict(
-            "vault key rotation requires every active device to sync once with a re-key-capable client; re-enroll legacy devices first".into(),
-        ));
-    }
 
     // The v1 capsule proves continuity from RMS_N to RMS_N+1. A device which
     // has not acknowledged the previous transition still holds an older RMS
@@ -468,13 +494,35 @@ pub async fn post_start(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if !pending_adoption.is_empty() {
-        return Err(AppError::Conflict(
-            "vault key rotation requires every active device to adopt and acknowledge the current epoch first".into(),
-        ));
-    }
-
-    let next = ks.epoch + 1;
+    let start_facts = StartFacts {
+        no_oram: oram.is_empty(),
+        all_devices_rekey_capable: incapable.is_empty(),
+        all_devices_acknowledged: pending_adoption.is_empty(),
+    };
+    let plan = match vela_rekey_policy::plan_start(ks.policy_state(), start_facts) {
+        StartDecision::Start(plan) => plan,
+        StartDecision::Reject if !start_facts.no_oram => {
+            return Err(AppError::Conflict(
+                "vault key rotation is unavailable while ORAM buckets exist".into(),
+            ));
+        }
+        StartDecision::Reject if !start_facts.all_devices_rekey_capable => {
+            return Err(AppError::Conflict(
+                "vault key rotation requires every active device to sync once with a re-key-capable client; re-enroll legacy devices first".into(),
+            ));
+        }
+        StartDecision::Reject if !start_facts.all_devices_acknowledged => {
+            return Err(AppError::Conflict(
+                "vault key rotation requires every active device to adopt and acknowledge the current epoch first".into(),
+            ));
+        }
+        StartDecision::Reject => {
+            return Err(AppError::Conflict(
+                "vault key epoch cannot advance to a representable successor".into(),
+            ));
+        }
+    };
+    let next = plan.to_epoch;
 
     // The inventory must be captured inside the same transaction as the
     // freeze CAS. Taken separately, a concurrent same-account write could
@@ -493,7 +541,7 @@ pub async fn post_start(
              WHERE user_id = ? AND epoch = ? ORDER BY chunk_id",
             vec![
                 TursoValue::Text(user_id.clone()),
-                TursoValue::Integer(ks.epoch),
+                TursoValue::Integer(plan.from_epoch),
             ],
         )
         .await
@@ -523,6 +571,11 @@ pub async fn post_start(
                AND NOT EXISTS (
                  SELECT 1 FROM devices
                   WHERE user_id = users.id AND revoked = 0
+                    AND rekey_capable = 0
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM devices
+                  WHERE user_id = users.id AND revoked = 0
                     AND rms_capsule_epoch IS NOT NULL
                )",
             vec![
@@ -530,7 +583,7 @@ pub async fn post_start(
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(rotation_id.clone()),
                 TursoValue::Text(user_id.clone()),
-                TursoValue::Integer(ks.epoch),
+                TursoValue::Integer(plan.from_epoch),
             ],
         )
         .await
@@ -547,7 +600,7 @@ pub async fn post_start(
         "DELETE FROM vault_chunks WHERE user_id = ? AND epoch != ?",
         vec![
             TursoValue::Text(user_id.clone()),
-            TursoValue::Integer(ks.epoch),
+            TursoValue::Integer(plan.from_epoch),
         ],
     )
     .await
@@ -558,7 +611,7 @@ pub async fn post_start(
 
     tracing::info!(
         user_id = %user_id,
-        from_epoch = ks.epoch,
+        from_epoch = plan.from_epoch,
         to_epoch = next,
         chunks = chunks.len(),
         "re-key started"
@@ -592,7 +645,16 @@ pub async fn post_capsules(
         return Err(AppError::Conflict("no re-key is in progress".into()));
     }
     ensure_starter(&ks, &session)?;
-    require_rotation_id(&headers, &ks)?;
+    let rotation_id = require_rotation_id(&headers, &ks)?;
+    let authority = attempt_authority(&ks, &session, Some(rotation_id));
+    if vela_rekey_policy::authorize_attempt(ks.policy_state(), authority) != ShadowDecision::Allow {
+        return Err(AppError::Forbidden(
+            "request is not authorized for this re-key attempt".into(),
+        ));
+    }
+    let capsule_epoch = vela_rekey_policy::next_epoch(ks.epoch).ok_or_else(|| {
+        AppError::Conflict("vault key epoch cannot advance to a representable successor".into())
+    })?;
     if body.capsules.len() > 64 {
         return Err(AppError::BadRequest("too many capsules".into()));
     }
@@ -619,14 +681,12 @@ pub async fn post_capsules(
                    )",
                 vec![
                     TursoValue::Text(capsule_b64.clone()),
-                    TursoValue::Integer(ks.epoch + 1),
+                    TursoValue::Integer(capsule_epoch),
                     TursoValue::Text(device_id.clone()),
                     TursoValue::Text(user_id.clone()),
                     TursoValue::Integer(ks.epoch),
                     TursoValue::Text(session.device_id.to_string()),
-                    TursoValue::Text(
-                        ks.rotation_id.as_deref().unwrap_or_default().to_string(),
-                    ),
+                    TursoValue::Text(ks.rotation_id.as_deref().unwrap_or_default().to_string()),
                 ],
             )
             .await
@@ -660,7 +720,6 @@ pub async fn post_commit(
     rate_limit(&state, &user_id)?;
 
     let ks = maybe_rollback(&state, &user_id, &load_key_state(&state, &user_id).await?).await?;
-    let new_epoch = ks.epoch + 1;
     if !ks.freezing {
         // Idempotent replay: if the caller targets the *current* epoch, its
         // commit already succeeded and only the response was lost. Answer
@@ -670,13 +729,15 @@ pub async fn post_commit(
             .get("X-Vela-Epoch")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok());
-        let replay_id = headers
-            .get("X-Vela-Rekey-Id")
-            .and_then(|v| v.to_str().ok());
-        if target_epoch == Some(ks.epoch)
-            && ks.last_rekey_epoch == Some(ks.epoch)
-            && replay_id.is_some()
-            && replay_id == ks.last_rekey_id.as_deref()
+        let replay_id = headers.get("X-Vela-Rekey-Id").and_then(|v| v.to_str().ok());
+        let replay = CommitReplayFacts {
+            target_epoch,
+            recorded_epoch: ks.last_rekey_epoch,
+            rotation_id_present: replay_id.is_some(),
+            rotation_id_matches: replay_id == ks.last_rekey_id.as_deref(),
+        };
+        if vela_rekey_policy::authorize_commit_replay(ks.policy_state(), replay)
+            == ShadowDecision::Allow
         {
             tracing::info!(
                 user_id = %user_id,
@@ -685,12 +746,19 @@ pub async fn post_commit(
             );
             return Ok(no_content(&session));
         }
-        return Err(AppError::Conflict(
-            "no re-key is in progress".into(),
-        ));
+        return Err(AppError::Conflict("no re-key is in progress".into()));
     }
     ensure_starter(&ks, &session)?;
     let rotation_id = require_rotation_id(&headers, &ks)?;
+    let authority = attempt_authority(&ks, &session, Some(rotation_id));
+    if vela_rekey_policy::authorize_attempt(ks.policy_state(), authority) != ShadowDecision::Allow {
+        return Err(AppError::Forbidden(
+            "request is not authorized for this re-key attempt".into(),
+        ));
+    }
+    let new_epoch = vela_rekey_policy::next_epoch(ks.epoch).ok_or_else(|| {
+        AppError::Conflict("vault key epoch cannot advance to a representable successor".into())
+    })?;
 
     // Never make N+1 authoritative unless it contains exactly one replacement
     // for every live N chunk and every active device has a capsule. The server
@@ -715,11 +783,6 @@ pub async fn post_commit(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if !missing_chunks.is_empty() {
-        return Err(AppError::Conflict(
-            "cannot commit re-key: one or more chunk shadows are missing".into(),
-        ));
-    }
     let missing_capsules = state
         .sqldb
         .query(
@@ -734,11 +797,28 @@ pub async fn post_commit(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    if !missing_capsules.is_empty() {
+    let commit_facts = CommitFacts {
+        authority,
+        chunk_shadows_complete: missing_chunks.is_empty(),
+        device_capsules_complete: missing_capsules.is_empty(),
+    };
+    let plan = vela_rekey_policy::plan_commit(ks.policy_state(), commit_facts);
+    if !commit_facts.chunk_shadows_complete {
+        return Err(AppError::Conflict(
+            "cannot commit re-key: one or more chunk shadows are missing".into(),
+        ));
+    }
+    if !commit_facts.device_capsules_complete {
         return Err(AppError::Conflict(
             "cannot commit re-key: one or more active devices has no capsule".into(),
         ));
     }
+    let CommitDecision::Commit(plan) = plan else {
+        return Err(AppError::Conflict(
+            "re-key is not authorized to commit".into(),
+        ));
+    };
+    let new_epoch = plan.to_epoch;
 
     // One atomic compare-and-swap both validates completeness and flips the
     // served epoch. A concurrent abort can only win or lose this statement;
@@ -749,7 +829,10 @@ pub async fn post_commit(
             "UPDATE users SET key_epoch = ?, rekey_state = NULL,
              rekey_started_at = NULL, rekey_starter = NULL, rekey_id = NULL,
              last_rekey_id = ?, last_rekey_epoch = ?,
-             recovery_share = NULL, recovery_auth_hash = NULL
+             recovery_share = NULL, recovery_split_id = NULL,
+             recovery_pending_share = NULL, recovery_pending_split_id = NULL,
+             recovery_pending_epoch = NULL, recovery_auth_hash = NULL,
+             recovery_pending_auth_hash = NULL
          WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
            AND rekey_starter = ? AND rekey_id = ?
            AND NOT EXISTS (
@@ -771,10 +854,10 @@ pub async fn post_commit(
                 TursoValue::Text(rotation_id.to_string()),
                 TursoValue::Integer(new_epoch),
                 TursoValue::Text(user_id.clone()),
-                TursoValue::Integer(ks.epoch),
+                TursoValue::Integer(plan.from_epoch),
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(rotation_id.to_string()),
-                TursoValue::Integer(ks.epoch),
+                TursoValue::Integer(plan.from_epoch),
                 TursoValue::Integer(new_epoch),
                 TursoValue::Integer(new_epoch),
             ],
@@ -823,21 +906,23 @@ pub async fn post_abort(
     }
     ensure_starter(&ks, &session)?;
     let rotation_id = require_rotation_id(&headers, &ks)?;
+    let authority = attempt_authority(&ks, &session, Some(rotation_id));
+    let after = match vela_rekey_policy::plan_abort(ks.policy_state(), authority) {
+        AbortDecision::Abort(after) => after,
+        AbortDecision::Reject => {
+            return Err(AppError::Forbidden(
+                "request is not authorized to abort this re-key attempt".into(),
+            ));
+        }
+    };
 
-    if !rollback_rekey(
-        &state,
-        &user_id,
-        ks.epoch,
-        rotation_id,
-    )
-    .await?
-    {
+    if !rollback_rekey(&state, &user_id, after.epoch, rotation_id).await? {
         return Err(AppError::Conflict(
             "re-key was committed or aborted concurrently".into(),
         ));
     }
 
-    tracing::info!(user_id = %user_id, epoch = ks.epoch, "re-key aborted");
+    tracing::info!(user_id = %user_id, epoch = after.epoch, "re-key aborted");
     Ok(no_content(&session))
 }
 

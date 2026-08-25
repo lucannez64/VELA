@@ -1,0 +1,174 @@
+theory M16_RecoveryPublicationConsistency
+/*
+  Two-phase recovery-share publication.
+
+  Two enrolled devices may create different Shamir polynomials at the same
+  account epoch. Staging is replaceable, but finalization consumes the one
+  pending slot and requires a durable cloud candidate for that exact split.
+  Only the winner may publish the mutable active cloud pointer and report the
+  recovery setup ready.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+rule SetupPublicationRound:
+    [ Fr(~user), Fr(~epoch), Fr(~splitA), Fr(~cloudA), Fr(~serverA),
+      Fr(~splitB), Fr(~cloudB), Fr(~serverB) ]
+  --[ PublicationRoundCreated(~user, ~epoch),
+      SplitCreated(~user, ~epoch, ~splitA, ~cloudA, ~serverA),
+      SplitCreated(~user, ~epoch, ~splitB, ~cloudB, ~serverB) ]->
+    [ AccountActive(~user, ~epoch), EmptyPending(~user, ~epoch),
+      StageReadyA(~user, ~epoch, ~splitA, ~cloudA, ~serverA),
+      StageReadyB(~user, ~epoch, ~splitB, ~cloudB, ~serverB),
+      UploadReadyA(~user, ~epoch, ~splitA, ~cloudA),
+      UploadReadyB(~user, ~epoch, ~splitB, ~cloudB) ]
+
+rule StageFirstCandidateA:
+    [ EmptyPending(U, E), StageReadyA(U, E, Split, Cloud, Server) ]
+  --[ ServerCandidateStaged(U, E, Split, Server) ]->
+    [ PendingA(U, E, Split, Cloud, Server) ]
+
+rule StageFirstCandidateB:
+    [ EmptyPending(U, E), StageReadyB(U, E, Split, Cloud, Server) ]
+  --[ ServerCandidateStaged(U, E, Split, Server) ]->
+    [ PendingB(U, E, Split, Cloud, Server) ]
+
+rule ReplacePendingAWithB:
+    [ PendingA(U, E, OldSplit, OldCloud, OldServer),
+      StageReadyB(U, E, NewSplit, NewCloud, NewServer) ]
+  --[ PendingCandidateReplaced(U, E, OldSplit, NewSplit),
+      ServerCandidateStaged(U, E, NewSplit, NewServer) ]->
+    [ PendingB(U, E, NewSplit, NewCloud, NewServer) ]
+
+rule ReplacePendingBWithA:
+    [ PendingB(U, E, OldSplit, OldCloud, OldServer),
+      StageReadyA(U, E, NewSplit, NewCloud, NewServer) ]
+  --[ PendingCandidateReplaced(U, E, OldSplit, NewSplit),
+      ServerCandidateStaged(U, E, NewSplit, NewServer) ]->
+    [ PendingA(U, E, NewSplit, NewCloud, NewServer) ]
+
+rule UploadImmutableCloudCandidateA:
+    [ UploadReadyA(U, E, Split, Cloud) ]
+  --[ CloudCandidateDurable(U, E, Split, Cloud) ]->
+    [ !DurableCloudCandidate(U, E, Split, Cloud) ]
+
+rule UploadImmutableCloudCandidateB:
+    [ UploadReadyB(U, E, Split, Cloud) ]
+  --[ CloudCandidateDurable(U, E, Split, Cloud) ]->
+    [ !DurableCloudCandidate(U, E, Split, Cloud) ]
+
+rule FinalizeExactPendingCandidateA:
+    [ AccountActive(U, E), PendingA(U, E, Split, Cloud, Server),
+      !DurableCloudCandidate(U, E, Split, Cloud) ]
+  --[ RecoveryPublicationFinalized(U, E, Split, Cloud, Server) ]->
+    [ !ActiveRecoveryPublication(U, E, Split, Cloud, Server),
+      PromoteAuthority(U, E, Split, Cloud, Server) ]
+
+rule FinalizeExactPendingCandidateB:
+    [ AccountActive(U, E), PendingB(U, E, Split, Cloud, Server),
+      !DurableCloudCandidate(U, E, Split, Cloud) ]
+  --[ RecoveryPublicationFinalized(U, E, Split, Cloud, Server) ]->
+    [ !ActiveRecoveryPublication(U, E, Split, Cloud, Server),
+      PromoteAuthority(U, E, Split, Cloud, Server) ]
+
+rule RetryAlreadyFinalizedCandidate:
+    [ !ActiveRecoveryPublication(U, E, Split, Cloud, Server) ]
+  --[ FinalizationRetryAccepted(U, E, Split) ]->
+    [ ]
+
+rule PublishActiveCloudPointer:
+    [ PromoteAuthority(U, E, Split, Cloud, Server),
+      !ActiveRecoveryPublication(U, E, Split, Cloud, Server),
+      !DurableCloudCandidate(U, E, Split, Cloud) ]
+  --[ ActiveCloudPointerPublished(U, E, Split, Cloud) ]->
+    [ !ActiveCloudPointer(U, E, Split, Cloud) ]
+
+rule ReportRecoveryReady:
+    [ !ActiveRecoveryPublication(U, E, Split, Cloud, Server),
+      !ActiveCloudPointer(U, E, Split, Cloud) ]
+  --[ RecoverySetupReady(U, E, Split, Cloud, Server),
+      ReadyPairReconstructs(U, E, Split, Cloud, Server) ]->
+    [ ]
+
+rule RotateBeforeFinalization:
+    [ AccountActive(U, E), Fr(~next) ]
+  --[ PublicationEpochRotated(U, E, ~next) ]->
+    [ AccountRetired(U, E) ]
+
+lemma finalization_requires_staging:
+  "All U E Split Cloud Server #i.
+     RecoveryPublicationFinalized(U, E, Split, Cloud, Server) @ i
+     ==> Ex #j. ServerCandidateStaged(U, E, Split, Server) @ j & #j < #i"
+
+lemma finalization_requires_durable_exact_cloud_candidate:
+  "All U E Split Cloud Server #i.
+     RecoveryPublicationFinalized(U, E, Split, Cloud, Server) @ i
+     ==> Ex #j. CloudCandidateDurable(U, E, Split, Cloud) @ j & #j < #i"
+
+lemma finalized_pair_has_one_split_origin:
+  "All U E Split Cloud Server #i.
+     RecoveryPublicationFinalized(U, E, Split, Cloud, Server) @ i
+     ==> Ex #j. SplitCreated(U, E, Split, Cloud, Server) @ j & #j < #i"
+
+lemma replaced_candidate_cannot_win_without_restaging:
+  "All U E Old New Cloud Server #i #j.
+     PendingCandidateReplaced(U, E, Old, New) @ i &
+     RecoveryPublicationFinalized(U, E, Old, Cloud, Server) @ j & #i < #j
+     ==> Ex Server0 #k. ServerCandidateStaged(U, E, Old, Server0) @ k & #i < #k & #k < #j"
+
+lemma publication_round_has_at_most_one_finalization:
+  "All U E S1 C1 V1 S2 C2 V2 #i #j.
+     RecoveryPublicationFinalized(U, E, S1, C1, V1) @ i &
+     RecoveryPublicationFinalized(U, E, S2, C2, V2) @ j
+     ==> #i = #j"
+
+lemma active_pointer_requires_finalization:
+  "All U E Split Cloud #i.
+     ActiveCloudPointerPublished(U, E, Split, Cloud) @ i
+     ==> Ex Server #j. RecoveryPublicationFinalized(U, E, Split, Cloud, Server) @ j & #j < #i"
+
+lemma active_pointer_is_exact_finalized_cloud_share:
+  "All U E Split Cloud #i.
+     ActiveCloudPointerPublished(U, E, Split, Cloud) @ i
+     ==> Ex Server #j. SplitCreated(U, E, Split, Cloud, Server) @ j & #j < #i"
+
+lemma ready_requires_active_pointer:
+  "All U E Split Cloud Server #i.
+     RecoverySetupReady(U, E, Split, Cloud, Server) @ i
+     ==> Ex #j. ActiveCloudPointerPublished(U, E, Split, Cloud) @ j & #j < #i"
+
+lemma ready_requires_exact_finalization:
+  "All U E Split Cloud Server #i.
+     RecoverySetupReady(U, E, Split, Cloud, Server) @ i
+     ==> Ex #j. RecoveryPublicationFinalized(U, E, Split, Cloud, Server) @ j & #j < #i"
+
+lemma every_ready_setup_reconstructs_one_split:
+  "All U E Split Cloud Server #i.
+     RecoverySetupReady(U, E, Split, Cloud, Server) @ i
+     ==> Ex #j. ReadyPairReconstructs(U, E, Split, Cloud, Server) @ j"
+
+lemma rotation_blocks_old_epoch_finalization:
+  "All U E Next Split Cloud Server #i #j.
+     PublicationEpochRotated(U, E, Next) @ i &
+     RecoveryPublicationFinalized(U, E, Split, Cloud, Server) @ j
+     ==> not (#i < #j)"
+
+lemma retry_is_only_for_the_active_split:
+  "All U E Split #i.
+     FinalizationRetryAccepted(U, E, Split) @ i
+     ==> Ex Cloud Server #j.
+           RecoveryPublicationFinalized(U, E, Split, Cloud, Server) @ j & #j < #i"
+
+lemma competing_stage_race_is_reachable:
+  exists-trace
+  "Ex U E Old New Cloud Server #i #j.
+     PendingCandidateReplaced(U, E, Old, New) @ i &
+     RecoveryPublicationFinalized(U, E, New, Cloud, Server) @ j"
+
+lemma legitimate_ready_publication_is_reachable:
+  exists-trace
+  "Ex U E Split Cloud Server #i.
+     RecoverySetupReady(U, E, Split, Cloud, Server) @ i"
+
+end

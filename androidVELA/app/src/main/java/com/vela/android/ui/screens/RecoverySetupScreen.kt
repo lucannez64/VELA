@@ -114,21 +114,60 @@ fun RecoverySetupScreen(onBack: () -> Unit) {
                         scope.launch(Dispatchers.IO) {
                             try {
                                 val ceremony = WebAuthnCeremony(context)
-                                val (share1, share3) = VelaRepositories.sync.setupRecovery { options ->
+                                val recovery = VelaRepositories.sync.setupRecovery { options ->
                                     ceremony.register(options)
-                                }.let { it[0] to it[1] }
-
-                                val userId = VelaRepositories.serverIdentity.load()?.userId
-                                    ?: error("Register with the server before setting up recovery")
-                                val driveBackup = GoogleDriveRecoveryBackup(currentActivity)
-                                val token = driveBackup.getAccessToken { intentSender ->
-                                    currentActivity.awaitDriveConsent(intentSender)
                                 }
-                                driveBackup.upload(token, userId, share1)
+
+                                if (!recovery.publicationComplete) {
+                                    val userId = VelaRepositories.serverIdentity.load()?.userId
+                                        ?: error("Register with the server before setting up recovery")
+                                    val driveBackup = GoogleDriveRecoveryBackup(currentActivity)
+                                    val token = driveBackup.getAccessToken { intentSender ->
+                                        currentActivity.awaitDriveConsent(intentSender)
+                                    }
+                                    if (!recovery.cloudCandidateDurable) {
+                                        VelaRepositories.sync.authorizeRecoveryCloudCandidate(
+                                            recovery.splitId,
+                                            recovery.keyEpoch,
+                                        )
+                                        driveBackup.uploadCandidate(
+                                            token,
+                                            userId,
+                                            recovery.cloudShareB64,
+                                            recovery.keyEpoch,
+                                            recovery.splitId,
+                                        )
+                                        VelaRepositories.sync.markRecoveryCloudCandidateDurable(
+                                            recovery.splitId,
+                                            recovery.keyEpoch,
+                                        )
+                                    }
+                                    if (!recovery.serverFinalized) {
+                                        VelaRepositories.sync.finalizeRecoverySetup(
+                                            recovery.splitId,
+                                            recovery.keyEpoch,
+                                        )
+                                    }
+                                    VelaRepositories.sync.authorizeRecoveryCloudPromotion(
+                                        recovery.splitId,
+                                        recovery.keyEpoch,
+                                    )
+                                    driveBackup.promote(
+                                        token,
+                                        userId,
+                                        recovery.cloudShareB64,
+                                        recovery.keyEpoch,
+                                        recovery.splitId,
+                                    )
+                                    VelaRepositories.sync.markRecoveryCloudActive(
+                                        recovery.splitId,
+                                        recovery.keyEpoch,
+                                    )
+                                }
 
                                 withContext(Dispatchers.Main) {
                                     cloudBackupDone = true
-                                    trustedContactShare = share3
+                                    trustedContactShare = recovery.trustedContactShareB64
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {

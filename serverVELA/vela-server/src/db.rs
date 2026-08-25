@@ -30,6 +30,11 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             recovery_auth_hash TEXT,
             created_at      TIMESTAMP NOT NULL,
             recovery_webauthn_credential TEXT,
+            recovery_split_id TEXT,
+            recovery_pending_share TEXT,
+            recovery_pending_split_id TEXT,
+            recovery_pending_epoch INTEGER,
+            recovery_pending_auth_hash TEXT,
             key_epoch       INTEGER NOT NULL DEFAULT 1,
             last_rekey_id   TEXT,
             last_rekey_epoch INTEGER
@@ -128,6 +133,10 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     )?;
     let _ = db.execute("ALTER TABLE users ADD COLUMN recovery_auth_hash TEXT", ());
     let _ = db.execute(
+        "ALTER TABLE users ADD COLUMN recovery_pending_auth_hash TEXT",
+        (),
+    );
+    let _ = db.execute(
         "ALTER TABLE users ADD COLUMN recovery_webauthn_credential TEXT",
         (),
     );
@@ -182,11 +191,17 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
     // The account the browser committed to at `start`; only that user may read
     // the session keys or grant it. Pre-existing pending rows have NULL here and
     // fail closed (they live at most 5 minutes).
-    let _ = db.execute("ALTER TABLE web_sessions ADD COLUMN approver_user_id TEXT", ());
+    let _ = db.execute(
+        "ALTER TABLE web_sessions ADD COLUMN approver_user_id TEXT",
+        (),
+    );
     // SHA-256 of the secret only the browser that started the session holds; it
     // must present the secret to collect the one-shot capsule. NULL on rows
     // written before the check existed, which fail closed.
-    let _ = db.execute("ALTER TABLE web_sessions ADD COLUMN poll_secret_hash TEXT", ());
+    let _ = db.execute(
+        "ALTER TABLE web_sessions ADD COLUMN poll_secret_hash TEXT",
+        (),
+    );
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status)",
         (),
@@ -215,6 +230,10 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
         "ALTER TABLE users ADD COLUMN rekey_id TEXT",
         "ALTER TABLE users ADD COLUMN last_rekey_id TEXT",
         "ALTER TABLE users ADD COLUMN last_rekey_epoch INTEGER",
+        "ALTER TABLE users ADD COLUMN recovery_split_id TEXT",
+        "ALTER TABLE users ADD COLUMN recovery_pending_share TEXT",
+        "ALTER TABLE users ADD COLUMN recovery_pending_split_id TEXT",
+        "ALTER TABLE users ADD COLUMN recovery_pending_epoch INTEGER",
         "ALTER TABLE vault_chunks ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
@@ -242,7 +261,8 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
          ON vault_chunks(user_id, epoch)",
-        ())?;
+        (),
+    )?;
     let _ = db.execute("DROP INDEX IF EXISTS idx_oram_buckets_user_tree_bucket", ());
     db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
@@ -582,11 +602,17 @@ fn turso_text(v: &crate::sqldb::TursoValue) -> Option<String> {
 }
 
 fn turso_ts(v: &crate::sqldb::TursoValue) -> Option<DateTime<Utc>> {
-    tv_as_str(v).and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map(|d| d.with_timezone(&Utc))
+    tv_as_str(v)
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
 }
 
-fn cell<'a>(row: &'a crate::sqldb::VelaRow, idx: usize) -> Result<&'a crate::sqldb::TursoValue, AppError> {
-    row.get(idx).ok_or_else(|| AppError::Internal(format!("row missing column {idx}")))
+fn cell<'a>(
+    row: &'a crate::sqldb::VelaRow,
+    idx: usize,
+) -> Result<&'a crate::sqldb::TursoValue, AppError> {
+    row.get(idx)
+        .ok_or_else(|| AppError::Internal(format!("row missing column {idx}")))
 }
 
 /// Parse a `shared_items` row buffered from turso (migration target).
@@ -634,7 +660,9 @@ pub fn parse_device_row_turso(row: &crate::sqldb::VelaRow) -> Result<DeviceRow, 
             .decode(turso_text(cell(row, 6)?).unwrap_or_default())
             .map_err(|e| AppError::Internal(format!("hybrid_vk decode: {e}")))?,
         enrolled_by: turso_uuid(cell(row, 7)?),
-        rms_capsule: turso_text(cell(row, 8)?).map(|s| B64.decode(s)).transpose()
+        rms_capsule: turso_text(cell(row, 8)?)
+            .map(|s| B64.decode(s))
+            .transpose()
             .map_err(|e| AppError::Internal(format!("rms_capsule decode: {e}")))?,
         revoked: tv_as_bool(cell(row, 9)?).unwrap_or(false),
         revoked_at: turso_ts(cell(row, 10)?),
@@ -643,7 +671,6 @@ pub fn parse_device_row_turso(row: &crate::sqldb::VelaRow) -> Result<DeviceRow, 
             .ok_or_else(|| AppError::Internal("device created_at missing/malformed".into()))?,
     })
 }
-
 
 /// Parse a `vault_chunks` row buffered from turso (migration target).
 pub fn parse_chunk_row_turso(row: &crate::sqldb::VelaRow) -> Result<ChunkRow, AppError> {
@@ -684,51 +711,110 @@ const BOOTSTRAP_TABLES: &[(&str, &[&str])] = &[
     (
         "users",
         &[
-            "id", "recovery_share", "recovery_auth_hash", "created_at",
-            "recovery_webauthn_credential", "share_ek", "recovery_webauthn_cred_id",
-            "key_epoch", "rekey_state", "rekey_started_at", "rekey_starter", "rekey_id",
-            "last_rekey_id", "last_rekey_epoch",
+            "id",
+            "recovery_share",
+            "recovery_auth_hash",
+            "created_at",
+            "recovery_webauthn_credential",
+            "share_ek",
+            "recovery_webauthn_cred_id",
+            "key_epoch",
+            "rekey_state",
+            "rekey_started_at",
+            "rekey_starter",
+            "rekey_id",
+            "last_rekey_id",
+            "last_rekey_epoch",
         ],
     ),
     (
         "devices",
         &[
-            "id", "user_id", "device_name", "device_type", "last_active",
-            "hybrid_ek", "hybrid_vk", "enrolled_by", "rms_capsule", "revoked",
-            "revoked_at", "revoked_by", "created_at", "rms_capsule_epoch", "rekey_capable",
+            "id",
+            "user_id",
+            "device_name",
+            "device_type",
+            "last_active",
+            "hybrid_ek",
+            "hybrid_vk",
+            "enrolled_by",
+            "rms_capsule",
+            "revoked",
+            "revoked_at",
+            "revoked_by",
+            "created_at",
+            "rms_capsule_epoch",
+            "rekey_capable",
         ],
     ),
     (
         "vault_chunks",
         &[
-            "chunk_id", "user_id", "version", "lamport_clock", "last_writer",
-            "ciphertext", "created_at", "updated_at", "epoch",
+            "chunk_id",
+            "user_id",
+            "version",
+            "lamport_clock",
+            "last_writer",
+            "ciphertext",
+            "created_at",
+            "updated_at",
+            "epoch",
         ],
     ),
     (
         "oram_buckets",
         &[
-            "user_id", "tree_id", "bucket_index", "version", "lamport_clock",
-            "last_writer", "ciphertext", "created_at", "updated_at", "epoch",
+            "user_id",
+            "tree_id",
+            "bucket_index",
+            "version",
+            "lamport_clock",
+            "last_writer",
+            "ciphertext",
+            "created_at",
+            "updated_at",
+            "epoch",
         ],
     ),
     (
         "share_inbox",
-        &["id", "sender_user_id", "recipient_user_id", "capsule", "created_at"],
+        &[
+            "id",
+            "sender_user_id",
+            "recipient_user_id",
+            "capsule",
+            "created_at",
+        ],
     ),
     (
         "shared_items",
         &[
-            "id", "sender_user_id", "recipient_user_id", "capsule", "created_at",
-            "updated_at", "revoked",
+            "id",
+            "sender_user_id",
+            "recipient_user_id",
+            "capsule",
+            "created_at",
+            "updated_at",
+            "revoked",
         ],
     ),
     (
         "web_sessions",
         &[
-            "id", "user_id", "approver_user_id", "poll_secret_hash", "ephemeral_pk",
-            "web_vk", "link_nonce", "mode", "status", "capsule", "approved_by",
-            "created_at", "expires_at", "key_epoch",
+            "id",
+            "user_id",
+            "approver_user_id",
+            "poll_secret_hash",
+            "ephemeral_pk",
+            "web_vk",
+            "link_nonce",
+            "mode",
+            "status",
+            "capsule",
+            "approved_by",
+            "created_at",
+            "expires_at",
+            "key_epoch",
         ],
     ),
 ];
@@ -803,7 +889,9 @@ pub async fn bootstrap_stoolap_into_turso(
 }
 
 /// Parse a `vault_chunks` manifest row buffered from turso (migration target).
-pub fn parse_chunk_manifest_row_turso(row: &crate::sqldb::VelaRow) -> Result<ChunkManifestRow, AppError> {
+pub fn parse_chunk_manifest_row_turso(
+    row: &crate::sqldb::VelaRow,
+) -> Result<ChunkManifestRow, AppError> {
     Ok(ChunkManifestRow {
         chunk_id: row
             .text(0)
@@ -845,13 +933,14 @@ mod tests {
         .unwrap();
 
         init_schema(&db).expect("epoch columns must be added before epoch indexes");
-        db.query("SELECT epoch FROM vault_chunks LIMIT 0", ()).unwrap();
+        db.query("SELECT epoch FROM vault_chunks LIMIT 0", ())
+            .unwrap();
         db.query(
             "SELECT key_epoch, rekey_state, rekey_id, last_rekey_id, last_rekey_epoch
              FROM users LIMIT 0",
             (),
         )
-            .unwrap();
+        .unwrap();
     }
 
     #[tokio::test]
@@ -927,7 +1016,9 @@ mod tests {
         let turso = TursoDb::open(&path, 2).await.unwrap();
 
         // First run copies.
-        let copied = bootstrap_stoolap_into_turso(&stoolap, &turso).await.unwrap();
+        let copied = bootstrap_stoolap_into_turso(&stoolap, &turso)
+            .await
+            .unwrap();
         assert!(copied >= 5, "expected >=5 rows copied, got {copied}");
 
         let devs = turso
@@ -938,7 +1029,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(devs.len(), 1, "device should be visible in turso after bootstrap");
+        assert_eq!(
+            devs.len(),
+            1,
+            "device should be visible in turso after bootstrap"
+        );
         assert_eq!(devs[0].text(1), Some("epoch-2-capsule"));
         assert_eq!(devs[0].i64(2), Some(2));
         assert_eq!(devs[0].bool_int(3), Some(true));
@@ -951,7 +1046,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(users.len(), 1, "user should be visible in turso after bootstrap");
+        assert_eq!(
+            users.len(),
+            1,
+            "user should be visible in turso after bootstrap"
+        );
         assert_eq!(users[0].i64(1), Some(2));
         assert_eq!(users[0].text(2), Some("freezing"));
         assert_eq!(users[0].text(3), Some(device_id.as_str()));
@@ -964,7 +1063,11 @@ mod tests {
             ("oram_buckets", "tree_id"),
             ("web_sessions", "id"),
         ] {
-            let epoch_column = if table == "web_sessions" { "key_epoch" } else { "epoch" };
+            let epoch_column = if table == "web_sessions" {
+                "key_epoch"
+            } else {
+                "epoch"
+            };
             let rows = turso
                 .query(
                     &format!("SELECT {id_column}, {epoch_column} FROM {table}"),
@@ -977,7 +1080,9 @@ mod tests {
         }
 
         // Second run is a no-op (turso already populated).
-        let copied_again = bootstrap_stoolap_into_turso(&stoolap, &turso).await.unwrap();
+        let copied_again = bootstrap_stoolap_into_turso(&stoolap, &turso)
+            .await
+            .unwrap();
         assert_eq!(copied_again, 0, "bootstrap must be idempotent");
 
         let _ = std::fs::remove_file(&path);

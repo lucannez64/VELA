@@ -1,0 +1,158 @@
+theory M15_ClientRecoveryBoundary
+/*
+  Client-side cloud/server share reconstruction and RMS adoption.
+
+  The cloud envelope is adversary-controlled and may be replayed or relabelled.
+  The server response is authoritative for the requested account and active
+  epoch. Reconstruction requires the exact cloud origin, server origin, split,
+  account and epoch; share authentication yields the unique RMS for that split.
+  Adoption additionally requires that the same epoch is still active.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+functions: cloud_envelope/3, server_envelope/3
+
+rule SetupRecoveryMaterial:
+    [ Fr(~user), Fr(~epoch), Fr(~split), Fr(~rms),
+      Fr(~cloud_share), Fr(~server_share),
+      Fr(~old_epoch), Fr(~old_split), Fr(~old_rms),
+      Fr(~old_cloud), Fr(~old_server) ]
+  --[ RecoveryMaterialCreated(~user, ~epoch, ~split, ~rms,
+                              ~cloud_share, ~server_share),
+      RecoveryMaterialCreated(~user, ~old_epoch, ~old_split, ~old_rms,
+                              ~old_cloud, ~old_server) ]->
+    [ ReleaseReady(~user, ~epoch, ~split, ~rms, ~server_share),
+      AdoptionAuthority(~user, ~epoch, ~split, ~rms),
+      RotateReady(~user),
+      HonestCloud(~user, ~epoch, ~split, ~cloud_share),
+      !CloudShareOrigin(~user, ~epoch, ~split, ~cloud_share),
+      !ServerShareOrigin(~user, ~epoch, ~split, ~server_share),
+      !CloudShareOrigin(~user, ~old_epoch, ~old_split, ~old_cloud),
+      !ServerShareOrigin(~user, ~old_epoch, ~old_split, ~old_server),
+      Out(cloud_envelope(~user, ~epoch, ~cloud_share)),
+      Out(cloud_envelope(~user, ~old_epoch, ~old_cloud)) ]
+
+rule ReleaseServerShare:
+    [ ReleaseReady(U, E, Set, Rms, S), Fr(~attempt) ]
+  --[ ServerShareReleased(~attempt, U, E, Set, S) ]->
+    [ ServerResponse(~attempt, U, E, Set, S, Rms),
+      Out(server_envelope(U, E, S)) ]
+
+rule AcceptExactCloudContext:
+    [ ServerResponse(A, U, E, Set, S, Rms),
+      In(cloud_envelope(U, E, C)),
+      !CloudShareOrigin(U, E, Set, C),
+      !ServerShareOrigin(U, E, Set, S) ]
+  --[ RecoveryContextAccepted(A, U, E, Set, C, S) ]->
+    [ ExactSharePair(A, U, E, Set, C, S, Rms) ]
+
+rule AcceptHonestCloudContext:
+    [ ServerResponse(A, U, E, Set, S, Rms),
+      HonestCloud(U, E, Set, C),
+      !CloudShareOrigin(U, E, Set, C),
+      !ServerShareOrigin(U, E, Set, S) ]
+  --[ RecoveryContextAccepted(A, U, E, Set, C, S) ]->
+    [ ExactSharePair(A, U, E, Set, C, S, Rms) ]
+
+rule AuthenticateAndReconstruct:
+    [ ExactSharePair(A, U, E, Set, C, S, Rms) ]
+  --[ RecoverySharesAuthenticated(A, U, E, Set, C, S),
+      RmsReconstructed(A, U, E, Set, C, S, Rms) ]->
+    [ CandidateRms(A, U, E, Set, Rms) ]
+
+rule AdoptRecoveredRms:
+    [ CandidateRms(A, U, E, Set, Rms),
+      AdoptionAuthority(U, E, Set, Rms) ]
+  --[ RmsAdopted(A, U, E, Set, Rms) ]->
+    [ Adopted(U, E, Rms) ]
+
+rule RotateRecoveryMaterial:
+    [ RotateReady(U), AdoptionAuthority(U, E, Set, Rms),
+      Fr(~next_epoch), Fr(~next_split) ]
+  --[ RecoveryEpochRotated(U, E, ~next_epoch, Set, ~next_split) ]->
+    [ RetiredRecovery(U, E, Set) ]
+
+lemma adoption_requires_reconstruction:
+  "All A U E Set Rms #i.
+     RmsAdopted(A, U, E, Set, Rms) @ i
+     ==> Ex C S #j. RmsReconstructed(A, U, E, Set, C, S, Rms) @ j & #j < #i"
+
+lemma adoption_requires_joint_share_authentication:
+  "All A U E Set Rms #i.
+     RmsAdopted(A, U, E, Set, Rms) @ i
+     ==> Ex C S #j. RecoverySharesAuthenticated(A, U, E, Set, C, S) @ j & #j < #i"
+
+lemma reconstruction_requires_server_release:
+  "All A U E Set C S Rms #i.
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ i
+     ==> Ex #j. ServerShareReleased(A, U, E, Set, S) @ j & #j < #i"
+
+lemma reconstruction_requires_exact_context_acceptance:
+  "All A U E Set C S Rms #i.
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ i
+     ==> Ex #j. RecoveryContextAccepted(A, U, E, Set, C, S) @ j & #j < #i"
+
+lemma reconstructed_cloud_share_has_exact_origin:
+  "All A U E Set C S Rms #i.
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ i
+     ==> Ex R S0 #j. RecoveryMaterialCreated(U, E, Set, R, C, S0) @ j & #j < #i"
+
+lemma reconstructed_server_share_has_exact_origin:
+  "All A U E Set C S Rms #i.
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ i
+     ==> Ex R C0 #j. RecoveryMaterialCreated(U, E, Set, R, C0, S) @ j & #j < #i"
+
+lemma reconstructed_rms_has_exact_origin:
+  "All A U E Set C S Rms #i.
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ i
+     ==> Ex #j. RecoveryMaterialCreated(U, E, Set, Rms, C, S) @ j & #j < #i"
+
+lemma cross_account_cloud_share_cannot_reconstruct:
+  "All A U E Set C S Rms Other OtherE OtherSet OtherR OtherS #i #j.
+     RecoveryMaterialCreated(Other, OtherE, OtherSet, OtherR, C, OtherS) @ i &
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ j
+     ==> U = Other"
+
+lemma mixed_epoch_cloud_share_cannot_reconstruct:
+  "All A U E Set C S Rms OtherE OtherSet OtherR OtherS #i #j.
+     RecoveryMaterialCreated(U, OtherE, OtherSet, OtherR, C, OtherS) @ i &
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ j
+     ==> E = OtherE"
+
+lemma mixed_split_shares_cannot_reconstruct:
+  "All A U E Set C S Rms OtherSet OtherR OtherC #i #j.
+     RecoveryMaterialCreated(U, E, OtherSet, OtherR, OtherC, S) @ i &
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ j
+     ==> Set = OtherSet"
+
+lemma server_share_cannot_be_substituted_for_cloud_share:
+  "All A U E Set C S Rms #i.
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ i
+     ==> not (C = S)"
+
+lemma each_server_response_reconstructs_at_most_once:
+  "All A U1 E1 Set1 C1 S1 R1 U2 E2 Set2 C2 S2 R2 #i #j.
+     RmsReconstructed(A, U1, E1, Set1, C1, S1, R1) @ i &
+     RmsReconstructed(A, U2, E2, Set2, C2, S2, R2) @ j
+     ==> #i = #j"
+
+lemma rotation_blocks_old_epoch_adoption:
+  "All U E Next Set NextSet A Rms #i #j.
+     RecoveryEpochRotated(U, E, Next, Set, NextSet) @ i &
+     RmsAdopted(A, U, E, Set, Rms) @ j
+     ==> not (#i < #j)"
+
+lemma adopted_epoch_is_the_released_server_epoch:
+  "All A U E Set Rms #i.
+     RmsAdopted(A, U, E, Set, Rms) @ i
+     ==> Ex S #j. ServerShareReleased(A, U, E, Set, S) @ j & #j < #i"
+
+lemma legitimate_reconstruction_and_adoption_is_reachable:
+  exists-trace
+  "Ex A U E Set C S Rms #i #j.
+     RmsReconstructed(A, U, E, Set, C, S, Rms) @ i &
+     RmsAdopted(A, U, E, Set, Rms) @ j & #i < #j"
+
+end

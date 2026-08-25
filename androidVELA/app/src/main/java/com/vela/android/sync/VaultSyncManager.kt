@@ -28,6 +28,16 @@ data class SyncState(
     val canResolveConflict: Boolean = false
 )
 
+data class RecoverySetupResult(
+    val cloudShareB64: String,
+    val trustedContactShareB64: String,
+    val keyEpoch: Long,
+    val splitId: String,
+    val cloudCandidateDurable: Boolean = false,
+    val serverFinalized: Boolean = false,
+    val publicationComplete: Boolean = false,
+)
+
 internal fun requireMatchingSyncEpoch(manifestEpoch: Long, localEpoch: Long) {
     require(manifestEpoch >= 1 && localEpoch >= 1) { "Vault key epochs must be positive" }
     check(manifestEpoch == localEpoch) {
@@ -45,6 +55,7 @@ class VaultSyncManager(
 ) {
     private val shareKeyRegistrationLock = Any()
     private val recoverySetupMutex = Mutex()
+    private val recoveryJournal = RecoveryPublicationJournalStore(context)
     private val _state = MutableStateFlow(SyncState(lastSyncedAt = settingsStore.settings.value.lastSyncedAt))
     val state: StateFlow<SyncState> = _state
 
@@ -188,20 +199,13 @@ class VaultSyncManager(
     /// sync layer doesn't need an Activity context for the Credential Manager
     /// UI — it receives the already-unwrapped creation options and returns
     /// the attestation response JSON.
-    suspend fun setupRecovery(performRegistration: suspend (JSONObject) -> JSONObject): List<String> =
+    suspend fun setupRecovery(performRegistration: suspend (JSONObject) -> JSONObject): RecoverySetupResult =
         recoverySetupMutex.withLock {
             check(security.session.value.unlocked) { "Unlock VELA before setting up recovery" }
-            val rms = security.currentRmsCopy() ?: error("No unlocked vault key")
-            val shares = try {
-                NativeVelaCore.splitRecovery(rms, threshold = 2, n = 3)
-                    ?: error("Native VELA bridge could not split recovery shares")
-            } finally {
-                rms.fill(0)
-            }
-            check(shares.size == 3) { "Unexpected share count from split" }
-
             val settings = settingsStore.settings.value
             require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
+            val accountId = identityStore.load()?.userId
+                ?: error("Register with the server before setting up recovery")
             val client = AndroidVelaApiClient(settings.serverUrl, context)
             var token = authenticatedToken(client, settings.bearerToken)
             if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
@@ -212,35 +216,217 @@ class VaultSyncManager(
                 "Vault key rotation changed this device's recovery epoch; sync and retry recovery setup"
             }
 
-            val (startJson, tokenAfterStart) = client.startRecoveryWebAuthnRegistration(token)
-            tokenAfterStart?.let { token = it; settingsStore.updateBearerToken(it) }
+            var journal = recoveryJournal.load()
+            if (journal != null && (journal.accountId != accountId || journal.keyEpoch != localEpoch)) {
+                // Rotation/cross-account state is retired before any new write.
+                recoveryJournal.clear()
+                journal = null
+            }
+            if (journal == null) {
+                val rms = security.currentRmsCopy() ?: error("No unlocked vault key")
+                // M18: the blind RMS commitment is captured while the RMS is
+                // still in scope and staged with the server share.
+                val possessionHashB64 = NativeVelaCore.rmsPossessionHash(rms)
+                    ?: error("Native VELA bridge could not derive the possession hash")
+                val shares = try {
+                    NativeVelaCore.splitRecovery(rms, threshold = 2, n = 3)
+                        ?: error("Native VELA bridge could not split recovery shares")
+                } finally {
+                    rms.fill(0)
+                }
+                check(shares.size == 3) { "Unexpected share count from split" }
+                journal = RecoveryPublicationJournal(
+                    accountId = accountId,
+                    keyEpoch = localEpoch,
+                    splitId = java.util.UUID.randomUUID().toString(),
+                    cloudShareB64 = shares[0],
+                    serverShareB64 = shares[1],
+                    trustedContactShareB64 = shares[2],
+                    possessionHashB64 = possessionHashB64,
+                )
+                // Write-ahead rule: no WebAuthn or external share write before this commit.
+                recoveryJournal.save(journal)
+            }
+            var activeJournal = requireNotNull(journal)
 
-            val requestOptions = WebAuthnCeremony.unwrapPublicKey(startJson)
-            val credentialJson = performRegistration(requestOptions)
-
-            val (registered, tokenAfterFinish) =
-                client.finishRecoveryWebAuthnRegistration(token, credentialJson)
-            tokenAfterFinish?.let { token = it; settingsStore.updateBearerToken(it) }
-            check(registered) { "Recovery passkey registration was not confirmed by the server" }
-
-            client.putRecoveryShare(token, shares[1], localEpoch)?.let {
-                token = it
-                settingsStore.updateBearerToken(it)
+            if (activeJournal.cloudActive) {
+                // The active phase was committed before a crash but secret
+                // cleanup did not finish. No external operation may run again.
+                recoveryJournal.clear()
+                return@withLock RecoverySetupResult(
+                    cloudShareB64 = activeJournal.cloudShareB64,
+                    trustedContactShareB64 = activeJournal.trustedContactShareB64,
+                    keyEpoch = localEpoch,
+                    splitId = activeJournal.splitId,
+                    cloudCandidateDurable = true,
+                    serverFinalized = true,
+                    publicationComplete = true,
+                )
             }
 
-            // Do not hand old-epoch shares to cloud/contact channels if another
-            // device committed a rotation while the WebAuthn ceremony was open.
-            val after = client.getVaultEpoch(token)
-            after.newToken?.let { settingsStore.updateBearerToken(it) }
-            check(after.state == "active" && after.epoch == localEpoch) {
-                "Vault key rotation changed during recovery setup; sync and start again"
+            if (!activeJournal.serverStaged) {
+                requireRecoveryAction(activeJournal, localEpoch, "stage_server")
+                val (startJson, tokenAfterStart) = client.startRecoveryWebAuthnRegistration(token)
+                tokenAfterStart?.let { token = it; settingsStore.updateBearerToken(it) }
+
+                val requestOptions = WebAuthnCeremony.unwrapPublicKey(startJson)
+                val credentialJson = performRegistration(requestOptions)
+
+                val (registered, tokenAfterFinish) =
+                    client.finishRecoveryWebAuthnRegistration(token, credentialJson)
+                tokenAfterFinish?.let { token = it; settingsStore.updateBearerToken(it) }
+                check(registered) { "Recovery passkey registration was not confirmed by the server" }
+
+                client.putRecoveryShare(
+                    token, activeJournal.serverShareB64, localEpoch,
+                    activeJournal.splitId, activeJournal.possessionHashB64
+                )?.let {
+                    token = it
+                    settingsStore.updateBearerToken(it)
+                }
+
+                // Do not hand old-epoch shares to cloud/contact channels if another
+                // device committed a rotation while the WebAuthn ceremony was open.
+                val after = client.getVaultEpoch(token)
+                after.newToken?.let { settingsStore.updateBearerToken(it) }
+                check(after.state == "active" && after.epoch == localEpoch) {
+                    "Vault key rotation changed during recovery setup; sync and start again"
+                }
+                activeJournal = activeJournal.copy(serverStaged = true)
+                recoveryJournal.save(activeJournal)
             }
 
             // Share 1 (cloud) and Share 3 (trusted contact) are handed back to
             // the caller to distribute — there is no cloud-storage integration
             // yet, so both are shown as plain text to copy/store manually.
-            listOf(shares[0], shares[2])
+            RecoverySetupResult(
+                cloudShareB64 = activeJournal.cloudShareB64,
+                trustedContactShareB64 = activeJournal.trustedContactShareB64,
+                keyEpoch = localEpoch,
+                splitId = activeJournal.splitId,
+                cloudCandidateDurable = activeJournal.cloudCandidateDurable,
+                serverFinalized = activeJournal.serverFinalized,
+            )
         }
+
+    suspend fun authorizeRecoveryCloudCandidate(splitId: String, keyEpoch: Long) =
+        recoverySetupMutex.withLock {
+            validateCurrentPublicationEpoch(keyEpoch)
+            requireRecoveryAction(
+                requireRecoveryJournal(splitId, keyEpoch), keyEpoch, "upload_cloud_candidate"
+            )
+        }
+
+    suspend fun markRecoveryCloudCandidateDurable(splitId: String, keyEpoch: Long) =
+        recoverySetupMutex.withLock {
+            validateCurrentPublicationEpoch(keyEpoch)
+            val journal = requireRecoveryJournal(splitId, keyEpoch)
+            check(journal.serverStaged) { "Publish the server candidate before the cloud candidate" }
+            requireRecoveryAction(journal, keyEpoch, "upload_cloud_candidate")
+            recoveryJournal.save(journal.copy(cloudCandidateDurable = true))
+        }
+
+    /** Promote the exact server candidate only after Share 1 is durable. */
+    suspend fun finalizeRecoverySetup(splitId: String, keyEpoch: Long) =
+        recoverySetupMutex.withLock {
+            var journal = requireRecoveryJournal(splitId, keyEpoch)
+            check(journal.serverStaged && journal.cloudCandidateDurable) {
+                "Both recovery candidates must be durable before finalization"
+            }
+            val settings = settingsStore.settings.value
+            val client = AndroidVelaApiClient(settings.serverUrl, context)
+            var token = authenticatedToken(client, settings.bearerToken)
+            val before = client.getVaultEpoch(token)
+            before.newToken?.let { token = it; settingsStore.updateBearerToken(it) }
+            check(before.state == "active" && before.epoch == keyEpoch) {
+                "Vault key rotation changed during recovery publication; restart setup"
+            }
+            if (!journal.serverFinalized) {
+                requireRecoveryAction(journal, keyEpoch, "finalize_server")
+                client.finalizeRecoveryShare(token, keyEpoch, splitId)?.let {
+                    token = it
+                    settingsStore.updateBearerToken(it)
+                }
+                journal = journal.copy(serverFinalized = true)
+                recoveryJournal.save(journal)
+            }
+            val after = client.getVaultEpoch(token)
+            after.newToken?.let { settingsStore.updateBearerToken(it) }
+            check(after.state == "active" && after.epoch == keyEpoch) {
+                "Vault key rotation changed while finalizing recovery; restart setup"
+            }
+        }
+
+    suspend fun authorizeRecoveryCloudPromotion(splitId: String, keyEpoch: Long) =
+        recoverySetupMutex.withLock {
+            validateCurrentPublicationEpoch(keyEpoch)
+            requireRecoveryAction(
+                requireRecoveryJournal(splitId, keyEpoch), keyEpoch, "promote_cloud_active"
+            )
+        }
+
+    suspend fun markRecoveryCloudActive(splitId: String, keyEpoch: Long) =
+        recoverySetupMutex.withLock {
+            validateCurrentPublicationEpoch(keyEpoch)
+            val journal = requireRecoveryJournal(splitId, keyEpoch)
+            check(journal.serverFinalized) { "The server split must be final before cloud promotion" }
+            requireRecoveryAction(journal, keyEpoch, "promote_cloud_active")
+            // Commit active before deleting secrets. A crash between these commits
+            // resumes as Complete; a crash before here repeats the idempotent promote.
+            recoveryJournal.save(journal.copy(cloudActive = true))
+            recoveryJournal.clear()
+        }
+
+    private fun requireRecoveryJournal(splitId: String, keyEpoch: Long): RecoveryPublicationJournal {
+        val journal = recoveryJournal.load() ?: error("Recovery publication journal is missing")
+        val accountId = identityStore.load()?.userId
+        check(accountId != null && journal.accountId == accountId) {
+            "Recovery publication belongs to another account"
+        }
+        check(journal.keyEpoch == keyEpoch && journal.splitId == splitId) {
+            "Recovery publication split or epoch changed; resume the journaled setup"
+        }
+        check(settingsStore.settings.value.keyEpoch == keyEpoch) {
+            "Recovery publication belongs to a retired vault epoch"
+        }
+        return journal
+    }
+
+    private fun validateCurrentPublicationEpoch(keyEpoch: Long) {
+        val settings = settingsStore.settings.value
+        val client = AndroidVelaApiClient(settings.serverUrl, context)
+        val token = authenticatedToken(client, settings.bearerToken)
+        if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
+        val epoch = client.getVaultEpoch(token)
+        epoch.newToken?.let(settingsStore::updateBearerToken)
+        check(epoch.state == "active" && epoch.epoch == keyEpoch) {
+            "Vault key rotation changed recovery publication epoch; resume after syncing"
+        }
+    }
+
+    private fun requireRecoveryAction(
+        journal: RecoveryPublicationJournal,
+        currentEpoch: Long,
+        expected: String,
+    ) {
+        val accountId = identityStore.load()?.userId
+        val action = NativeVelaCore.planRecoveryPublication(
+            accountMatches = accountId != null && journal.accountId == accountId,
+            journalEpoch = journal.keyEpoch,
+            currentEpoch = currentEpoch,
+            accountEpochActive = settingsStore.settings.value.keyEpoch == currentEpoch,
+            splitIdPresent = journal.splitId.isNotBlank(),
+            cloudSharePresent = journal.cloudShareB64.isNotBlank(),
+            serverSharePresent = journal.serverShareB64.isNotBlank(),
+            serverStaged = journal.serverStaged,
+            cloudCandidateDurable = journal.cloudCandidateDurable,
+            serverFinalized = journal.serverFinalized,
+            cloudActive = journal.cloudActive,
+        ) ?: error("Native recovery publication policy is unavailable")
+        check(action == expected) {
+            "Recovery publication policy requires $action, not $expected"
+        }
+    }
 
     /// Reconstruct the RMS on a brand-new device from Share 1 (pasted from
     /// wherever the user stored it) + Share 2 (released by the server after
@@ -252,6 +438,9 @@ class VaultSyncManager(
     suspend fun recoverAccount(
         serverUrl: String,
         userId: String,
+        cloudUserId: String,
+        share1KeyEpoch: Long,
+        cloudSplitId: String?,
         share1B64: String,
         deviceName: String?,
         performAssertion: suspend (JSONObject) -> JSONObject
@@ -265,8 +454,29 @@ class VaultSyncManager(
         val requestOptions = WebAuthnCeremony.unwrapPublicKey(initiate.publicKeyJson)
         val credentialJson = performAssertion(requestOptions)
         val recovered = client.recoverAccount(userId, initiate.recoveryId, credentialJson)
+        val canonicalCloudSplitId = cloudSplitId?.takeIf { it.isNotBlank() }?.let { raw ->
+            runCatching { java.util.UUID.fromString(raw).toString() }
+                .getOrElse { error("Cloud recovery split ID is invalid") }
+        }
+        val canonicalServerSplitId = recovered.splitId?.let { raw ->
+            runCatching { java.util.UUID.fromString(raw).toString() }
+                .getOrElse { error("Server recovery split ID is invalid") }
+        }
 
-        val rms = NativeVelaCore.combineRecovery(listOf(share1B64, recovered.shareB64))
+        val rms = NativeVelaCore.combinePairRecovery(
+            requestedUserId = userId,
+            firstShareB64 = share1B64,
+            firstChannel = "cloud",
+            firstAccountId = cloudUserId,
+            firstKeyEpoch = share1KeyEpoch,
+            firstSplitId = canonicalCloudSplitId,
+            secondShareB64 = recovered.shareB64,
+            secondChannel = "server",
+            secondAccountId = userId,
+            secondKeyEpoch = recovered.keyEpoch,
+            secondSplitId = canonicalServerSplitId,
+            secondRecipientBound = false
+        )
             ?: error("Native VELA bridge could not reconstruct the vault key")
 
         // Generated behind a handle: only the public halves come back here.
@@ -283,7 +493,12 @@ class VaultSyncManager(
         identityStore.save(identity.copy(userId = userId, deviceId = deviceId))
 
         val token = authenticateOrRegister(client)
-        adoptRmsAtCurrentEpoch(client, token, rms)
+        adoptRmsAtCurrentEpoch(
+            client = client,
+            token = token,
+            rms = rms,
+            expectedEpoch = recovered.keyEpoch,
+        )
     }
 
     // suspend, not a runBlocking-wrapped plain fun: the previous version
@@ -548,11 +763,15 @@ class VaultSyncManager(
         client: AndroidVelaApiClient,
         token: String,
         rms: ByteArray,
+        expectedEpoch: Long? = null,
     ) {
         try {
             val epoch = client.getVaultEpoch(token)
             check(epoch.state == "active") {
                 "Vault key rotation started during enrollment; retry after it completes."
+            }
+            check(expectedEpoch == null || epoch.epoch == expectedEpoch) {
+                "Vault key epoch changed during recovery; discard the recovered key and retry."
             }
             security.adoptRms(rms)
             settingsStore.updateKeyEpoch(epoch.epoch)

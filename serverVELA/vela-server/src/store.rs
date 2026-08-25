@@ -12,12 +12,28 @@
 
 use std::sync::Arc;
 
-use sled::{Db, Tree};
+use sled::{
+    transaction::{ConflictableTransactionError, TransactionError},
+    Db, Tree,
+};
 
 use crate::error::{AppError, Result};
 
 const TTL_TREE: &str = "ttl";
 const PERSIST_TREE: &str = "persist";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardedSetOutcome {
+    Inserted,
+    GuardMissing,
+    KeyExists,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GuardedSetAbort {
+    GuardMissing,
+    KeyExists,
+}
 
 #[derive(Clone, Copy)]
 enum LookupSource {
@@ -132,6 +148,44 @@ impl Store {
         Ok(())
     }
 
+    /// Store two expiring records in one serializable transaction.
+    ///
+    /// Enrollment uses this only to restore a grant and its claim after the
+    /// SQL epoch guard rejects a completion. Keeping the pair atomic prevents
+    /// a retry from observing half a ceremony.
+    pub fn set_ex_pair(
+        &self,
+        first_key: &str,
+        first_value: &[u8],
+        second_key: &str,
+        second_value: &[u8],
+        ttl_secs: u64,
+    ) -> Result<()> {
+        if first_key == second_key {
+            return Err(AppError::Internal(
+                "atomic TTL pair requires two distinct keys".into(),
+            ));
+        }
+        let expiry = epoch_secs() + ttl_secs;
+        let mut first_entry = expiry.to_le_bytes().to_vec();
+        first_entry.extend_from_slice(first_value);
+        let mut second_entry = expiry.to_le_bytes().to_vec();
+        second_entry.extend_from_slice(second_value);
+
+        self.ttl
+            .transaction(|tree| {
+                tree.insert(first_key.as_bytes(), first_entry.as_slice())?;
+                tree.insert(second_key.as_bytes(), second_entry.as_slice())?;
+                Ok(())
+            })
+            .map_err(|e: TransactionError<()>| match e {
+                TransactionError::Storage(error) => map_err(error),
+                TransactionError::Abort(()) => {
+                    AppError::Internal("atomic TTL pair restore aborted".into())
+                }
+            })
+    }
+
     /// Set a key **only if it is absent or expired**, atomically.
     ///
     /// Returns whether this caller was the one that set it.
@@ -172,6 +226,61 @@ impl Store {
             )
             .map_err(|e| AppError::Internal(format!("sled cas error: {e}")))?;
         Ok(swapped.is_ok())
+    }
+
+    /// Set an expiring key only while another expiring key is live, with both
+    /// predicates checked in the same serializable transaction.
+    ///
+    /// The enrollment claim uses the grant as its guard. This closes the gap
+    /// between separately observing a live grant and winning `set_ex_nx`: an
+    /// expiring grant can no longer leave behind a newly-created orphan claim.
+    pub fn set_ex_nx_if_live(
+        &self,
+        guard_key: &str,
+        key: &str,
+        value: &[u8],
+        ttl_secs: u64,
+    ) -> Result<GuardedSetOutcome> {
+        if guard_key == key {
+            return Err(AppError::Internal(
+                "guarded TTL set requires two distinct keys".into(),
+            ));
+        }
+        let now = epoch_secs();
+        let expiry = now + ttl_secs;
+        let mut entry = expiry.to_le_bytes().to_vec();
+        entry.extend_from_slice(value);
+
+        let outcome = self.ttl.transaction(|tree| {
+            match tree.get(guard_key.as_bytes())? {
+                Some(guard) if !entry_is_expired_at(&guard, now) => {}
+                _ => {
+                    return Err(ConflictableTransactionError::Abort(
+                        GuardedSetAbort::GuardMissing,
+                    ));
+                }
+            }
+            if let Some(current) = tree.get(key.as_bytes())? {
+                if !entry_is_expired_at(&current, now) {
+                    return Err(ConflictableTransactionError::Abort(
+                        GuardedSetAbort::KeyExists,
+                    ));
+                }
+            }
+            tree.insert(key.as_bytes(), entry.as_slice())?;
+            Ok(())
+        });
+
+        match outcome {
+            Ok(()) => Ok(GuardedSetOutcome::Inserted),
+            Err(TransactionError::Abort(GuardedSetAbort::GuardMissing)) => {
+                Ok(GuardedSetOutcome::GuardMissing)
+            }
+            Err(TransactionError::Abort(GuardedSetAbort::KeyExists)) => {
+                Ok(GuardedSetOutcome::KeyExists)
+            }
+            Err(TransactionError::Storage(error)) => Err(map_err(error)),
+        }
     }
 
     /// Set a key without TTL (persists until deleted).
@@ -233,18 +342,65 @@ impl Store {
     }
 
     /// Get and delete a key atomically. Returns `None` if missing or expired.
+    ///
+    /// `Tree::remove` is the linearization point: it returns the bytes that
+    /// this caller alone removed. The previous lookup-then-remove sequence let
+    /// two racing recovery requests both read the same one-shot challenge or
+    /// enrollment grant before either deletion landed.
     pub fn get_del(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        match self.lookup_tree(key)? {
-            Some((data, source)) => {
-                self.remove_from_source(key, source)?;
+        let removed = if let Some(data) = self.ttl.remove(key.as_bytes()).map_err(map_err)? {
+            Some(data)
+        } else if let Some(data) = self.persist.remove(key.as_bytes()).map_err(map_err)? {
+            Some(data)
+        } else {
+            self.db.remove(key.as_bytes()).map_err(map_err)?
+        };
+        match removed {
+            Some(data) => {
                 let (value, expired) = extract_value(&data);
-                if expired {
-                    Ok(None)
-                } else {
-                    Ok(Some(value))
-                }
+                Ok((!expired).then_some(value))
             }
             None => Ok(None),
+        }
+    }
+
+    /// Atomically take two live TTL records, or leave both untouched.
+    ///
+    /// The transaction is the permanent-enrollment ceremony's linearization
+    /// point: exactly one completion can consume both the grant and claim. A
+    /// missing or expired member aborts without deleting its partner.
+    pub fn take_live_pair(
+        &self,
+        first_key: &str,
+        second_key: &str,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        if first_key == second_key {
+            return Err(AppError::Internal(
+                "atomic TTL pair requires two distinct keys".into(),
+            ));
+        }
+        let now = epoch_secs();
+        let taken = self.ttl.transaction(|tree| {
+            let first = match tree.get(first_key.as_bytes())? {
+                Some(value) if !entry_is_expired_at(&value, now) => value,
+                _ => return Err(ConflictableTransactionError::Abort(())),
+            };
+            let second = match tree.get(second_key.as_bytes())? {
+                Some(value) if !entry_is_expired_at(&value, now) => value,
+                _ => return Err(ConflictableTransactionError::Abort(())),
+            };
+            tree.remove(first_key.as_bytes())?;
+            tree.remove(second_key.as_bytes())?;
+            Ok((first, second))
+        });
+
+        match taken {
+            Ok((first, second)) => Ok(Some((
+                extract_value_at(&first, now).0,
+                extract_value_at(&second, now).0,
+            ))),
+            Err(TransactionError::Abort(())) => Ok(None),
+            Err(TransactionError::Storage(error)) => Err(map_err(error)),
         }
     }
 
@@ -364,7 +520,9 @@ impl Store {
         let data = updated
             .ok_or_else(|| AppError::Internal("sled incr_expire returned no value".into()))?;
         if data.len() < 16 {
-            return Err(AppError::Internal("sled incr_expire wrote short value".into()));
+            return Err(AppError::Internal(
+                "sled incr_expire wrote short value".into(),
+            ));
         }
         let mut cnt = [0u8; 8];
         cnt.copy_from_slice(&data[8..16]);
@@ -523,6 +681,10 @@ impl Store {
 }
 
 fn extract_value(data: &[u8]) -> (Vec<u8>, bool) {
+    extract_value_at(data, epoch_secs())
+}
+
+fn extract_value_at(data: &[u8], now: u64) -> (Vec<u8>, bool) {
     if data.len() < 8 {
         return (data.to_vec(), false);
     }
@@ -531,10 +693,14 @@ fn extract_value(data: &[u8]) -> (Vec<u8>, bool) {
     exp_bytes.copy_from_slice(&data[..8]);
     let expiry = u64::from_le_bytes(exp_bytes);
 
-    let expired = expiry != u64::MAX && epoch_secs() >= expiry;
+    let expired = expiry != u64::MAX && now >= expiry;
     let value = data[8..].to_vec();
 
     (value, expired)
+}
+
+fn entry_is_expired_at(data: &[u8], now: u64) -> bool {
+    extract_value_at(data, now).1
 }
 
 fn epoch_secs() -> u64 {
@@ -655,5 +821,117 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100));
         assert!(store.set_ex_nx("grant:2", b"fresh", 60).unwrap());
         assert_eq!(store.get("grant:2").unwrap().unwrap(), b"fresh");
+    }
+
+    #[test]
+    fn taking_a_pair_is_all_or_nothing() {
+        let store = Store::open_temp().unwrap();
+        store.set_ex("grant:pair", b"grant", 60).unwrap();
+
+        assert_eq!(
+            store.take_live_pair("grant:pair", "claim:pair").unwrap(),
+            None
+        );
+        assert_eq!(store.get("grant:pair").unwrap().unwrap(), b"grant");
+
+        store.set_ex("claim:pair", b"claim", 60).unwrap();
+        assert_eq!(
+            store.take_live_pair("grant:pair", "claim:pair").unwrap(),
+            Some((b"grant".to_vec(), b"claim".to_vec()))
+        );
+        assert!(!store.exists("grant:pair").unwrap());
+        assert!(!store.exists("claim:pair").unwrap());
+    }
+
+    #[test]
+    fn a_claim_cannot_be_created_without_a_live_grant() {
+        let store = Store::open_temp().unwrap();
+        assert_eq!(
+            store
+                .set_ex_nx_if_live("grant:guard", "claim:guard", b"claim", 60)
+                .unwrap(),
+            GuardedSetOutcome::GuardMissing
+        );
+        assert!(!store.exists("claim:guard").unwrap());
+
+        store.set_ex("grant:guard", b"grant", 60).unwrap();
+        assert_eq!(
+            store
+                .set_ex_nx_if_live("grant:guard", "claim:guard", b"first", 60)
+                .unwrap(),
+            GuardedSetOutcome::Inserted
+        );
+        assert_eq!(
+            store
+                .set_ex_nx_if_live("grant:guard", "claim:guard", b"second", 60)
+                .unwrap(),
+            GuardedSetOutcome::KeyExists
+        );
+        assert_eq!(store.get("claim:guard").unwrap().unwrap(), b"first");
+    }
+
+    #[test]
+    fn exactly_one_racing_completion_takes_the_whole_pair() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let store = Arc::new(Store::open_temp().unwrap());
+        store.set_ex("grant:complete-race", b"grant", 60).unwrap();
+        store.set_ex("claim:complete-race", b"claim", 60).unwrap();
+        let barrier = Arc::new(Barrier::new(8));
+        let winners = Arc::new(AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                let winners = winners.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    if store
+                        .take_live_pair("grant:complete-race", "claim:complete-race")
+                        .unwrap()
+                        .is_some()
+                    {
+                        winners.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(winners.load(Ordering::SeqCst), 1);
+        assert!(!store.exists("grant:complete-race").unwrap());
+        assert!(!store.exists("claim:complete-race").unwrap());
+    }
+
+    #[test]
+    fn get_del_redeems_a_one_shot_artifact_exactly_once_under_concurrency() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let store = Arc::new(Store::open_temp().unwrap());
+        store.set_ex("recovery:one-shot", b"challenge", 60).unwrap();
+        let barrier = Arc::new(Barrier::new(8));
+        let winners = Arc::new(AtomicUsize::new(0));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                let winners = winners.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    if store.get_del("recovery:one-shot").unwrap().is_some() {
+                        winners.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(winners.load(Ordering::SeqCst), 1);
     }
 }

@@ -10,10 +10,21 @@ interface Props {
 interface CloudRecoveryShare {
   user_id: string;
   key_epoch: number;
+  split_id?: string;
   share_b64: string;
 }
 
-type Step = 'remote' | 'account' | 'confirm' | 'device';
+type Step = 'remote' | 'account' | 'confirm' | 'contact' | 'contactRespond' | 'device';
+
+// M18: an authenticated response envelope from the trusted contact, produced
+// by re-sealing their held share to this device's ephemeral request key.
+interface ContactResponse {
+  account_id: string;
+  key_epoch: number;
+  split_id?: string;
+  coordinate: number;
+  envelope_b64: string;
+}
 
 // Account recovery (SPEC.md §4.3): reconstruct the RMS from Share 1 (cloud
 // backup) + Share 2 (server, released only after a WebAuthn assertion
@@ -36,6 +47,10 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
   const [deviceName, setDeviceName] = useState('');
   const [isFinishing, setIsFinishing] = useState(false);
   const [error, setError] = useState('');
+  // M18 trusted-contact path state.
+  const [requestPublicKey, setRequestPublicKey] = useState('');
+  const [requestSecretKey, setRequestSecretKey] = useState('');
+  const [contactResponseText, setContactResponseText] = useState('');
 
   useEffect(() => {
     invoke<string[]>('list_cloud_backup_remotes')
@@ -98,6 +113,60 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
     }
   };
 
+  const handleStartContactFlow = async () => {
+    setError('');
+    try {
+      const request = await invoke<{ public_key_b64: string; secret_key_b64: string }>(
+        'generate_recovery_request',
+      );
+      setRequestPublicKey(request.public_key_b64);
+      // Kept in memory only for the lifetime of this modal.
+      setRequestSecretKey(request.secret_key_b64);
+      setStep('contact');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start contact recovery');
+    }
+  };
+
+  const handleContactFinish = async () => {
+    if (!share || !requestSecretKey) return;
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    let parsed: ContactResponse;
+    try {
+      parsed = JSON.parse(contactResponseText);
+    } catch (e) {
+      setError('The trusted-contact response is not valid JSON');
+      return;
+    }
+    setIsFinishing(true);
+    setError('');
+    try {
+      await invoke('complete_account_recovery_with_contact', {
+        userId: share.user_id,
+        firstShareB64: share.share_b64,
+        firstShareKeyEpoch: share.key_epoch,
+        firstShareSplitId: share.split_id,
+        firstShareChannel: 'cloud',
+        requestSecretKeyB64: requestSecretKey,
+        contactResponseJson: JSON.stringify(parsed),
+        password,
+        deviceName: deviceName.trim() || undefined,
+      });
+      onComplete();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Account recovery failed');
+    } finally {
+      setIsFinishing(false);
+    }
+  };
+
   const handleFinish = async () => {
     if (!share || !credential) return;
     if (password.length < 8) {
@@ -115,6 +184,7 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
         userId: share.user_id,
         share1B64: share.share_b64,
         share1KeyEpoch: share.key_epoch,
+        share1SplitId: share.split_id,
         credential,
         recoveryId,
         password,
@@ -184,7 +254,7 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
             <div className="space-y-2">
               {shares.map(s => (
                 <button
-                  key={`${s.user_id}:${s.key_epoch}`}
+                  key={`${s.user_id}:${s.key_epoch}:${s.split_id ?? 'legacy'}`}
                   onClick={() => {
                     setShare(s);
                     setStep('confirm');
@@ -215,6 +285,69 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
               className="w-full py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               {isVerifying ? 'Waiting for security key...' : 'Verify with security key'}
+            </button>
+            <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+              <span className="flex-1 border-t border-outline-variant/30" />or<span className="flex-1 border-t border-outline-variant/30" />
+            </div>
+            <p className="text-on-surface-variant text-sm">
+              Lost your security key? Recover through your trusted contact instead — they hand
+              back their sealed share and no security key is needed.
+            </p>
+            <button
+              onClick={handleStartContactFlow}
+              className="w-full py-3 bg-surface-container-highest hover:bg-surface-bright rounded-xl text-on-surface font-medium transition-colors"
+            >
+              Use trusted contact share
+            </button>
+          </div>
+        )}
+
+        {step === 'contact' && (
+          <div className="space-y-4">
+            <p className="text-on-surface-variant text-sm">
+              Show this request code to your trusted contact. Their VELA app opens the envelope you
+              gave them and seals the share back to this device — only this device can open it.
+            </p>
+            <div className="font-mono text-xs bg-surface-bright rounded-lg px-4 py-3 break-all text-on-surface">
+              {requestPublicKey}
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard?.writeText(requestPublicKey).catch(() => {});
+              }}
+              className="w-full py-2 bg-surface-container-highest hover:bg-surface-bright rounded-xl text-sm text-on-surface transition-colors"
+            >
+              Copy request code
+            </button>
+            <button
+              onClick={() => setStep('contactRespond')}
+              disabled={!requestPublicKey}
+              className="w-full py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              I have their response
+            </button>
+          </div>
+        )}
+
+        {step === 'contactRespond' && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-on-surface-variant mb-1">
+                Trusted-contact response (paste the JSON their app produced)
+              </label>
+              <textarea
+                value={contactResponseText}
+                onChange={e => setContactResponseText(e.target.value)}
+                rows={4}
+                className="w-full font-mono text-xs bg-surface-bright border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary resize-none"
+              />
+            </div>
+            <button
+              onClick={() => setStep('device')}
+              disabled={!contactResponseText.trim()}
+              className="w-full py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              Continue
             </button>
           </div>
         )}
@@ -255,7 +388,7 @@ export default function RecoverAccountModal({ onComplete, onClose }: Props) {
               />
             </div>
             <button
-              onClick={handleFinish}
+              onClick={credential ? handleFinish : handleContactFinish}
               disabled={isFinishing}
               className="w-full py-3 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
