@@ -1,0 +1,65 @@
+(* ══════════════════════════════════════════════════════════════════════
+   M22a · BASELINE FALSIFICATION — static position map.
+
+   The pre-ORAM-regression design: the client's position map assigns each
+   chunk a FIXED leaf `pos(ch)` and never remaps before an access. Chunk ids
+   are NOT secret from the server — they appear in plaintext in the sync
+   manifest (`GET /vault/sync` returns chunk_id/version/lamport rows) — so
+   the server can compute `pos(known_chunk)` for any chunk it knows about
+   and match it against the observed path request.
+
+   This model encodes that determinism and expects the observational
+   equivalence between "access chunk A now" and "access chunk B now" to be
+   FALSE: the adversary distinguishes by comparing the observed leaf against
+   the leaves of chunks it knows the account owns.
+
+   Expected verdict: equivalence is FALSE (distinguishing trace found).
+   This is what prepare_access's fresh-leaf remap in m22b eliminates.
+
+   Concatenated at runner level after:
+     security/formal/hax_pv_prelude.pvl
+     libVELA/vela-crypto/proofs/proverif/extraction/lib.pvl
+   ══════════════════════════════════════════════════════════════════════ *)
+
+(* the relay channel is `c`, declared by the hax-extracted lib.pvl preamble *)
+
+type leaf.
+type chunkid.
+type key.
+type bucketset.
+
+(* Public request/response shapes: tree id folded into the leaf namespace,
+   height fixed, so only the leaf varies per request. *)
+fun get_path(leaf): bitstring [data].
+fun put_path(leaf, bitstring): bitstring [data].
+
+(* Opaque AEAD write-back: stash + target block, sealed under the client's
+   RMS-derived key. The server cannot open it — but the LEAF it rides on is
+   plaintext. *)
+fun aead_stash(key, bitstring): bitstring.
+
+(* Deterministic position map of the broken design: public, injective. *)
+fun pos(chunkid): leaf [data].
+
+(* Per-chunk payload; private so the capsule contents stay symbolic. *)
+fun chunk_payload(chunkid): bitstring [private].
+
+(* Chunk identities are known to the server via the sync manifest. *)
+free chunkA: chunkid.
+free chunkB: chunkid.
+
+event accessed(chunkid).
+
+equivalence
+  (* world A: the user happens to open chunk A *)
+  new k: key;
+    out(c, get_path(pos(chunkA)));
+    in(c, downloadedA: bitstring);
+    event accessed(chunkA);
+    out(c, put_path(pos(chunkA), aead_stash(k, downloadedA)))
+  (* world B: the user happens to open chunk B instead *)
+  new k: key;
+    out(c, get_path(pos(chunkB)));
+    in(c, downloadedB: bitstring);
+    event accessed(chunkB);
+    out(c, put_path(pos(chunkB), aead_stash(k, downloadedB)))

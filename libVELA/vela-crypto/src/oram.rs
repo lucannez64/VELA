@@ -92,6 +92,36 @@ pub struct PathOram {
     num_leaves: u64,
 }
 
+// ── Pure policy functions shared with the ProVerif model (M22) ──────────────
+//
+// These free functions mirror the associated API so hax can extract the
+// decision logic verbatim into `proofs/proverif/extraction/lib.pvl`, where
+// the access-pattern-hiding equivalence model (m22_oram_access_hiding.pv)
+// consults them. Keep them pure: no state, no RNG, no I/O.
+
+/// Decision with an explicit threshold — the extraction shape shared with
+/// the ProVerif access-hiding model (M22). Pure `nat → nat → bool`: no
+/// constants, no state, no RNG, so hax's ProVerif backend emits a letfun
+/// that evaluates inside the equivalence model.
+pub fn use_trivial_oram_with_threshold(chunk_count: usize, threshold: usize) -> bool {
+    chunk_count <= threshold
+}
+
+/// The shipped threshold policy (thin wrapper over the extracted shape).
+pub fn use_trivial_oram(chunk_count: usize) -> bool {
+    use_trivial_oram_with_threshold(chunk_count, TRIVIAL_ORAM_THRESHOLD)
+}
+
+/// Tree height for a tree sized to hold at least `capacity` real blocks.
+pub fn oram_height(capacity: usize) -> u32 {
+    PathOram::new(capacity).height()
+}
+
+/// Total number of leaves for a tree of this capacity.
+pub fn oram_num_leaves(capacity: usize) -> u64 {
+    PathOram::new(capacity).num_leaves()
+}
+
 impl PathOram {
     /// Create a new ORAM instance with a tree sized to hold at least
     /// `capacity` real blocks.  Minimum height is 1 (2 leaves).

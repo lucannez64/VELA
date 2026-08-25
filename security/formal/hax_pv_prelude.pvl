@@ -1,0 +1,20 @@
+(*****************************************)
+(* M22 · vendored hax ProVerif prelude   *)
+(*                                       *)
+(* hax 0.3.7's experimental pro-verif    *)
+(* backend emits references to a         *)
+(* `core_models` prelude it does not     *)
+(* ship. This file vendors the minimal   *)
+(* definitions our extracted slice       *)
+(* needs, and documents the one symbol   *)
+(* that stays uninterpreted.             *)
+(*****************************************)
+
+(* `core_models__cmp__f_le(x, y)` is Rust's `x <= y` on usize. hax models
+   Rust bools as `bitstring` (cf. lib.pvl's `bool_default`), and ProVerif's
+   symbolic model has no arithmetic on `nat`, so this stays uninterpreted.
+   The access-hiding property does not depend on its value: m22b and m22c
+   prove the equivalence separately for BOTH modes (trivial-ORAM and
+   Path-ORAM), so whichever way the threshold decides at runtime, the
+   server's transcript hides the accessed chunk. *)
+fun core_models__cmp__f_le(nat, nat): bitstring.

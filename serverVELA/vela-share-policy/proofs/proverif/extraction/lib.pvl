@@ -1,0 +1,145 @@
+(*****************************************)
+(* Preamble *)
+(*****************************************)
+
+channel c.
+
+fun construct_fail() : bitstring
+reduc construct_fail() = fail.
+
+type Option.
+fun Some(bitstring): Option [data].
+fun None(): Option [data].
+letfun Option_err() = let x = construct_fail() in None().
+
+const empty: bitstring.
+letfun bitstring_default() = empty.
+letfun bitstring_err() = let x = construct_fail() in bitstring_default().
+
+letfun nat_default() = 0.
+fun nat_to_bitstring(nat): bitstring.
+letfun nat_err() = let x = construct_fail() in nat_default().
+
+letfun bool_default() = false.
+
+
+(*****************************************)
+(* Types and Constructors *)
+(*****************************************)
+
+type vela_share_policy__t_SendCapsuleFacts.
+
+fun vela_share_policy__t_SendCapsuleFacts_to_bitstring(
+      vela_share_policy__t_SendCapsuleFacts
+    )
+    : bitstring [typeConverter].
+fun vela_share_policy__t_SendCapsuleFacts_from_bitstring(bitstring)
+    : vela_share_policy__t_SendCapsuleFacts [typeConverter].
+const vela_share_policy__t_SendCapsuleFacts_default_value: vela_share_policy__t_SendCapsuleFacts.
+letfun vela_share_policy__t_SendCapsuleFacts_default() =
+       vela_share_policy__t_SendCapsuleFacts_default_value.
+letfun vela_share_policy__t_SendCapsuleFacts_err() =
+       let x = construct_fail() in vela_share_policy__t_SendCapsuleFacts_default_value.
+fun vela_share_policy__SendCapsuleFacts(bool, bool, bool, bool)
+    : vela_share_policy__t_SendCapsuleFacts [data].
+reduc forall 
+  vela_share_policy__f_sender_authenticated: bool,
+  vela_share_policy__f_recipient_registered: bool,
+  vela_share_policy__f_capsule_size_valid: bool,
+  vela_share_policy__f_inbox_has_capacity: bool
+;
+    accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_sender_authenticated(
+      vela_share_policy__SendCapsuleFacts(
+        vela_share_policy__f_sender_authenticated,
+        vela_share_policy__f_recipient_registered,
+        vela_share_policy__f_capsule_size_valid,
+        vela_share_policy__f_inbox_has_capacity
+      )
+    ) = vela_share_policy__f_sender_authenticated.
+reduc forall 
+  vela_share_policy__f_sender_authenticated: bool,
+  vela_share_policy__f_recipient_registered: bool,
+  vela_share_policy__f_capsule_size_valid: bool,
+  vela_share_policy__f_inbox_has_capacity: bool
+;
+    accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_recipient_registered(
+      vela_share_policy__SendCapsuleFacts(
+        vela_share_policy__f_sender_authenticated,
+        vela_share_policy__f_recipient_registered,
+        vela_share_policy__f_capsule_size_valid,
+        vela_share_policy__f_inbox_has_capacity
+      )
+    ) = vela_share_policy__f_recipient_registered.
+reduc forall 
+  vela_share_policy__f_sender_authenticated: bool,
+  vela_share_policy__f_recipient_registered: bool,
+  vela_share_policy__f_capsule_size_valid: bool,
+  vela_share_policy__f_inbox_has_capacity: bool
+;
+    accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_capsule_size_valid(
+      vela_share_policy__SendCapsuleFacts(
+        vela_share_policy__f_sender_authenticated,
+        vela_share_policy__f_recipient_registered,
+        vela_share_policy__f_capsule_size_valid,
+        vela_share_policy__f_inbox_has_capacity
+      )
+    ) = vela_share_policy__f_capsule_size_valid.
+reduc forall 
+  vela_share_policy__f_sender_authenticated: bool,
+  vela_share_policy__f_recipient_registered: bool,
+  vela_share_policy__f_capsule_size_valid: bool,
+  vela_share_policy__f_inbox_has_capacity: bool
+;
+    accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_inbox_has_capacity(
+      vela_share_policy__SendCapsuleFacts(
+        vela_share_policy__f_sender_authenticated,
+        vela_share_policy__f_recipient_registered,
+        vela_share_policy__f_capsule_size_valid,
+        vela_share_policy__f_inbox_has_capacity
+      )
+    ) = vela_share_policy__f_inbox_has_capacity.
+
+type vela_share_policy__t_SendDecision.
+
+fun vela_share_policy__t_SendDecision_to_bitstring(
+      vela_share_policy__t_SendDecision
+    )
+    : bitstring [typeConverter].
+fun vela_share_policy__t_SendDecision_from_bitstring(bitstring)
+    : vela_share_policy__t_SendDecision [typeConverter].
+const vela_share_policy__t_SendDecision_default_value: vela_share_policy__t_SendDecision.
+letfun vela_share_policy__t_SendDecision_default() =
+       vela_share_policy__t_SendDecision_default_value.
+letfun vela_share_policy__t_SendDecision_err() =
+       let x = construct_fail() in vela_share_policy__t_SendDecision_default_value.
+fun vela_share_policy__SendDecision_Deliver()
+    : vela_share_policy__t_SendDecision [data].
+
+fun vela_share_policy__SendDecision_Reject()
+    : vela_share_policy__t_SendDecision [data].
+
+
+(*****************************************)
+(* Functions *)
+(*****************************************)
+
+letfun vela_share_policy__send_is_authorized(
+         facts : vela_share_policy__t_SendCapsuleFacts
+       ) =
+       accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_sender_authenticated(
+         facts
+       ) && accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_recipient_registered(
+         facts
+       ) && accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_capsule_size_valid(
+         facts
+       ) && accessor_vela_share_policy__t_SendCapsuleFacts_vela_share_policy__f_inbox_has_capacity(
+         facts
+       ).
+
+letfun vela_share_policy__plan_send(
+         facts : vela_share_policy__t_SendCapsuleFacts
+       ) =
+       if vela_share_policy__send_is_authorized(facts)
+       then (vela_share_policy__SendDecision_Deliver())
+       else (vela_share_policy__SendDecision_Reject()).
+

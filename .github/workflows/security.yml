@@ -108,6 +108,13 @@ jobs:
       - name: Prove linked-item revocation finality
         run: ./security/formal/run-link-revocation-finality-proofs.sh
 
+      - name: Prove Path-ORAM access-pattern hiding (ProVerif)
+        run: |
+          opam switch create vela-proverif ocaml-base-compiler.5.1.1 || true
+          opam install --switch vela-proverif --yes proverif || true
+          eval "$(opam env --switch vela-proverif)"
+          ./security/formal/run-oram-access-hiding-proofs.sh
+
       - name: Exhaust the bounded model against real handlers and Turso
         run: |
           cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model

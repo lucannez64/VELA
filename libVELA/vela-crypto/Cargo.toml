@@ -12,6 +12,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 default = []
 wasm = ["getrandom/js"]
 
+[target.'cfg(hax)'.dependencies]
+hax-lib = "=0.3.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(hax)", "cfg(hax_compilation)"] }
+
 [dependencies]
 # Hybrid KEM
 ml-kem         = { version = "0.3.0", features = ["getrandom"] }

@@ -1025,6 +1025,7 @@ dependencies = [
  "ed25519-dalek",
  "fips204",
  "getrandom 0.2.17",
+ "hax-lib",
  "hex",
  "hkdf",
  "ml-kem",

@@ -1,0 +1,66 @@
+(* ══════════════════════════════════════════════════════════════════════
+   M22c · PATH-ORAM MODE — fresh-leaf remap per access.
+
+   Above TRIVIAL_ORAM_THRESHOLD, `PathOram::prepare_access` remaps the
+   target chunk to a FRESH RANDOM LEAF before every read/write cycle. The
+   server therefore observes:
+
+     world A: get_path(leafA1), put_path(leafA1, ct1),
+              get_path(leafA2), put_path(leafA2, ct2)   ← same chunk twice
+     world B: get_path(leafB1), put_path(leafB1, ct1),
+              get_path(leafB2), put_path(leafB2, ct2)   ← same chunk twice
+
+   where leafA1/leafA2/leafB1/leafB2 are all fresh-random and the
+   write-backs are opaque AEAD under the client key. The two transcripts
+   are observationally equivalent even though both worlds touch the SAME
+   chunk twice — repeated access is unlinkable, which is exactly what the
+   static map of m22a fails to provide.
+
+   Expected verdict: equivalence is TRUE.
+
+   Concatenated at runner level after:
+     security/formal/hax_pv_prelude.pvl
+     libVELA/vela-crypto/proofs/proverif/extraction/lib.pvl
+   ══════════════════════════════════════════════════════════════════════ *)
+
+type leaf.
+type chunkid.
+type key.
+
+fun get_path(leaf): bitstring [data].
+fun put_path(leaf, bitstring): bitstring [data].
+fun aead_stash(key, bitstring): bitstring.
+fun stash_merge(bitstring, bitstring): bitstring.
+fun chunk_payload(chunkid): bitstring [private].
+
+(* Chunk ids are known to the server via the sync manifest; the accessed
+   one is the user's choice, not the server's. *)
+free chunkA: chunkid.
+free chunkB: chunkid.
+
+equivalence
+  (* world A: the user opens chunk A twice *)
+  new k: key;
+    new leafA1: leaf;
+    out(c, get_path(leafA1));
+    in(c, downloadedA1: bitstring);
+    out(c, put_path(leafA1,
+         aead_stash(k, stash_merge(downloadedA1, chunk_payload(chunkA)))));
+    (* prepare_access remaps the target to a fresh leaf before round 2 *)
+    new leafA2: leaf;
+    out(c, get_path(leafA2));
+    in(c, downloadedA2: bitstring);
+    out(c, put_path(leafA2,
+         aead_stash(k, stash_merge(downloadedA2, chunk_payload(chunkA)))))
+  (* world B: the user opens chunk B twice — identical shape, fresh leaves *)
+  new k: key;
+    new leafB1: leaf;
+    out(c, get_path(leafB1));
+    in(c, downloadedB1: bitstring);
+    out(c, put_path(leafB1,
+         aead_stash(k, stash_merge(downloadedB1, chunk_payload(chunkB)))));
+    new leafB2: leaf;
+    out(c, get_path(leafB2));
+    in(c, downloadedB2: bitstring);
+    out(c, put_path(leafB2,
+         aead_stash(k, stash_merge(downloadedB2, chunk_payload(chunkB)))))

@@ -318,3 +318,27 @@ Expected: **2 Tamarin lemmas verified**. The enforced rules live in
 `share/mod.rs` (sender identity match for updates/deletes, `revoked = 0` filter,
 ETag `If-Match` comparison). The shared channel's complete verified stack is
 M19 (binding integrity) + M20 (route gating) + M21 (revocation finality).
+
+## Checking Path-ORAM access-pattern hiding (M22, ProVerif)
+
+Access-pattern leakage is an *indistinguishability* property — outside
+Dolev-Yao reachability, so it is checked with **ProVerif observational
+equivalence** instead of Tamarin. `m22a` falsifies the static-position-map
+design (the server matches observed paths against plaintext manifest chunk
+ids); `m22b` proves trivial mode (≤4 chunks: whole-tree sweep) hides by
+identical transcripts; `m22c` proves full Path ORAM hides because
+`prepare_access` remaps the target to a fresh random leaf per access — even a
+repeated access to the same chunk is unlinkable. The Rust threshold policy is
+extracted with hax's experimental ProVerif backend into
+`libVELA/vela-crypto/proofs/proverif/extraction/lib.pvl`; the minimal prelude
+it needs (hax 0.3.7 does not ship one) is vendored in
+`security/formal/hax_pv_prelude.pvl`.
+
+```bash
+./run-oram-access-hiding-proofs.sh
+```
+
+Requires ProVerif 2.05 (`opam switch create vela-proverif
+ocaml-base-compiler.5.1.1 && opam install --switch vela-proverif --yes
+proverif`). Expected: **2 equivalences proved, 1 baseline falsified, 0
+errors**.
