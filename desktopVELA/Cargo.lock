@@ -10389,6 +10389,7 @@ dependencies = [
  "ed25519-dalek",
  "fips204",
  "getrandom 0.2.17",
+ "hax-lib",
  "hkdf",
  "ml-kem",
  "rand_core 0.6.4",
@@ -10488,6 +10489,7 @@ dependencies = [
  "uuid",
  "vela-client-recovery-policy",
  "vela-crypto",
+ "vela-sync-policy",
  "webauthn-rs",
  "webauthn-rs-proto",
  "windows 0.58.0",
@@ -10548,6 +10550,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "vela-desktop-core",
+]
+
+[[package]]
+name = "vela-sync-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
 ]
 
 [[package]]

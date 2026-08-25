@@ -342,3 +342,23 @@ Requires ProVerif 2.05 (`opam switch create vela-proverif
 ocaml-base-compiler.5.1.1 && opam install --switch vela-proverif --yes
 proverif`). Expected: **2 equivalences proved, 1 baseline falsified, 0
 errors**.
+
+## Checking the client sync-admission policy (M23)
+
+The sync engine decides whether a server response may enter the local vault:
+Lamport rollback guard, epoch probe/adoption ladder, capsule binding, and
+merge classification. `libVELA/vela-sync-policy` owns these decisions as
+hax-extracted pure functions (`plan_epoch_adoption`,
+`plan_chunk_download`, `classify_merge_action`) with negative theorems for
+rollback, skipped transitions, freezing rotations, foreign capsules, and
+tombstone resurrection; `sync.rs` consumes the permits instead of computing
+decisions inline. Tamarin `m23_sync_admission.spthy` encodes epoch succession
+with a public `succ` constructor so "exactly local + 1" is structural.
+
+```bash
+./run-sync-admission-proofs.sh
+cd ../../libVELA/vela-sync-policy && ./verify-fstar.sh
+```
+
+Expected: **8 Tamarin lemmas verified** and all F* verification conditions
+discharged.

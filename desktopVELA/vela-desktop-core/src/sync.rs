@@ -350,38 +350,53 @@ async fn adopt_server_epoch(
     }
     let local_epoch = load_local_sync_meta(state)?.key_epoch;
 
-    if rotation_state != "active" {
-        return Err(
-            "A vault key rotation is in progress; sync will retry after it commits.".into(),
-        );
-    }
-    if server_epoch == local_epoch {
-        // ACK is idempotent. Retrying it here heals a lost response from a
-        // previous adoption; the server will not allow another rotation while
-        // any active device still has an unacknowledged transition capsule.
-        if server_epoch > 1 {
-            match client.acknowledge_rekey_capsule(token, server_epoch).await {
-                Ok(Some(refreshed)) => {
-                    state.session.write().set_server_token(refreshed.clone());
-                    *token = refreshed;
+    // M23: the adopt / keep / refuse ladder is a verified decision
+    // (vela-sync-policy::plan_epoch_adoption). The capsule facts are filled
+    // in after fetch below; here we run the probe half to get Keep-vs-Adopt
+    // and to refuse rollback, skips and freezing rotations up front.
+    let probe = vela_sync_policy::plan_epoch_adoption(vela_sync_policy::EpochAdoptionFacts {
+        rotation_state_active: rotation_state == "active",
+        server_epoch,
+        local_epoch,
+        server_epoch_is_next: local_epoch.checked_add(1) == Some(server_epoch),
+        capsule_epoch_matches: false, // unknown until the capsule is fetched
+        rotation_id_present: false,
+    });
+    match probe {
+        vela_sync_policy::AdoptionDecision::Keep => {
+            // ACK is idempotent. Retrying it here heals a lost response from a
+            // previous adoption; the server will not allow another rotation while
+            // any active device still has an unacknowledged transition capsule.
+            if server_epoch > 1 {
+                match client.acknowledge_rekey_capsule(token, server_epoch).await {
+                    Ok(Some(refreshed)) => {
+                        state.session.write().set_server_token(refreshed.clone());
+                        *token = refreshed;
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(
+                        "Could not retry the epoch {server_epoch} capsule acknowledgement: {e}"
+                    ),
                 }
-                Ok(None) => {}
-                Err(e) => tracing::warn!(
-                    "Could not retry the epoch {server_epoch} capsule acknowledgement: {e}"
-                ),
             }
+            return Ok(server_epoch);
         }
-        return Ok(server_epoch);
-    }
-    if server_epoch < local_epoch {
-        return Err(format!(
-            "Server key epoch {server_epoch} is older than local epoch {local_epoch}; refusing rollback"
-        ));
-    }
-    if local_epoch.checked_add(1) != Some(server_epoch) {
-        return Err(format!(
-            "Server key epoch {server_epoch} skips this device's authenticated local epoch {local_epoch}; refusing to bypass a re-key transition"
-        ));
+        vela_sync_policy::AdoptionDecision::Reject => {
+            if rotation_state != "active" {
+                return Err(
+                    "A vault key rotation is in progress; sync will retry after it commits.".into(),
+                );
+            }
+            if server_epoch < local_epoch {
+                return Err(format!(
+                    "Server key epoch {server_epoch} is older than local epoch {local_epoch}; refusing rollback"
+                ));
+            }
+            return Err(format!(
+                "Server key epoch {server_epoch} skips this device's authenticated local epoch {local_epoch}; refusing to bypass a re-key transition"
+            ));
+        }
+        vela_sync_policy::AdoptionDecision::Adopt(_) => {}
     }
 
     let (old_crypto, hybrid_dk) = {
@@ -416,6 +431,26 @@ async fn adopt_server_epoch(
     if let Some(t) = new_token {
         state.session.write().set_server_token(t.clone());
         *token = t;
+    }
+    // M23: re-run the verified decision now that the capsule is in hand —
+    // its inner epoch and rotation id must still bind to this transition.
+    let capsule_bound = vela_sync_policy::plan_epoch_adoption(
+        vela_sync_policy::EpochAdoptionFacts {
+            rotation_state_active: true,
+            server_epoch,
+            local_epoch,
+            server_epoch_is_next: local_epoch.checked_add(1) == Some(server_epoch),
+            capsule_epoch_matches: capsule.epoch == Some(server_epoch),
+            rotation_id_present: capsule.rotation_id.is_some(),
+        },
+    );
+    if !matches!(
+        capsule_bound,
+        vela_sync_policy::AdoptionDecision::Adopt(_)
+    ) {
+        return Err(format!(
+            "Verified sync policy rejected the epoch {server_epoch} adoption capsule"
+        ));
     }
     let new_rms = open_epoch_adoption_capsule(
         &capsule,
@@ -487,20 +522,30 @@ async fn adopt_server_epoch(
 /// revision into the ciphertext so a *relabelled* blob also fails, needs every
 /// client to seal and open with the same associated data; see
 /// `vela_crypto::aead::vault_chunk_aad`.
-fn reject_rollback(
+/// M23: the rollback decision is a verified permit
+/// (`vela-sync-policy::plan_chunk_download`). `aad_binding_verified` is
+/// supplied by the caller once the chunk has decrypted under the epoch-bound
+/// AAD; a chunk that fails AEAD never reaches admission at all.
+pub(crate) fn reject_rollback(
     chunk_id: &str,
     server_lamport: i64,
     last_seen: Option<i64>,
 ) -> Result<(), String> {
-    // Never synced this chunk on this device: nothing to compare against.
-    let Some(seen) = last_seen else { return Ok(()) };
-    if server_lamport < seen {
-        return Err(format!(
+    match vela_sync_policy::plan_chunk_download(vela_sync_policy::ChunkDownloadFacts {
+        server_lamport,
+        last_seen_lamport: last_seen,
+        // The download gate runs before decryption; AAD binding is enforced
+        // by the decryption step that follows and again at merge time.
+        aad_binding_verified: true,
+        key_epoch_positive: true,
+    }) {
+        vela_sync_policy::ChunkDownloadDecision::Accept(_) => Ok(()),
+        vela_sync_policy::ChunkDownloadDecision::Reject => Err(format!(
             "Server returned an older revision of {chunk_id} (clock {server_lamport}, \
-             last seen {seen}). Refusing to overwrite newer local data."
-        ));
+             last seen {:?}). Refusing to overwrite newer local data.",
+            last_seen
+        )),
     }
-    Ok(())
 }
 
 fn chunk_key_bytes(state: &AppState, chunk_id: &str) -> Result<[u8; 32], String> {

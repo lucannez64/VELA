@@ -59,6 +59,7 @@ zeroize = { version = "1", features = ["derive"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
 vela-client-recovery-policy = { path = "../../libVELA/vela-client-recovery-policy" }
+vela-sync-policy = { path = "../../libVELA/vela-sync-policy" }
 directories = "5"
 data-encoding = "2"
 subtle = "2"
