@@ -186,9 +186,7 @@ final class AccountViewModel: ObservableObject {
         do {
             // M19: the registration must be signed by this device's identity
             // key with a monotonic timestamp.
-            guard let deviceID = state.deviceID else {
-                throw Failure("this device is not enrolled")
-            }
+            let deviceID = state.deviceID
             let signedAt = ISO8601DateFormatter().string(from: Date())
             guard let signature = VelaCoreFFI.identitySignShareEkBinding(
                 handle: identity.handle, shareEKBase64: rotated.shareEK, signedAt: signedAt)
