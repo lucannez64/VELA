@@ -125,7 +125,12 @@ jobs:
           if ! opam switch list | grep -q 'vela-proverif'; then
             opam switch create vela-proverif ocaml-base-compiler.5.1.1
           fi
-          opam install --switch vela-proverif --yes proverif
+          # proverif's opam depext pulls GUI libs the headless runner lacks;
+          # they are optional for the CLI solver, so skip depext handling.
+          if ! opam list --switch vela-proverif --installed 2>/dev/null | grep -q 'proverif'; then
+            opam option --switch vela-proverif depext=false
+            opam install --switch vela-proverif --yes proverif
+          fi
           eval "$(opam env --switch vela-proverif)"
           ./security/formal/run-oram-access-hiding-proofs.sh
 
