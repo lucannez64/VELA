@@ -42,6 +42,12 @@ post_register_finish
 get_webauthn_config
 post_register_start           # webauthn recovery registration (pre-auth)
 
+# M18 possession-proof recovery: unauthenticated by design (the user has
+# lost their devices). The challenge-bound keyed-hash proof substitutes for
+# both WebAuthn and session auth. Rate-limited identically to /recovery/initiate.
+post_initiate_proof
+post_recover_proof
+
 # Share inbox delivery can be pulled by a not-yet-linked recipient token;
 # scoped checks live inside the handler. (Review if this widens.)
 get_inbox
