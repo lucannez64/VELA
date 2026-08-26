@@ -6,7 +6,7 @@ proof_tmp="$(mktemp -d)"
 trap 'rm -rf -- "$proof_tmp"' EXIT
 
 count() {
-  grep -cE '^(lemma|exists-trace)' "$1.spthy"
+  grep -cE '^(lemma|exists-trace)' "$proof_root/$1.spthy"
 }
 
 check() {
