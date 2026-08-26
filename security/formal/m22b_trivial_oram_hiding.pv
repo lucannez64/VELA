@@ -32,20 +32,27 @@ fun put_tree(tree, bitstring): bitstring [data].
 fun get_path(leaf): bitstring [data].
 fun put_path(leaf, bitstring): bitstring [data].
 fun aead_stash(key, bitstring): bitstring.
+fun concat(bitstring, bitstring): bitstring [data].
 fun chunk_payload(chunkid): bitstring [private].
 
 (* Chunk ids are known to the server via the sync manifest. *)
 free chunkA: chunkid.
 free chunkB: chunkid.
 
+(* The touched chunk's payload is folded into the opaque stash write-back:
+   world A writes back chunkA, world B writes back chunkB. The requests
+   (whole-tree get_tree) and the write shape (put_tree + aead_stash) are
+   identical, so only the hidden chunk distinguishes the worlds — and it
+   is sealed under the fresh key k. The equivalence therefore models
+   access(chunkA) ~ access(chunkB), not a trivial self-equivalence. *)
 equivalence
   (* world A: user opens chunk A; trivial mode sweeps everything *)
   new k: key;
     out(c, get_tree(tree_id));
     in(c, downloadedA: bitstring);
-    out(c, put_tree(tree_id, aead_stash(k, downloadedA)))
+    out(c, put_tree(tree_id, aead_stash(k, concat(downloadedA, chunk_payload(chunkA)))))
   (* world B: user opens chunk B; identical sweep *)
   new k: key;
     out(c, get_tree(tree_id));
     in(c, downloadedB: bitstring);
-    out(c, put_tree(tree_id, aead_stash(k, downloadedB)))
+    out(c, put_tree(tree_id, aead_stash(k, concat(downloadedB, chunk_payload(chunkB)))))

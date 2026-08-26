@@ -70,3 +70,9 @@ Reproduce with:
 ./security/formal/run-sync-admission-proofs.sh
 cd libVELA/vela-sync-policy && ./verify-fstar.sh
 ```
+
+## Post-review revision (2026-08-26)
+
+`RecordOnFirstSync` no longer admits an unrecorded clock: first-sync admission
+now requires trusted bootstrap/revision evidence. Model revised post-review;
+verification re-run delegated to CI (local run skipped to bound memory use).

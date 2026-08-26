@@ -576,11 +576,15 @@ pub struct PutShareEkRequest {
 /// an attacker-chosen capsule key — the attacker needs the private half of an
 /// enrolled device identity. Monotonic `signed_at` turns replayed older
 /// bindings into no-ops.
+///
+/// Returns the *verified* `(device_id, signed_at)` pair from the request body
+/// (not the caller's session), so the database stores exactly what the binding
+/// signature covered.
 async fn authorize_ek_binding(
     state: &AppState,
     user_id: Uuid,
     request: &PutShareEkRequest,
-) -> Result<String> {
+) -> Result<(Uuid, String)> {
     use crate::device::enroll::verify_hybrid_signature;
     use vela_share_policy::{EkRegistrationDecision, EkRegistrationFacts};
 
@@ -594,11 +598,30 @@ async fn authorize_ek_binding(
         )));
     }
     let device_id = request.device_id;
-    if request.signed_at.len() < 20 || request.signed_at.len() > 64 {
+    // M-signed_at canonicalization (audit fix): the raw string previously went
+    // into a lexicographic freshness compare and the stored `share_ek_since`,
+    // so an offset form like `2026-01-01T01:00:00+01:00` could wind back the
+    // monotonic clock. Require canonical UTC (`...:SSZ`, second precision) and
+    // reject excessive future skew; store/pass only the verified canonical
+    // instant.
+    if !request.signed_at.ends_with('Z') || request.signed_at.len() != 20 {
         return Err(AppError::BadRequest(
-            "signed_at must be an RFC 3339 timestamp".into(),
+            "signed_at must be a canonical RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)".into(),
         ));
     }
+    let parsed_signed_at =
+        chrono::DateTime::parse_from_rfc3339(&request.signed_at).map_err(|_| {
+            AppError::BadRequest("signed_at must be an RFC 3339 timestamp".into())
+        })?;
+    const MAX_FUTURE_SKEW_SECS: i64 = 300;
+    let skew_secs =
+        parsed_signed_at.timestamp() - chrono::Utc::now().timestamp();
+    if skew_secs > MAX_FUTURE_SKEW_SECS {
+        return Err(AppError::BadRequest(
+            "signed_at is too far in the future".into(),
+        ));
+    }
+    let canonical_signed_at = request.signed_at.clone();
 
     // The signing device must exist, belong to the caller, and be live.
     let rows = state
@@ -625,7 +648,7 @@ async fn authorize_ek_binding(
     let current_since = row.text(2);
     let seq = if current_since.is_some() { 2 } else { 1 };
 
-    let message = vela_crypto::signing::share_ek_binding_message(&ek_bytes, &request.signed_at);
+    let message = vela_crypto::signing::share_ek_binding_message(&ek_bytes, &canonical_signed_at);
     let signature_verified = verify_hybrid_signature(
         &crate::db::decode_b64(hybrid_vk)?,
         &message,
@@ -637,7 +660,7 @@ async fn authorize_ek_binding(
 
     // M25: the freshness relation lives in the verified policy layer.
     let signed_at_is_fresher = vela_share_policy::timestamp_is_fresher(
-        request.signed_at.as_bytes(),
+        canonical_signed_at.as_bytes(),
         current_since.as_deref().map(|c| c.as_bytes()),
     );
 
@@ -649,7 +672,9 @@ async fn authorize_ek_binding(
         signed_at_is_fresher,
         seq,
     }) {
-        vela_share_policy::EkRegistrationDecision::Register(_) => Ok(request.signed_at.clone()),
+        vela_share_policy::EkRegistrationDecision::Register(_) => {
+            Ok((request.device_id, canonical_signed_at))
+        }
         vela_share_policy::EkRegistrationDecision::Reject => Err(AppError::Unauthorized(
             "verified sharing policy rejected the share-key registration".into(),
         )),
@@ -668,7 +693,8 @@ pub async fn put_my_ek(
     session: DeviceSession,
     Json(body): Json<PutShareEkRequest>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let signed_at = authorize_ek_binding(&state, session.user_id, &body).await?;
+    let (bound_device_id, signed_at) =
+        authorize_ek_binding(&state, session.user_id, &body).await?;
 
     let n = state
         .sqldb
@@ -678,7 +704,7 @@ pub async fn put_my_ek(
             vec![
                 TursoValue::Text(body.share_ek.clone()),
                 TursoValue::Text(signed_at.clone()),
-                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(bound_device_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
             ],
         )

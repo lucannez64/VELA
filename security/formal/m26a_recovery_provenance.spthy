@@ -10,10 +10,10 @@ theory M26a_RecoveryProvenance
 begin
 
 rule SetupAccount:
-    [ Fr(~user), Fr(~epoch) ]
+    [ Fr(~user), Fr(~epoch), Fr(~device) ]
   --[ AccountCreated(~user),
-      DeviceOnboarded(~user) ]->
-    [ !EnrolledDevice(~user),
+      DeviceOnboarded(~device) ]->
+    [ !EnrolledDevice(~user, ~device),
       CurrentEpoch(~user, ~epoch) ]
 
 rule StageCommitment:
@@ -33,11 +33,15 @@ rule IssuePossessionGrant:
   --[ PossessionGrantIssued(U, E) ]->
     [ CurrentEpoch(U, E), GrantToken(U, E) ]
 
+/* The recovered device identity is preserved end-to-end: the event carries
+   it, the enrolled row binds the account to that exact device, and
+   onboarding is recorded for it — recovery enrollment never fabricates an
+   unaccounted-for device. */
 rule EnrollRecoveredDevice:
     [ GrantToken(U, E), CurrentEpoch(U, E), Fr(~device) ]
-  --[ DeviceEnrolledViaRecovery(U, E),
+  --[ DeviceEnrolledViaRecovery(U, ~device, E),
       DeviceOnboarded(~device) ]->
-    [ !EnrolledDevice(U), CurrentEpoch(U, E) ]
+    [ !EnrolledDevice(U, ~device), CurrentEpoch(U, E) ]
 
 lemma possession_grant_requires_staged_commitment:
   "All U E #i.
@@ -50,9 +54,24 @@ lemma enrollment_requires_possession_grant:
      ==> Ex #j. PossessionGrantIssued(U, E) @ j & #j < #i"
 
 lemma enrolled_devices_require_onboarding_or_setup:
-  "All U #i.
-     !EnrolledDevice(U) @ i
-     ==> (Ex D #j. DeviceOnboarded(D) @ j & #j < #i)"
+  "All U D #i.
+     !EnrolledDevice(U, D) @ i
+     ==> (Ex #j. DeviceOnboarded(D) @ j & not (#i < #j))"
+
+/* Full provenance: a recovered-device enrollment chains staged commitment
+   → grant → enrollment, and the onboarded device matches the enrolled one. */
+lemma recovery_enrollment_traces_to_staged_commitment:
+  "All U D E #i.
+     DeviceEnrolledViaRecovery(U, D, E) @ i
+     ==> Ex #j #k.
+           CommitmentStaged(U, E) @ j &
+           PossessionGrantIssued(U, E) @ k &
+           #j < #k & #k < #i"
+
+lemma recovered_device_matches_an_onboarding_event:
+  "All U D E #i.
+     DeviceEnrolledViaRecovery(U, D, E) @ i
+     ==> Ex #j. DeviceOnboarded(D) @ j & not (#i < #j)"
 
 lemma device_enrollment_reachable:
   exists-trace

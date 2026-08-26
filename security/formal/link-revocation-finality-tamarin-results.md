@@ -31,14 +31,18 @@ matching the relay's view.
 - `only_sender_can_revoke_link` — provenance: every revocation traces back to
   the original sender's link creation event, enforced by the device identity
   premise (`!DevKey(S, X)`).
-- `link_read_is_reachable` — honest path exists: link created → capsule
-  delivered → link read, with correct time ordering (`#a < #b < #c`).
+- `revocation_is_reachable` — honest path exists: the sender device is
+  enrolled → link created under that device → revoked. Post-review revision:
+  `LinkCreated` now requires `!DevKey(S, X)` so the creating sender and the
+  revoking device are the same identity (previously both minted independent
+  fresh identities, making the lemma vacuous/unreachable).
 
 ## Verification output
 
 ```text
-m21_link_revocation_finality: 2 verified
-m21 link-revocation formal proof gate: 2 verified, 0 falsified, 0 warnings
+revoked_links_can_never_be_read_again (all-traces): verified (4 steps)
+only_sender_can_revoke_link (all-traces): verified (3 steps)
+revocation_is_reachable (exists-trace): verified (4 steps)
 ```
 
 Toolchain: tamarin-prover 1.12.0, Maude 3.5.1, UTF-8 locale.

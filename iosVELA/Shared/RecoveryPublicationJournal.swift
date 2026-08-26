@@ -15,6 +15,13 @@ struct RecoveryPublicationJournal: Codable, Equatable {
     /// Blind RMS commitment staged with the server share (M18).
     var possessionHashBase64 = ""
     var serverStaged = false
+    /// Distinct post-registration stage: `finishRecoveryWebAuthnRegistration`
+    /// consumes server-side ceremony state before any share is published, so
+    /// it is journaled separately — on retry the flow resumes directly at
+    /// `putRecoveryShare` instead of restarting (and possibly replacing) the
+    /// credential. Optional so journals persisted before this field existed
+    /// still decode (`nil` ≡ not yet registered).
+    var webAuthnRegistered: Bool?
     var cloudCandidateDurable = false
     var serverFinalized = false
     var cloudActive = false

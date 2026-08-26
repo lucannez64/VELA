@@ -103,8 +103,9 @@ fn full_cycle(
 ) -> Option<Vec<u8>> {
     let old_leaf = oram.prepare_access(id).expect("registered chunk");
     let path = server.get_path(old_leaf);
-    let (read_back, write_back) =
-        oram.access(path, old_leaf, id, write_data).expect("access ok");
+    let (read_back, write_back) = oram
+        .access(path, old_leaf, id, write_data)
+        .expect("access ok");
 
     // Hard invariant (M24 regression guard): the stash never holds two blocks
     // for the same chunk — duplicates are what caused the stale-read and

@@ -65,3 +65,14 @@ Reproduce with:
 ```sh
 ./security/formal/run-composition-proofs.sh
 ```
+
+## Post-review revision (2026-08-26)
+
+`IssuePossessionGrant`, `RegisterShareKey`, and `GrantWebSession` now re-emit
+their validity facts; `RotateEpoch` is the single invalidation point. Model
+revised post-review; verification re-run delegated to CI.
+
+Also revised: `m26a_recovery_provenance.spthy` — `EnrollRecoveredDevice` now
+preserves `~device` in `!EnrolledDevice` and emits it in
+`DeviceEnrolledViaRecovery`; recovery enrollment requires a preceding matching
+`DeviceOnboarded` event. Verification re-run delegated to CI.

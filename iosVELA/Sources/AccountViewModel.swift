@@ -343,6 +343,17 @@ final class AccountViewModel: ObservableObject {
 
     var shareManifest = ShareManifest()
 
+    /// Monotonic counter bumped by `signOut`. An in-flight long flow captures
+    /// its value up front and must re-check it after every suspension point;
+    /// otherwise a task racing sign-out could write stale state afterwards.
+    private var sessionGeneration = 0
+
+    private func ensureActiveSession(_ generation: Int) throws {
+        guard sessionGeneration == generation else {
+            throw Failure("signed out during the operation")
+        }
+    }
+
     /// Split the RMS into recovery shares (SPEC.md §4.3), register a WebAuthn
     /// recovery passkey (a physical security key, independent of this
     /// device's own biometrics — see `WebAuthnCeremony`), deliver Share 2 to
@@ -352,10 +363,24 @@ final class AccountViewModel: ObservableObject {
     /// automated channel for that one.
     func setupRecovery(threshold: Int = 2, total: Int = 3) {
         run("Setting up recovery") { [self] in
+            // The split below indexes shares[0...2] and every downstream
+            // channel expects exactly Share 1 (cloud) / Share 2 (server) /
+            // Share 3 (trusted contact). Nothing else is supported.
+            guard threshold == 2, total == 3 else {
+                throw Failure("recovery setup supports only a 2-of-3 split")
+            }
+            let session = sessionGeneration
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
-            guard let account = account else { throw Failure("register first") }
+            guard var account = account else { throw Failure("register first") }
             let client = client()
             let localEpoch = try authenticatedLocalEpoch(rms: rms)
+            // Planner admission compares the *authenticated* vault epoch, not
+            // whatever stale `keyEpoch` an older stored AccountState carried.
+            if account.keyEpoch != localEpoch {
+                account.keyEpoch = localEpoch
+                try store.save(account)
+                self.account = account
+            }
             let initialEpoch = try await client.vaultEpoch()
             await persistRenewedToken(from: client)
             guard initialEpoch.state == "active", initialEpoch.epoch == localEpoch else {
@@ -392,19 +417,35 @@ final class AccountViewModel: ObservableObject {
             }
             guard var publication = journal else { throw Failure("recovery journal failed") }
 
-            if !publication.serverStaged {
+            if publication.webAuthnRegistered != true {
+                // The passkey registration is *not* what `serverStaged`
+                // records: `putRecoveryShare` is the server's consumed state,
+                // but finishRecoveryWebAuthnRegistration already registers a
+                // credential server-side. If we crashed between the two, a
+                // plain restart would run a fresh ceremony and could replace
+                // the just-registered credential. So persist a distinct
+                // post-registration stage and resume at `putRecoveryShare`.
                 try requireRecoveryAction(
                     publication, account: account, currentEpoch: localEpoch,
                     expected: "stage_server")
                 let startResp = try await client.startRecoveryWebAuthnRegistration()
+                try ensureActiveSession(session)
                 let creationOptions = WebAuthnCeremony.unwrapPublicKey(startResp)
                 let credentialJSON = try await WebAuthnCeremony().register(optionsJSON: creationOptions)
+                try ensureActiveSession(session)
                 let registered = try await client.finishRecoveryWebAuthnRegistration(credentialJSON: credentialJSON)
+                try ensureActiveSession(session)
                 guard registered else { throw Failure("recovery passkey registration was not confirmed by the server") }
+                publication.webAuthnRegistered = true
+                try recoveryJournal.save(publication)
+            }
 
-                // Share 2 is gated by the passkey we just registered.
+            if !publication.serverStaged {
+                // Share 2 is gated by the passkey registered above (or in a
+                // previous attempt, resumed from the journal stage).
                 let recoveryEpoch = try await client.vaultEpoch()
                 await persistRenewedToken(from: client)
+                try ensureActiveSession(session)
                 guard recoveryEpoch.state == "active", recoveryEpoch.epoch == localEpoch else {
                     throw Failure("vault key rotation changed during recovery setup; start again")
                 }
@@ -414,12 +455,15 @@ final class AccountViewModel: ObservableObject {
                     splitID: publication.splitID,
                     possessionHashBase64: publication.possessionHashBase64)
                 await persistRenewedToken(from: client)
+                try ensureActiveSession(session)
                 let afterSecurityKey = try await client.vaultEpoch()
                 await persistRenewedToken(from: client)
+                try ensureActiveSession(session)
                 guard afterSecurityKey.state == "active", afterSecurityKey.epoch == localEpoch else {
                     throw Failure("vault key rotation changed during recovery setup; start again")
                 }
                 publication.serverStaged = true
+                try ensureActiveSession(session)
                 try recoveryJournal.save(publication)
             }
 
@@ -434,10 +478,12 @@ final class AccountViewModel: ObservableObject {
                     splitID: publication.splitID)
                 let confirmedEpoch = try await client.vaultEpoch()
                 await persistRenewedToken(from: client)
+                try ensureActiveSession(session)
                 guard confirmedEpoch.state == "active", confirmedEpoch.epoch == localEpoch else {
                     throw Failure("vault key rotation changed during cloud backup; start recovery setup again")
                 }
                 publication.cloudCandidateDurable = true
+                try ensureActiveSession(session)
                 try recoveryJournal.save(publication)
             }
 
@@ -448,6 +494,7 @@ final class AccountViewModel: ObservableObject {
                 try await client.finalizeRecoveryShare(
                     keyEpoch: localEpoch, splitID: publication.splitID)
                 await persistRenewedToken(from: client)
+                try ensureActiveSession(session)
                 publication.serverFinalized = true
                 try recoveryJournal.save(publication)
             }
@@ -461,6 +508,7 @@ final class AccountViewModel: ObservableObject {
                     shareBase64: publication.cloudShareBase64,
                     keyEpoch: localEpoch,
                     splitID: publication.splitID)
+                try ensureActiveSession(session)
                 publication.cloudActive = true
                 try recoveryJournal.save(publication)
             }
@@ -469,10 +517,11 @@ final class AccountViewModel: ObservableObject {
                 expected: "complete")
             // Share 3 (trusted contact) is shown to the user to distribute —
             // there is no automated channel for a trusted-contact handoff.
+            try ensureActiveSession(session)
             recoveryShares = [publication.trustedContactShareBase64]
             recoveryJournal.clear()
-            AuditLog.shared.record("recovery_setup", "\(threshold)-of-\(total)")
-            return "Recovery ready (\(threshold)-of-\(total)); Share 1 backed up to iCloud"
+            AuditLog.shared.record("recovery_setup", "2-of-3")
+            return "Recovery ready (2-of-3); Share 1 backed up to iCloud"
         }
     }
 
@@ -813,6 +862,10 @@ final class AccountViewModel: ObservableObject {
     }
 
     func signOut() {
+        // Invalidate any in-flight flow (e.g. setupRecovery) so its
+        // post-`await` mutations throw instead of landing stale writes after
+        // the account, journal, and store have been cleared below.
+        sessionGeneration += 1
         let loggingOut = account.map {
             VelaClient(baseURL: URL(string: $0.serverURL) ?? URL(string: defaultServer)!, token: $0.token)
         }

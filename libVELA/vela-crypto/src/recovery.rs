@@ -12,6 +12,11 @@ use crate::{
     error::{Result, VelaError},
     shamir::{self, Share},
 };
+use ed25519_dalek::{
+    Signer as _, SigningKey as Ed25519Sk, Verifier as _, VerifyingKey as Ed25519Vk,
+};
+use fips204::ml_dsa_87::{self, PrivateKey as MlDsaSk, PublicKey as MlDsaVk};
+use fips204::traits::{KeyGen as _, SerDes as _, Signer as _, Verifier as _};
 use vela_client_recovery_policy::{
     AdoptionDecision, AdoptionFacts, BoundShareFacts, ReconstructionDecision, ReconstructionFacts,
     RecoveryChannel,
@@ -211,7 +216,9 @@ fn open_for_recipient(
 ) -> Result<Share> {
     let header = 1 + crate::kem::HybridCapsule::WIRE_LEN;
     if blob.len() <= header {
-        return Err(VelaError::InvalidParameter("contact envelope too short".into()));
+        return Err(VelaError::InvalidParameter(
+            "contact envelope too short".into(),
+        ));
     }
     if blob[0] != CONTACT_ENVELOPE_VERSION {
         return Err(VelaError::InvalidParameter(format!(
@@ -285,42 +292,249 @@ pub fn open_contact_share_response(
 
 // ── RMS possession proof (server enrollment without WebAuthn) ────────────────
 
-/// Blind commitment to the reconstructed RMS, staged next to the server share.
+/// Length of the staged possession commitment: a hybrid verifying key
+/// (`ML-DSA-87 vk (2592 B) ‖ Ed25519 vk (32 B)`).
+pub const POSSESSION_COMMITMENT_LEN: usize = crate::signing::HYBRID_VK_LEN;
+/// Length of a possession proof: a hybrid signature.
+pub const POSSESSION_PROOF_LEN: usize = crate::signing::HYBRID_SIG_LEN;
+
+/// Deterministic CSPRNG whose output stream is derived from a single 32-byte
+/// seed via BLAKE3 (counter-mode key re-chaining).
+///
+/// Used only for ML-DSA-87 *key generation*: FIPS 204 keygen is randomized, but
+/// the possession keypair must be reproducible from the RMS alone, so we feed
+/// keygen from this stream instead of OS entropy. The resulting ML-DSA-87 key
+/// pair is an ordinary FIPS 204 key pair; its post-quantum security depends on
+/// ML-DSA, not on this wrapper.
+struct KdfStreamRng {
+    seed: [u8; 32],
+    block: [u8; 32],
+    offset: usize,
+    counter: u64,
+}
+
+impl KdfStreamRng {
+    fn new(seed: [u8; 32]) -> Self {
+        let mut rng = Self {
+            seed,
+            block: [0u8; 32],
+            offset: usize::MAX,
+            counter: 0,
+        };
+        rng.refill();
+        rng
+    }
+
+    fn refill(&mut self) {
+        self.counter = self.counter.wrapping_add(1);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"vela rms possession ml-dsa keygen v1");
+        hasher.update(&self.seed);
+        hasher.update(&self.counter.to_le_bytes());
+        self.block.copy_from_slice(hasher.finalize().as_bytes());
+        self.offset = 0;
+    }
+}
+
+impl rand_core::RngCore for KdfStreamRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut buf = [0u8; 4];
+        self.fill_bytes(&mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut buf = [0u8; 8];
+        self.fill_bytes(&mut buf);
+        u64::from_le_bytes(buf)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for byte in dest.iter_mut() {
+            if self.offset >= self.block.len() {
+                self.refill();
+            }
+            *byte = self.block[self.offset];
+            self.offset += 1;
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl rand_core::CryptoRng for KdfStreamRng {}
+
+/// Derive the deterministic hybrid signing key for one account's RMS.
+///
+/// Both components come from the RMS via BLAKE3 domain-separated derivation:
+/// the Ed25519 component from a directly derived seed, and the ML-DSA-87
+/// component through `KdfStreamRng` key generation. Distinct derivation
+/// contexts prevent any cross-component key reuse.
+fn possession_keys(rms: &[u8; 32]) -> (MlDsaSk, MlDsaVk, Ed25519Sk) {
+    let ml_seed = crate::kdf::derive("vela rms possession ml-dsa v1", rms).0;
+    let ed_seed = crate::kdf::derive("vela rms possession ed25519 v1", rms).0;
+    let mut rng = KdfStreamRng::new(ml_seed);
+    // Keygen consumes only our deterministic stream; the Infallible-style error
+    // arm is unreachable for well-formed RNG output.
+    let (ml_vk, ml_sk) =
+        ml_dsa_87::KG::try_keygen_with_rng(&mut rng).expect("deterministic ML-DSA keygen");
+    let ed_sk = Ed25519Sk::from_bytes(&ed_seed);
+    let ed_vk = ed_sk.verifying_key();
+    let _ = ed_vk;
+    (ml_sk, ml_vk, ed_sk)
+}
+
+/// Public verifying commitment to the reconstructed RMS, staged next to the
+/// server share.
 ///
 /// Lets the server issue a post-recovery enrollment grant after seeing only a
 /// challenge-bound proof — no WebAuthn assertion required, because possession
-/// of *any* two shares already implies possession of the RMS. The RMS is a
-/// random 32-byte value, so the hash leaks nothing usable offline; verification
-/// is online-only and rate-limited like every other recovery endpoint.
-pub fn rms_possession_hash(rms: &[u8; 32]) -> [u8; 32] {
-    crate::kdf::derive("vela rms possession v1", rms).0
+/// of *any* two shares already implies possession of the RMS.
+///
+/// The commitment is the PUBLIC hybrid (post-quantum + classical) verifying key
+/// of a keypair deterministically derived from the RMS — ML-DSA-87 plus
+/// Ed25519, mirroring every other identity signature in VELA. It can only be
+/// used to VERIFY proofs, never to produce them: a database reader holding
+/// `recovery_auth_hash` learns nothing that lets them forge a valid proof under
+/// either algorithm. Verification remains online-only and rate-limited like
+/// every other recovery endpoint.
+pub fn rms_possession_commitment(rms: &[u8; 32]) -> [u8; POSSESSION_COMMITMENT_LEN] {
+    let (_, ml_vk, ed_sk) = possession_keys(rms);
+    let mut out = [0u8; POSSESSION_COMMITMENT_LEN];
+    out[..crate::signing::ML_DSA_VK_LEN].copy_from_slice(&ml_vk.into_bytes());
+    out[crate::signing::ML_DSA_VK_LEN..].copy_from_slice(ed_sk.verifying_key().as_bytes());
+    out
 }
 
-/// Prove possession of the RMS for one specific recovery attempt.
-///
-/// `challenge` comes from `/recovery/initiate-proof`, so a captured proof is
-/// worthless outside its single-use attempt.
-pub fn rms_possession_proof(
-    possession_hash: &[u8; 32],
+/// Proof-message binding for one specific recovery attempt.
+fn possession_message(
     user_id: &str,
     recovery_id: &str,
     challenge: &[u8],
     key_epoch: i64,
-) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_keyed(possession_hash);
-    hasher.update(b"vela recovery possession proof v1");
-    hasher.update(&(user_id.len() as u32).to_le_bytes());
-    hasher.update(user_id.as_bytes());
-    hasher.update(&(recovery_id.len() as u32).to_le_bytes());
-    hasher.update(recovery_id.as_bytes());
-    hasher.update(&(challenge.len() as u32).to_le_bytes());
-    hasher.update(challenge);
-    hasher.update(&key_epoch.to_le_bytes());
-    *hasher.finalize().as_bytes()
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(48 + user_id.len() + recovery_id.len() + challenge.len());
+    message.extend_from_slice(b"vela recovery possession proof v2");
+    message.extend_from_slice(&(user_id.len() as u32).to_le_bytes());
+    message.extend_from_slice(user_id.as_bytes());
+    message.extend_from_slice(&(recovery_id.len() as u32).to_le_bytes());
+    message.extend_from_slice(recovery_id.as_bytes());
+    message.extend_from_slice(&(challenge.len() as u32).to_le_bytes());
+    message.extend_from_slice(challenge);
+    message.extend_from_slice(&key_epoch.to_le_bytes());
+    message
 }
 
-/// Constant-time equality for possession proofs compared server-side.
-pub fn possession_proofs_equal(a: &[u8; 32], b: &[u8; 32]) -> bool {
+const POSSESSION_MLDSA_CTX: &[u8] = b"vela recovery possession v1";
+
+/// Prove possession of the RMS for one specific recovery attempt.
+///
+/// Signs with both components of the RMS-derived hybrid key. `challenge` comes
+/// from `/recovery/initiate-proof`, so a captured proof is worthless outside
+/// its single-use attempt.
+pub fn rms_possession_sign(
+    rms: &[u8; 32],
+    user_id: &str,
+    recovery_id: &str,
+    challenge: &[u8],
+    key_epoch: i64,
+) -> [u8; POSSESSION_PROOF_LEN] {
+    let (ml_sk, _, ed_sk) = possession_keys(rms);
+    let message = possession_message(user_id, recovery_id, challenge, key_epoch);
+    let mut sig = [0u8; POSSESSION_PROOF_LEN];
+    let ml_sig = ml_sk
+        .try_sign(&message, POSSESSION_MLDSA_CTX)
+        .expect("ML-DSA sign");
+    sig[..crate::signing::ML_DSA_SIG_LEN].copy_from_slice(&ml_sig);
+    sig[crate::signing::ML_DSA_SIG_LEN..].copy_from_slice(&ed_sk.sign(&message).to_bytes());
+    sig
+}
+
+/// Verify a presented possession proof against the stored public commitment.
+///
+/// The commitment length selects the scheme version:
+///
+/// - **v1 (legacy, 32 bytes)** — the pre-hybrid keyed-hash commitment. These
+///   were staged by clients that shipped before the hybrid redesign; they are
+///   verifiable here so accounts mid-recovery are not stranded, but a v1
+///   commitment is itself the proof key and therefore offers no protection
+///   against a database reader. v1 remains forgeable-by-design until the
+///   account re-stages recovery; it must never be *produced* again.
+/// - **v2 (current, 2624 bytes)** — hybrid ML-DSA-87 ‖ Ed25519 verifying key.
+pub fn rms_possession_verify(
+    commitment: &[u8],
+    user_id: &str,
+    recovery_id: &str,
+    challenge: &[u8],
+    key_epoch: i64,
+    presented: &[u8],
+) -> bool {
+    if commitment.len() == 32 {
+        // Legacy v1: keyed-hash proof over the same attempt bindings.
+        let mut expected = blake3::Hasher::new_keyed(&{
+            let mut k = [0u8; 32];
+            k.copy_from_slice(commitment);
+            k
+        });
+        expected.update(b"vela recovery possession proof v1");
+        expected.update(&(user_id.len() as u32).to_le_bytes());
+        expected.update(user_id.as_bytes());
+        expected.update(&(recovery_id.len() as u32).to_le_bytes());
+        expected.update(recovery_id.as_bytes());
+        expected.update(&(challenge.len() as u32).to_le_bytes());
+        expected.update(challenge);
+        expected.update(&key_epoch.to_le_bytes());
+        return presented.len() == 32
+            && constant_time_eq(presented, expected.finalize().as_bytes());
+    }
+
+    if commitment.len() != POSSESSION_COMMITMENT_LEN || presented.len() != POSSESSION_PROOF_LEN {
+        return false;
+    }
+    let message = possession_message(user_id, recovery_id, challenge, key_epoch);
+
+    let ml_vk = match MlDsaVk::try_from_bytes(
+        commitment[..crate::signing::ML_DSA_VK_LEN]
+            .try_into()
+            .expect("length checked above"),
+    ) {
+        Ok(vk) => vk,
+        Err(_) => return false,
+    };
+
+    // ML-DSA-87 component (post-quantum): must verify on its own.
+    let ml_sig: [u8; crate::signing::ML_DSA_SIG_LEN] = presented[..crate::signing::ML_DSA_SIG_LEN]
+        .try_into()
+        .expect("length checked above");
+    if !ml_vk.verify(&message, &ml_sig, POSSESSION_MLDSA_CTX) {
+        return false;
+    }
+
+    // Classical component: must also verify independently.
+    let ed_sig = match <&[u8; 32]>::try_from(&commitment[crate::signing::ML_DSA_VK_LEN..])
+        .ok()
+        .and_then(|b| Ed25519Vk::from_bytes(b).ok())
+    {
+        Some(vk) => vk,
+        None => return false,
+    };
+    use ed25519_dalek::Signature as Ed25519Sig;
+    let ed_sig_bytes: [u8; crate::signing::ED25519_SIG_LEN] = presented
+        [crate::signing::ML_DSA_SIG_LEN..]
+        .try_into()
+        .expect("length checked above");
+    ed_sig
+        .verify(&message, &Ed25519Sig::from_bytes(&ed_sig_bytes))
+        .is_ok()
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
     let mut diff = 0u8;
     for (x, y) in a.iter().zip(b.iter()) {
         diff |= x ^ y;
@@ -437,12 +651,7 @@ mod tests {
     fn unbound_or_legacy_shares_fail_closed() {
         let shares = shamir::split(&[9u8; 32], 2, 3).unwrap();
         // A trusted-contact share that was never inside an addressed envelope.
-        let mut raw_contact = bound(
-            &shares[1],
-            ACCOUNT,
-            2,
-            RecoveryShareChannel::TrustedContact,
-        );
+        let mut raw_contact = bound(&shares[1], ACCOUNT, 2, RecoveryShareChannel::TrustedContact);
         raw_contact.recipient_bound = false;
         assert!(reconstruct_account_recovery(
             ACCOUNT,
@@ -549,28 +758,138 @@ mod tests {
     #[test]
     fn possession_proofs_bind_attempt_and_epoch() {
         let rms = [13u8; 32];
-        let hash = rms_possession_hash(&rms);
-        let proof = rms_possession_proof(&hash, ACCOUNT, "attempt-1", b"challenge", 5);
-        assert!(possession_proofs_equal(
-            &proof,
-            &rms_possession_proof(&hash, ACCOUNT, "attempt-1", b"challenge", 5)
+        let commitment = rms_possession_commitment(&rms);
+        let proof = rms_possession_sign(&rms, ACCOUNT, "attempt-1", b"challenge", 5);
+        assert!(rms_possession_verify(
+            &commitment,
+            ACCOUNT,
+            "attempt-1",
+            b"challenge",
+            5,
+            &proof
         ));
-        assert!(!possession_proofs_equal(
-            &proof,
-            &rms_possession_proof(&hash, ACCOUNT, "attempt-2", b"challenge", 5)
+        // Binding: another attempt id, challenge, or epoch fails verification.
+        assert!(!rms_possession_verify(
+            &commitment,
+            ACCOUNT,
+            "attempt-2",
+            b"challenge",
+            5,
+            &proof
         ));
-        assert!(!possession_proofs_equal(
-            &proof,
-            &rms_possession_proof(&hash, ACCOUNT, "attempt-1", b"other", 5)
+        assert!(!rms_possession_verify(
+            &commitment,
+            ACCOUNT,
+            "attempt-1",
+            b"other",
+            5,
+            &proof
         ));
-        assert!(!possession_proofs_equal(
-            &proof,
-            &rms_possession_proof(&hash, ACCOUNT, "attempt-1", b"challenge", 6)
+        assert!(!rms_possession_verify(
+            &commitment,
+            ACCOUNT,
+            "attempt-1",
+            b"challenge",
+            6,
+            &proof
         ));
-        let other_hash = rms_possession_hash(&[14u8; 32]);
-        assert!(!possession_proofs_equal(
-            &proof,
-            &rms_possession_proof(&other_hash, ACCOUNT, "attempt-1", b"challenge", 5)
+        // A different RMS produces a different commitment and proof.
+        let other_commitment = rms_possession_commitment(&[14u8; 32]);
+        let other_proof = rms_possession_sign(&[14u8; 32], ACCOUNT, "attempt-1", b"challenge", 5);
+        assert_ne!(commitment, other_commitment);
+        assert_ne!(proof, other_proof);
+        assert!(!rms_possession_verify(
+            &other_commitment,
+            ACCOUNT,
+            "attempt-1",
+            b"challenge",
+            5,
+            &proof
+        ));
+        // A different RMS produces a different commitment and proof.
+        let other_commitment = rms_possession_commitment(&[14u8; 32]);
+        let other_proof = rms_possession_sign(&[14u8; 32], ACCOUNT, "attempt-1", b"challenge", 5);
+        assert_ne!(commitment, other_commitment);
+        assert_ne!(proof, other_proof);
+        assert!(!rms_possession_verify(
+            &other_commitment,
+            ACCOUNT,
+            "attempt-1",
+            b"challenge",
+            5,
+            &proof
+        ));
+        // The commitment itself cannot produce a valid proof (DB-read safety).
+        assert!(!rms_possession_verify(
+            &commitment,
+            ACCOUNT,
+            "attempt-1",
+            b"challenge",
+            5,
+            &{
+                let mut p = [0u8; POSSESSION_PROOF_LEN];
+                p[..POSSESSION_COMMITMENT_LEN.min(POSSESSION_PROOF_LEN)].copy_from_slice(
+                    &commitment[..POSSESSION_COMMITMENT_LEN.min(POSSESSION_PROOF_LEN)],
+                );
+                p
+            }
+        ));
+    }
+
+    #[test]
+    fn possession_keys_are_derived_deterministically() {
+        let rms = [21u8; 32];
+        // Key derivation is deterministic (same verifying key every time);
+        // signatures are not compared byte-for-byte because ML-DSA signing
+        // deliberately randomizes its rejection-sampling loop.
+        assert_eq!(
+            rms_possession_commitment(&rms),
+            rms_possession_commitment(&rms)
+        );
+        let commitment = rms_possession_commitment(&rms);
+        for attempt in [("a", b"c".as_slice(), 1i64), ("b", b"d".as_slice(), 2)] {
+            let proof = rms_possession_sign(&rms, ACCOUNT, attempt.0, attempt.1, attempt.2);
+            assert!(rms_possession_verify(
+                &commitment,
+                ACCOUNT,
+                attempt.0,
+                attempt.1,
+                attempt.2,
+                &proof
+            ));
+        }
+    }
+
+    #[test]
+    fn legacy_v1_possession_still_verifies() {
+        // Accounts staged before the hybrid redesign hold a 32-byte keyed-hash
+        // commitment; their in-flight proofs must keep verifying.
+        let possession_hash = blake3::derive_key("vela rms possession v1", &[99u8; 32]);
+        let mut expected = blake3::Hasher::new_keyed(&possession_hash);
+        expected.update(b"vela recovery possession proof v1");
+        expected.update(&(ACCOUNT.len() as u32).to_le_bytes());
+        expected.update(ACCOUNT.as_bytes());
+        expected.update(&("recovery_id".len() as u32).to_le_bytes());
+        expected.update(b"recovery_id");
+        expected.update(&(b"chal".len() as u32).to_le_bytes());
+        expected.update(b"chal");
+        expected.update(&7i64.to_le_bytes());
+        let proof = *expected.finalize().as_bytes();
+        assert!(rms_possession_verify(
+            &possession_hash,
+            ACCOUNT,
+            "recovery_id",
+            b"chal",
+            7,
+            &proof
+        ));
+        assert!(!rms_possession_verify(
+            &possession_hash,
+            ACCOUNT,
+            "recovery_id",
+            b"chal",
+            8,
+            &proof
         ));
     }
 }

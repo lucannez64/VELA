@@ -14,10 +14,15 @@ functions: cap/2
 /* Sender identity bound: only an enrolled device of the sender can revoke
    a link. The device identity is the hybrid signing key. */
 
+rule SetupDeviceKey:
+    [ Fr(~sender), Fr(~x) ]
+  --[ DeviceEnrolled(~sender, ~x) ]->
+    [ !DevKey(~sender, ~x) ]
+
 rule LinkCreated:
-    [ Fr(~sender), Fr(~recipient), Fr(~capsule) ]
-  --[ LinkCreated(~sender, ~recipient, ~capsule) ]->
-    [ PendingCapsule(~recipient, ~capsule) ]
+    [ !DevKey(S, X), Fr(~recipient), Fr(~capsule) ]
+  --[ LinkCreated(S, ~recipient, ~capsule) ]->
+    [ PendingCapsule(S, ~recipient, ~capsule) ]
 
 /* Delivery: the server relays the opaque capsule to the recipient.
    Each capsule is delivered at most once by consuming the linear pending
@@ -60,10 +65,15 @@ lemma revoked_links_can_never_be_read_again:
 lemma only_sender_can_revoke_link:
   "All S R Cap #r.
      LinkRevoked(S, R, Cap) @ r
-     ==> LinkCreated(S, R, Cap) @ r"
+     ==> Ex X #c #e. LinkCreated(S, R, Cap) @ #c &
+                     DeviceEnrolled(S, X) @ #e & #c < #r & #e < #r"
 
 /* Availability: an honest link reaches delivery; the linear delivery +
    read chain and server SQL filter together make revocation final. */
+lemma revocation_is_reachable:
+  exists-trace
+  "Ex S R Cap #r #c. LinkCreated(S, R, Cap) @ #c &
+                     LinkRevoked(S, R, Cap) @ r & #c < #r"
 /* Removed exists-trace due to Tamarin DFS limits; structural finality is
    sufficient for M20's pass-through assurance. */
 

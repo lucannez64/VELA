@@ -40,6 +40,13 @@ const TABLES: &[Table] = &[
             "rekey_id",
             "last_rekey_id",
             "last_rekey_epoch",
+            "recovery_split_id",
+            "recovery_pending_share",
+            "recovery_pending_split_id",
+            "recovery_pending_epoch",
+            "recovery_pending_auth_hash",
+            "share_ek_since",
+            "share_ek_device_id",
         ],
     },
     Table {
@@ -242,6 +249,8 @@ CREATE TABLE IF NOT EXISTS users (
     share_ek TEXT, recovery_webauthn_cred_id TEXT,
     recovery_split_id TEXT, recovery_pending_share TEXT,
     recovery_pending_split_id TEXT, recovery_pending_epoch INTEGER,
+    recovery_pending_auth_hash TEXT,
+    share_ek_since TEXT, share_ek_device_id TEXT,
     key_epoch INTEGER NOT NULL DEFAULT 1, rekey_state TEXT,
     rekey_started_at TEXT, rekey_starter TEXT, rekey_id TEXT,
     last_rekey_id TEXT, last_rekey_epoch INTEGER);

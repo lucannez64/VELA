@@ -81,3 +81,11 @@ install commands). Extracted policy regenerates with:
 cd libVELA/vela-crypto
 cargo hax into -i '-** +vela_crypto::oram::use_trivial_oram_with_threshold' pro-verif
 ```
+
+## Post-review revision (2026-08-26)
+
+`m22b_trivial_oram_hiding.pv` now folds the selected chunk's payload into the
+opaque `aead_stash` write-back (chunkA in world A, chunkB in world B), so the
+equivalence models `access(chunkA) ~ access(chunkB)` rather than a trivial
+self-equivalence. Re-verified locally: m22a FALSE (baseline attack), m22b TRUE,
+m22c TRUE (proverif).

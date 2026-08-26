@@ -1947,9 +1947,11 @@ async fn possession_proof_recovery_grants_enrollment_without_webauthn() {
     insert_user(&state, user_id).await;
 
     // A finalized split with a staged possession commitment (what
-    // `put_share` + `finalize_share` produce together).
+    // `put_share` + `finalize_share` produce together): the commitment is the
+    // *public* verifying key derived from the RMS — it must not be usable to
+    // produce proofs.
     let rms = [42u8; 32];
-    let commitment = blake3::derive_key("vela rms possession v1", &rms);
+    let commitment = vela_crypto::recovery::rms_possession_commitment(&rms);
     state
         .sqldb
         .execute(
@@ -2008,7 +2010,7 @@ async fn possession_proof_recovery_grants_enrollment_without_webauthn() {
     let challenge = B64.decode(body["challenge_b64"].as_str().unwrap()).unwrap();
     assert_eq!(body["key_epoch"].as_i64(), Some(4));
 
-    let proof = possession_proof_client_side(&commitment, &user_id, &recovery_id, &challenge, 4);
+    let proof = possession_proof_client_side(&rms, &user_id, &recovery_id, &challenge, 4);
     let ip: ConnectInfo<SocketAddr> = ConnectInfo(SocketAddr::from(([10, 0, 0, 9], 44444)));
     let resp = app
         .clone()
@@ -2042,13 +2044,14 @@ async fn possession_proof_recovery_grants_enrollment_without_webauthn() {
     );
 
     // The challenge is single-use: a replayed or forged proof fails closed.
-    let wrong_commitment = blake3::derive_key("vela rms possession v1", &[43u8; 32]);
-    let wrong_proof = possession_proof_client_side(
-        &wrong_commitment,
-        &user_id,
-        &recovery_id,
-        &challenge,
-        4,
+    // A proof under a different RMS does not verify against the staged
+    // commitment, and a proof for a different attempt id fails the binding.
+    let wrong_proof =
+        possession_proof_client_side(&[43u8; 32], &user_id, &recovery_id, &challenge, 4);
+    assert_ne!(
+        B64.encode(wrong_proof),
+        B64.encode(proof),
+        "different RMS values must produce different proofs"
     );
     let resp = app
         .clone()
@@ -2073,24 +2076,24 @@ async fn possession_proof_recovery_grants_enrollment_without_webauthn() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-/// Mirror of `vela_crypto::recovery::rms_possession_proof` for test clients.
+/// Client-side proof generation for test clients, delegating to the same
+/// `vela_crypto::recovery` construction every real client uses. `rms` here is
+/// the reconstructed root material; the stored commitment in
+/// `recovery_auth_hash` is its public verifying key only.
 fn possession_proof_client_side(
-    commitment: &[u8; 32],
+    rms: &[u8; 32],
     user_id: &Uuid,
     recovery_id: &Uuid,
     challenge: &[u8],
     key_epoch: i64,
-) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_keyed(commitment);
-    hasher.update(b"vela recovery possession proof v1");
-    hasher.update(&(user_id.to_string().len() as u32).to_le_bytes());
-    hasher.update(user_id.to_string().as_bytes());
-    hasher.update(&(recovery_id.to_string().len() as u32).to_le_bytes());
-    hasher.update(recovery_id.to_string().as_bytes());
-    hasher.update(&(challenge.len() as u32).to_le_bytes());
-    hasher.update(challenge);
-    hasher.update(&key_epoch.to_le_bytes());
-    *hasher.finalize().as_bytes()
+) -> [u8; vela_crypto::recovery::POSSESSION_PROOF_LEN] {
+    vela_crypto::recovery::rms_possession_sign(
+        rms,
+        &user_id.to_string(),
+        &recovery_id.to_string(),
+        challenge,
+        key_epoch,
+    )
 }
 
 /// M19: share-key registration requires a device-signed binding. A database

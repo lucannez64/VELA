@@ -727,6 +727,13 @@ const BOOTSTRAP_TABLES: &[(&str, &[&str])] = &[
             "rekey_id",
             "last_rekey_id",
             "last_rekey_epoch",
+            "recovery_split_id",
+            "recovery_pending_share",
+            "recovery_pending_split_id",
+            "recovery_pending_epoch",
+            "recovery_pending_auth_hash",
+            "share_ek_since",
+            "share_ek_device_id",
         ],
     ),
     (

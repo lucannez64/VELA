@@ -11,8 +11,8 @@ type t_EpochAdoptionFacts = {
   f_server_epoch:i64;
   f_local_epoch:i64;
   f_server_epoch_is_next:bool;
-  f_capsule_epoch_matches:bool;
-  f_rotation_id_present:bool
+  f_capsule_epoch_matches:Core_models.Option.t_Option bool;
+  f_rotation_id_present:Core_models.Option.t_Option bool
 }
 
 type t_EpochAdoptionPermit = {
@@ -22,6 +22,7 @@ type t_EpochAdoptionPermit = {
 
 type t_AdoptionDecision =
   | AdoptionDecision_Keep : t_AdoptionDecision
+  | AdoptionDecision_FetchCapsule : t_AdoptionDecision
   | AdoptionDecision_Adopt : t_EpochAdoptionPermit -> t_AdoptionDecision
   | AdoptionDecision_Reject : t_AdoptionDecision
 
@@ -45,8 +46,21 @@ let epoch_adoption_is_authorized (facts: t_EpochAdoptionFacts) : bool =
   facts.f_local_epoch >=. v_INITIAL_EPOCH &&
   facts.f_server_epoch >. facts.f_local_epoch &&
   facts.f_server_epoch_is_next &&
-  facts.f_capsule_epoch_matches &&
-  facts.f_rotation_id_present
+  facts.f_capsule_epoch_matches ==. Core_models.Option.Option_Some true &&
+  facts.f_rotation_id_present ==. Core_models.Option.Option_Some true
+
+/// A sequential advance whose capsule has not been fetched yet (fact fields
+/// `None`) asks the caller to fetch it; every other unauthorized shape is a
+/// plain rejection.
+let epoch_adoption_is_fetch_pending (facts: t_EpochAdoptionFacts) : bool =
+  let fetch_pending_or_present (o: Core_models.Option.t_Option bool) : bool =
+    match o <: Core_models.Option.t_Option bool with
+    | Core_models.Option.Option_None -> true
+    | Core_models.Option.Option_Some _ -> false
+  in
+  facts.f_server_epoch_is_next &&
+  (fetch_pending_or_present facts.f_capsule_epoch_matches ||
+    fetch_pending_or_present facts.f_rotation_id_present)
 
 let epoch_adoption_decision_matches_spec
       (facts: t_EpochAdoptionFacts)
@@ -61,26 +75,32 @@ let epoch_adoption_decision_matches_spec
       if facts.f_server_epoch =. facts.f_local_epoch
       then decision =. (AdoptionDecision_Keep <: t_AdoptionDecision)
       else
-        if epoch_adoption_is_authorized facts
-        then
-          match
-            (match decision <: t_AdoptionDecision with
-              | AdoptionDecision_Adopt permit ->
-                (match
-                    (impl_EpochAdoptionPermit__epoch permit <: i64) =. facts.f_server_epoch &&
-                    impl_EpochAdoptionPermit__binds_capsule_epoch permit
-                    <:
-                    bool
-                  with
-                  | true -> Core_models.Option.Option_Some true <: Core_models.Option.t_Option bool
+        if ~.facts.f_server_epoch_is_next
+        then decision =. (AdoptionDecision_Reject <: t_AdoptionDecision)
+        else
+          if epoch_adoption_is_fetch_pending facts
+          then decision =. (AdoptionDecision_FetchCapsule <: t_AdoptionDecision)
+          else
+            if epoch_adoption_is_authorized facts
+            then
+              match
+                (match decision <: t_AdoptionDecision with
+                  | AdoptionDecision_Adopt permit ->
+                    (match
+                        (impl_EpochAdoptionPermit__epoch permit <: i64) =. facts.f_server_epoch &&
+                        impl_EpochAdoptionPermit__binds_capsule_epoch permit
+                        <:
+                        bool
+                      with
+                      | true -> Core_models.Option.Option_Some true <: Core_models.Option.t_Option bool
+                      | _ -> Core_models.Option.Option_None <: Core_models.Option.t_Option bool)
                   | _ -> Core_models.Option.Option_None <: Core_models.Option.t_Option bool)
-              | _ -> Core_models.Option.Option_None <: Core_models.Option.t_Option bool)
-            <:
-            Core_models.Option.t_Option bool
-          with
-          | Core_models.Option.Option_Some x -> x
-          | Core_models.Option.Option_None  -> false
-        else decision =. (AdoptionDecision_Reject <: t_AdoptionDecision)
+                <:
+                Core_models.Option.t_Option bool
+              with
+              | Core_models.Option.Option_Some x -> x
+              | Core_models.Option.Option_None  -> false
+            else decision =. (AdoptionDecision_Reject <: t_AdoptionDecision)
 
 let plan_epoch_adoption (facts: t_EpochAdoptionFacts)
     : Prims.Pure t_AdoptionDecision
@@ -98,14 +118,20 @@ let plan_epoch_adoption (facts: t_EpochAdoptionFacts)
       if facts.f_server_epoch =. facts.f_local_epoch
       then AdoptionDecision_Keep <: t_AdoptionDecision
       else
-        if epoch_adoption_is_authorized facts
-        then
-          AdoptionDecision_Adopt
-          ({ f_epoch = facts.f_server_epoch; f_binds_capsule_epoch = true } <: t_EpochAdoptionPermit
-          )
-          <:
-          t_AdoptionDecision
-        else AdoptionDecision_Reject <: t_AdoptionDecision
+        if ~.facts.f_server_epoch_is_next
+        then AdoptionDecision_Reject <: t_AdoptionDecision
+        else
+          if epoch_adoption_is_authorized facts
+          then
+            AdoptionDecision_Adopt
+            ({ f_epoch = facts.f_server_epoch; f_binds_capsule_epoch = true } <: t_EpochAdoptionPermit
+            )
+            <:
+            t_AdoptionDecision
+          else
+            if epoch_adoption_is_fetch_pending facts
+            then AdoptionDecision_FetchCapsule <: t_AdoptionDecision
+            else AdoptionDecision_Reject <: t_AdoptionDecision
 
 let rolled_back_server_epoch_can_adopt (facts: t_EpochAdoptionFacts)
     : Prims.Pure bool
@@ -160,7 +186,13 @@ let fforeign_capsule_can_adopt (facts: t_EpochAdoptionFacts)
           let result:bool = result in
           result =. false) =
   let facts:t_EpochAdoptionFacts =
-    { facts with f_capsule_epoch_matches = false } <: t_EpochAdoptionFacts
+    {
+      facts with
+      f_capsule_epoch_matches =
+      Core_models.Option.Option_Some false <: Core_models.Option.t_Option bool
+    }
+    <:
+    t_EpochAdoptionFacts
   in
   epoch_adoption_is_authorized facts
 

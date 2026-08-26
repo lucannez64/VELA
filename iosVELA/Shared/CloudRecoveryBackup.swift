@@ -70,6 +70,12 @@ enum CloudRecoveryBackup {
             key: "\(candidateKeyPrefix)\(userID).\(keyEpoch).\(splitID)")
     }
 
+    /// Re-publishes Share 1 as the active envelope under an epoch-scoped key
+    /// (`v3.active.<userID>.<epoch>`), so a delayed older-epoch promotion
+    /// cannot overwrite a newer epoch's envelope. Readers select the highest
+    /// valid epoch for the account via `newest(in:)`. Superseded artifacts —
+    /// the legacy unprefixed v1 key, v3 single-user active keys from before
+    /// this scheme, and lower-epoch actives for this user — are removed.
     static func promote(
         userID: String, shareBase64: String, keyEpoch: Int, splitID: String
     ) throws {
@@ -78,7 +84,28 @@ enum CloudRecoveryBackup {
         }
         try upload(
             userID: userID, shareBase64: shareBase64, keyEpoch: keyEpoch,
-            splitID: splitID, status: "active", key: "\(activeKeyPrefix)\(userID)")
+            splitID: splitID, status: "active",
+            key: "\(activeKeyPrefix)\(userID).\(keyEpoch)")
+        cleanupSupersededActive(userID: userID, keyEpoch: keyEpoch)
+    }
+
+    /// Best-effort removal of envelopes the new active supersedes. Failure is
+    /// harmless: stale keys are simply ignored by the newest-epoch reader.
+    private static func cleanupSupersededActive(userID: String, keyEpoch: Int) {
+        let store = NSUbiquitousKeyValueStore.default
+        for (key, _) in store.dictionaryRepresentation {
+            if key == legacyStorageKey
+                || key == "\(activeKeyPrefix)\(userID)" {   // pre-epoch-scoped v3 key
+                store.removeObject(forKey: key)
+                continue
+            }
+            let scopedPrefix = "\(activeKeyPrefix)\(userID)."
+            guard key.hasPrefix(scopedPrefix),
+                  let epoch = Int(key.dropFirst(scopedPrefix.count)),
+                  epoch < keyEpoch else { continue }
+            store.removeObject(forKey: key)
+        }
+        store.synchronize()
     }
 
     private static func upload(

@@ -440,14 +440,18 @@ pub unsafe extern "C" fn vela_ffi_identity_rotate_share_key(
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
-pub unsafe extern "C" fn vela_ffi_open_rekey_capsule_json(request_json: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn vela_ffi_open_rekey_capsule_json(
+    request_json: *const c_char,
+) -> *mut c_char {
     json_result(|| open_rekey_capsule_impl(c_str(request_json)?))
 }
 
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
-pub unsafe extern "C" fn vela_ffi_identity_sign_share_ek_json(request_json: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn vela_ffi_identity_sign_share_ek_json(
+    request_json: *const c_char,
+) -> *mut c_char {
     json_result(|| identity_sign_share_ek_impl(c_str(request_json)?))
 }
 
@@ -653,7 +657,9 @@ pub unsafe extern "C" fn vela_ffi_rms_possession_hash_json(
 ) -> *mut c_char {
     json_result(|| {
         let rms = rms_from(raw_slice(rms, rms_len)?)?;
-        let hash_b64 = vela_crypto::recovery::rms_possession_hash(&rms);
+        // v2: this is now the *public* verifying-key commitment (same 32-byte
+        // wire shape); it cannot itself produce proofs.
+        let hash_b64 = vela_crypto::recovery::rms_possession_commitment(&rms);
         Ok(serde_json::json!({ "hash_b64": B64.encode(hash_b64) }))
     })
 }
@@ -811,7 +817,9 @@ fn identity_sign_impl(request_json: &str) -> FfiResult<AuthSignatureResponse> {
 }
 
 #[derive(Serialize)]
-struct OpenRekeyCapsuleResponse { rms_b64: String }
+struct OpenRekeyCapsuleResponse {
+    rms_b64: String,
+}
 
 /// Open an RMS-rotation capsule with the device's hybrid DK (M24).
 fn open_rekey_capsule_impl(request_json: &str) -> FfiResult<OpenRekeyCapsuleResponse> {
@@ -824,18 +832,26 @@ fn open_rekey_capsule_impl(request_json: &str) -> FfiResult<OpenRekeyCapsuleResp
         expected_rotation_id: String,
     }
     #[derive(Serialize)]
-    struct Response { rms_b64: String }
+    struct Response {
+        rms_b64: String,
+    }
     let req: Request = serde_json::from_str(request_json)?;
     let dk = B64.decode(req.hybrid_dk_b64.as_bytes())?;
     let capsule = B64.decode(req.capsule_b64.as_bytes())?;
     let prev = B64.decode(req.previous_rms_b64.as_bytes())?;
-    let previous_rms: [u8; 32] = prev.try_into()
+    let previous_rms: [u8; 32] = prev
+        .try_into()
         .map_err(|_| "previous_rms must be 32 bytes".to_string())?;
     let rms = vela_crypto::rekey::open_rekey_capsule(
-        &dk, &capsule, &previous_rms,
-        req.expected_epoch, &req.expected_rotation_id,
+        &dk,
+        &capsule,
+        &previous_rms,
+        req.expected_epoch,
+        &req.expected_rotation_id,
     )?;
-    Ok(OpenRekeyCapsuleResponse { rms_b64: B64.encode(rms.as_slice()) })
+    Ok(OpenRekeyCapsuleResponse {
+        rms_b64: B64.encode(rms.as_slice()),
+    })
 }
 
 /// Sign a share-key binding with the identity held under `handle` (M19).
@@ -1033,10 +1049,11 @@ fn combine_recovery_json(request_json: &str) -> FfiResult<CombineRecoveryRespons
     // policy, which admits every distinct-channel pair (cloud + server,
     // cloud + trusted contact, server + trusted contact).
     if !req.bound_shares.is_empty() {
-        let requested = req.requested_user_id.as_deref().ok_or(
-            "requested_user_id is required for bound account recovery",
-        )?;
-        if req.bound_shares.len() != 2 || shares.len() != 2 {
+        let requested = req
+            .requested_user_id
+            .as_deref()
+            .ok_or("requested_user_id is required for bound account recovery")?;
+        if req.bound_shares.len() != 2 {
             return Err("bound account recovery requires exactly two shares".into());
         }
         let channel = |name: &str| match name {
@@ -1044,6 +1061,15 @@ fn combine_recovery_json(request_json: &str) -> FfiResult<CombineRecoveryRespons
             "server" => Ok(vela_crypto::recovery::RecoveryShareChannel::Server),
             "trusted_contact" => Ok(vela_crypto::recovery::RecoveryShareChannel::TrustedContact),
             other => Err(format!("unknown recovery share channel {other:?}")),
+        };
+        // Decode each bound share from its own metadata entry — pairing
+        // `bound_shares[i]` metadata with a positionally-coupled element of
+        // the separate `shares_b64` array let metadata and key material go
+        // out of sync.
+        let decode_bound = |entry: &CombineShareInput| -> FfiResult<shamir::Share> {
+            Ok(shamir::Share::from_bytes(
+                &B64.decode(entry.share_b64.as_bytes())?,
+            )?)
         };
         let first = &req.bound_shares[0];
         let second = &req.bound_shares[1];
@@ -1055,7 +1081,7 @@ fn combine_recovery_json(request_json: &str) -> FfiResult<CombineRecoveryRespons
                 split_id: first.split_id.as_deref(),
                 channel: channel(&first.channel)?,
                 recipient_bound: first.recipient_bound,
-                share: &shares[0],
+                share: &decode_bound(first)?,
             },
             vela_crypto::recovery::BoundRecoveryShare {
                 account_id: second.account_id.as_str(),
@@ -1063,7 +1089,7 @@ fn combine_recovery_json(request_json: &str) -> FfiResult<CombineRecoveryRespons
                 split_id: second.split_id.as_deref(),
                 channel: channel(&second.channel)?,
                 recipient_bound: second.recipient_bound,
-                share: &shares[1],
+                share: &decode_bound(second)?,
             },
         )?;
         return Ok(CombineRecoveryResponse {
@@ -1123,7 +1149,8 @@ fn seal_contact_share_json(request_json: &str) -> FfiResult<serde_json::Value> {
         share_b64: String,
     }
     let req: Request = serde_json::from_str(request_json)?;
-    let pk = kem::HybridPublicKey::from_bytes(&B64.decode(req.recipient_public_key_b64.as_bytes())?)?;
+    let pk =
+        kem::HybridPublicKey::from_bytes(&B64.decode(req.recipient_public_key_b64.as_bytes())?)?;
     let share = shamir::Share::from_bytes(&B64.decode(req.share_b64.as_bytes())?)?;
     let context = vela_crypto::recovery::ContactShareContext {
         account_id: req.account_id.as_str(),
@@ -1154,7 +1181,8 @@ fn open_contact_share_json(request_json: &str) -> FfiResult<serde_json::Value> {
         response: bool,
     }
     let req: Request = serde_json::from_str(request_json)?;
-    let sk = kem::HybridSecretKey::from_bytes(&B64.decode(req.recipient_secret_key_b64.as_bytes())?)?;
+    let sk =
+        kem::HybridSecretKey::from_bytes(&B64.decode(req.recipient_secret_key_b64.as_bytes())?)?;
     let context = vela_crypto::recovery::ContactShareContext {
         account_id: req.account_id.as_str(),
         key_epoch: req.key_epoch,
@@ -1182,7 +1210,8 @@ fn seal_contact_share_response_json(request_json: &str) -> FfiResult<serde_json:
         share_b64: String,
     }
     let req: Request = serde_json::from_str(request_json)?;
-    let pk = kem::HybridPublicKey::from_bytes(&B64.decode(req.requester_public_key_b64.as_bytes())?)?;
+    let pk =
+        kem::HybridPublicKey::from_bytes(&B64.decode(req.requester_public_key_b64.as_bytes())?)?;
     let share = shamir::Share::from_bytes(&B64.decode(req.share_b64.as_bytes())?)?;
     let context = vela_crypto::recovery::ContactShareContext {
         account_id: req.account_id.as_str(),
@@ -1217,16 +1246,17 @@ fn possession_proof_json(request_json: &str) -> FfiResult<serde_json::Value> {
         .try_into()
         .map_err(|_| "rms must be exactly 32 bytes".to_string())?;
     let challenge = B64.decode(req.challenge_b64.as_bytes())?;
-    let hash = vela_crypto::recovery::rms_possession_hash(&rms);
-    let proof = vela_crypto::recovery::rms_possession_proof(
-        &hash,
+    // v2: sign under the RMS-derived private key; the server verifies against
+    // the public commitment alone, so the stored value cannot forge proofs.
+    let proof = vela_crypto::recovery::rms_possession_sign(
+        &rms,
         &req.user_id,
         &req.recovery_id,
         &challenge,
         req.key_epoch,
     );
     Ok(serde_json::json!({
-        "possession_hash_b64": B64.encode(hash),
+        "possession_hash_b64": B64.encode(vela_crypto::recovery::rms_possession_commitment(&rms)),
         "proof_b64": B64.encode(proof),
     }))
 }
@@ -1831,36 +1861,42 @@ mod tests {
         );
         let split: SplitRecoveryResponse = serde_json::from_str(&split).unwrap();
 
-        let bound_request =
-            |first: &str, second: &str, second_bound: bool, second_epoch: i64| {
-                serde_json::json!({
-                    "shares_b64": [split.shares_b64[0], split.shares_b64[2]],
-                    "requested_user_id": "account-a",
-                    "bound_shares": [
-                        {
-                            "share_b64": split.shares_b64[0],
-                            "channel": first,
-                            "account_id": "account-a",
-                            "key_epoch": 5,
-                            "split_id": "11111111-1111-1111-1111-111111111111"
-                        },
-                        {
-                            "share_b64": split.shares_b64[2],
-                            "channel": second,
-                            "account_id": "account-a",
-                            "key_epoch": second_epoch,
-                            "split_id": "11111111-1111-1111-1111-111111111111",
-                            "recipient_bound": second_bound
-                        }
-                    ]
-                })
-                .to_string()
-            };
+        let bound_request = |first: &str, second: &str, second_bound: bool, second_epoch: i64| {
+            serde_json::json!({
+                "shares_b64": [split.shares_b64[0], split.shares_b64[2]],
+                "requested_user_id": "account-a",
+                "bound_shares": [
+                    {
+                        "share_b64": split.shares_b64[0],
+                        "channel": first,
+                        "account_id": "account-a",
+                        "key_epoch": 5,
+                        "split_id": "11111111-1111-1111-1111-111111111111"
+                    },
+                    {
+                        "share_b64": split.shares_b64[2],
+                        "channel": second,
+                        "account_id": "account-a",
+                        "key_epoch": second_epoch,
+                        "split_id": "11111111-1111-1111-1111-111111111111",
+                        "recipient_bound": second_bound
+                    }
+                ]
+            })
+            .to_string()
+        };
 
-        for pair in [("cloud", "server"), ("cloud", "trusted_contact"), ("server", "trusted_contact")] {
-            let out = combine_recovery_json(
-                &bound_request(pair.0, pair.1, pair.1 == "trusted_contact", 5),
-            )
+        for pair in [
+            ("cloud", "server"),
+            ("cloud", "trusted_contact"),
+            ("server", "trusted_contact"),
+        ] {
+            let out = combine_recovery_json(&bound_request(
+                pair.0,
+                pair.1,
+                pair.1 == "trusted_contact",
+                5,
+            ))
             .unwrap_or_else(|e| panic!("{pair:?} must reconstruct: {e}"));
             assert_eq!(out.rms_b64, B64.encode(rms));
         }
@@ -1890,7 +1926,10 @@ mod tests {
         );
         let response: serde_json::Value = serde_json::from_str(&out).unwrap();
         let proof_b64 = response["proof_b64"].as_str().unwrap();
-        assert_eq!(B64.decode(proof_b64).unwrap().len(), 32);
+        assert_eq!(
+            B64.decode(proof_b64).unwrap().len(),
+            vela_crypto::recovery::POSSESSION_PROOF_LEN
+        );
         // Deterministic and attempt-bound.
         let again = call(
             vela_ffi_possession_proof_json,
@@ -1904,6 +1943,27 @@ mod tests {
             .to_string(),
         );
         let again: serde_json::Value = serde_json::from_str(&again).unwrap();
-        assert_eq!(proof_b64, again["proof_b64"]);
+        // ML-DSA signing randomizes its rejection-sampling loop, so two proofs
+        // for the same attempt differ in bytes — but BOTH must verify against
+        // the same RMS-derived public commitment.
+        let commitment = B64.decode(response["possession_hash_b64"].as_str().unwrap()).unwrap();
+        assert_ne!(proof_b64, again["proof_b64"]);
+        let message_user = "account-a";
+        assert!(vela_crypto::recovery::rms_possession_verify(
+            &commitment,
+            message_user,
+            "22222222-2222-2222-2222-222222222222",
+            &challenge,
+            3,
+            &B64.decode(proof_b64).unwrap()
+        ));
+        assert!(vela_crypto::recovery::rms_possession_verify(
+            &commitment,
+            message_user,
+            "22222222-2222-2222-2222-222222222222",
+            &challenge,
+            3,
+            &B64.decode(again["proof_b64"].as_str().unwrap()).unwrap()
+        ));
     }
 }

@@ -4,14 +4,17 @@ theory M26_Composition
 
   Three individually verified subsystems share one account epoch token:
 
-    - M18 possession recovery consumes RecoveryValidity(E)
-    - M19 share-key registration consumes ShareUpdateValidity(E)
-    - M20 web-session pass-through consumes WebValidity(E)
+    - M18 possession recovery requires RecoveryValidity(E)
+    - M19 share-key registration requires ShareUpdateValidity(E)
+    - M20 web-session pass-through requires WebValidity(E)
 
-  Rotation consumes ALL THREE validity tokens plus the live epoch itself.
-  After rotation, no grant can be issued, no share key registered, and no
-  vault action performed against the old epoch — the composition seam that
-  individual proofs cannot express.
+  Issuing/registration rules do NOT strand their epoch: each re-emits its
+  validity fact so legitimate work can proceed within an epoch. Rotation
+  (RotateEpoch) is THE invalidation point: it consumes all three validity
+  tokens plus the old live epoch. After rotation, no grant can be issued,
+  no share key registered, and no vault action performed against the old
+  epoch — old-epoch capabilities are invalidated BY rotation, not merely
+  unissuable before it.
 
   Expected verdict: all lemmas VERIFIED.
 */
@@ -33,7 +36,7 @@ rule IssuePossessionGrant:
       RecoveryValidity(U, E),
       CurrentEpoch(U, E) ]
   --[ PossessionGrantIssued(U, E) ]->
-    []
+    [ RecoveryValidity(U, E), CurrentEpoch(U, E) ]
 
 rule RegisterShareKey:
     [ !EnrolledDevice(U),
@@ -41,18 +44,20 @@ rule RegisterShareKey:
       CurrentEpoch(U, E),
       Fr(~ek) ]
   --[ ShareKeyRegistered(U, E, ~ek) ]->
-    []
+    [ ShareUpdateValidity(U, E), CurrentEpoch(U, E) ]
 
 rule GrantWebSession:
     [ !EnrolledDevice(U), WebValidity(U, E), Fr(~ws) ]
   --[ WebSessionGranted(U, E, ~ws) ]->
-    [ !LiveWebSession(U, E, ~ws) ]
+    [ WebValidity(U, E), !LiveWebSession(U, E, ~ws) ]
 
 rule WebVaultPassThrough:
     [ !LiveWebSession(U, E, WS), CurrentEpoch(U, E) ]
   --[ WebVaultAction(U, E, WS) ]->
     []
 
+/* Rotation is the invalidation point: it consumes the three validity
+   tokens of the outgoing epoch and re-issues fresh ones for the next. */
 rule RotateEpoch:
     [ !Rotator(U),
       RotationBudget(U),
@@ -61,10 +66,16 @@ rule RotateEpoch:
       WebValidity(U, E),
       CurrentEpoch(U, E) ]
   --[ Rotated(U, E, ~next) ]->
-    [ CurrentEpoch(U, ~next) ]
+    [ CurrentEpoch(U, ~next),
+      RecoveryValidity(U, ~next),
+      ShareUpdateValidity(U, ~next),
+      WebValidity(U, ~next) ]
 
 /* ── Composition safety: rotation strands everything bound to E ──────────── */
 
+/* Old-epoch capabilities are invalidated BY rotation: within an epoch any
+   amount of legitimate work may occur, but once Rotated(U,E,Next) fires,
+   no further PossessionGrantIssued on E can ever follow. */
 lemma grants_cannot_outlive_their_rotation:
   "All U E Next #r #g.
      Rotated(U, E, Next) @ r &
@@ -82,5 +93,13 @@ lemma web_actions_cannot_outlive_their_rotation:
      Rotated(U, E, Next) @ r &
      WebVaultAction(U, E, W) @ i
      ==> not (#r < #i)"
+
+/* Availability: legitimate work and rotation compose — a grant precedes
+   the rotation that later strands its epoch. */
+lemma work_then_rotation_is_reachable:
+  exists-trace
+  "Ex U E Next #g #r.
+     PossessionGrantIssued(U, E) @ g &
+     Rotated(U, E, Next) @ r & #g < #r"
 
 end

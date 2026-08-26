@@ -236,12 +236,13 @@ impl PathOram {
             .iter()
             .filter_map(|b| b.chunk_id().copied())
             .collect();
-        let mut seen_this_path: std::collections::HashSet<ChunkId> = std::collections::HashSet::new();
-        for bucket in path {
+        let mut seen_this_path: std::collections::HashSet<ChunkId> =
+            std::collections::HashSet::new();
+        for bucket in path.into_iter().rev() {
             for block in bucket {
                 if let OramBlock::Real { id, .. } = block {
                     if stashed.contains(&id) || !seen_this_path.insert(id) {
-                        continue; // stale tree copy / deeper duplicate wins
+                        continue; // stale tree copy / shallower duplicate loses
                     }
                 }
                 if block.is_real() {
@@ -356,7 +357,10 @@ impl PathOram {
 
     /// Chunk ids currently held in the stash (test/diagnostic surface).
     pub fn stash_ids(&self) -> Vec<ChunkId> {
-        self.stash.iter().filter_map(|b| b.chunk_id().copied()).collect()
+        self.stash
+            .iter()
+            .filter_map(|b| b.chunk_id().copied())
+            .collect()
     }
 
     pub fn position_map(&self) -> &HashMap<ChunkId, LeafIdx> {

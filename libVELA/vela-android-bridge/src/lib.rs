@@ -875,14 +875,17 @@ fn split_recovery_with_rms(
     })
 }
 
-/// Blind RMS-possession commitment (M18). Staged with the server share so
+/// Public RMS-possession commitment (M18). Staged with the server share so
 /// any two-share pair can prove RMS possession for enrollment without WebAuthn.
+/// The commitment is a public verifying key only — it cannot produce proofs.
 fn rms_possession_hash_bytes(rms: &[u8]) -> anyhow_like::Result<String> {
     if rms.len() != 32 {
         return Err("rms must be exactly 32 bytes".into());
     }
     let rms: [u8; 32] = rms.try_into().expect("length checked");
-    Ok(B64.encode(vela_crypto::recovery::rms_possession_hash(&rms)))
+    Ok(B64.encode(vela_crypto::recovery::rms_possession_commitment(
+        &rms,
+    )))
 }
 
 fn encrypt_vault_json(request_json: &str) -> anyhow_like::Result<EncryptVaultResponse> {

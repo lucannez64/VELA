@@ -31,6 +31,8 @@ impl DesktopClient {
 
         let identity = crypto::generate_identity_keypair()?;
         let client = ApiClient::with_url(server_url.to_string());
+        // One timestamp, signed exactly as transmitted.
+        let share_ek_signed_at = chrono::Utc::now().to_rfc3339();
         let resp = client
             .register_account(&RegisterRequest {
                 hybrid_ek: B64.encode(&identity.hybrid_ek),
@@ -38,11 +40,12 @@ impl DesktopClient {
                 device_name: Some("Desktop E2E".to_string()),
                 device_type: Some("desktop".to_string()),
                 share_ek: Some(B64.encode(&identity.share_ek)),
-                share_ek_signed_at: Some(chrono::Utc::now().to_rfc3339()),
-                share_ek_signature: crypto::sign_share_ek_binding(
-                    &identity.hybrid_sk, &identity.share_ek,
-                    &chrono::Utc::now().to_rfc3339(),
-                ).ok(),
+                share_ek_signed_at: Some(share_ek_signed_at.clone()),
+                share_ek_signature: Some(crypto::sign_share_ek_binding(
+                    &identity.hybrid_sk,
+                    &identity.share_ek,
+                    &share_ek_signed_at,
+                )?),
             })
             .await
             .map_err(|e| format!("register account: {e}"))?;
@@ -74,7 +77,12 @@ impl DesktopClient {
             session.user_id = Some(resp.user_id.clone());
         }
 
-        Ok(Self { state, device_id: resp.device_id, user_id: resp.user_id, _dir: dir })
+        Ok(Self {
+            state,
+            device_id: resp.device_id,
+            user_id: resp.user_id,
+            _dir: dir,
+        })
     }
 
     pub fn add_login(&self, id: &str, name: &str, url: &str, username: &str, password: &str) {
@@ -102,7 +110,10 @@ impl DesktopClient {
     }
 
     pub fn delete_item(&self, id: &str) {
-        self.state.vault.write().delete_item(id, Some(&self.device_id));
+        self.state
+            .vault
+            .write()
+            .delete_item(id, Some(&self.device_id));
     }
 
     /// Rewrite `updated_at` (used to stage a concurrent-edit scenario).
@@ -146,11 +157,7 @@ impl DesktopClient {
     ///
     /// A wrong value does not merely fail: it discards the pending enrollment,
     /// which is what stops an n-way choice from becoming a 1-in-1 by repetition.
-    pub async fn confirm_enrollment(
-        &self,
-        grant_id: &str,
-        chosen: &str,
-    ) -> Result<String, String> {
+    pub async fn confirm_enrollment(&self, grant_id: &str, chosen: &str) -> Result<String, String> {
         vela_desktop_core::commands::enrollment_v3::confirm_enrollment(
             &self.state,
             grant_id,
@@ -160,14 +167,32 @@ impl DesktopClient {
     }
 
     pub fn item_ids(&self) -> Vec<String> {
-        self.state.vault.read().items.iter().map(|i| i.id().to_string()).collect()
+        self.state
+            .vault
+            .read()
+            .items
+            .iter()
+            .map(|i| i.id().to_string())
+            .collect()
     }
 
     pub fn item_names(&self) -> Vec<String> {
-        self.state.vault.read().items.iter().map(|i| i.name().to_string()).collect()
+        self.state
+            .vault
+            .read()
+            .items
+            .iter()
+            .map(|i| i.name().to_string())
+            .collect()
     }
 
     pub fn find_item(&self, id: &str) -> Option<VaultItem> {
-        self.state.vault.read().items.iter().find(|i| i.id() == id).cloned()
+        self.state
+            .vault
+            .read()
+            .items
+            .iter()
+            .find(|i| i.id() == id)
+            .cloned()
     }
 }

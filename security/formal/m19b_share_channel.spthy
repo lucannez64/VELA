@@ -72,18 +72,20 @@ rule SendItem:
   --[ ItemSent(S, R, EK, T, ~item) ]->
     [ PendingCapsule(R, EK, T, ~item) ]
 
-/* The relay delivers each capsule at most once (linear pending). */
+/* The relay delivers each capsule at most once (linear pending), moving it
+   to a DeliveredCapsule token held by the recipient device — only a
+   delivered capsule can be opened (no pre-delivery opening). */
 rule DeliverCapsule:
     [ PendingCapsule(R, EK, T, Item) ]
   --[ CapsuleDelivered(R, EK, T, Item) ]->
-    [ Out(cap(EK, Item)) ]
+    [ DeliveredCapsule(R, EK, T, Item) ]
 
 /* The recipient device holds the share decryption key and opens its own
    delivered capsules; the item plaintext never re-enters the network. */
 rule OpenItem:
     [ !ShareDk(R, DK),
       !EkEntry(R, pek(DK), T),
-      PendingCapsule(R, pek(DK), T, Item) ]
+      DeliveredCapsule(R, pek(DK), T, Item) ]
   --[ ItemOpened(R, T, Item) ]->
     []
 
@@ -111,6 +113,12 @@ lemma deliveries_require_sends:
   "All R EK T Item #i.
      CapsuleDelivered(R, EK, T, Item) @ i
      ==> Ex S #j. ItemSent(S, R, EK, T, Item) @ j & #j < #i"
+
+/* Opening requires prior delivery of the same capsule. */
+lemma opened_items_were_delivered:
+  "All R T Item #i.
+     ItemOpened(R, T, Item) @ i
+     ==> Ex EK #j. CapsuleDelivered(R, EK, T, Item) @ j & #j < #i"
 
 /* Opening a victim-addressed capsule with a leaked key requires that key
    to have leaked first — the channel itself discloses nothing. */

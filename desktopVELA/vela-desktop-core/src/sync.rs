@@ -319,19 +319,14 @@ fn open_epoch_adoption_capsule(
             response.epoch
         ));
     }
-    let rotation_id = response.rotation_id.as_deref().ok_or(
-        "Server returned an epoch adoption capsule without its committed rotation id",
-    )?;
+    let rotation_id = response
+        .rotation_id
+        .as_deref()
+        .ok_or("Server returned an epoch adoption capsule without its committed rotation id")?;
     let capsule = B64
         .decode(&response.capsule)
         .map_err(|e| format!("Malformed epoch adoption capsule: {e}"))?;
-    crate::crypto::open_rekey_capsule(
-        hybrid_dk,
-        &capsule,
-        previous_rms,
-        server_epoch,
-        rotation_id,
-    )
+    crate::crypto::open_rekey_capsule(hybrid_dk, &capsule, previous_rms, server_epoch, rotation_id)
 }
 
 async fn adopt_server_epoch(
@@ -351,16 +346,17 @@ async fn adopt_server_epoch(
     let local_epoch = load_local_sync_meta(state)?.key_epoch;
 
     // M23: the adopt / keep / refuse ladder is a verified decision
-    // (vela-sync-policy::plan_epoch_adoption). The capsule facts are filled
-    // in after fetch below; here we run the probe half to get Keep-vs-Adopt
-    // and to refuse rollback, skips and freezing rotations up front.
+    // (vela-sync-policy::plan_epoch_adoption). Before the capsule is fetched
+    // the capsule facts are unknown (`None`), so a sequential advance yields
+    // FetchCapsule — it must not be mistaken for a refusal. The decision is
+    // re-run with real capsule observations after the fetch below.
     let probe = vela_sync_policy::plan_epoch_adoption(vela_sync_policy::EpochAdoptionFacts {
         rotation_state_active: rotation_state == "active",
         server_epoch,
         local_epoch,
         server_epoch_is_next: local_epoch.checked_add(1) == Some(server_epoch),
-        capsule_epoch_matches: false, // unknown until the capsule is fetched
-        rotation_id_present: false,
+        capsule_epoch_matches: None, // unknown until the capsule is fetched
+        rotation_id_present: None,
     });
     match probe {
         vela_sync_policy::AdoptionDecision::Keep => {
@@ -396,7 +392,11 @@ async fn adopt_server_epoch(
                 "Server key epoch {server_epoch} skips this device's authenticated local epoch {local_epoch}; refusing to bypass a re-key transition"
             ));
         }
-        vela_sync_policy::AdoptionDecision::Adopt(_) => {}
+        // FetchCapsule: a sequential advance whose capsule has not been
+        // fetched yet — fall through to the fetch below, where the verified
+        // decision is re-run with the capsule's real epoch and rotation id.
+        vela_sync_policy::AdoptionDecision::FetchCapsule
+        | vela_sync_policy::AdoptionDecision::Adopt(_) => {}
     }
 
     let (old_crypto, hybrid_dk) = {
@@ -434,30 +434,22 @@ async fn adopt_server_epoch(
     }
     // M23: re-run the verified decision now that the capsule is in hand —
     // its inner epoch and rotation id must still bind to this transition.
-    let capsule_bound = vela_sync_policy::plan_epoch_adoption(
-        vela_sync_policy::EpochAdoptionFacts {
+    let capsule_bound =
+        vela_sync_policy::plan_epoch_adoption(vela_sync_policy::EpochAdoptionFacts {
             rotation_state_active: true,
             server_epoch,
             local_epoch,
             server_epoch_is_next: local_epoch.checked_add(1) == Some(server_epoch),
-            capsule_epoch_matches: capsule.epoch == Some(server_epoch),
-            rotation_id_present: capsule.rotation_id.is_some(),
-        },
-    );
-    if !matches!(
-        capsule_bound,
-        vela_sync_policy::AdoptionDecision::Adopt(_)
-    ) {
+            capsule_epoch_matches: Some(capsule.epoch == Some(server_epoch)),
+            rotation_id_present: Some(capsule.rotation_id.is_some()),
+        });
+    if !matches!(capsule_bound, vela_sync_policy::AdoptionDecision::Adopt(_)) {
         return Err(format!(
             "Verified sync policy rejected the epoch {server_epoch} adoption capsule"
         ));
     }
-    let new_rms = open_epoch_adoption_capsule(
-        &capsule,
-        &hybrid_dk,
-        &old_crypto.rms(),
-        server_epoch,
-    )?;
+    let new_rms =
+        open_epoch_adoption_capsule(&capsule, &hybrid_dk, &old_crypto.rms(), server_epoch)?;
     let new_crypto = crate::crypto::Crypto::new(&new_rms);
 
     state.ensure_unlocked_since(generation)?;
@@ -716,14 +708,13 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
         }
     };
     let signed_at = chrono::Utc::now().to_rfc3339();
-    let signature =
-        match crypto::sign_share_ek_binding(&keys.hybrid_sk, &share_ek, &signed_at) {
-            Ok(signature) => signature,
-            Err(e) => {
-                tracing::warn!("Share key backfill: signing failed: {}", e);
-                return;
-            }
-        };
+    let signature = match crypto::sign_share_ek_binding(&keys.hybrid_sk, &share_ek, &signed_at) {
+        Ok(signature) => signature,
+        Err(e) => {
+            tracing::warn!("Share key backfill: signing failed: {}", e);
+            return;
+        }
+    };
     if let Err(e) = client
         .put_my_share_ek(
             token,
@@ -1293,15 +1284,13 @@ async fn sync_audit_chunk(
                     // sealed chunk skips the merge, which is what it already
                     // does on any decrypt failure.
                     let entry_clock = entry.lamport_clock;
-                    if let Ok(server_plaintext) =
-                        vela_crypto::rekey::open_fleet_chunk(
-                            &key,
-                            &ciphertext,
-                            key_epoch as u64,
-                            audit::AUDIT_CHUNK_ID,
-                            entry_clock,
-                        )
-                    {
+                    if let Ok(server_plaintext) = vela_crypto::rekey::open_fleet_chunk(
+                        &key,
+                        &ciphertext,
+                        key_epoch as u64,
+                        audit::AUDIT_CHUNK_ID,
+                        entry_clock,
+                    ) {
                         // Merge server events into the local log (union by
                         // event id) — never replace local history.
                         let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
@@ -1823,14 +1812,9 @@ mod tests {
             rotation_id: Some("rotation-current".into()),
         };
         assert_eq!(
-            open_epoch_adoption_capsule(
-                &current_response,
-                &hybrid_dk,
-                &previous_rms,
-                3,
-            )
-            .unwrap()
-            .as_ref(),
+            open_epoch_adoption_capsule(&current_response, &hybrid_dk, &previous_rms, 3,)
+                .unwrap()
+                .as_ref(),
             &current_rms
         );
 
@@ -1848,44 +1832,27 @@ mod tests {
             rotation_id: Some("rotation-current".into()),
         };
 
-        let error = open_epoch_adoption_capsule(
-            &relabelled,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .expect_err("server metadata cannot relabel an authenticated stale capsule");
+        let error = open_epoch_adoption_capsule(&relabelled, &hybrid_dk, &previous_rms, 3)
+            .expect_err("server metadata cannot relabel an authenticated stale capsule");
         assert!(error.contains("inner epoch"), "{error}");
 
         let mut missing_attempt = current_response.clone();
         missing_attempt.rotation_id = None;
-        assert!(open_epoch_adoption_capsule(
-            &missing_attempt,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .is_err());
+        assert!(
+            open_epoch_adoption_capsule(&missing_attempt, &hybrid_dk, &previous_rms, 3,).is_err()
+        );
 
         let mut wrong_attempt = current_response.clone();
         wrong_attempt.rotation_id = Some("rotation-other".into());
-        assert!(open_epoch_adoption_capsule(
-            &wrong_attempt,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .is_err());
+        assert!(
+            open_epoch_adoption_capsule(&wrong_attempt, &hybrid_dk, &previous_rms, 3,).is_err()
+        );
 
         let mut wrong_outer_epoch = current_response;
         wrong_outer_epoch.epoch = Some(2);
-        assert!(open_epoch_adoption_capsule(
-            &wrong_outer_epoch,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .is_err());
+        assert!(
+            open_epoch_adoption_capsule(&wrong_outer_epoch, &hybrid_dk, &previous_rms, 3,).is_err()
+        );
     }
 
     #[test]
@@ -1941,7 +1908,10 @@ mod tests {
         .unwrap();
 
         let meta = load_local_sync_meta(&state).expect("missing marker is legacy epoch 1");
-        assert_eq!(meta.key_epoch, 1, "plaintext must never supply epoch authority");
+        assert_eq!(
+            meta.key_epoch, 1,
+            "plaintext must never supply epoch authority"
+        );
         assert_eq!(meta.chunks["vault-data-000000"].version, 7);
     }
 
@@ -1960,9 +1930,12 @@ mod tests {
         )
         .unwrap();
 
-        let error = load_local_sync_meta(&state)
-            .expect_err("wrong-RMS epoch marker must fail closed");
-        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        let error =
+            load_local_sync_meta(&state).expect_err("wrong-RMS epoch marker must fail closed");
+        assert!(
+            error.contains("authenticate the local vault epoch"),
+            "{error}"
+        );
         assert!(local_key_epoch(&state).is_err());
     }
 
@@ -2031,13 +2004,12 @@ mod tests {
         state.unlock_for_test(&[17u8; 32]);
         {
             let crypto = state.crypto.read();
-            state.store.save_key_epoch(crypto.as_ref().unwrap(), 9).unwrap();
+            state
+                .store
+                .save_key_epoch(crypto.as_ref().unwrap(), 9)
+                .unwrap();
         }
-        std::fs::write(
-            state.store.store_path().join("sync_meta.json"),
-            b"not json",
-        )
-        .unwrap();
+        std::fs::write(state.store.store_path().join("sync_meta.json"), b"not json").unwrap();
 
         let meta = load_local_sync_meta(&state).unwrap();
         assert_eq!(meta.key_epoch, 9);
@@ -2068,7 +2040,10 @@ mod tests {
         state.unlock_for_test(&[18u8; 32]);
         {
             let crypto = state.crypto.read();
-            state.store.save_key_epoch(crypto.as_ref().unwrap(), 3).unwrap();
+            state
+                .store
+                .save_key_epoch(crypto.as_ref().unwrap(), 3)
+                .unwrap();
         }
 
         set_local_key_epoch(&state, 77).unwrap();
@@ -2121,9 +2096,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let status = trigger_sync(&state)
+            .await
+            .expect("sync returns a surfaced status error");
         let error = status.error.expect("unreadable marker must stop sync");
-        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        assert!(
+            error.contains("authenticate the local vault epoch"),
+            "{error}"
+        );
         server.verify().await;
     }
 
@@ -2189,7 +2169,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let status = trigger_sync(&state)
+            .await
+            .expect("sync returns a surfaced status error");
         let error = status.error.expect("unreadable server data must stop sync");
         assert!(error.contains("could not be authenticated"), "{error}");
         assert!(error.contains("No server data was overwritten"), "{error}");

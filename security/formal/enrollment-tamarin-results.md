@@ -24,3 +24,11 @@ Run with Tamarin 1.12.0+, Maude 3.x, and a UTF-8 locale:
 Tamarin establishes the symbolic protocol properties. The production
 refinement is checked by hax/F* in `serverVELA/vela-enrollment-policy`; sled
 unit tests exercise first-claim-wins and atomic pair consumption under races.
+
+## Post-review revision (2026-08-26)
+
+`ConfirmClaim` no longer converts `Claimed` directly to `Confirmed`; the bypassing
+rule was removed so confirmation requires inspection (`ConfirmInspectedClaim`).
+A new lemma `completion_requires_inspection` proves every `EnrollmentCompleted`
+event is preceded by a `ClaimInspected` event. Re-verified locally: all 16 lemmas
+verified (tamarin-prover 1.12.0).

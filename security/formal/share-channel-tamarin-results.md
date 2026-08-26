@@ -60,3 +60,10 @@ Reproduce with:
 The Rust counterpart is the hax-extracted `vela-share-policy`
 (`plan_ek_registration`, `plan_send`, `plan_link_mutation`), enforced by
 `serverVELA/vela-server/src/share/mod.rs` and `src/account/mod.rs`.
+
+## Post-review revision (2026-08-26)
+
+`OpenItem` now requires a distinct `DeliveredCapsule` fact produced by
+`DeliverCapsule`, so opening can only occur after delivery. Re-verified locally:
+all 6 lemmas verified, including `opened_items_were_delivered` and
+`legitimate_share_exchange_is_reachable` (tamarin-prover 1.12.0).

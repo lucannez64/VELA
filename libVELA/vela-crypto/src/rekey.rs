@@ -238,7 +238,6 @@ pub fn rekeyed_len(input_len: usize) -> usize {
     input_len + OVERHEAD
 }
 
-
 // -- Rekey capsule seal/open (M24: moved from desktop-core for mobile access) --
 
 const REKEY_CAPSULE_V1_MAGIC: &[u8] = b"vela rekey capsule v1\0";
@@ -254,7 +253,9 @@ pub fn seal_rekey_capsule(
     rotation_id: &str,
 ) -> Result<Vec<u8>> {
     if epoch < 2 {
-        return Err(VelaError::InvalidParameter("re-key capsule epoch must be at least 2".into()));
+        return Err(VelaError::InvalidParameter(
+            "re-key capsule epoch must be at least 2".into(),
+        ));
     }
     if rotation_id.is_empty() {
         return Err(VelaError::InvalidParameter("rotation id is empty".into()));
@@ -282,25 +283,30 @@ pub fn open_rekey_capsule(
     expected_rotation_id: &str,
 ) -> Result<Zeroizing<[u8; 32]>> {
     if expected_epoch < 2 || expected_rotation_id.is_empty() {
-        return Err(VelaError::InvalidParameter("invalid expected re-key capsule metadata".into()));
+        return Err(VelaError::InvalidParameter(
+            "invalid expected re-key capsule metadata".into(),
+        ));
     }
-    let sk = crate::kem::HybridSecretKey::from_bytes(hybrid_dk_bytes)
-        ?;
-    let authenticated_payload = Zeroizing::new(
-        crate::kem::open_share(&sk, capsule).map_err(|_| VelaError::KemError)?,
-    );
+    let sk = crate::kem::HybridSecretKey::from_bytes(hybrid_dk_bytes)?;
+    let authenticated_payload =
+        Zeroizing::new(crate::kem::open_share(&sk, capsule).map_err(|_| VelaError::KemError)?);
     let binding_key = kdf::derive("vela rekey capsule binding v1", previous_rms);
-    let payload = aead::decrypt(binding_key.as_bytes(), &authenticated_payload)
-        .map_err(|_| VelaError::InvalidParameter("re-key capsule was not authenticated by the current RMS".into()))?;
+    let payload = aead::decrypt(binding_key.as_bytes(), &authenticated_payload).map_err(|_| {
+        VelaError::InvalidParameter(
+            "re-key capsule was not authenticated by the current RMS".into(),
+        )
+    })?;
     let fixed_len = REKEY_CAPSULE_V1_MAGIC.len() + 8 + 2 + 32;
     if payload.len() < fixed_len || !payload.starts_with(REKEY_CAPSULE_V1_MAGIC) {
-        return Err(VelaError::InvalidParameter("capsule did not contain a versioned re-key payload".into()));
+        return Err(VelaError::InvalidParameter(
+            "capsule did not contain a versioned re-key payload".into(),
+        ));
     }
     let mut cursor = REKEY_CAPSULE_V1_MAGIC.len();
-    let inner_epoch = i64::from_be_bytes(
-        payload[cursor..cursor + 8].try_into()
-            .map_err(|_| VelaError::InvalidParameter("re-key capsule epoch is malformed".into()))?,
-    );
+    let inner_epoch =
+        i64::from_be_bytes(payload[cursor..cursor + 8].try_into().map_err(|_| {
+            VelaError::InvalidParameter("re-key capsule epoch is malformed".into())
+        })?);
     cursor += 8;
     if inner_epoch != expected_epoch {
         return Err(VelaError::InvalidParameter(format!(
@@ -308,10 +314,16 @@ pub fn open_rekey_capsule(
         )));
     }
     let rid_len = u16::from_be_bytes(
-        payload[cursor..cursor + 2].try_into()
+        payload[cursor..cursor + 2]
+            .try_into()
             .map_err(|_| VelaError::InvalidParameter("rotation id length is malformed".into()))?,
     ) as usize;
     cursor += 2;
+    if payload.len() < cursor + rid_len {
+        return Err(VelaError::InvalidParameter(
+            "re-key capsule rotation id length is out of range".into(),
+        ));
+    }
     let rotation_id = std::str::from_utf8(&payload[cursor..cursor + rid_len])
         .map_err(|_| VelaError::InvalidParameter("rotation id is not valid UTF-8".into()))?;
     if rotation_id != expected_rotation_id {
@@ -320,9 +332,14 @@ pub fn open_rekey_capsule(
         )));
     }
     cursor += rid_len;
-    let rms: [u8; 32] = payload[cursor..cursor + 32]
-        .try_into()
-        .map_err(|_| VelaError::InvalidParameter("RMS is missing from the capsule payload".into()))?;
+    if payload.len() < cursor + 32 {
+        return Err(VelaError::InvalidParameter(
+            "re-key capsule rotation id length is out of range".into(),
+        ));
+    }
+    let rms: [u8; 32] = payload[cursor..cursor + 32].try_into().map_err(|_| {
+        VelaError::InvalidParameter("RMS is missing from the capsule payload".into())
+    })?;
     Ok(Zeroizing::new(rms))
 }
 
@@ -507,6 +524,31 @@ mod tests {
         assert!(!shares_reconstruct_to(&shares[0..2], &new));
         // At threshold: verified.
         assert!(shares_reconstruct_to(&shares[0..3], &new));
+    }
+
+    #[test]
+    fn open_rekey_capsule_rejects_out_of_range_rotation_id_length() {
+        // A malicious or corrupted capsule that declares more rotation-id
+        // bytes than the payload holds must fail with InvalidParameter — not
+        // panic on slicing (a panic here kills mobile FFI hosts).
+        let (pk, sk) = crate::kem::generate_keypair();
+        let previous = seed(6);
+        let binding_key = kdf::derive("vela rekey capsule binding v1", &previous);
+        let mut payload = Vec::new();
+        payload.extend_from_slice(REKEY_CAPSULE_V1_MAGIC);
+        payload.extend_from_slice(&3i64.to_be_bytes());
+        payload.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        let authenticated_payload = crate::aead::encrypt(binding_key.as_bytes(), &payload).unwrap();
+        let capsule = crate::kem::seal_share(&pk, &authenticated_payload).unwrap();
+        let err = open_rekey_capsule(
+            sk.to_bytes().as_slice(),
+            &capsule,
+            &previous,
+            3,
+            "some-rotation-id",
+        )
+        .unwrap_err();
+        assert!(matches!(err, VelaError::InvalidParameter(_)));
     }
 
     #[test]

@@ -26,15 +26,20 @@ pub struct EpochAdoptionFacts {
     /// opaque, so the transition relation crosses as an observation).
     pub server_epoch_is_next: bool,
     /// The adoption capsule's inner plaintext epoch equals `server_epoch`.
-    pub capsule_epoch_matches: bool,
+    /// `None` before the capsule is fetched.
+    pub capsule_epoch_matches: Option<bool>,
     /// The committed rotation id is present in both capsule and metadata.
-    pub rotation_id_present: bool,
+    /// `None` before the capsule is fetched.
+    pub rotation_id_present: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdoptionDecision {
     /// Epochs already agree: nothing to migrate.
     Keep,
+    /// A sequential advance with no capsule facts yet: fetch the adoption
+    /// capsule and re-run this decision with real observations.
+    FetchCapsule,
     /// Open the capsule and migrate every local RMS consumer to this epoch.
     Adopt(EpochAdoptionPermit),
     Reject,
@@ -66,8 +71,16 @@ pub fn epoch_adoption_is_authorized(facts: EpochAdoptionFacts) -> bool {
         && facts.local_epoch >= INITIAL_EPOCH
         && facts.server_epoch > facts.local_epoch
         && facts.server_epoch_is_next
-        && facts.capsule_epoch_matches
-        && facts.rotation_id_present
+        && facts.capsule_epoch_matches == Some(true)
+        && facts.rotation_id_present == Some(true)
+}
+
+/// A sequential advance whose capsule has not been fetched yet (fact fields
+/// `None`) asks the caller to fetch it; every other unauthorized shape is a
+/// plain rejection.
+fn epoch_adoption_is_fetch_pending(facts: EpochAdoptionFacts) -> bool {
+    facts.server_epoch_is_next
+        && (facts.capsule_epoch_matches.is_none() || facts.rotation_id_present.is_none())
 }
 
 pub fn epoch_adoption_decision_matches_spec(
@@ -80,6 +93,10 @@ pub fn epoch_adoption_decision_matches_spec(
         decision == AdoptionDecision::Reject
     } else if facts.server_epoch == facts.local_epoch {
         decision == AdoptionDecision::Keep
+    } else if !facts.server_epoch_is_next {
+        decision == AdoptionDecision::Reject
+    } else if epoch_adoption_is_fetch_pending(facts) {
+        decision == AdoptionDecision::FetchCapsule
     } else if epoch_adoption_is_authorized(facts) {
         matches!(
             decision,
@@ -104,11 +121,16 @@ pub fn plan_epoch_adoption(facts: EpochAdoptionFacts) -> AdoptionDecision {
     if facts.server_epoch == facts.local_epoch {
         return AdoptionDecision::Keep;
     }
+    if !facts.server_epoch_is_next {
+        return AdoptionDecision::Reject;
+    }
     if epoch_adoption_is_authorized(facts) {
         AdoptionDecision::Adopt(EpochAdoptionPermit {
             epoch: facts.server_epoch,
             binds_capsule_epoch: true,
         })
+    } else if epoch_adoption_is_fetch_pending(facts) {
+        AdoptionDecision::FetchCapsule
     } else {
         AdoptionDecision::Reject
     }
@@ -140,7 +162,7 @@ pub fn freezing_rotation_can_adopt(mut facts: EpochAdoptionFacts) -> bool {
 
 #[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
 pub fn foreign_capsule_can_adopt(mut facts: EpochAdoptionFacts) -> bool {
-    facts.capsule_epoch_matches = false;
+    facts.capsule_epoch_matches = Some(false);
     epoch_adoption_is_authorized(facts)
 }
 
@@ -319,8 +341,8 @@ mod tests {
             server_epoch: 5,
             local_epoch: 4,
             server_epoch_is_next: true,
-            capsule_epoch_matches: true,
-            rotation_id_present: true,
+            capsule_epoch_matches: Some(true),
+            rotation_id_present: Some(true),
         };
         let AdoptionDecision::Adopt(permit) = plan_epoch_adoption(valid) else {
             panic!("valid adoption rejected");
@@ -333,6 +355,15 @@ mod tests {
         same.server_epoch = 4;
         assert_eq!(plan_epoch_adoption(same), AdoptionDecision::Keep);
 
+        // A sequential advance before the capsule is fetched asks for it.
+        let mut unfetched = valid;
+        unfetched.capsule_epoch_matches = None;
+        unfetched.rotation_id_present = None;
+        assert_eq!(
+            plan_epoch_adoption(unfetched),
+            AdoptionDecision::FetchCapsule
+        );
+
         // Rollback, skip, freezing, foreign capsule all reject.
         assert!(!rolled_back_server_epoch_can_adopt(valid));
         assert!(!skipped_transition_can_adopt(valid));
@@ -341,10 +372,7 @@ mod tests {
 
         let mut older_local = valid;
         older_local.local_epoch = 9;
-        assert_eq!(
-            plan_epoch_adoption(older_local),
-            AdoptionDecision::Reject
-        );
+        assert_eq!(plan_epoch_adoption(older_local), AdoptionDecision::Reject);
     }
 
     #[test]
@@ -375,10 +403,7 @@ mod tests {
 
         let mut stale = seen;
         stale.server_lamport = 4; // < last seen 5
-        assert_eq!(
-            plan_chunk_download(stale),
-            ChunkDownloadDecision::Reject
-        );
+        assert_eq!(plan_chunk_download(stale), ChunkDownloadDecision::Reject);
     }
 
     #[test]

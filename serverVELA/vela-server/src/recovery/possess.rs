@@ -7,11 +7,15 @@
 //! WebAuthn assertion: possession of two shares already implies everything
 //! WebAuthn recovery would have established about the caller.
 //!
-//! The proof is a BLAKE3 keyed hash over the attempt id, a fresh per-attempt
-//! challenge, and the live epoch, keyed by the blind commitment staged at
-//! setup finalization (`recovery_auth_hash`). Captured proofs are worthless
-//! outside their single-use attempt; the commitment leaks nothing usable
-//! offline because verification only happens on this rate-limited endpoint.
+//! The proof is a hybrid signature (ML-DSA-87 ‖ Ed25519) over the attempt id,
+//! a fresh per-attempt challenge, and the live epoch, verified against the
+//! *public* hybrid verifying-key commitment staged at setup finalization
+//! (`recovery_auth_hash`). v2 invariant: the stored value cannot be used to
+//! produce proofs — it is only the public half, so a database reader can no
+//! longer forge them (the retired v1 scheme keyed a hash with the stored
+//! value). Captured proofs are worthless outside their single-use attempt;
+//! the commitment leaks nothing usable offline because verification only
+//! happens on this rate-limited endpoint.
 
 use axum::{
     extract::{ConnectInfo, State},
@@ -74,44 +78,26 @@ fn take_proof_state(state: &AppState, user_id: &Uuid, recovery_id: &Uuid) -> Res
     Ok(envelope)
 }
 
-pub(crate) fn expected_possession_proof(
+/// Verify the presented proof against the stored public commitment for one
+/// exact attempt. Delegates to `vela_crypto::recovery::rms_possession_verify`
+/// (the same construction used by every client), so sign and verify can never
+/// drift.
+pub(crate) fn verify_possession_proof(
     commitment: &[u8],
     attempt: &PossessionProofState,
-) -> Result<[u8; 32]> {
-    let commitment: [u8; 32] = commitment.try_into().map_err(|_| {
-        AppError::Internal("stored possession commitment is malformed".into())
-    })?;
-    Ok(vela_crypto_recovery_mirror::possession_proof(
-        &commitment,
+    presented: &[u8],
+) -> bool {
+    // The commitment length selects the scheme version (32-byte legacy v1
+    // keyed-hash, or the 2624-byte hybrid v2 verifying key); see
+    // `rms_possession_verify`.
+    vela_crypto::recovery::rms_possession_verify(
+        commitment,
         &attempt.user_id.to_string(),
         &attempt.recovery_id.to_string(),
         &attempt.challenge,
         attempt.key_epoch,
-    ))
-}
-
-/// Server-side mirror of `vela_crypto::recovery::rms_possession_proof`. The
-/// server does not depend on the client crypto crate, so the construction is
-/// duplicated and pinned by cross-vector tests on both sides.
-mod vela_crypto_recovery_mirror {
-    pub fn possession_proof(
-        possession_hash: &[u8; 32],
-        user_id: &str,
-        recovery_id: &str,
-        challenge: &[u8],
-        key_epoch: i64,
-    ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_keyed(possession_hash);
-        hasher.update(b"vela recovery possession proof v1");
-        hasher.update(&(user_id.len() as u32).to_le_bytes());
-        hasher.update(user_id.as_bytes());
-        hasher.update(&(recovery_id.len() as u32).to_le_bytes());
-        hasher.update(recovery_id.as_bytes());
-        hasher.update(&(challenge.len() as u32).to_le_bytes());
-        hasher.update(challenge);
-        hasher.update(&key_epoch.to_le_bytes());
-        *hasher.finalize().as_bytes()
-    }
+        presented,
+    )
 }
 
 #[derive(Deserialize)]
@@ -237,9 +223,7 @@ pub async fn post_recover_proof(
     let proof_bytes = B64
         .decode(&body.proof_b64)
         .map_err(|_| AppError::BadRequest("proof is not valid base64".into()))?;
-    let presented: [u8; 32] = proof_bytes
-        .try_into()
-        .map_err(|_| AppError::BadRequest("possession proof must be exactly 32 bytes".into()))?;
+    let presented = proof_bytes; // length checked by verify (v1: 32 B, v2: 4659 B)
 
     let attempt = take_proof_state(&state, &body.user_id, &body.recovery_id)?;
 
@@ -270,8 +254,7 @@ pub async fn post_recover_proof(
         }
     };
 
-    let expected = expected_possession_proof(&commitment, &attempt)?;
-    let proof_verified = possession_proofs_equal(&expected, &presented);
+    let proof_verified = verify_possession_proof(&commitment, &attempt, &presented);
 
     let permit = match vela_recovery_policy::plan_possession_recovery(
         vela_recovery_policy::PossessionRecoverFacts {
@@ -303,14 +286,4 @@ pub async fn post_recover_proof(
         key_epoch: permit.epoch(),
         recovery_grant,
     }))
-}
-
-fn possession_proofs_equal(expected: &[u8; 32], presented: &[u8; 32]) -> bool {
-    // Constant-time fold so a caller cannot learn how many leading bytes of a
-    // proof matched.
-    let mut diff = 0u8;
-    for (x, y) in expected.iter().zip(presented.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }

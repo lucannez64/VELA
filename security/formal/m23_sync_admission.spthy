@@ -18,11 +18,13 @@ begin
 
 functions: succ/1
 
-/* A fresh account starts at the base epoch. */
+/* A fresh account starts at the base epoch and records its trusted
+   bootstrap clock — an in-model honest value, never network data. */
 rule AccountSetup:
-    [ Fr(~user) ]
-  --[ AccountCreated(~user) ]->
-    [ LocalEpoch('e0') ]
+    [ Fr(~user), Fr(~clock0) ]
+  --[ AccountCreated(~user),
+      BootstrapClockTrusted(~user, ~clock0) ]->
+    [ LocalEpoch('e0'), TrustedClock(~clock0), Out(~clock0) ]
 
 /* ── Chunk admission ─────────────────────────────────────────────────────── */
 
@@ -41,10 +43,12 @@ rule AdmitKnownChunk:
   --[ ChunkAdmitted(C) ]->
     [ RecordedClock(C) ]
 
-/* The recording itself originates only from a legitimately observed
-   revision: the device records a clock after admitting it once. */
+/* The recording itself originates only from a trusted bootstrap: the
+   device records a first clock only when it matches the clock it
+   initialized locally at account creation — adversary-chosen clocks from
+   AdmissionRequest alone cannot be recorded. */
 rule RecordOnFirstSync:
-    [ AdmissionRequest(C) ]
+    [ AdmissionRequest(C), TrustedClock(C) ]
   --[ ChunkAdmitted(C), ClockRecorded(C) ]->
     [ RecordedClock(C) ]
 
@@ -63,6 +67,18 @@ lemma clock_recorded_event_comes_from_admission:
   "All C #i.
      ClockRecorded(C) @ i
      ==> ChunkAdmitted(C) @ i"
+
+/* Validation (not just transmission): every recorded/admitted clock
+   traces to the trusted bootstrap value, never to server-supplied data. */
+lemma recorded_clocks_are_trusted_bootstrap_values:
+  "All C #i.
+     ClockRecorded(C) @ i
+     ==> Ex U #j. BootstrapClockTrusted(U, C) @ j & #j < #i"
+
+lemma admitted_clocks_are_validated_against_the_trusted_record:
+  "All C #i.
+     ChunkAdmitted(C) @ i
+     ==> Ex U #j. BootstrapClockTrusted(U, C) @ j & #j < #i"
 
 /* ── Epoch adoption ladder ───────────────────────────────────────────────── */
 
@@ -113,6 +129,12 @@ lemma adopted_epoch_was_never_retired_before:
      ==> not (Ex #j. RetiredLocalEpoch(L) @ j & #j < #i)"
 
 /* ── Availability ─────────────────────────────────────────────────────────── */
+
+lemma trusted_first_sync_is_reachable:
+  exists-trace
+  "Ex C #a #b.
+     ChunkServed(C) @ a &
+     ClockRecorded(C) @ b & #a < #b"
 
 lemma adoption_is_reachable:
   exists-trace

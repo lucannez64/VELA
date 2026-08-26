@@ -68,6 +68,9 @@ class ServerIdentityStore(context: Context) {
             hybridVkB64 = created.hybridVkB64,
             shareEkB64 = created.shareEkB64,
             sealedB64 = created.sealedB64,
+            // The initial share key has not reached the server yet; keep it
+            // eligible for backfill if registration is interrupted.
+            shareEkRegistrationPending = true,
             shareEkSignedAt = signedAt,
             shareEkSignature = shareEkSignature,
         )
@@ -105,6 +108,9 @@ class ServerIdentityStore(context: Context) {
             hybridVkB64 = created.hybridVkB64,
             shareEkB64 = created.shareEkB64,
             sealedB64 = created.sealedB64,
+            // The initial share key has not reached the server yet; keep it
+            // eligible for backfill if registration is interrupted.
+            shareEkRegistrationPending = true,
             shareEkSignedAt = signedAt,
             shareEkSignature = shareEkSignature,
         )
@@ -249,7 +255,9 @@ class ServerIdentityStore(context: Context) {
             hybridVkB64 = json.getString("hybrid_vk_b64"),
             shareEkB64 = json.optString("share_ek_b64"),
             sealedB64 = json.optString("sealed_b64"),
-            shareEkRegistrationPending = json.optBoolean("share_ek_registration_pending", false)
+            shareEkRegistrationPending = json.optBoolean("share_ek_registration_pending", false),
+            shareEkSignedAt = json.optString("share_ek_signed_at").takeIf { it.isNotBlank() },
+            shareEkSignature = json.optString("share_ek_signature").takeIf { it.isNotBlank() },
         )
     }
 
@@ -262,6 +270,8 @@ class ServerIdentityStore(context: Context) {
             .put("share_ek_b64", shareEkB64)
             .put("sealed_b64", sealedB64)
             .put("share_ek_registration_pending", shareEkRegistrationPending)
+            .put("share_ek_signed_at", shareEkSignedAt)
+            .put("share_ek_signature", shareEkSignature)
     }
 
     companion object {

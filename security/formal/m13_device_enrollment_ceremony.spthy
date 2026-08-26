@@ -33,13 +33,10 @@ rule InspectClaim:
   --[ ClaimInspected(G, U, D, EK, VK) ]->
     [ Inspected(G, U, D, E, EK, VK, JK) ]
 
-rule ConfirmClaim:
-    [ Claimed(G, U, D, E, EK, VK, JK), !OpeningKey(U, D, PK), Fr(~capsule) ]
-  --[ HumanConfirmed(G, U, D, EK, VK),
-      PrimarySigned(G, U, D, EK, VK, ~capsule) ]->
-    [ Confirmed(G, U, D, E, EK, VK, JK, ~capsule,
-                primary_sig(PK, G, EK, VK, ~capsule, E)) ]
-
+/* Confirmation REQUIRES inspection: a Claimed row is not directly
+   confirmable — it must pass through InspectClaim (which yields ClaimInspected)
+   before ConfirmInspectedClaim can fire, so CompleteEnrollment cannot bypass
+   inspection. */
 rule ConfirmInspectedClaim:
     [ Inspected(G, U, D, E, EK, VK, JK), !OpeningKey(U, D, PK), Fr(~capsule) ]
   --[ HumanConfirmed(G, U, D, EK, VK),
@@ -119,6 +116,11 @@ lemma completion_requires_human_confirmation:
   "All G U D New E EK VK C #i.
      EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ i
      ==> Ex #j. HumanConfirmed(G, U, D, EK, VK) @ j & #j < #i"
+
+lemma completion_requires_inspection:
+  "All G U D New E EK VK C #i.
+     EnrollmentCompleted(G, U, D, New, E, EK, VK, C) @ i
+     ==> Ex #j. ClaimInspected(G, U, D, EK, VK) @ j & #j < #i"
 
 lemma completion_requires_the_primary_binding:
   "All G U D New E EK VK C #i.

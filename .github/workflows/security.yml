@@ -118,13 +118,15 @@ jobs:
         run: ./security/formal/run-oram-stash-bounds-tests.sh
 
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
-        continue-on-error: true
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq opam || true
-          opam init --auto-setup --bare -y 2>/dev/null || true
-          opam switch create vela-proverif ocaml-base-compiler.5.1.1 2>/dev/null || true
-          opam install --switch vela-proverif --yes proverif 2>/dev/null || true
-          eval "$(opam env --switch vela-proverif 2>/dev/null || true)"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq opam
+          opam init --auto-setup --bare -y
+          if ! opam switch list | grep -q 'vela-proverif'; then
+            opam switch create vela-proverif ocaml-base-compiler.5.1.1
+          fi
+          opam install --switch vela-proverif --yes proverif
+          eval "$(opam env --switch vela-proverif)"
           ./security/formal/run-oram-access-hiding-proofs.sh
 
       - name: Exhaust the bounded model against real handlers and Turso

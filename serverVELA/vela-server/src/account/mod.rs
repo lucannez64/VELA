@@ -124,7 +124,7 @@ pub async fn post_register(
 
     let user_id = Uuid::new_v4();
     let device_id = Uuid::new_v4();
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let device_name = body
         .device_name
         .filter(|s| !s.trim().is_empty())

@@ -234,8 +234,12 @@ fn save_pending(state: &AppState, pending: &PendingRecoveryShares) -> Result<(),
     }
     crate::store::write_secret_file(&path, &ciphertext).map_err(|e| e.to_string())?;
     // This journal is an ordering boundary, not a cache: commit the phase to
-    // stable storage before the next external effect can begin.
-    std::fs::File::open(&path)
+    // stable storage before the next external effect can begin. The file must
+    // be opened with write access — a read-only handle fails sync_all on
+    // Windows (ERROR_ACCESS_DENIED).
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
         .and_then(|file| file.sync_all())
         .map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -374,11 +378,13 @@ pub(crate) async fn deliver_security_key_share(
     )?;
     // M18: stage the blind RMS commitment together with the share. Once the
     // split is finalized, any two-share pair — not just this server share —
-    // can prove possession of the RMS for enrollment without WebAuthn.
-    let possession_hash = {
+    // can prove possession of the RMS for enrollment without WebAuthn. The
+    // commitment is only the Ed25519 *verifying* half derived from the RMS,
+    // so it cannot itself be used to produce proofs (v2 invariant).
+    let possession_commitment = {
         let crypto = state.crypto.read();
         let crypto = crypto.as_ref().ok_or("Vault is locked")?;
-        vela_crypto::recovery::rms_possession_hash(&crypto.rms())
+        vela_crypto::recovery::rms_possession_commitment(&crypto.rms())
     };
     let share_b64 = B64.encode(&share2);
     let refreshed = client
@@ -388,7 +394,7 @@ pub(crate) async fn deliver_security_key_share(
                 share: share_b64,
                 key_epoch,
                 split_id,
-                possession_hash: B64.encode(possession_hash),
+                possession_hash: B64.encode(possession_commitment),
             },
         )
         .await
@@ -534,7 +540,10 @@ pub async fn seal_trusted_contact_share(
         .split_id
         .clone()
         .ok_or("Recovery split ID was not generated")?;
-    let share3_bytes = pending.share3.clone().ok_or("Recovery share was not generated")?;
+    let share3_bytes = pending
+        .share3
+        .clone()
+        .ok_or("Recovery share was not generated")?;
     let share3 = vela_crypto::shamir::Share::from_bytes(&share3_bytes)
         .map_err(|e| format!("Cached recovery share is malformed: {e}"))?;
 
@@ -1197,7 +1206,10 @@ pub async fn complete_account_recovery(
         &client,
         &user_id,
         rms,
-        recover_resp.recovery_grant.parse().map_err(|e| format!("Invalid recovery grant: {e}"))?,
+        recover_resp
+            .recovery_grant
+            .parse()
+            .map_err(|e| format!("Invalid recovery grant: {e}"))?,
         password,
         device_name,
     )
@@ -1267,12 +1279,9 @@ pub async fn complete_account_recovery_with_contact(
         split_id: response.split_id.as_deref(),
         coordinate: response.coordinate,
     };
-    let contact_share = vela_crypto::recovery::open_contact_share_response(
-        &request_sk,
-        &context,
-        &envelope_bytes,
-    )
-    .map_err(|e| format!("The trusted-contact response could not be authenticated: {e}"))?;
+    let contact_share =
+        vela_crypto::recovery::open_contact_share_response(&request_sk, &context, &envelope_bytes)
+            .map_err(|e| format!("The trusted-contact response could not be authenticated: {e}"))?;
 
     let first_bytes = B64
         .decode(&first_share_b64)
@@ -1314,20 +1323,34 @@ pub async fn complete_account_recovery_with_contact(
     }
 
     // Prove possession of the reconstructed RMS for exactly this attempt.
-    let possession_hash = vela_crypto::recovery::rms_possession_hash(&recovered.rms);
-    let proof = vela_crypto::recovery::rms_possession_proof(
-        &possession_hash,
+    // The proof is a signature under the RMS-derived private key, verifiable
+    // by the server against the public commitment alone.
+    let proof = vela_crypto::recovery::rms_possession_sign(
+        &recovered.rms,
         &user_id,
         &attempt.recovery_id.to_string(),
         &challenge,
         attempt.key_epoch,
     );
     let grant = client
-        .recover_with_possession_proof(&user_id, &attempt.recovery_id.to_string(), &B64.encode(proof))
+        .recover_with_possession_proof(
+            &user_id,
+            &attempt.recovery_id.to_string(),
+            &B64.encode(proof),
+        )
         .await
         .map_err(|e| format!("Possession proof rejected: {e}"))?;
 
-    finish_recovered_device_setup(state, &client, &user_id, recovered.rms, grant.recovery_grant, password, device_name).await?;
+    finish_recovered_device_setup(
+        state,
+        &client,
+        &user_id,
+        recovered.rms,
+        grant.recovery_grant,
+        password,
+        device_name,
+    )
+    .await?;
     Ok(())
 }
 

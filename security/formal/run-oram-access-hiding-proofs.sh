@@ -15,7 +15,10 @@ repo_root="$proof_root/../.."
 proof_tmp="$(mktemp -d)"
 trap 'rm -rf -- "$proof_tmp"' EXIT
 
-export PATH="$(opam var bin --switch vela-proverif 2>/dev/null):$PATH"
+opam_bin="$(opam var bin --switch vela-proverif 2>/dev/null || true)"
+if [[ -n "$opam_bin" && -d "$opam_bin" ]]; then
+  export PATH="$opam_bin:$PATH"
+fi
 command -v proverif >/dev/null || {
   echo "proverif is missing; install with:" >&2
   echo "  opam switch create vela-proverif ocaml-base-compiler.5.1.1" >&2
