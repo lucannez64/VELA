@@ -507,6 +507,17 @@ fn open_rekey_capsule_json(request_json: &str) -> anyhow_like::Result<OpenRekeyC
 
 /// Sign a share-key binding with the identity held under `handle` (M19).
 #[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentitySignShareEkJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_sign_share_ek(request)
+    });
+    jni_string(&mut env, &response)
+}
+
 /// Open an RMS-rotation capsule for epoch adoption (M24).
 #[no_mangle]
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenRekeyCapsuleJson(
@@ -516,17 +527,6 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenRekey
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| {
         open_rekey_capsule_json(request)
-    });
-    jni_string(&mut env, &response)
-}
-
-pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentitySignShareEkJson(
-    mut env: JNIEnv,
-    _object: JObject,
-    request_json: JString,
-) -> jstring {
-    let response = jni_json_result(&mut env, request_json, |request| {
-        identity_sign_share_ek(request)
     });
     jni_string(&mut env, &response)
 }

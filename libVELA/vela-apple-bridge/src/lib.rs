@@ -437,8 +437,6 @@ pub unsafe extern "C" fn vela_ffi_identity_rotate_share_key(
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
 /// # Safety
-/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
-#[no_mangle]
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
@@ -446,6 +444,9 @@ pub unsafe extern "C" fn vela_ffi_open_rekey_capsule_json(request_json: *const c
     json_result(|| open_rekey_capsule_impl(c_str(request_json)?))
 }
 
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
 pub unsafe extern "C" fn vela_ffi_identity_sign_share_ek_json(request_json: *const c_char) -> *mut c_char {
     json_result(|| identity_sign_share_ek_impl(c_str(request_json)?))
 }
