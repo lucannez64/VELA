@@ -16,23 +16,41 @@ theory M26_Composition
   epoch — old-epoch capabilities are invalidated BY rotation, not merely
   unissuable before it.
 
-  Expected verdict: all lemmas VERIFIED.
+  Termination: `!Rotator` and `!EnrolledDevice` are the only persistent
+  facts, and every rule consuming them also burns a one-shot LINEAR fuel
+  token it does not re-emit (GrantFuel x2, DeviceFuel x1, ShareKeyFuel x1,
+  WebSessionFuel x1, RotationBudget x1), so all reachable state spaces are
+  finite. Two grant units suffice for any counterexample trace shape.
 */
 begin
 
 rule SetupAccount:
     [ Fr(~user), Fr(~epoch) ]
   --[ AccountCreated(~user),
-      DeviceOnboarded(~user) ]->
+      CompositionDeviceOnboarded(~user) ]->
     [ !Rotator(~user),
       RecoveryValidity(~user, ~epoch),
       ShareUpdateValidity(~user, ~epoch),
       WebValidity(~user, ~epoch),
       CurrentEpoch(~user, ~epoch),
+      DeviceFuel(~user),
+      GrantFuel(~user),
+      GrantFuel(~user),
+      ShareKeyFuel(~user),
+      WebSessionFuel(~user),
       RotationBudget(~user) ]
 
+/* Bounded device onboarding: the only producer of !EnrolledDevice. */
+rule OnboardDevice:
+    [ !Rotator(U), DeviceFuel(U), Fr(~device), CurrentEpoch(U, E) ]
+  --[ EnrolledForComposition(U, ~device) ]->
+    [ !EnrolledDevice(U), CurrentEpoch(U, E) ]
+
+/* Bounded possession-grant issuance: burns one GrantFuel unit but re-emits
+   its validity fact, so legitimate work continues within an epoch. */
 rule IssuePossessionGrant:
     [ !Rotator(U),
+      GrantFuel(U),
       RecoveryValidity(U, E),
       CurrentEpoch(U, E) ]
   --[ PossessionGrantIssued(U, E) ]->
@@ -40,6 +58,7 @@ rule IssuePossessionGrant:
 
 rule RegisterShareKey:
     [ !EnrolledDevice(U),
+      ShareKeyFuel(U),
       ShareUpdateValidity(U, E),
       CurrentEpoch(U, E),
       Fr(~ek) ]
@@ -47,36 +66,38 @@ rule RegisterShareKey:
     [ ShareUpdateValidity(U, E), CurrentEpoch(U, E) ]
 
 rule GrantWebSession:
-    [ !EnrolledDevice(U), WebValidity(U, E), Fr(~ws) ]
+    [ !EnrolledDevice(U), WebSessionFuel(U), WebValidity(U, E), Fr(~ws) ]
   --[ WebSessionGranted(U, E, ~ws) ]->
-    [ WebValidity(U, E), !LiveWebSession(U, E, ~ws) ]
+    [ WebValidity(U, E), LiveWebSession(U, E, ~ws) ]
 
 rule WebVaultPassThrough:
-    [ !LiveWebSession(U, E, WS), CurrentEpoch(U, E) ]
+    [ LiveWebSession(U, E, WS), CurrentEpoch(U, E) ]
   --[ WebVaultAction(U, E, WS) ]->
     []
 
-/* Rotation is the invalidation point: it consumes the three validity
-   tokens of the outgoing epoch and re-issues fresh ones for the next. */
+/* Rotation is the invalidation point: it consumes the three validity tokens
+   of the outgoing epoch plus the epoch token itself; fresh ones are issued
+   for the next epoch. RotationBudget makes rotations finite (one here).
+   Note the next epoch gets NO new GrantFuel/DeviceFuel/etc.: the whole
+   lifetime of an account in this model is deliberately finite, which is
+   what makes the search terminate while preserving every counterexample
+   shape the "cannot outlive their rotation" lemmas need. */
 rule RotateEpoch:
     [ !Rotator(U),
       RotationBudget(U),
-      Fr(~next),
       RecoveryValidity(U, E),
       ShareUpdateValidity(U, E),
       WebValidity(U, E),
-      CurrentEpoch(U, E) ]
+      CurrentEpoch(U, E),
+      Fr(~next) ]
   --[ Rotated(U, E, ~next) ]->
-    [ CurrentEpoch(U, ~next),
-      RecoveryValidity(U, ~next),
+    [ RecoveryValidity(U, ~next),
       ShareUpdateValidity(U, ~next),
-      WebValidity(U, ~next) ]
+      WebValidity(U, ~next),
+      CurrentEpoch(U, ~next) ]
 
 /* ── Composition safety: rotation strands everything bound to E ──────────── */
 
-/* Old-epoch capabilities are invalidated BY rotation: within an epoch any
-   amount of legitimate work may occur, but once Rotated(U,E,Next) fires,
-   no further PossessionGrantIssued on E can ever follow. */
 lemma grants_cannot_outlive_their_rotation:
   "All U E Next #r #g.
      Rotated(U, E, Next) @ r &

@@ -24,7 +24,10 @@ rule AccountSetup:
     [ Fr(~user), Fr(~clock0) ]
   --[ AccountCreated(~user),
       BootstrapClockTrusted(~user, ~clock0) ]->
-    [ LocalEpoch('e0'), TrustedClock(~clock0), Out(~clock0) ]
+    [ LocalEpoch('e0'), TrustedClock(~clock0), Out(~clock0),
+      /* Bounded ladder: two adoptions max per device lifetime. Without
+         this fuel the succ-chain climbs forever and the search diverges. */
+      AdoptionFuel(), AdoptionFuel() ]
 
 /* ── Chunk admission ─────────────────────────────────────────────────────── */
 
@@ -36,12 +39,14 @@ rule ServeChunk:
     [ AdmissionRequest(clock) ]
 
 /* A chunk is admitted only when this device already recorded exactly that
-   clock for it — equal-clock redelivery. Older/forged clocks find no
-   matching recording and are refused (no rule exists for them). */
+   clock for it — equal-clock redelivery. The recording is consumed: an
+   admitted redelivery spends the record, which keeps the reachable state
+   space finite (re-emitting it would allow unbounded re-admission loops).
+   Older/forged clocks find no matching recording and are refused. */
 rule AdmitKnownChunk:
     [ AdmissionRequest(C), RecordedClock(C) ]
   --[ ChunkAdmitted(C) ]->
-    [ RecordedClock(C) ]
+    []
 
 /* The recording itself originates only from a trusted bootstrap: the
    device records a first clock only when it matches the clock it
@@ -94,6 +99,7 @@ rule AdvertiseEpoch:
 rule AdoptSuccessorEpoch:
     [ !AdvertisedEpoch(succ(L)),
       LocalEpoch(L),
+      AdoptionFuel(),
       Fr(~rotid),
       Fr(~rms) ]
   --[ EpochAdopted(L, succ(L), ~rotid, ~rms) ]->

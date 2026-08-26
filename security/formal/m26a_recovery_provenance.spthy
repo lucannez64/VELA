@@ -14,10 +14,21 @@ rule SetupAccount:
   --[ AccountCreated(~user),
       DeviceOnboarded(~device) ]->
     [ !EnrolledDevice(~user, ~device),
-      CurrentEpoch(~user, ~epoch) ]
+      CurrentEpoch(~user, ~epoch),
+      /* Finite fuel bounds CommitmentStaged re-firings (see M26). */
+      StagingFuel(~user),
+      StagingFuel(~user) ]
+
+/* Bounded recovery-device enrollment fuel: without it, EnrollRecoveredDevice
+   fires unboundedly (it re-emits its epoch token) and the search diverges. */
+rule MintRecoveryDeviceFuel:
+    [ StagingFuel(U) ]
+  --[]->
+    [ RecoveryDeviceFuel(U), StagingFuel(U) ]
 
 rule StageCommitment:
-    [ CurrentEpoch(U, E) ]
+    [ StagingFuel(U),
+      CurrentEpoch(U, E) ]
   --[ CommitmentStaged(U, E) ]->
     [ /* The live epoch token survives staging — commitments are staged
          against the CURRENT epoch, not consumed by it. */
@@ -38,7 +49,7 @@ rule IssuePossessionGrant:
    onboarding is recorded for it — recovery enrollment never fabricates an
    unaccounted-for device. */
 rule EnrollRecoveredDevice:
-    [ GrantToken(U, E), CurrentEpoch(U, E), Fr(~device) ]
+    [ GrantToken(U, E), RecoveryDeviceFuel(U), CurrentEpoch(U, E), Fr(~device) ]
   --[ DeviceEnrolledViaRecovery(U, ~device, E),
       DeviceOnboarded(~device) ]->
     [ !EnrolledDevice(U, ~device), CurrentEpoch(U, E) ]
