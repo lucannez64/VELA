@@ -38,6 +38,11 @@ impl DesktopClient {
                 device_name: Some("Desktop E2E".to_string()),
                 device_type: Some("desktop".to_string()),
                 share_ek: Some(B64.encode(&identity.share_ek)),
+                share_ek_signed_at: Some(chrono::Utc::now().to_rfc3339()),
+                share_ek_signature: crypto::sign_share_ek_binding(
+                    &identity.hybrid_sk, &identity.share_ek,
+                    &chrono::Utc::now().to_rfc3339(),
+                ).ok(),
             })
             .await
             .map_err(|e| format!("register account: {e}"))?;

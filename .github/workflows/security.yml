@@ -120,9 +120,11 @@ jobs:
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
         continue-on-error: true
         run: |
-          opam switch create vela-proverif ocaml-base-compiler.5.1.1 || true
-          opam install --switch vela-proverif --yes proverif || true
-          eval "$(opam env --switch vela-proverif)"
+          sudo apt-get update -qq && sudo apt-get install -y -qq opam || true
+          opam init --auto-setup --bare -y 2>/dev/null || true
+          opam switch create vela-proverif ocaml-base-compiler.5.1.1 2>/dev/null || true
+          opam install --switch vela-proverif --yes proverif 2>/dev/null || true
+          eval "$(opam env --switch vela-proverif 2>/dev/null || true)"
           ./security/formal/run-oram-access-hiding-proofs.sh
 
       - name: Exhaust the bounded model against real handlers and Turso
