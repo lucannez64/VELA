@@ -91,11 +91,47 @@ manifest files.
 
 ## Testing
 
+The host speaks the native messaging protocol: every message is a 4-byte
+little-endian *length* prefix followed by the JSON — there is no length prefix
+in a bare `echo`, so a raw `echo '{"action":"ping"}' | vela-native-messaging-host`
+reads garbage as the length and prints nothing.
+
+More importantly, the desktop's `ipc_gate` only admits a host that a **browser**
+spawned (gate checks 1–3 in `ipc_gate.rs`). A host you launch from a terminal
+has no browser in its process ancestry, so the desktop refuses it and the host
+answers `{"success":false,"connected":false}`. That is expected, not a bug —
+the manual command can never return `{"success":true,...}`.
+
+To confirm the binary and the desktop socket are wired up at all, send a
+*framed* ping from a shell (you will see `connected:false`, proving the path
+works and isolating any real problem to the gate):
+
 ```bash
 cd ../../desktopVELA && cargo build --release -p vela-nm-host
-echo '{"action":"ping"}' | ../desktopVELA/target/release/vela-native-messaging-host
+python3 - <<'PY'
+import json, subprocess, sys
+m = json.dumps({"action":"ping"}).encode()
+p = subprocess.run(
+    ["../desktopVELA/target/release/vela-native-messaging-host"],
+    input=len(m).to_bytes(4,"little")+m, capture_output=True)
+out = p.stdout
+print("response:", out[4:].decode() if len(out) > 4 else f"(none; stderr: {p.stderr.decode().strip()})")
+PY
 ```
 
-(The host speaks the native messaging length-prefixed framing; the desktop app
-must be running for the ping to be answered. The full round trip — real host,
-real gate, real socket — is covered by `vela-nm-host`'s `e2e` test.)
+The only faithful end-to-end test is the browser extension itself: that is what
+spawns the host as a browser descendant and passes the gate. The host plus the
+real gate and socket are also covered by `vela-nm-host`'s `e2e` test (it stands
+in for the browser via the `VELA_NM_BROWSER_NAMES` escape hatch).
+
+If the extension does not work, the desktop log is the source of truth — look
+for a line like:
+
+```
+WARN … Refused IPC connection from vela-native-messaging-host (pid …): … was not started by a recognized browser
+```
+
+which means the gate could not find a browser in the host's ancestry (common
+with Flatpak/Snap browsers, whose host parent is the sandbox launcher rather
+than `chrome`/`firefox`). The escape hatch is `VELA_NM_BROWSER_NAMES=<launcher>`
+on the **desktop** process.

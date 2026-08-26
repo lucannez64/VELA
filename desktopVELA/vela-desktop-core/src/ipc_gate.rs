@@ -66,6 +66,14 @@ const BROWSER_PROCESS_NAMES: &[&str] = &[
     "thorium-browser",
     "librewolf",
     "waterfox",
+    // Keep in sync with the browsers registered by
+    // extension/native-messaging/register-host.sh and register-firefox-host.sh.
+    "zen",
+    "helium",
+    "floorp",
+    "thunderbird",
+    "arc",
+    "ungoogled-chromium",
 ];
 
 /// Extra browser names accepted as spawners, from `VELA_NM_BROWSER_NAMES`
