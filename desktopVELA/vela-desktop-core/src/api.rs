@@ -42,9 +42,9 @@ pub struct RegisterRequest {
     pub device_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub share_ek: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share_ek_signed_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share_ek_signature: Option<String>,
 }
 
