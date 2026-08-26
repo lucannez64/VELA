@@ -128,8 +128,7 @@ jobs:
           # proverif's opam depext pulls GUI libs the headless runner lacks;
           # they are optional for the CLI solver, so skip depext handling.
           if ! opam list --switch vela-proverif --installed 2>/dev/null | grep -q 'proverif'; then
-            opam option --switch vela-proverif depext=false
-            opam install --switch vela-proverif --yes proverif
+            opam install --switch vela-proverif --yes --assume-depexts proverif
           fi
           eval "$(opam env --switch vela-proverif)"
           ./security/formal/run-oram-access-hiding-proofs.sh
