@@ -22,6 +22,7 @@ ENV PATH="/root/.bun/bin:${PATH}"
 WORKDIR /src
 # vela-wasm-bridge depends on vela-crypto + vela-core.
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+COPY libVELA/vela-client-recovery-policy/ libVELA/vela-client-recovery-policy/
 COPY libVELA/vela-core/ libVELA/vela-core/
 COPY libVELA/vela-wasm-bridge/ libVELA/vela-wasm-bridge/
 COPY webVELA/ webVELA/
