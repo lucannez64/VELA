@@ -49,8 +49,8 @@ lemma possession_grant_requires_staged_commitment:
      ==> Ex #j. CommitmentStaged(U, E) @ j & #j < #i"
 
 lemma enrollment_requires_possession_grant:
-  "All U E #i.
-     DeviceEnrolledViaRecovery(U, E) @ i
+  "All U D E #i.
+     DeviceEnrolledViaRecovery(U, D, E) @ i
      ==> Ex #j. PossessionGrantIssued(U, E) @ j & #j < #i"
 
 lemma enrolled_devices_require_onboarding_or_setup:
@@ -75,6 +75,6 @@ lemma recovered_device_matches_an_onboarding_event:
 
 lemma device_enrollment_reachable:
   exists-trace
-  "Ex U E #i. DeviceEnrolledViaRecovery(U, E) @ i"
+  "Ex U D E #i. DeviceEnrolledViaRecovery(U, D, E) @ i"
 
 end

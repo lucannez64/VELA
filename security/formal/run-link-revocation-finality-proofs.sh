@@ -6,7 +6,7 @@ proof_tmp="$(mktemp -d)"
 trap 'rm -rf -- "$proof_tmp"' EXIT
 
 model=m21_link_revocation_finality
-expected=2
+expected="$(grep -cE '^(lemma|exists-trace)' "$proof_root/m21_link_revocation_finality.spthy")"
 output="$proof_tmp/$model.out"
 tamarin-prover --prove "$proof_root/$model.spthy" >"$output"
 

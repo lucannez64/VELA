@@ -61,6 +61,7 @@ rule WebVaultPassThrough:
 rule RotateEpoch:
     [ !Rotator(U),
       RotationBudget(U),
+      Fr(~next),
       RecoveryValidity(U, E),
       ShareUpdateValidity(U, E),
       WebValidity(U, E),

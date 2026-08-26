@@ -6,7 +6,7 @@ proof_tmp="$(mktemp -d)"
 trap 'rm -rf -- "$proof_tmp"' EXIT
 
 model=m23_sync_admission
-expected=8
+expected="$(grep -cE '^(lemma|exists-trace)' "$proof_root/m23_sync_admission.spthy")"
 output="$proof_tmp/$model.out"
 tamarin-prover --prove "$proof_root/$model.spthy" >"$output"
 
