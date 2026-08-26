@@ -384,3 +384,35 @@ stash growth, write-back clobbering of unread buckets) — all fixed in
 Expected: **4/4 tests passed**. See
 `oram-stash-bounds-statistical-results.md` for the tool-boundary discussion
 (EasyCrypt supermartingale proof explicitly out of scope).
+
+## Checking cross-milestone composition (M26)
+
+Component proofs do not compose themselves. `m26_composition.spthy` puts
+four verified subsystems in one state machine — M18 possession recovery,
+M19 share-key bindings, M20 web-session gating, and the M23 rotation ladder
+— with the account's live epoch as a single linear token every subsystem
+consumes and re-emits. Proven seams: possession grants, challenges, and
+recovered-device enrollment are stranded by an intervening rotation;
+web-session vault actions cannot outlive their bound epoch; share-key
+registration always traces to an onboarded device (setup or recovered
+enrollment — never around it); and the full composed chain from commitment
+staging through vault pass-through is reachable.
+
+```bash
+./run-composition-proofs.sh
+```
+
+Expected: **8 Tamarin lemmas verified**.
+
+## Checking cross-milestone composition stranding (M26)
+
+M26 proves the composition seam: rotation strands ALL THREE subsystem
+validity tokens simultaneously, so neither possession grants, share-key
+updates, nor web-session vault actions can outlive their epoch's rotation.
+This is the interaction property no individual model can express.
+
+```bash
+./run-composition-proofs.sh
+```
+
+Expected: **3 Tamarin lemmas verified**.

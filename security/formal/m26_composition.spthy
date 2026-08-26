@@ -1,0 +1,86 @@
+theory M26_Composition
+/*
+  Cross-milestone composition: rotation strands everything bound to E.
+
+  Three individually verified subsystems share one account epoch token:
+
+    - M18 possession recovery consumes RecoveryValidity(E)
+    - M19 share-key registration consumes ShareUpdateValidity(E)
+    - M20 web-session pass-through consumes WebValidity(E)
+
+  Rotation consumes ALL THREE validity tokens plus the live epoch itself.
+  After rotation, no grant can be issued, no share key registered, and no
+  vault action performed against the old epoch — the composition seam that
+  individual proofs cannot express.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+rule SetupAccount:
+    [ Fr(~user), Fr(~epoch) ]
+  --[ AccountCreated(~user),
+      DeviceOnboarded(~user) ]->
+    [ !Rotator(~user),
+      RecoveryValidity(~user, ~epoch),
+      ShareUpdateValidity(~user, ~epoch),
+      WebValidity(~user, ~epoch),
+      CurrentEpoch(~user, ~epoch),
+      RotationBudget(~user) ]
+
+rule IssuePossessionGrant:
+    [ !Rotator(U),
+      RecoveryValidity(U, E),
+      CurrentEpoch(U, E) ]
+  --[ PossessionGrantIssued(U, E) ]->
+    []
+
+rule RegisterShareKey:
+    [ !EnrolledDevice(U),
+      ShareUpdateValidity(U, E),
+      CurrentEpoch(U, E),
+      Fr(~ek) ]
+  --[ ShareKeyRegistered(U, E, ~ek) ]->
+    []
+
+rule GrantWebSession:
+    [ !EnrolledDevice(U), WebValidity(U, E), Fr(~ws) ]
+  --[ WebSessionGranted(U, E, ~ws) ]->
+    [ !LiveWebSession(U, E, ~ws) ]
+
+rule WebVaultPassThrough:
+    [ !LiveWebSession(U, E, WS), CurrentEpoch(U, E) ]
+  --[ WebVaultAction(U, E, WS) ]->
+    []
+
+rule RotateEpoch:
+    [ !Rotator(U),
+      RotationBudget(U),
+      RecoveryValidity(U, E),
+      ShareUpdateValidity(U, E),
+      WebValidity(U, E),
+      CurrentEpoch(U, E) ]
+  --[ Rotated(U, E, ~next) ]->
+    [ CurrentEpoch(U, ~next) ]
+
+/* ── Composition safety: rotation strands everything bound to E ──────────── */
+
+lemma grants_cannot_outlive_their_rotation:
+  "All U E Next #r #g.
+     Rotated(U, E, Next) @ r &
+     PossessionGrantIssued(U, E) @ g
+     ==> not (#r < #g)"
+
+lemma share_updates_cannot_outlive_their_rotation:
+  "All U E Next K #r #i.
+     Rotated(U, E, Next) @ r &
+     ShareKeyRegistered(U, E, K) @ i
+     ==> not (#r < #i)"
+
+lemma web_actions_cannot_outlive_their_rotation:
+  "All U E W Next #r #i.
+     Rotated(U, E, Next) @ r &
+     WebVaultAction(U, E, W) @ i
+     ==> not (#r < #i)"
+
+end

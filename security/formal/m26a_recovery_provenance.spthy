@@ -1,0 +1,61 @@
+theory M26a_RecoveryProvenance
+/*
+  Composition part A: recovery-chain provenance.
+
+  Every link in the composed possession-recovery chain traces to the
+  staged commitment: challenge-slot consumption, grant issuance, and
+  recovered-device enrollment each require the staged commitment and live
+  epoch of the same account.
+*/
+begin
+
+rule SetupAccount:
+    [ Fr(~user), Fr(~epoch) ]
+  --[ AccountCreated(~user),
+      DeviceOnboarded(~user) ]->
+    [ !EnrolledDevice(~user),
+      CurrentEpoch(~user, ~epoch) ]
+
+rule StageCommitment:
+    [ CurrentEpoch(U, E) ]
+  --[ CommitmentStaged(U, E) ]->
+    [ /* The live epoch token survives staging — commitments are staged
+         against the CURRENT epoch, not consumed by it. */
+      CurrentEpoch(U, E),
+      CommittedPossession(U, E),
+      ChallengeSlot(U, E) ]
+
+rule IssuePossessionGrant:
+    [ CommittedPossession(U, E),
+      ChallengeSlot(U, E),
+      CurrentEpoch(U, E),
+      Fr(~chal) ]
+  --[ PossessionGrantIssued(U, E) ]->
+    [ CurrentEpoch(U, E), GrantToken(U, E) ]
+
+rule EnrollRecoveredDevice:
+    [ GrantToken(U, E), CurrentEpoch(U, E), Fr(~device) ]
+  --[ DeviceEnrolledViaRecovery(U, E),
+      DeviceOnboarded(~device) ]->
+    [ !EnrolledDevice(U), CurrentEpoch(U, E) ]
+
+lemma possession_grant_requires_staged_commitment:
+  "All U E #i.
+     PossessionGrantIssued(U, E) @ i
+     ==> Ex #j. CommitmentStaged(U, E) @ j & #j < #i"
+
+lemma enrollment_requires_possession_grant:
+  "All U E #i.
+     DeviceEnrolledViaRecovery(U, E) @ i
+     ==> Ex #j. PossessionGrantIssued(U, E) @ j & #j < #i"
+
+lemma enrolled_devices_require_onboarding_or_setup:
+  "All U #i.
+     !EnrolledDevice(U) @ i
+     ==> (Ex D #j. DeviceOnboarded(D) @ j & #j < #i)"
+
+lemma device_enrollment_reachable:
+  exists-trace
+  "Ex U E #i. DeviceEnrolledViaRecovery(U, E) @ i"
+
+end

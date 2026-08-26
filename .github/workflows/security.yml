@@ -108,11 +108,17 @@ jobs:
       - name: Prove linked-item revocation finality
         run: ./security/formal/run-link-revocation-finality-proofs.sh
 
+      - name: Prove cross-milestone rotation-stranding composition
+        run: ./security/formal/run-composition-proofs.sh
+
       - name: Prove the client sync-admission policy
         run: ./security/formal/run-sync-admission-proofs.sh
 
       - name: Statistical stash-bounds verification over the real ORAM
         run: ./security/formal/run-oram-stash-bounds-tests.sh
+
+      - name: Prove cross-milestone composition seams
+        run: ./security/formal/run-composition-proofs.sh
 
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
         run: |
