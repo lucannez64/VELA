@@ -224,6 +224,19 @@ class AndroidVelaApiClient(
     }
 
     /** Current vault-key epoch and rotation state ("active" or "freezing"). */
+    fun markRekeyCapable(token: String): String? {
+        val response = request("POST", "/device/rekey-capable", token)
+        response.requireSuccess("Mark rekey-capable failed")
+        return response.newToken
+    }
+
+    fun acknowledgeRekeyCapsule(token: String, epoch: Long): String? {
+        val body = JSONObject().put("epoch", epoch).toString().toByteArray(Charsets.UTF_8)
+        val response = request("POST", "/device/capsule/ack", token, body, contentType = "application/json")
+        response.requireSuccess("Acknowledge rekey capsule failed")
+        return response.newToken
+    }
+
     fun getVaultEpoch(token: String): VaultEpochResponse {
         val response = request("GET", "/vault/epoch", token)
         response.requireSuccess("Vault epoch request failed")
