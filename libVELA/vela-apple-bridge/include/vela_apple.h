@@ -65,6 +65,7 @@ char *vela_ffi_seal_contact_share_json(const char *request_json);
 char *vela_ffi_open_contact_share_json(const char *request_json);
 char *vela_ffi_seal_contact_share_response_json(const char *request_json);
 char *vela_ffi_identity_sign_share_ek_json(const char *request_json);
+char *vela_ffi_open_rekey_capsule_json(const char *request_json);
 char *vela_ffi_possession_proof_json(const char *request_json);
 char *vela_ffi_generate_recovery_request_json(void);
 char *vela_ffi_rms_possession_hash_json(const uint8_t *rms, size_t rms_len);

@@ -439,6 +439,13 @@ pub unsafe extern "C" fn vela_ffi_identity_rotate_share_key(
 /// # Safety
 /// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
 #[no_mangle]
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_open_rekey_capsule_json(request_json: *const c_char) -> *mut c_char {
+    json_result(|| open_rekey_capsule_impl(c_str(request_json)?))
+}
+
 pub unsafe extern "C" fn vela_ffi_identity_sign_share_ek_json(request_json: *const c_char) -> *mut c_char {
     json_result(|| identity_sign_share_ek_impl(c_str(request_json)?))
 }
@@ -800,6 +807,34 @@ fn identity_sign_impl(request_json: &str) -> FfiResult<AuthSignatureResponse> {
     Ok(AuthSignatureResponse {
         signature_b64: B64.encode(signature),
     })
+}
+
+#[derive(Serialize)]
+struct OpenRekeyCapsuleResponse { rms_b64: String }
+
+/// Open an RMS-rotation capsule with the device's hybrid DK (M24).
+fn open_rekey_capsule_impl(request_json: &str) -> FfiResult<OpenRekeyCapsuleResponse> {
+    #[derive(Deserialize)]
+    struct Request {
+        hybrid_dk_b64: String,
+        capsule_b64: String,
+        previous_rms_b64: String,
+        expected_epoch: i64,
+        expected_rotation_id: String,
+    }
+    #[derive(Serialize)]
+    struct Response { rms_b64: String }
+    let req: Request = serde_json::from_str(request_json)?;
+    let dk = B64.decode(req.hybrid_dk_b64.as_bytes())?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let prev = B64.decode(req.previous_rms_b64.as_bytes())?;
+    let previous_rms: [u8; 32] = prev.try_into()
+        .map_err(|_| "previous_rms must be 32 bytes".to_string())?;
+    let rms = vela_crypto::rekey::open_rekey_capsule(
+        &dk, &capsule, &previous_rms,
+        req.expected_epoch, &req.expected_rotation_id,
+    )?;
+    Ok(OpenRekeyCapsuleResponse { rms_b64: B64.encode(rms.as_slice()) })
 }
 
 /// Sign a share-key binding with the identity held under `handle` (M19).

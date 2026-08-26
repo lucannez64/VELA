@@ -170,28 +170,8 @@ pub fn seal_rekey_capsule(
     epoch: i64,
     rotation_id: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(epoch >= 2, "re-key capsule epoch must be at least 2");
-    anyhow::ensure!(!rotation_id.is_empty(), "re-key capsule rotation id is empty");
-    anyhow::ensure!(
-        rotation_id.len() <= u16::MAX as usize,
-        "re-key capsule rotation id is too long"
-    );
-
-    let pk = kem::HybridPublicKey::from_bytes(hybrid_ek_bytes)?;
-    let mut payload = Zeroizing::new(Vec::with_capacity(
-        REKEY_CAPSULE_V1_MAGIC.len() + 8 + 2 + rotation_id.len() + rms.len(),
-    ));
-    payload.extend_from_slice(REKEY_CAPSULE_V1_MAGIC);
-    payload.extend_from_slice(&epoch.to_be_bytes());
-    payload.extend_from_slice(&(rotation_id.len() as u16).to_be_bytes());
-    payload.extend_from_slice(rotation_id.as_bytes());
-    payload.extend_from_slice(rms);
-    // KEM sealing alone authenticates ciphertext integrity, not its sender:
-    // anyone knows the public key. The inner old-RMS-derived AEAD proves this
-    // transition was created by a holder of the currently trusted vault key.
-    let binding_key = kdf::derive(REKEY_CAPSULE_BINDING_CONTEXT, previous_rms);
-    let authenticated_payload = encrypt(binding_key.as_bytes(), &payload)?;
-    Ok(kem::seal_share(&pk, &authenticated_payload)?)
+    vela_crypto::rekey::seal_rekey_capsule(hybrid_ek_bytes, previous_rms, rms, epoch, rotation_id)
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Open and validate a versioned RMS-rotation capsule.
@@ -205,58 +185,11 @@ pub fn open_rekey_capsule(
     expected_epoch: i64,
     expected_rotation_id: &str,
 ) -> Result<Zeroizing<[u8; 32]>, String> {
-    if expected_epoch < 2 || expected_rotation_id.is_empty() {
-        return Err("invalid expected re-key capsule metadata".into());
-    }
-    let sk = kem::HybridSecretKey::from_bytes(hybrid_dk_bytes)
-        .map_err(|e| format!("invalid device key: {e}"))?;
-    let authenticated_payload = Zeroizing::new(
-        kem::open_share(&sk, capsule).map_err(|e| format!("capsule did not open: {e}"))?,
-    );
-    let binding_key = kdf::derive(REKEY_CAPSULE_BINDING_CONTEXT, previous_rms);
-    let payload = decrypt(binding_key.as_bytes(), &authenticated_payload)
-        .map_err(|_| "re-key capsule was not authenticated by the current RMS".to_string())?;
-    let fixed_len = REKEY_CAPSULE_V1_MAGIC.len() + 8 + 2 + 32;
-    if payload.len() < fixed_len || !payload.starts_with(REKEY_CAPSULE_V1_MAGIC) {
-        return Err("capsule did not contain a versioned re-key payload".into());
-    }
-
-    let mut cursor = REKEY_CAPSULE_V1_MAGIC.len();
-    let inner_epoch = i64::from_be_bytes(
-        payload[cursor..cursor + 8]
-            .try_into()
-            .map_err(|_| "re-key capsule epoch is malformed")?,
-    );
-    cursor += 8;
-    let rotation_len = u16::from_be_bytes(
-        payload[cursor..cursor + 2]
-            .try_into()
-            .map_err(|_| "re-key capsule rotation id is malformed")?,
-    ) as usize;
-    cursor += 2;
-    let expected_len = cursor
-        .checked_add(rotation_len)
-        .and_then(|len| len.checked_add(32))
-        .ok_or("re-key capsule length overflow")?;
-    if payload.len() != expected_len {
-        return Err("re-key capsule has an invalid payload length".into());
-    }
-    let inner_rotation_id = std::str::from_utf8(&payload[cursor..cursor + rotation_len])
-        .map_err(|_| "re-key capsule rotation id is not UTF-8")?;
-    cursor += rotation_len;
-
-    if inner_epoch != expected_epoch {
-        return Err(format!(
-            "authenticated re-key capsule epoch {inner_epoch} does not match expected epoch {expected_epoch}"
-        ));
-    }
-    if inner_rotation_id != expected_rotation_id {
-        return Err("authenticated re-key capsule rotation id does not match the committed attempt".into());
-    }
-
-    let mut rms = Zeroizing::new([0u8; 32]);
-    rms.copy_from_slice(&payload[cursor..]);
-    Ok(rms)
+    vela_crypto::rekey::open_rekey_capsule(
+        hybrid_dk_bytes, capsule, previous_rms,
+        expected_epoch, expected_rotation_id,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Decrypt an RMS capsule previously created by [`create_rms_capsule`].
@@ -479,7 +412,7 @@ mod v3_capsule_tests {
 
         let error = open_rekey_capsule(&sk, &stale, &previous_rms, 3, "rotation-current")
             .expect_err("outer current-epoch metadata must not authorize a stale capsule");
-        assert!(error.contains("authenticated re-key capsule epoch"), "{error}");
+        assert!(error.contains("inner epoch"), "{error}");
 
         // A second attempt can target the same epoch after an abort. Binding
         // the attempt id prevents that abandoned RMS from being adopted too.

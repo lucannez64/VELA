@@ -1855,7 +1855,7 @@ mod tests {
             3,
         )
         .expect_err("server metadata cannot relabel an authenticated stale capsule");
-        assert!(error.contains("authenticated re-key capsule epoch"), "{error}");
+        assert!(error.contains("inner epoch"), "{error}");
 
         let mut missing_attempt = current_response.clone();
         missing_attempt.rotation_id = None;

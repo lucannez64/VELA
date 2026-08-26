@@ -217,6 +217,11 @@ struct OpenShareResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct OpenRekeyCapsuleResponse {
+    rms_b64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct AuthSignatureResponse {
     signature: String,
 }
@@ -476,8 +481,45 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityS
     jni_string(&mut env, &response)
 }
 
+/// Open an RMS-rotation capsule with the device's hybrid DK (M24).
+fn open_rekey_capsule_json(request_json: &str) -> anyhow_like::Result<OpenRekeyCapsuleResponse> {
+    #[derive(Deserialize)]
+    struct Request {
+        hybrid_dk_b64: String,
+        capsule_b64: String,
+        previous_rms: Vec<u8>,
+        expected_epoch: i64,
+        expected_rotation_id: String,
+    }
+    #[derive(Serialize)]
+    struct Response { rms_b64: String }
+    let request: Request = serde_json::from_str(request_json)?;
+    let dk = B64.decode(request.hybrid_dk_b64.as_bytes())?;
+    let capsule = B64.decode(request.capsule_b64.as_bytes())?;
+    let previous_rms: [u8; 32] = request.previous_rms.try_into()
+        .map_err(|_| "previous_rms must be 32 bytes")?;
+    let rms = vela_crypto::rekey::open_rekey_capsule(
+        &dk, &capsule, &previous_rms,
+        request.expected_epoch, &request.expected_rotation_id,
+    )?;
+    Ok(OpenRekeyCapsuleResponse { rms_b64: B64.encode(rms.as_slice()) })
+}
+
 /// Sign a share-key binding with the identity held under `handle` (M19).
 #[no_mangle]
+/// Open an RMS-rotation capsule for epoch adoption (M24).
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenRekeyCapsuleJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        open_rekey_capsule_json(request)
+    });
+    jni_string(&mut env, &response)
+}
+
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentitySignShareEkJson(
     mut env: JNIEnv,
     _object: JObject,
