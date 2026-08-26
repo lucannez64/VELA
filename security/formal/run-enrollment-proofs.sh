@@ -6,7 +6,7 @@ proof_tmp="$(mktemp -d)"
 trap 'rm -rf -- "$proof_tmp"' EXIT
 
 model=m13_device_enrollment_ceremony
-expected=15
+expected=16
 output="$proof_tmp/$model.out"
 tamarin-prover --prove "$proof_root/$model.spthy" >"$output"
 
