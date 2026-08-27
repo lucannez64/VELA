@@ -434,9 +434,12 @@ async fn adopt_server_epoch(
     }
     // M23: re-run the verified decision now that the capsule is in hand —
     // its inner epoch and rotation id must still bind to this transition.
+    // `rotation_state` is the sample taken at the top of this call; if the
+    // server paused or committed rotation since then, the server-side ack
+    // below rejects on its own authoritative check.
     let capsule_bound =
         vela_sync_policy::plan_epoch_adoption(vela_sync_policy::EpochAdoptionFacts {
-            rotation_state_active: true,
+            rotation_state_active: rotation_state == "active",
             server_epoch,
             local_epoch,
             server_epoch_is_next: local_epoch.checked_add(1) == Some(server_epoch),
@@ -707,7 +710,7 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
             return;
         }
     };
-    let signed_at = chrono::Utc::now().to_rfc3339();
+    let signed_at = crate::crypto::canonical_binding_timestamp();
     let signature = match crypto::sign_share_ek_binding(&keys.hybrid_sk, &share_ek, &signed_at) {
         Ok(signature) => signature,
         Err(e) => {

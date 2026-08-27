@@ -23,5 +23,5 @@ if [[ "$verified" -ne "$expected" ]]; then
   exit 1
 fi
 
-echo "m23_sync_admission: 8 verified"
-echo "m23 sync-admission formal proof gate: 8 verified, 0 falsified, 0 warnings"
+echo "m23_sync_admission: $expected verified"
+echo "m23 sync-admission formal proof gate: $expected verified, 0 falsified, 0 warnings"

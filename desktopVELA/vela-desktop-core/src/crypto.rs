@@ -210,6 +210,12 @@ pub fn decrypt_rms_capsule(transfer_key: &[u8; 32], capsule: &[u8]) -> Result<[u
 /// Sign a server-issued challenge for authentication.
 /// Sign a share-key binding (M19): authorizes registering `share_ek` at
 /// `signed_at` under this device's hybrid identity key.
+///
+/// IMPORTANT: `signed_at` must be produced by [`canonical_binding_timestamp`].
+/// The server rejects anything but second-precision canonical UTC
+/// (`YYYY-MM-DDTHH:MM:SSZ`, 20 chars) — a timestamp with fractional seconds
+/// or an offset suffix fails verification on the server, because the
+/// signature covers this exact string.
 pub fn sign_share_ek_binding(
     hybrid_sk: &[u8],
     share_ek: &[u8],
@@ -221,6 +227,34 @@ pub fn sign_share_ek_binding(
     let signature = signing::sign(&sk, &message)
         .map_err(|e| format!("Failed to sign share-key binding: {e}"))?;
     Ok(B64.encode(signature.to_bytes()))
+}
+
+/// Canonical M19 share-key binding timestamp: second-precision UTC
+/// (`YYYY-MM-DDTHH:MM:SSZ`, exactly 20 chars). Every client MUST mint the
+/// binding timestamp through this function — `Utc::now().to_rfc3339()` alone
+/// emits fractional seconds and an offset suffix that the server rejects.
+pub fn canonical_binding_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    #[test]
+    fn binding_timestamp_is_server_canonical() {
+        let t = super::canonical_binding_timestamp();
+        assert_eq!(t.len(), 20, "must be exactly YYYY-MM-DDTHH:MM:SSZ: {t}");
+        assert!(t.ends_with('Z'), "must be UTC-Z form: {t}");
+        // RFC3339-parseable with seconds precision (no fraction accepted).
+        let parsed =
+            chrono::DateTime::parse_from_rfc3339(&t).expect("must be valid RFC 3339");
+        assert_eq!(parsed.timestamp_subsec_nanos(), 0);
+        // Re-formatting must round-trip byte-for-byte.
+        assert_eq!(
+            parsed.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            t,
+            "timestamp must already be in canonical form"
+        );
+    }
 }
 
 pub fn create_auth_signature(

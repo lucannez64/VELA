@@ -2285,6 +2285,24 @@ async fn share_ek_registration_requires_device_signed_binding() {
         .await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
+    // Non-canonical timestamp forms are rejected BEFORE verification:
+    // fractional seconds, offset suffix, and equal-instant offset form
+    // (which would otherwise rewind the lexicographic freshness compare).
+    for bad in [
+        "2026-01-01T00:00:00.123456789Z",
+        "2026-01-01T01:00:00+01:00",
+        "2025-12-31T23:00:00-01:00",
+    ] {
+        let sig = sign_binding(&share_ek, bad, &sk);
+        let resp = put(json!({ "share_ek": share_ek, "device_id": device_id,
+            "signed_at": bad, "signature": sig })).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "non-canonical signed_at {bad} must be rejected outright"
+        );
+    }
+
     // A valid binding registers.
     let t1 = "2026-01-01T00:00:00Z";
     let sig1 = sign_binding(&share_ek, t1, &sk);

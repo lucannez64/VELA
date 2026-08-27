@@ -729,7 +729,7 @@ class VaultSyncManager(
             val registration = runCatching {
                 val deviceId = identity.deviceId
                     ?: error("Server identity has no device id")
-                val signedAt = java.time.Instant.now().toString()
+                val signedAt = ServerIdentityStore.canonicalTimestamp()
                 val identityHandle = identityStore.handle()
                     ?: error("Device identity is unavailable; re-enroll this device")
                 val signature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(

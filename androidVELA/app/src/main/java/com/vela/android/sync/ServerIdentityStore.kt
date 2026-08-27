@@ -55,7 +55,7 @@ class ServerIdentityStore(context: Context) {
         handle = created
         // M19: sign the initial share-key binding now, while the identity is
         // open; the signature travels with the publics to registration.
-        val signedAt = java.time.Instant.now().toString()
+        val signedAt = canonicalTimestamp()
         val shareEkSignature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(
             handle = created.handle,
             shareEkB64 = created.shareEkB64,
@@ -95,7 +95,7 @@ class ServerIdentityStore(context: Context) {
         handle = created
         // M19: sign the initial share-key binding now, while the identity is
         // open; the signature travels with the publics to registration.
-        val signedAt = java.time.Instant.now().toString()
+        val signedAt = canonicalTimestamp()
         val shareEkSignature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(
             handle = created.handle,
             shareEkB64 = created.shareEkB64,
@@ -174,7 +174,7 @@ class ServerIdentityStore(context: Context) {
         val handleId = handle() ?: return null
         val rotated = NativeVelaCore.identityRotateShareKey(sealKey(), handleId) ?: return null
         val (shareEk, sealed) = rotated
-        val signedAt = java.time.Instant.now().toString()
+        val signedAt = canonicalTimestamp()
         val signature = handleId.takeIf { shareEk.isNotBlank() }?.let {
             NativeVelaCore.identitySignShareEkBinding(
                 handle = it,
@@ -295,5 +295,15 @@ class ServerIdentityStore(context: Context) {
         private const val TAG = "ServerIdentityStore"
         private const val KEY_IDENTITY_JSON = "identity_json"
         private const val KEY_SEAL_KEY = "identity_seal_key"
+
+        /**
+         * Canonical M19 binding timestamp: second-precision UTC ("...:SSZ",
+         * exactly 20 chars). The server rejects anything else, so every client
+         * must mint timestamps through this helper — Instant.toString() alone
+         * emits fractional seconds whenever nanos are nonzero.
+         */
+        fun canonicalTimestamp(): String =
+            java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                .toString()
     }
 }

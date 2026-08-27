@@ -32,7 +32,8 @@ impl DesktopClient {
         let identity = crypto::generate_identity_keypair()?;
         let client = ApiClient::with_url(server_url.to_string());
         // One timestamp, signed exactly as transmitted.
-        let share_ek_signed_at = chrono::Utc::now().to_rfc3339();
+        let share_ek_signed_at =
+            vela_desktop_core::crypto::canonical_binding_timestamp();
         let resp = client
             .register_account(&RegisterRequest {
                 hybrid_ek: B64.encode(&identity.hybrid_ek),

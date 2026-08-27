@@ -104,7 +104,7 @@ async fn register_with_server(
     let identity = crypto::generate_identity_keypair()?;
 
     // M19: provision the share key only through a device-signed binding.
-    let signed_at = chrono::Utc::now().to_rfc3339();
+    let signed_at = crate::crypto::canonical_binding_timestamp();
     let share_ek_signature = crypto::sign_share_ek_binding(
         &identity.hybrid_sk,
         &identity.share_ek,

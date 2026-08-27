@@ -39,9 +39,10 @@ pub struct Config {
     /// Accept legacy v1 (32-byte keyed-hash) possession commitments during
     /// the hybrid redesign migration. A v1 commitment is itself the proof
     /// key, so while this is on, a database reader can forge proofs for any
-    /// account still holding a v1 row. Operators should flip it to `false`
-    /// (VELA_ALLOW_LEGACY_POSSESSION_V1=0) once all staged commitments are
-    /// known to be hybrid v2 — verification then fails closed for v1 rows.
+    /// account still holding a v1 row. Operators should flip it off (set
+    /// VELA_ALLOW_LEGACY_POSSESSION_V1_OFF=1) once all staged commitments
+    /// are known to be hybrid v2 — verification then fails closed for v1
+    /// rows. Default: on.
     pub allow_legacy_possession_v1: bool,
 }
 
