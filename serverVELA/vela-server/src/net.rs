@@ -142,6 +142,7 @@ mod tests {
             trust_proxy_headers,
             trusted_proxy_cidrs: trusted_proxy_cidrs.iter().map(|s| s.to_string()).collect(),
             production: true,
+            allow_legacy_possession_v1: true,
         }
     }
 

@@ -1,0 +1,25 @@
+# Repo-wide build configuration. Applies to every workspace under VELA/
+# (libVELA, serverVELA, desktopVELA, ...) because cargo config discovery
+# walks up to the nearest .cargo/config.toml.
+
+[build]
+# One shared target directory for all workspaces: dependency crates (tokio,
+# axum, reqwest, vela-crypto, ...) are compiled once instead of once per
+# workspace. Saves both duplicate compile time and roughly half the disk
+# that the per-workspace target/ dirs used to hold.
+target-dir = "target"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+# lld beats the default GNU ld by ~4x on incremental test-binary links
+# (measured 37.7s -> 9.3s on vela-server, see docs/BUILD_PERFORMANCE.md).
+# mold was measured slower here (11.8s) — its parallelism does not pay off
+# at 12 cores. Revisit if core counts change.
+#
+# --cfg reqwest_unstable: required by reqwest's unstable http3 feature,
+# enabled by the desktop apps via vela-desktop-core's `http3` feature.
+# desktopVELA/.cargo/config.toml used to supply this via build.rustflags,
+# but target-specific rustflags here take precedence over any build.rustflags,
+# so the cfg must live in this same list. It is inert for crates that never
+# reference the cfg (i.e. everything except reqwest).
+rustflags = ["-Clink-arg=-fuse-ld=lld", "--cfg", "reqwest_unstable"]
