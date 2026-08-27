@@ -39,7 +39,10 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: libVELA/vela-apple-bridge
+          workspaces: libVELA/vela-apple-bridge -> ../../target
+          # The repo-root .cargo/config.toml redirects the target dir to
+          # VELA/target, so point rust-cache at it (cache-dir is relative to
+          # the workspace dir).
 
       - name: Core tests (host)
         run: cargo test --release

@@ -76,8 +76,11 @@ jobs:
         with:
           # See the note in the macOS workflow: the workspace root is
           # desktopVELA, so src-tauri caches the wrong lockfile/target dir.
-          workspaces: desktopVELA
-          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
+          workspaces: desktopVELA -> ../target
+
+          # The repo-root .cargo/config.toml redirects the target dir to
+          # VELA/target, so point rust-cache at it (cache-dir is relative to
+          # the workspace dir).          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
           # crate *inside* the workspace dir as a "workspace crate" and skips
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,
           # so its whole debug + release output was rebuilt on every run.
@@ -138,7 +141,7 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA
+          workspaces: desktopVELA -> ../target
           # Cache the vendored gpui-ce artifacts too. rust-cache treats every
           # crate *inside* the workspace dir as a "workspace crate" and skips
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,
@@ -233,7 +236,7 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA
+          workspaces: desktopVELA -> ../target
           # Cache the vendored gpui-ce artifacts too. rust-cache treats every
           # crate *inside* the workspace dir as a "workspace crate" and skips
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,

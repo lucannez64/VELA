@@ -47,6 +47,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@nightly
 
+      # cargo-fuzz builds into fuzz/target (its own dir, unaffected by the
+      # repo-root target-dir config), so the default workspace mapping is
+      # correct. Nightly builds all 12 ASan targets; without this every run
+      # recompiles the whole graph.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: libVELA/vela-core/fuzz
+          cache-on-failure: true
+
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@v2
         with:

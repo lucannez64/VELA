@@ -45,7 +45,10 @@ jobs:
           # the lockfile and target dir it caches both live at the root. Pointed
           # at src-tauri it keys off an orphaned lockfile and caches an empty
           # target dir.
-          workspaces: desktopVELA
+          workspaces: desktopVELA -> ../target
+          # The repo-root .cargo/config.toml redirects the target dir to
+          # VELA/target, so point rust-cache at it (cache-dir is relative to
+          # the workspace dir).
           # Cache the vendored gpui-ce artifacts too. rust-cache treats every
           # crate *inside* the workspace dir as a "workspace crate" and skips
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,

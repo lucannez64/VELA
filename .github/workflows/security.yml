@@ -60,10 +60,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # All Rust compilation in this job (server model tests, crypto, bridges)
+      # shares the repo-root target dir, so one cache entry covers it. The
+      # same shared-key is used by the regression job below: whichever job
+      # finishes first saves, the other restores, and neither repeats the
+      # dependency compilation the next run.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            serverVELA -> target
+            libVELA/vela-crypto -> target
+            libVELA/vela-client-recovery-policy -> target
+            libVELA/vela-android-bridge -> target
+            libVELA/vela-apple-bridge -> target
+            libVELA/vela-wasm-bridge -> target
+          shared-key: security-rust
+          cache-on-failure: true
+
+      - name: Cache Tamarin 1.12.0 and Maude
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/tamarin-prover
+            /usr/local/bin/maude
+          key: tamarin-1.12.0-maude
+
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install Tamarin 1.12.0 and Maude
         run: |
+          if command -v tamarin-prover >/dev/null && command -v maude >/dev/null; then
+            echo "Tamarin and Maude restored from cache"
+            tamarin-prover --version
+            maude --version
+            exit 0
+          fi
           sudo apt-get update
           sudo apt-get install --yes maude ripgrep
           curl --fail --silent --show-error --location \
@@ -117,9 +148,17 @@ jobs:
       - name: Statistical stash-bounds verification over the real ORAM
         run: ./security/formal/run-oram-stash-bounds-tests.sh
 
+      # The opam switch with ProVerif is the slowest toolchain step (ocaml +
+      # proverif build ~5 min); the install below is already idempotent, so a
+      # cache hit just skips straight to the proof.
+      - name: Cache opam/ProVerif toolchain
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.opam
+          key: opam-proverif-ocaml5.1.1-v1
+
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
-        run: |
-          sudo apt-get update -qq
+        run: |          sudo apt-get update -qq
           sudo apt-get install -y -qq opam libgtk2.0-dev pkg-config
           opam init --auto-setup --bare -y
           if ! opam switch list | grep -q 'vela-proverif'; then
@@ -176,6 +215,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Same shared-key as formal-rekey above: the server dependencies that
+      # job compiled are reused here instead of a second full compile.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: serverVELA -> target
+          shared-key: security-rust
+          cache-on-failure: true
 
       - uses: dtolnay/rust-toolchain@stable
 
