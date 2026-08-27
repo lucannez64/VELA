@@ -164,17 +164,34 @@ class ServerIdentityStore(context: Context) {
         return opened.handle
     }
 
-    /** Generate a share keypair and remember that its public half still needs registration. */
+    /** Generate a share keypair and remember that its public half still needs registration.
+     *
+     * The binding metadata (signedAt + signature) is refreshed for the ROTATED
+     * key in the same persisted update: retaining the previous key's signature
+     * would bind the old `shareEkB64`, so a registration retry for the rotated
+     * key fails server verification and leaves the pending flag stuck. */
     fun rotateShareKey(): String? {
         val handleId = handle() ?: return null
         val rotated = NativeVelaCore.identityRotateShareKey(sealKey(), handleId) ?: return null
         val (shareEk, sealed) = rotated
+        val signedAt = java.time.Instant.now().toString()
+        val signature = handleId.takeIf { shareEk.isNotBlank() }?.let {
+            NativeVelaCore.identitySignShareEkBinding(
+                handle = it,
+                shareEkB64 = shareEk,
+                signedAt = signedAt,
+            )
+        }
         load()?.let {
             save(
                 it.copy(
                     shareEkB64 = shareEk,
                     sealedB64 = sealed,
-                    shareEkRegistrationPending = true
+                    shareEkRegistrationPending = true,
+                    // Fresh binding metadata for the NEW key — never carry the
+                    // old key's signature forward.
+                    shareEkSignedAt = signature?.let { _ -> signedAt },
+                    shareEkSignature = signature,
                 )
             )
         }

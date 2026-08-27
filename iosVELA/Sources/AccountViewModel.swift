@@ -383,6 +383,9 @@ final class AccountViewModel: ObservableObject {
             }
             let initialEpoch = try await client.vaultEpoch()
             await persistRenewedToken(from: client)
+            // The awaits above can straddle a sign-out: never touch the
+            // journal or the recovery API on a dead session.
+            try ensureActiveSession(session)
             guard initialEpoch.state == "active", initialEpoch.epoch == localEpoch else {
                 throw Failure(
                     "This device has vault epoch \(localEpoch), but the server is "

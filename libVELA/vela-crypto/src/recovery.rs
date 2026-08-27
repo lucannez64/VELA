@@ -463,6 +463,11 @@ pub fn rms_possession_sign(
 ///   commitment is itself the proof key and therefore offers no protection
 ///   against a database reader. v1 remains forgeable-by-design until the
 ///   account re-stages recovery; it must never be *produced* again.
+///
+///   Gated by `allow_legacy_v1`: while migration is in progress callers pass
+///   `true` (the historical default). Once operators judge migration complete,
+///   flip it to `false` — every v1 commitment then fails closed regardless of
+///   proof contents, closing the DB-read exposure outright.
 /// - **v2 (current, 2624 bytes)** — hybrid ML-DSA-87 ‖ Ed25519 verifying key.
 pub fn rms_possession_verify(
     commitment: &[u8],
@@ -472,7 +477,24 @@ pub fn rms_possession_verify(
     key_epoch: i64,
     presented: &[u8],
 ) -> bool {
+    rms_possession_verify_ex(commitment, user_id, recovery_id, challenge, key_epoch, presented, true)
+}
+
+/// [`rms_possession_verify`] with an explicit legacy gate. `allow_legacy_v1`
+/// MUST be `false` once all staged commitments are known to be v2.
+pub fn rms_possession_verify_ex(
+    commitment: &[u8],
+    user_id: &str,
+    recovery_id: &str,
+    challenge: &[u8],
+    key_epoch: i64,
+    presented: &[u8],
+    allow_legacy_v1: bool,
+) -> bool {
     if commitment.len() == 32 {
+        if !allow_legacy_v1 {
+            return false;
+        }
         // Legacy v1: keyed-hash proof over the same attempt bindings.
         let mut expected = blake3::Hasher::new_keyed(&{
             let mut k = [0u8; 32];

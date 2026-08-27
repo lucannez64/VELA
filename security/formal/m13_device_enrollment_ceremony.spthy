@@ -9,7 +9,16 @@ theory M13_DeviceEnrollmentCeremony
   collection requires the joining key. Revocation, expiry, and epoch commit
   consume an authority needed by completion.
 
-  Expected verdict: all lemmas VERIFIED.
+  Scope boundary: this theory has NO In/Out adversary interaction — it is a
+  closed ceremony-ordering model over honest state transitions. It proves
+  ceremony ORDERING properties (inspection before confirmation, single claim,
+  completion provenance, reachability), NOT network-level secrecy or
+  man-in-the-middle resistance; `primary_sig` exists only as an internal
+  binding token, never as a verifiable signature exposed to a Dolev-Yao
+  attacker. Network adversary coverage for the enrollment endpoint lives in
+  the session/HTTP policy theories.
+
+  Expected verdict: all lemmas VERIFIED within that ordering-only scope.
 */
 begin
 

@@ -31,18 +31,20 @@ matching the relay's view.
 - `only_sender_can_revoke_link` — provenance: every revocation traces back to
   the original sender's link creation event, enforced by the device identity
   premise (`!DevKey(S, X)`).
-- `revocation_is_reachable` — honest path exists: the sender device is
-  enrolled → link created under that device → revoked. Post-review revision:
-  `LinkCreated` now requires `!DevKey(S, X)` so the creating sender and the
-  revoking device are the same identity (previously both minted independent
-  fresh identities, making the lemma vacuous/unreachable).
+- `revocation_is_reachable` — full ordered witness (post-review revision):
+  link created by an enrolled device → capsule delivered → READ → then
+  revoked. The model now keeps the link revocable AFTER a read: ReadLink
+  burns a one-shot `ReadAllowance` but leaves `LinkLive` in place, so
+  `RevokeLink` can fire post-read and the finality lemma is genuine
+  temporal ordering ("no read strictly after revocation"), not mere mutual
+  exclusion. Single-read-per-link is enforced by the consumed allowance.
 
 ## Verification output
 
 ```text
-revoked_links_can_never_be_read_again (all-traces): verified (4 steps)
-only_sender_can_revoke_link (all-traces): verified (3 steps)
-revocation_is_reachable (exists-trace): verified (4 steps)
+revoked_links_can_never_be_read_again (all-traces): verified (9 steps)
+only_sender_can_revoke_link (all-traces): verified (4 steps)
+revocation_is_reachable (exists-trace): verified (8 steps)
 ```
 
 Toolchain: tamarin-prover 1.12.0, Maude 3.5.1, UTF-8 locale.

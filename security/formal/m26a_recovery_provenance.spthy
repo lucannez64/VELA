@@ -24,7 +24,7 @@ rule SetupAccount:
 rule MintRecoveryDeviceFuel:
     [ StagingFuel(U) ]
   --[]->
-    [ RecoveryDeviceFuel(U), StagingFuel(U) ]
+    [ RecoveryDeviceFuel(U) ]
 
 rule StageCommitment:
     [ StagingFuel(U),

@@ -1185,7 +1185,7 @@ fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecov
             .requested_user_id
             .as_deref()
             .ok_or("requested_user_id is required for bound account recovery")?;
-        if request.bound_shares.len() != 2 || shares.len() != 2 {
+        if request.bound_shares.len() != 2 {
             return Err("bound account recovery requires exactly two shares".into());
         }
         let channel = |name: &str| match name {
@@ -1194,8 +1194,22 @@ fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecov
             "trusted_contact" => Ok(vela_crypto::recovery::RecoveryShareChannel::TrustedContact),
             other => Err(format!("unknown recovery share channel {other:?}")),
         };
+        // Decode each bound share from its own metadata entry — pairing
+        // `bound_shares[i]` metadata with a positionally-coupled element of
+        // the separate `shares` array let metadata and key material go out
+        // of sync (same fix as the Apple bridge).
+        let decode_bound =
+            |entry: &CombineShareInput| -> Result<shamir::Share, String> {
+                let bytes = B64
+                    .decode(entry.share_b64.as_bytes())
+                    .map_err(|e| format!("bound share is not valid base64: {e}"))?;
+                shamir::Share::from_bytes(&bytes)
+                    .map_err(|e| format!("bound share is not a valid Shamir blob: {e}"))
+            };
         let first = &request.bound_shares[0];
         let second = &request.bound_shares[1];
+        let first_share = decode_bound(first)?;
+        let second_share = decode_bound(second)?;
         let recovered = vela_crypto::recovery::reconstruct_account_recovery(
             requested,
             vela_crypto::recovery::BoundRecoveryShare {
@@ -1204,7 +1218,7 @@ fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecov
                 split_id: first.split_id.as_deref(),
                 channel: channel(&first.channel)?,
                 recipient_bound: first.recipient_bound,
-                share: &shares[0],
+                share: &first_share,
             },
             vela_crypto::recovery::BoundRecoveryShare {
                 account_id: second.account_id.as_str(),
@@ -1212,7 +1226,7 @@ fn combine_recovery_json(request_json: &str) -> anyhow_like::Result<CombineRecov
                 split_id: second.split_id.as_deref(),
                 channel: channel(&second.channel)?,
                 recipient_bound: second.recipient_bound,
-                share: &shares[1],
+                share: &second_share,
             },
         )?;
         return Ok(CombineRecoveryResponse {

@@ -2043,16 +2043,9 @@ async fn possession_proof_recovery_grants_enrollment_without_webauthn() {
         "the possession path must never release the server share"
     );
 
-    // The challenge is single-use: a replayed or forged proof fails closed.
-    // A proof under a different RMS does not verify against the staged
-    // commitment, and a proof for a different attempt id fails the binding.
-    let wrong_proof =
-        possession_proof_client_side(&[43u8; 32], &user_id, &recovery_id, &challenge, 4);
-    assert_ne!(
-        B64.encode(wrong_proof),
-        B64.encode(proof),
-        "different RMS values must produce different proofs"
-    );
+    // The challenge is single-use: replaying the SAME attempt must fail at
+    // the state lookup ("challenge expired or already used"), not at proof
+    // verification.
     let resp = app
         .clone()
         .oneshot(
@@ -2065,7 +2058,7 @@ async fn possession_proof_recovery_grants_enrollment_without_webauthn() {
                     json!({
                         "user_id": user_id,
                         "recovery_id": recovery_id,
-                        "proof_b64": B64.encode(wrong_proof),
+                        "proof_b64": B64.encode(proof),
                     })
                     .to_string(),
                 ))
@@ -2074,6 +2067,143 @@ async fn possession_proof_recovery_grants_enrollment_without_webauthn() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A FORGED proof under a different RMS must fail the verified policy on
+    // a FRESH single-use challenge — exercising verify_possession_proof
+    // itself, not just the challenge-consumption guard.
+    let init_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/initiate-proof")
+                .extension(ConnectInfo(SocketAddr::from(([10, 0, 0, 11], 44445))))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "user_id": user_id }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(init_resp.status(), StatusCode::OK);
+    let body2: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(init_resp.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    // Each initiation mints a fresh single-use challenge AND a fresh attempt
+    // id (the server models every re-attempt as a new recovery ceremony).
+    let recovery_id2 = Uuid::parse_str(body2["recovery_id"].as_str().unwrap()).unwrap();
+    assert_ne!(recovery_id, recovery_id2);
+    let challenge2 = B64.decode(body2["challenge_b64"].as_str().unwrap()).unwrap();
+
+    // A proof signed by a different RMS does not verify against the staged
+    // public commitment.
+    let wrong_rms_proof =
+        possession_proof_client_side(&[43u8; 32], &user_id, &recovery_id2, &challenge2, 4);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/recover/proof")
+                .extension(ConnectInfo(SocketAddr::from(([10, 0, 0, 12], 44446))))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": user_id,
+                        "recovery_id": recovery_id2,
+                        "proof_b64": B64.encode(wrong_rms_proof),
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "a forged proof must fail verification on a fresh challenge"
+    );
+
+    // …and the honest RMS still verifies against that same fresh challenge.
+    let good_proof = possession_proof_client_side(&rms, &user_id, &recovery_id2, &challenge2, 4);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/recover/proof")
+                .extension(ConnectInfo(SocketAddr::from(([10, 0, 0, 13], 44447))))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": user_id,
+                        "recovery_id": recovery_id2,
+                        "proof_b64": B64.encode(good_proof),
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "the failed attempt consumed its single-use challenge: an honest retry \
+         needs yet another fresh initiation"
+    );
+
+    // Third ceremony: the HONEST RMS verifies against a fresh challenge.
+    let init_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/initiate-proof")
+                .extension(ConnectInfo(SocketAddr::from(([10, 0, 0, 14], 44448))))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "user_id": user_id }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(init_resp.status(), StatusCode::OK);
+    let body3: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(init_resp.into_body(), 1024).await.unwrap(),
+    )
+    .unwrap();
+    let recovery_id3 = Uuid::parse_str(body3["recovery_id"].as_str().unwrap()).unwrap();
+    let challenge3 = B64.decode(body3["challenge_b64"].as_str().unwrap()).unwrap();
+    let good_proof =
+        possession_proof_client_side(&rms, &user_id, &recovery_id3, &challenge3, 4);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/recover/proof")
+                .extension(ConnectInfo(SocketAddr::from(([10, 0, 0, 15], 44449))))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": user_id,
+                        "recovery_id": recovery_id3,
+                        "proof_b64": B64.encode(good_proof),
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "the honest RMS must verify on a fresh challenge"
+    );
 }
 
 /// Client-side proof generation for test clients, delegating to the same

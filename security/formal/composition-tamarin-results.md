@@ -76,3 +76,10 @@ Also revised: `m26a_recovery_provenance.spthy` — `EnrollRecoveredDevice` now
 preserves `~device` in `!EnrolledDevice` and emits it in
 `DeviceEnrolledViaRecovery`; recovery enrollment requires a preceding matching
 `DeviceOnboarded` event. Verification re-run delegated to CI.
+
+Follow-up post-review fixes (2026-08-27), both re-verified locally:
+- m26a: `MintRecoveryDeviceFuel` consumed its `StagingFuel` instead of
+  re-emitting it — the re-emission made the fuel infinite and the bound void.
+  All 6 lemmas verified, search terminates in <1 s.
+- m23: `AdmitKnownChunk` no longer re-emits `RecordedClock`, and adoption is
+  bounded by `AdoptionFuel`. All 11 lemmas verified.

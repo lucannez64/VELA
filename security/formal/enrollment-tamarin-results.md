@@ -25,10 +25,13 @@ Tamarin establishes the symbolic protocol properties. The production
 refinement is checked by hax/F* in `serverVELA/vela-enrollment-policy`; sled
 unit tests exercise first-claim-wins and atomic pair consumption under races.
 
-## Post-review revision (2026-08-26)
+## Post-review revision (2026-08-26/27)
 
 `ConfirmClaim` no longer converts `Claimed` directly to `Confirmed`; the bypassing
 rule was removed so confirmation requires inspection (`ConfirmInspectedClaim`).
 A new lemma `completion_requires_inspection` proves every `EnrollmentCompleted`
-event is preceded by a `ClaimInspected` event. Re-verified locally: all 16 lemmas
-verified (tamarin-prover 1.12.0).
+event is preceded by a `ClaimInspected` event. Re-verified for this exact
+revision: all 16 lemmas verified locally and in CI (tamarin-prover 1.12.0).
+
+Scope note aligned with the theory header: ordering-only model, no In/Out
+adversary interaction; secrecy/MITM claims are out of scope here.

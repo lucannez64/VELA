@@ -83,20 +83,22 @@ fn take_proof_state(state: &AppState, user_id: &Uuid, recovery_id: &Uuid) -> Res
 /// (the same construction used by every client), so sign and verify can never
 /// drift.
 pub(crate) fn verify_possession_proof(
+    state: &AppState,
     commitment: &[u8],
     attempt: &PossessionProofState,
     presented: &[u8],
 ) -> bool {
     // The commitment length selects the scheme version (32-byte legacy v1
-    // keyed-hash, or the 2624-byte hybrid v2 verifying key); see
-    // `rms_possession_verify`.
-    vela_crypto::recovery::rms_possession_verify(
+    // keyed-hash, or the 2624-byte hybrid v2 verifying key). The legacy gate
+    // is operator-controlled and fails closed once migration completes.
+    vela_crypto::recovery::rms_possession_verify_ex(
         commitment,
         &attempt.user_id.to_string(),
         &attempt.recovery_id.to_string(),
         &attempt.challenge,
         attempt.key_epoch,
         presented,
+        state.config.allow_legacy_possession_v1,
     )
 }
 
@@ -254,7 +256,7 @@ pub async fn post_recover_proof(
         }
     };
 
-    let proof_verified = verify_possession_proof(&commitment, &attempt, &presented);
+    let proof_verified = verify_possession_proof(&state, &commitment, &attempt, &presented);
 
     let permit = match vela_recovery_policy::plan_possession_recovery(
         vela_recovery_policy::PossessionRecoverFacts {

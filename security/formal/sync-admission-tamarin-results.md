@@ -57,10 +57,23 @@ local + 1" is structural pattern-matching: rollback (predecessor), skips
 
 ## Verification output
 
+Historic pre-revision run (8 lemmas) is superseded. Captured output for the
+current fuel-bounded revision:
+
 ```text
-m23_sync_admission: 8 verified
-m23 sync-admission formal proof gate: 8 verified, 0 falsified, 0 warnings
+m23_sync_admission: 11 verified
+every_admitted_chunk_was_served / recorded_clock_fact_comes_from_admission /
+clock_recorded_event_comes_from_admission /
+recorded_clocks_are_trusted_bootstrap_values /
+admitted_clocks_are_validated_against_the_trusted_record /
+adoption_requires_successor_of_local / adopted_epoch_differs_from_retired /
+every_adoption_has_an_advertised_epoch /
+adopted_epoch_was_never_retired_before /
+trusted_first_sync_is_reachable / adoption_is_reachable
+— all 11 verified, 0 falsified, 0 warnings (0.3 s)
 ```
+
+The gate derives the expected count from the theory itself.
 
 Toolchain: tamarin-prover 1.12.0, Maude 3.5.1, UTF-8 locale.
 
@@ -71,8 +84,18 @@ Reproduce with:
 cd libVELA/vela-sync-policy && ./verify-fstar.sh
 ```
 
-## Post-review revision (2026-08-26)
+## Post-review revision (2026-08-26/27)
 
 `RecordOnFirstSync` no longer admits an unrecorded clock: first-sync admission
-now requires trusted bootstrap/revision evidence. Model revised post-review;
-verification re-run delegated to CI (local run skipped to bound memory use).
+requires the device's trusted bootstrap clock. Re-verified for THIS exact
+revision (fuel-bounded model, see header): **all 11 lemmas verified** locally
+under a hard memory cap and in CI (tamarin-prover 1.12.0).
+
+Scope restrictions — do not over-claim:
+- The clock surface admits only the BOOTSTRAP clock value, recorded once.
+  Later clocks ADVANCING from admitted server-supplied revisions (the real
+  client's monotonic succ-based admission) are NOT modeled; the two
+  "trusted bootstrap value" lemmas hold only for this bootstrap-only
+  surface. Advancing-revision admission is future work.
+- The epoch ladder is bounded to TWO adoptions per device via AdoptionFuel;
+  "never retired before"-style lemmas hold within that bound.

@@ -6,7 +6,8 @@ proof_tmp="$(mktemp -d)"
 trap 'rm -rf -- "$proof_tmp"' EXIT
 
 model=m13_device_enrollment_ceremony
-expected=16
+# Derived from the theory so the expectation can never drift from its lemmas.
+expected="$(grep -cE '^(lemma|exists-trace)' "$proof_root/$model.spthy")"
 output="$proof_tmp/$model.out"
 tamarin-prover --prove "$proof_root/$model.spthy" >"$output"
 
@@ -23,5 +24,5 @@ if [[ "$verified" -ne "$expected" ]]; then
   exit 1
 fi
 
-echo "m13_device_enrollment_ceremony: 15 verified"
-echo "enrollment formal proof gate: 15 verified, 0 falsified, 0 warnings"
+echo "m13_device_enrollment_ceremony: $expected verified"
+echo "enrollment formal proof gate: $expected verified, 0 falsified, 0 warnings"

@@ -45,8 +45,9 @@ never leaves its device outside the explicit `LeakShareDk` compromise event.
 
 ```text
 m19a_ek_registry_baseline: 2 verified
-m19b_share_channel: 5 verified
-m19 share-channel formal proof gate: 7 verified, 0 falsified, 0 warnings
+m19b_share_channel: 6 verified (post-revision; see below)
+m19 share-channel formal proof gate: lemma counts derived from the theories,
+0 falsified, 0 warnings
 ```
 
 Toolchain: tamarin-prover 1.12.0, Maude 3.5.1, UTF-8 locale.
@@ -61,9 +62,15 @@ The Rust counterpart is the hax-extracted `vela-share-policy`
 (`plan_ek_registration`, `plan_send`, `plan_link_mutation`), enforced by
 `serverVELA/vela-server/src/share/mod.rs` and `src/account/mod.rs`.
 
-## Post-review revision (2026-08-26)
+## Post-review revision (2026-08-26/27)
 
 `OpenItem` now requires a distinct `DeliveredCapsule` fact produced by
-`DeliverCapsule`, so opening can only occur after delivery. Re-verified locally:
-all 6 lemmas verified, including `opened_items_were_delivered` and
-`legitimate_share_exchange_is_reachable` (tamarin-prover 1.12.0).
+`DeliverCapsule`, so opening can only occur after delivery. Re-verified for
+this exact revision: all 6 m19b lemmas verified (tamarin-prover 1.12.0),
+including `opened_items_were_delivered` and
+`legitimate_share_exchange_is_reachable`.
+
+Scope note aligned with the theory header: device-key theft is NOT modeled
+(no leak rules); RegisterShareKey enforces possession of !DevKey as its
+binding premise, and `signing`/`cap` builtins are unused compatibility
+declarations. Adversarial capsule exposure is not modeled.

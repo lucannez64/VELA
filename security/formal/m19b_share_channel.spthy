@@ -3,18 +3,23 @@ theory M19_ShareChannel
   The M19 cross-user item-sharing channel with device-signed key bindings.
 
   Fixes the baseline impossibility (m19a_ek_registry_baseline.spthy):
-  registering a share encapsulation key now REQUIRES a signature made by an
-  enrolled device identity key over the binding `b(share_ek, timestamp)`.
-  Signature unforgeability means neither database writes nor stolen session
-  tokens can substitute a victim's sharing key — the attacker needs the
-  private half of an enrolled device key (modeled by explicit leak rules).
+  registering a share encapsulation key now REQUIRES holding an enrolled
+  device identity key — RegisterShareKey consumes !DevKey as a linear-ish
+  persistent possession premise rather than verifying a signature term.
 
-  The relay (server) is fully adversarial: it sees every capsule and every
-  registered key, can replay signatures, and delivers capsules arbitrarily
-  late. Capsules are opaque: only the holder of the matching share decryption
-  key can learn an item.
+  Scope boundary (be careful not to over-claim): device private keys are
+  never leaked to the adversary in this theory; key theft is the enrollment-
+  compromise class covered by M13/M14. There is also NO In/Out interaction
+  with capsule contents here — capsules are opaque to everyone including
+  the adversary, and the builtins signing/cap declarations are retained for
+  cross-theory wire compatibility with M21/M22 but are not exercised by
+  any rule. Adversarial capsule exposure is NOT modeled; content secrecy
+  claims rest on that assumption plus the AEAD, not on this file alone.
 
-  Expected verdict: all lemmas VERIFIED.
+  The relay (server) is structurally honest-but-curious inside the theory:
+  delivery order is modeled, relay compromise is not.
+
+  Expected verdict: all lemmas VERIFIED (within the scope above).
 */
 begin
 

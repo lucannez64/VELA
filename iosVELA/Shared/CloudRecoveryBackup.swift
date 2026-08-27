@@ -91,12 +91,25 @@ enum CloudRecoveryBackup {
 
     /// Best-effort removal of envelopes the new active supersedes. Failure is
     /// harmless: stale keys are simply ignored by the newest-epoch reader.
+    /// The legacy (un-scoped) key may belong to ANY account — it is removed
+    /// only after decoding its envelope and confirming the userID matches;
+    /// another account's legacy backup is left untouched.
     private static func cleanupSupersededActive(userID: String, keyEpoch: Int) {
         let store = NSUbiquitousKeyValueStore.default
         for (key, _) in store.dictionaryRepresentation {
-            if key == legacyStorageKey
-                || key == "\(activeKeyPrefix)\(userID)" {   // pre-epoch-scoped v3 key
+            if key == "\(activeKeyPrefix)\(userID)" {   // pre-epoch-scoped v3 key
                 store.removeObject(forKey: key)
+                continue
+            }
+            if key == legacyStorageKey {
+                // The legacy key is un-scoped: it may belong to any account.
+                // Decode it and remove only if this promotion's userID owns
+                // it — otherwise leave another account's backup alone.
+                if let data = store.data(forKey: key),
+                   let envelope = try? JSONDecoder().decode(Envelope.self, from: data),
+                   envelope.userID == userID {
+                    store.removeObject(forKey: key)
+                }
                 continue
             }
             let scopedPrefix = "\(activeKeyPrefix)\(userID)."

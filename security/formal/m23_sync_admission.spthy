@@ -12,7 +12,16 @@ theory M23_SyncAdmission
   Successor encoding: epochs are terms over the public `succ` constructor,
   so "exactly local + 1" is structural pattern-matching — no arithmetic.
 
-  Expected verdict: all lemmas VERIFIED.
+  Scope restriction (post-review): the clock model admits only the BOOTSTRAP
+  clock value, recorded once. It does not model later clocks ADVANCING from
+  admitted server-supplied revisions (the real client's monotonic succ-based
+  admission). Consequently `recorded_clocks_are_trusted_bootstrap_values`
+  and `admitted_clocks_are_validated_against_the_trusted_record` are proven
+  for this bootstrap-only surface; advancing-revision admission remains
+  future work. Termination bounds: at most TWO adoptions per device
+  (AdoptionFuel) and one first-sync recording (linear TrustedClock).
+
+  Expected verdict: all lemmas VERIFIED within that bounded scope.
 */
 begin
 

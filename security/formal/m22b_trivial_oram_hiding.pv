@@ -4,11 +4,17 @@
    At or below TRIVIAL_ORAM_THRESHOLD (4) chunks, every sync downloads and
    re-uploads the entire tree regardless of which chunk the user touched
    (`vela_crypto::oram::use_trivial_oram_with_threshold`, extracted by hax
-   into lib.pvl). The server's transcript is therefore *literally
-   identical* in both worlds — the strongest form of pattern hiding: not
-   merely equivalent, but the same terms in the same order.
+   into lib.pvl).
 
-   Expected verdict: equivalence is TRUE.
+   What is proven: the two worlds are observationally INDISTINGUISHABLE,
+   not transcript-identical. Both worlds issue the same whole-tree
+   get_tree request and the same put_tree write shape; the only difference
+   is which chunk's payload (chunkA vs chunkB) is folded into the AEAD
+   stash blob, sealed under a fresh key k. aead_stash output length varies
+   with input length in reality and is abstracted here.
+
+   Expected verdict: equivalence TRUE (indistinguishability under the
+   fresh sealing key k), NOT literal transcript equality.
 
    Concatenated at runner level after:
      security/formal/hax_pv_prelude.pvl
