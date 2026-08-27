@@ -22,6 +22,8 @@ find_host_binary() {
 		"/usr/bin/vela-native-messaging-host" \
 		"/usr/local/bin/vela-native-messaging-host" \
 		"$HOME/.local/bin/vela-native-messaging-host" \
+		"$SCRIPT_DIR/../../target/release/vela-native-messaging-host" \
+		"$SCRIPT_DIR/../../target/debug/vela-native-messaging-host" \
 		"$SCRIPT_DIR/../../desktopVELA/target/release/vela-native-messaging-host" \
 		"$SCRIPT_DIR/../../desktopVELA/target/debug/vela-native-messaging-host"; do
 		if [ -x "$candidate" ]; then

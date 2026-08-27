@@ -67,3 +67,7 @@ extension/native-messaging/vela-native-messaging-host
 extension/fuzz/node_modules/
 extension/fuzz/crash-*
 extension/fuzz/slow-unit-*
+
+# libFuzzer corpora are generated at run time, not source
+libVELA/vela-core/fuzz/corpus/
+extension/fuzz/corpus/

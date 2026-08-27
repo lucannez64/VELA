@@ -80,14 +80,14 @@ jobs:
 
       # Launch the built app on the runner, screenshot it, and confirm it didn't
       # crash on startup. The screenshot is uploaded so the UI can be eyeballed.
-      # Bundles land in desktopVELA/target, not src-tauri/target: src-tauri is a
+      # Bundles land in the shared repo-root target (see .cargo/config.toml), not src-tauri/target: src-tauri is a
       # member of the desktopVELA workspace, so the target dir is the workspace
       # root's.
       - name: Smoke test (launch, screenshot, extension IPC bridge)
         run: |
           set -x
-          APP=$(find desktopVELA/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
-          if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R desktopVELA/target/release/bundle || true; exit 1; fi
+          APP=$(find target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then echo "no .app bundle found"; ls -R target/release/bundle || true; exit 1; fi
 
           # The IPC connection gate reads VELA_NM_BROWSER_NAMES from the
           # *desktop's* environment (it runs in the server process), so the
@@ -118,7 +118,7 @@ jobs:
           echo "desktop socket: $ENDPOINT"
           # The workspace manifest lives in desktopVELA/, not the repo root.
           (cd desktopVELA && cargo build --release -p vela-nm-host)
-          python3 .github/scripts/ipc_ping.py desktopVELA/target/release/vela-native-messaging-host
+          python3 .github/scripts/ipc_ping.py target/release/vela-native-messaging-host
 
           osascript -e 'quit app "VELA"' 2>/dev/null || pkill -f 'VELA.app' || true
 
@@ -128,7 +128,7 @@ jobs:
         with:
           name: vela-macos-arm64
           path: |
-            desktopVELA/target/release/bundle/dmg/*.dmg
-            desktopVELA/target/release/bundle/macos/*.app
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app
             smoke.png
           if-no-files-found: warn

@@ -168,8 +168,8 @@ jobs:
         with:
           name: vela-windows-installers
           path: |
-            desktopVELA/target/release/bundle/msi/*.msi
-            desktopVELA/target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
   # Linux ships the native gpui-ce build, not the Tauri/WebKit one: it is the

@@ -133,7 +133,7 @@ At runtime Nixpacks starts (production-hardened defaults baked in; the
 Dockerfile image sets the same via `ENV`):
 
 ```text
-VELA_PRODUCTION=true TRUST_PROXY_HEADERS=true TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fd00::/8 LISTEN_ADDR=0.0.0.0:${PORT:-8443} serverVELA/target/release/vela-server serve
+VELA_PRODUCTION=true TRUST_PROXY_HEADERS=true TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fd00::/8 LISTEN_ADDR=0.0.0.0:${PORT:-8443} target/release/vela-server serve
 ```
 
 Set these Coolify environment variables (domain-specific ones are required;

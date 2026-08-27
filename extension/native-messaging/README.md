@@ -26,7 +26,7 @@ hyphens before it even reads the registered manifest.
 
 ```bash
 cd desktopVELA && cargo build --release -p vela-nm-host
-# -> desktopVELA/target/release/vela-native-messaging-host
+# -> target/release/vela-native-messaging-host
 ```
 
 The registration scripts look for it in the usual install locations
@@ -112,7 +112,7 @@ python3 - <<'PY'
 import json, subprocess, sys
 m = json.dumps({"action":"ping"}).encode()
 p = subprocess.run(
-    ["../desktopVELA/target/release/vela-native-messaging-host"],
+    ["../target/release/vela-native-messaging-host"],
     input=len(m).to_bytes(4,"little")+m, capture_output=True)
 out = p.stdout
 print("response:", out[4:].decode() if len(out) > 4 else f"(none; stderr: {p.stderr.decode().strip()})")

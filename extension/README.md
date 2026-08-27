@@ -168,7 +168,7 @@ This registers for: Firefox, Zen Browser, Waterfox, Floorp, LibreWolf.
 ```bash
 cd ../desktopVELA && cargo build --release -p vela-nm-host && cd ../extension
 echo '{"action":"ping"}' | \
-  ../desktopVELA/target/release/vela-native-messaging-host
+  ../target/release/vela-native-messaging-host
 # (framed on stdin; with the desktop app running this answers {"success":true,...})
 ```
 

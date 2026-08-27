@@ -51,7 +51,7 @@ jobs:
         run: |
           cargo build --release
           swiftc smoke/smoke.swift \
-            -I include -L target/release -lvela_apple_bridge \
+            -I include -L ../../target/release -lvela_apple_bridge \
             -framework Security -framework CoreFoundation \
             -o smoke_bin
           ./smoke_bin
