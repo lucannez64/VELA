@@ -1,0 +1,76 @@
+# Nightly continuous fuzzing for the Rust core (see libVELA/vela-core/fuzz).
+#
+# Each target gets a short budget every night; the goal is regression detection
+# on the parsers and protocol decoders (vault JSON, crypto containers, IPC and
+# native-messaging framing, ORAM state, enrollment codes), not exhaustive
+# exploration. A crash or OOM fails the run and uploads the reproducing corpus.
+#
+# Not a PR gate: scheduled runs and workflow_dispatch only.
+
+name: fuzz
+
+on:
+  schedule:
+    # 03:17 UTC daily — off the hour so it does not collide with other jobs.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds_per_target:
+        description: "Fuzzing budget per target, in seconds"
+        required: false
+        default: "120"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - vault_json
+          - url_domain_match
+          - shamir_shares
+          - crypto_parsers
+          - password_options
+          - totp_otpauth
+          - ipc_message
+          - pwkdf_blob
+          - oram_state
+          - enrollment_codes
+          - credential_key_verify
+          - nm_host_protocol
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz ${{ matrix.target }}
+        id: fuzz
+        working-directory: libVELA/vela-core/fuzz
+        run: |
+          cargo fuzz run \
+            ${{ matrix.target }} \
+            -- \
+            -max_total_time=${{ inputs.seconds_per_target || '120' }} \
+            -rss_limit_mb=4096 \
+            -print_final_stats=1
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: |
+            libVELA/vela-core/fuzz/crash-*
+            libVELA/vela-core/fuzz/leak-*
+            libVELA/vela-core/fuzz/oom-*
+            libVELA/vela-core/fuzz/timeout-*
+          if-no-files-found: ignore
