@@ -61,11 +61,10 @@ assets = [
 name = "VELA"
 summary = "Passwordless, zero-knowledge password vault."
 assets = [
-    # `../target`, unlike the cargo-deb block above: cargo-deb rewrites a
-    # leading `target/release/` to the real (workspace) target dir, but
-    # cargo-generate-rpm resolves sources relative to the invocation cwd —
-    # which is this crate dir, one level below the workspace target.
-    { source = "../target/release/vela-desktop", dest = "/usr/bin/vela-desktop", mode = "755" },
+    # `../../target`: the repo-root .cargo/config.toml redirects the target
+    # dir to the repository root, and cargo-generate-rpm resolves sources
+    # relative to the invocation cwd — this crate dir, two levels below it.
+    { source = "../../target/release/vela-desktop", dest = "/usr/bin/vela-desktop", mode = "755" },
     { source = "../src-tauri/assets/com.vela.vault.desktop", dest = "/usr/share/applications/com.vela.vault.desktop", mode = "644" },
     { source = "../src-tauri/icons/icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/vela-desktop.png", mode = "644" },
 ]
