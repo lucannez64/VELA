@@ -27,6 +27,24 @@ test suites in parallel; `cargo nextest run` per workspace.
 
 ("after" = cranelift + lld; lld alone already gives the 9.3 s row below.)
 
+## Debuginfo tuning (biggest disk win)
+
+Dev profiles now use `debug = "line-tables-only"` for local crates and
+`debug = false, opt-level = 1` for dependencies (serverVELA previously used
+cargo defaults = full `debuginfo=2` everywhere; desktopVELA already tuned
+its deps). Backtraces keep file names and line numbers; variable and type
+information is dropped — use a debug build with `debug = true` if you need
+to inspect variables in a debugger.
+
+Measured with the shared target dir: `vela-server` with all test binaries
+plus a `vela-desktop-core` check **shrank from ~7.4 GB to 2.3 GB (−69 %)**.
+The one-time cost is a slower cold build (~2x for the server), because
+dependencies now compile at opt-level 1; incremental rebuilds are unchanged.
+
+Housekeeping: invalidated artifacts are not garbage-collected by cargo, so
+after profile changes run `rm -rf target` once, and periodically after big
+dependency upgrades.
+
 Breakdown by technique:
 
 | Technique                                   | incremental tests | clean  | disk |

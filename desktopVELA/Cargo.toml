@@ -16,7 +16,9 @@ edition = "2021"
 [profile.dev]
 incremental = true
 opt-level = 0
-debug = true
+# File+line backtraces without full variable/type debuginfo — full
+# debuginfo=2 on the gpui tree alone is gigabytes (see docs/BUILD_PERFORMANCE.md).
+debug = "line-tables-only"
 
 # Dependencies at opt-level 1: the gpui tree is unusably slow when built fully
 # unoptimized, and we don't step through it anyway.

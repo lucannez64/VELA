@@ -7,3 +7,17 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Dev builds: keep file+line backtraces for the local crates but drop full
+# variable/type debuginfo (debuginfo=2 is the single largest contributor to
+# target/ size — the vela-server artifacts alone were ~2.5 GB). Dependencies
+# get no debuginfo at all and a little optimization so tokio/axum paths are
+# not unusably slow at runtime; nobody steps through them anyway. Same
+# tuning desktopVELA already uses. See docs/BUILD_PERFORMANCE.md.
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = false
