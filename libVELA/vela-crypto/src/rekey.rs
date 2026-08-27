@@ -242,7 +242,6 @@ pub fn rekeyed_len(input_len: usize) -> usize {
 
 const REKEY_CAPSULE_V1_MAGIC: &[u8] = b"vela rekey capsule v1\0";
 const REKEY_CAPSULE_BINDING_CONTEXT: &str = "vela rekey capsule binding v1";
-
 /// Seal a rekey capsule: the new RMS, authenticated by an AEAD keyed from
 /// the previous RMS, then KEM-sealed to the target device's public key.
 pub fn seal_rekey_capsule(
@@ -269,7 +268,7 @@ pub fn seal_rekey_capsule(
     payload.extend_from_slice(&(rotation_id.len() as u16).to_be_bytes());
     payload.extend_from_slice(rotation_id.as_bytes());
     payload.extend_from_slice(rms);
-    let binding_key = kdf::derive("vela rekey capsule binding v1", previous_rms);
+    let binding_key = kdf::derive(REKEY_CAPSULE_BINDING_CONTEXT, previous_rms);
     let authenticated_payload = aead::encrypt(binding_key.as_bytes(), &payload)?;
     Ok(crate::kem::seal_share(&pk, &authenticated_payload)?)
 }
@@ -290,7 +289,7 @@ pub fn open_rekey_capsule(
     let sk = crate::kem::HybridSecretKey::from_bytes(hybrid_dk_bytes)?;
     let authenticated_payload =
         Zeroizing::new(crate::kem::open_share(&sk, capsule).map_err(|_| VelaError::KemError)?);
-    let binding_key = kdf::derive("vela rekey capsule binding v1", previous_rms);
+    let binding_key = kdf::derive(REKEY_CAPSULE_BINDING_CONTEXT, previous_rms);
     let payload = aead::decrypt(binding_key.as_bytes(), &authenticated_payload).map_err(|_| {
         VelaError::InvalidParameter(
             "re-key capsule was not authenticated by the current RMS".into(),

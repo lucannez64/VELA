@@ -586,7 +586,7 @@ async fn authorize_ek_binding(
     request: &PutShareEkRequest,
 ) -> Result<(Uuid, String)> {
     use crate::device::enroll::verify_hybrid_signature;
-    use vela_share_policy::{EkRegistrationDecision, EkRegistrationFacts};
+    use vela_share_policy::EkRegistrationFacts;
 
     let ek_bytes = B64
         .decode(&request.share_ek)

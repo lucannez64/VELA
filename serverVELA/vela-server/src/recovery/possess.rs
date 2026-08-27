@@ -148,7 +148,10 @@ pub async fn post_initiate_proof(
         ));
     }
     let key_epoch = row.i64(2).unwrap_or(1).max(1);
-    let commitment = match row.get(1) {
+    // Read-and-validate the stored commitment even though the proof policy
+    // does not consume it here: a row whose commitment is not valid base64 is
+    // a corrupted store and must fail closed, not surface later mid-proof.
+    let _commitment = match row.get(1) {
         Some(TursoValue::Text(text)) => crate::db::decode_b64(&text)?,
         _ => return Err(AppError::NotFound(RECOVERY_UNAVAILABLE.into())),
     };

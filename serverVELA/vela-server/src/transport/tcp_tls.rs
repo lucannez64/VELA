@@ -1,4 +1,4 @@
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::Router;
 use hyper_util::{
@@ -29,7 +29,9 @@ pub async fn serve(
         let acceptor = acceptor.clone();
         let per_connection = match make_service.call(peer).await {
             Ok(service) => service,
-            Err(error) => match Infallible::from(error) {},
+            // `make_service` is infallible; the match is exhaustive over the
+            // uninhabited error type.
+            Err(error) => match error {},
         };
         let service = TowerToHyperService::new(per_connection);
 

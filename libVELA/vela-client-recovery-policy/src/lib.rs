@@ -340,6 +340,7 @@ pub fn plan_adoption(
     }
 }
 
+#[cfg(test)]
 fn valid_pair() -> (BoundShareFacts, BoundShareFacts) {
     (
         BoundShareFacts {

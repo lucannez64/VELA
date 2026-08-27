@@ -52,7 +52,12 @@ const POLL_SECRET_HASH_LEN: usize = 32;
 /// Header carrying the raw poll secret on `GET /web-session/:id`.
 const POLL_SECRET_HEADER: &str = "x-web-session-secret";
 
+// Production TTLs live in the verified policy layer (vela-session-policy);
+// these remain as the documented reference values the policy clamps to, and
+// the tests below pin the clamp against them.
+#[cfg(test)]
 const DEFAULT_TTL_SECS: i64 = 30 * 60; // 30 minutes
+#[cfg(test)]
 const MIN_TTL_SECS: i64 = 60;
 pub(crate) const MAX_TTL_SECS: i64 = 24 * 60 * 60; // 24 hours
 /// A pending (never granted) session is reaped after this long.

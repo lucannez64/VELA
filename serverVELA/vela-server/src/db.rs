@@ -591,10 +591,6 @@ fn tv_as_bool(v: &crate::sqldb::TursoValue) -> Option<bool> {
     tv_as_i64(v).map(|i| i != 0)
 }
 
-fn tv_is_null(v: &crate::sqldb::TursoValue) -> bool {
-    matches!(v, crate::sqldb::TursoValue::Null)
-}
-
 fn turso_uuid(v: &crate::sqldb::TursoValue) -> Option<Uuid> {
     tv_as_str(v).and_then(|s| Uuid::parse_str(s).ok())
 }

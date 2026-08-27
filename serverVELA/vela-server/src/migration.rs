@@ -523,15 +523,6 @@ fn ensure_dir(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
-/// Like [`ensure_file`]/[`ensure_dir`] but accepts either — `vela.db` is a
-/// directory under stoolap but may be a single file in other modes.
-fn ensure_exists(path: &Path, label: &str) -> Result<()> {
-    if !path.exists() {
-        bail!("{label} not found at {}", path.display());
-    }
-    Ok(())
-}
-
 /// Copy a path that may be a file or a directory.
 fn copy_path(src: &Path, dst: &Path) -> Result<()> {
     if src.is_dir() {
