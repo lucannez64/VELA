@@ -278,10 +278,13 @@ async fn serve() -> anyhow::Result<()> {
         }
         _ => {
             tracing::warn!(
-                "no TLS listener configured (TLS_CERT_PATH/TLS_KEY_PATH unset): VELA is \
-                 serving cleartext HTTP only. Deploy it behind a TLS-terminating proxy \
-                 (see serverVELA/DEPLOY_SYSTEMD.md) or configure the native TLS listener; \
-                 clients expect an https origin (WEBAUTHN_RP_ORIGIN, CSP)."
+                "no native TLS listener configured (TLS_CERT_PATH/TLS_KEY_PATH unset): VELA is \
+                 serving cleartext HTTP on {listen}. This is fine when a TLS-terminating proxy \
+                 or Cloudflare Tunnel is in front (see serverVELA/DEPLOY_SYSTEMD.md) — the \
+                 proxy must forward X-Forwarded-Proto: https. If nothing terminates TLS for \
+                 this address, configure the native TLS listener: clients expect an https \
+                 origin (WEBAUTHN_RP_ORIGIN, CSP).",
+                listen = config.listen_addr
             );
             None
         }
