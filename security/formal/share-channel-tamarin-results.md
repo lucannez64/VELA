@@ -25,7 +25,7 @@ device's private identity key — signature unforgeability means substitution
 requires device-key theft, which is the M13/M14 enrollment-compromise class,
 outside this channel's threat boundary (stated in the model header).
 
-Proven properties (5/5 verified):
+Proven properties (6/6 verified, post-revision):
 
 - `registrations_require_enrolled_device_signature` — every registered share
   key traces to an enrolled device and a signed binding.
@@ -34,12 +34,15 @@ Proven properties (5/5 verified):
 - `sends_use_registered_bindings` / `deliveries_require_sends` — items are
   sealed under exactly the recipient's registered binding, and every relayed
   capsule traces to a send.
+- `opened_items_were_delivered` — a delivered capsule cannot be opened before
+  the server relays it (post-review revision).
 - `legitimate_share_exchange_is_reachable` — availability of the honest path.
 
-Item confidentiality is structural: capsules (`cap/2`) are opaque, no rule
-discloses an item's plaintext, and the decryption half of each share keypair
-never leaves its device outside the explicit `LeakShareDk` compromise event.
-(The earlier `CompromisedOpen` refinement was folded into this statement.)
+Item confidentiality is structural: capsules are opaque, no rule discloses an
+item's plaintext, and the decryption half of each share keypair never leaves
+its device (no leak rules exist in the theory — device-key theft is outside
+the threat boundary, covered by the M13/M14 enrollment-compromise class,
+as stated in the model header).
 
 ## Verification output
 
