@@ -7,6 +7,9 @@ cd "$(dirname "$0")"
 LIB=libvela_apple_bridge.a
 OUT=VelaCore.xcframework
 HEADERS=include
+# .cargo/config.toml at the repo root redirects the target dir away from this
+# crate's own directory, so resolve it the way cargo does.
+TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)"
 
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios >/dev/null 2>&1 || true
 
@@ -22,13 +25,13 @@ cargo build --release --target x86_64-apple-ios
 echo "==> lipo universal simulator library"
 mkdir -p target/ios-sim-universal
 lipo -create \
-  "target/aarch64-apple-ios-sim/release/$LIB" \
-  "target/x86_64-apple-ios/release/$LIB" \
+  "$TARGET_DIR/aarch64-apple-ios-sim/release/$LIB" \
+  "$TARGET_DIR/x86_64-apple-ios/release/$LIB" \
   -output "target/ios-sim-universal/$LIB"
 
 rm -rf "$OUT"
 xcodebuild -create-xcframework \
-  -library "target/aarch64-apple-ios/release/$LIB" -headers "$HEADERS" \
+  -library "$TARGET_DIR/aarch64-apple-ios/release/$LIB" -headers "$HEADERS" \
   -library "target/ios-sim-universal/$LIB" -headers "$HEADERS" \
   -output "$OUT"
 

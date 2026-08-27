@@ -215,6 +215,10 @@ tasks.register("buildRustBridge") {
                 .directory(bridgeDir)
                 .inheritIO()
             cargo.environment()["ANDROID_NDK_HOME"] = ndkDir.absolutePath
+            // Pin the target dir to the bridge crate: the repo-root
+            // .cargo/config.toml redirects it to VELA/target, and the Android
+            // triples are unique to this build anyway.
+            cargo.environment()["CARGO_TARGET_DIR"] = File(bridgeDir, "target").absolutePath
             cargo.environment()["CARGO_BUILD_JOBS"] = "1"
             cargo.environment()[rustTargetLinkerEnv(abi.rustTarget)] = linker.absolutePath
             cargo.environment()[abi.ccEnv] = linker.absolutePath
