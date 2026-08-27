@@ -158,7 +158,8 @@ jobs:
           key: opam-proverif-ocaml5.1.1-v1
 
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
-        run: |          sudo apt-get update -qq
+        run: |
+          sudo apt-get update -qq
           sudo apt-get install -y -qq opam libgtk2.0-dev pkg-config
           opam init --auto-setup --bare -y
           if ! opam switch list | grep -q 'vela-proverif'; then
