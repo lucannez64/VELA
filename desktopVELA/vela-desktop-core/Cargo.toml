@@ -11,6 +11,12 @@ edition = "2021"
 
 [features]
 default = []
+# reqwest's unstable HTTP/3 client. Requires `--cfg reqwest_unstable` in
+# RUSTFLAGS (see desktopVELA/.cargo/config.toml), so it is opt-in: apps enable
+# it, while builds outside that directory tree (e.g. libVELA/vela-core/fuzz)
+# compile without it. The sync server negotiates HTTP/3 itself; this only
+# affects the desktop client's direct requests.
+http3 = ["reqwest/http3"]
 # The M9c experiment: a JS runtime inside the core, for logins on sites that
 # submit by `fetch` rather than by form. Off by default and likely to stay that
 # way — see `security/formal/m9c_inprocess_sandbox.spthy` for what it costs, and
@@ -48,7 +54,7 @@ chrono = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
 anyhow = "1.0"
 getrandom = "0.2"
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "http3"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"

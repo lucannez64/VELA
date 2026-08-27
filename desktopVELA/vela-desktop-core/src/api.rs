@@ -129,6 +129,10 @@ impl ApiClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");
+        // reqwest's HTTP/3 support is unstable and gated behind the `http3`
+        // feature (which also requires `--cfg reqwest_unstable`). Without it,
+        // all traffic uses the TCP fallback client.
+        #[cfg(feature = "http3")]
         let h3_client = if base_url.starts_with("https://") {
             match Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
@@ -144,6 +148,8 @@ impl ApiClient {
         } else {
             None
         };
+        #[cfg(not(feature = "http3"))]
+        let h3_client = None;
 
         Self {
             h3_client,
