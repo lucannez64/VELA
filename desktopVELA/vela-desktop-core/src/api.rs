@@ -745,8 +745,11 @@ impl ApiClient {
     pub async fn fetch_enrollment_package(&self, token: &str) -> Result<String> {
         // Send the real token via a header, not the URL: URLs commonly end up
         // in access/proxy/CDN logs by default, while custom headers typically
-        // don't. The path keeps a placeholder for route compatibility — the
-        // server prefers the header when present (see get_enrollment_package).
+        // don't. The server route requires a path segment, so the literal "_"
+        // below is a dummy placeholder — the server ignores it whenever the
+        // X-Enrollment-Token header is present (see get_enrollment_package in
+        // serverVELA/vela-server/src/device/invitation.rs), which is always the
+        // case for this client.
         let token = token.to_string();
         let resp = self
             .send_request(true, move |client| {

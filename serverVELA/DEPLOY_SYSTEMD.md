@@ -135,6 +135,17 @@ Validate through the public domain:
 curl https://vault.example.com/health
 ```
 
+### HTTPS enforcement and HSTS
+
+The server emits a `Strict-Transport-Security: max-age=63072000; includeSubDomains`
+header on every response it believes arrived over HTTPS — natively (TLS listener)
+or via a forwarded `X-Forwarded-Proto: https` from a trusted proxy. With
+Cloudflare Tunnel you can additionally enable **Always Use HTTPS** and HSTS for
+the zone in the Cloudflare dashboard; the server-side header covers clients that
+reach your domain through any other path. VELA never serves plain-HTTP clients
+with HSTS headers, and logs a warning at startup if no TLS listener is
+configured, so a misconfigured edge is visible in `journalctl -u vela-server`.
+
 ## Migration Checklist With Cloudflare Tunnel
 
 When moving to a new home server:

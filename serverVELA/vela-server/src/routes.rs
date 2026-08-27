@@ -243,13 +243,19 @@ pub fn build(state: AppState) -> Router {
 /// (same-origin assets + wasm + data-URL images like the QR code) while denying
 /// framing, plugins and cross-origin script/style injection.
 async fn security_headers(req: Request, next: Next) -> Response {
+    let is_https = req.extensions().get::<NativeHttps>().is_some()
+        || req
+            .headers()
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.eq_ignore_ascii_case("https"))
+            .unwrap_or(false);
     let mut response = next.run(req).await;
     let headers = response.headers_mut();
     headers.insert(
         axum::http::header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
+    );    headers.insert(
         axum::http::header::X_FRAME_OPTIONS,
         HeaderValue::from_static("DENY"),
     );
@@ -266,6 +272,16 @@ async fn security_headers(req: Request, next: Next) -> Response {
              base-uri 'none'; frame-ancestors 'none'",
         ),
     );
+    // HSTS when the request arrived over HTTPS — natively (TLS listener marks
+    // it via NativeHttps) or via a TLS-terminating proxy that forwarded
+    // `X-Forwarded-Proto: https` (see enforce_https). Browsers ignore HSTS on
+    // cleartext responses, so a spoofed marker behind the edge is harmless.
+    if is_https {
+        headers.insert(
+            HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+        );
+    }
     response
 }
 

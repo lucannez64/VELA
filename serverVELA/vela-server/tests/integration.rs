@@ -43,6 +43,40 @@ async fn health_returns_ok() {
 }
 
 #[tokio::test]
+async fn hsts_header_present_on_https_requests() {
+    let app = app().await;
+
+    let req = Request::builder()
+        .uri("/health")
+        .header("x-forwarded-proto", "https")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get("strict-transport-security")
+            .and_then(|v| v.to_str().ok()),
+        Some("max-age=63072000; includeSubDomains")
+    );
+}
+
+#[tokio::test]
+async fn hsts_header_absent_on_cleartext_requests() {
+    let app = app().await;
+
+    let req = Request::builder()
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().get("strict-transport-security").is_none());
+}
+
+#[tokio::test]
 async fn register_creates_account_and_device() {
     let app = app().await;
 

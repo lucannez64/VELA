@@ -276,7 +276,15 @@ async fn serve() -> anyhow::Result<()> {
         (Some(cert_path), Some(key_path)) => {
             Some(TlsConfigPaths::from_strings(cert_path, key_path))
         }
-        _ => None,
+        _ => {
+            tracing::warn!(
+                "no TLS listener configured (TLS_CERT_PATH/TLS_KEY_PATH unset): VELA is \
+                 serving cleartext HTTP only. Deploy it behind a TLS-terminating proxy \
+                 (see serverVELA/DEPLOY_SYSTEMD.md) or configure the native TLS listener; \
+                 clients expect an https origin (WEBAUTHN_RP_ORIGIN, CSP)."
+            );
+            None
+        }
     };
 
     let tls_addr = config
