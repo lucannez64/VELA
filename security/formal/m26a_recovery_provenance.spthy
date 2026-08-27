@@ -1,0 +1,91 @@
+theory M26a_RecoveryProvenance
+/*
+  Composition part A: recovery-chain provenance.
+
+  Every link in the composed possession-recovery chain traces to the
+  staged commitment: challenge-slot consumption, grant issuance, and
+  recovered-device enrollment each require the staged commitment and live
+  epoch of the same account.
+*/
+begin
+
+rule SetupAccount:
+    [ Fr(~user), Fr(~epoch), Fr(~device) ]
+  --[ AccountCreated(~user),
+      DeviceOnboarded(~device) ]->
+    [ !EnrolledDevice(~user, ~device),
+      CurrentEpoch(~user, ~epoch),
+      /* Finite fuel bounds CommitmentStaged re-firings (see M26). */
+      StagingFuel(~user),
+      StagingFuel(~user) ]
+
+/* Bounded recovery-device enrollment fuel: without it, EnrollRecoveredDevice
+   fires unboundedly (it re-emits its epoch token) and the search diverges. */
+rule MintRecoveryDeviceFuel:
+    [ StagingFuel(U) ]
+  --[]->
+    [ RecoveryDeviceFuel(U) ]
+
+rule StageCommitment:
+    [ StagingFuel(U),
+      CurrentEpoch(U, E) ]
+  --[ CommitmentStaged(U, E) ]->
+    [ /* The live epoch token survives staging — commitments are staged
+         against the CURRENT epoch, not consumed by it. */
+      CurrentEpoch(U, E),
+      CommittedPossession(U, E),
+      ChallengeSlot(U, E) ]
+
+rule IssuePossessionGrant:
+    [ CommittedPossession(U, E),
+      ChallengeSlot(U, E),
+      CurrentEpoch(U, E),
+      Fr(~chal) ]
+  --[ PossessionGrantIssued(U, E) ]->
+    [ CurrentEpoch(U, E), GrantToken(U, E) ]
+
+/* The recovered device identity is preserved end-to-end: the event carries
+   it, the enrolled row binds the account to that exact device, and
+   onboarding is recorded for it — recovery enrollment never fabricates an
+   unaccounted-for device. */
+rule EnrollRecoveredDevice:
+    [ GrantToken(U, E), RecoveryDeviceFuel(U), CurrentEpoch(U, E), Fr(~device) ]
+  --[ DeviceEnrolledViaRecovery(U, ~device, E),
+      DeviceOnboarded(~device) ]->
+    [ !EnrolledDevice(U, ~device), CurrentEpoch(U, E) ]
+
+lemma possession_grant_requires_staged_commitment:
+  "All U E #i.
+     PossessionGrantIssued(U, E) @ i
+     ==> Ex #j. CommitmentStaged(U, E) @ j & #j < #i"
+
+lemma enrollment_requires_possession_grant:
+  "All U D E #i.
+     DeviceEnrolledViaRecovery(U, D, E) @ i
+     ==> Ex #j. PossessionGrantIssued(U, E) @ j & #j < #i"
+
+lemma enrolled_devices_require_onboarding_or_setup:
+  "All U D #i.
+     !EnrolledDevice(U, D) @ i
+     ==> (Ex #j. DeviceOnboarded(D) @ j & not (#i < #j))"
+
+/* Full provenance: a recovered-device enrollment chains staged commitment
+   → grant → enrollment, and the onboarded device matches the enrolled one. */
+lemma recovery_enrollment_traces_to_staged_commitment:
+  "All U D E #i.
+     DeviceEnrolledViaRecovery(U, D, E) @ i
+     ==> Ex #j #k.
+           CommitmentStaged(U, E) @ j &
+           PossessionGrantIssued(U, E) @ k &
+           #j < #k & #k < #i"
+
+lemma recovered_device_matches_an_onboarding_event:
+  "All U D E #i.
+     DeviceEnrolledViaRecovery(U, D, E) @ i
+     ==> Ex #j. DeviceOnboarded(D) @ j & not (#i < #j)"
+
+lemma device_enrollment_reachable:
+  exists-trace
+  "Ex U D E #i. DeviceEnrolledViaRecovery(U, D, E) @ i"
+
+end

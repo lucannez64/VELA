@@ -82,12 +82,18 @@ actor VelaClient {
     }
 
     func register(hybridEK: String, hybridVK: String, deviceName: String, deviceType: String = "ios",
-                  shareEK: String? = nil) async throws -> RegisterResponse {
+                  shareEK: String? = nil, shareEKSignedAt: String? = nil,
+                  shareEKSignature: String? = nil) async throws -> RegisterResponse {
         var body: [String: Any] = [
             "hybrid_ek": hybridEK, "hybrid_vk": hybridVK,
             "device_name": deviceName, "device_type": deviceType,
         ]
-        if let shareEK = shareEK { body["share_ek"] = shareEK }
+        // M19: an initial share key must arrive device-signed.
+        if let shareEK = shareEK {
+            body["share_ek"] = shareEK
+            body["share_ek_signed_at"] = shareEKSignedAt ?? ""
+            body["share_ek_signature"] = shareEKSignature ?? ""
+        }
         let resp: RegisterResponse = try await request("POST", "/account/register", json: body, auth: false)
         if let t = resp.token { token = t }
         return resp
@@ -256,11 +262,15 @@ actor VelaClient {
                                                   json: ["capsule": capsuleBase64], auth: true)
     }
 
-    /// Register (or update) the caller's own share encapsulation key. Backfill
-    /// path for accounts created before share keys existed.
-    func putMyShareEK(_ shareEK: String) async throws {
+    /// Register (or update) the caller's own share encapsulation key.
+    /// M19: requires a binding signature from one of the account's devices.
+    func putMyShareEK(_ shareEK: String, deviceID: String, signedAt: String,
+                      signature: String) async throws {
         let _: EmptyResponse = try await request("PUT", "/share/my-ek",
-                                                  json: ["share_ek": shareEK], auth: true)
+                                                  json: ["share_ek": shareEK,
+                                                         "device_id": deviceID,
+                                                         "signed_at": signedAt,
+                                                         "signature": signature], auth: true)
     }
 
     struct WebKeysResponse: Decodable { let ephemeral_pk: String; let web_vk: String }
@@ -391,13 +401,29 @@ actor VelaClient {
 
     // MARK: - Recovery share
 
-    func putRecoveryShare(_ shareBase64: String, keyEpoch: Int) async throws {
+    func putRecoveryShare(_ shareBase64: String, keyEpoch: Int, splitID: String, possessionHashBase64: String) async throws {
         guard keyEpoch >= 1 else {
             throw ServerError(status: 0, body: "recovery share epoch must be positive")
         }
+        guard !splitID.isEmpty else {
+            throw ServerError(status: 0, body: "recovery split ID is required")
+        }
+        guard !possessionHashBase64.isEmpty else {
+            throw ServerError(status: 0, body: "RMS possession hash is required")
+        }
         let _: EmptyResponse = try await request(
             "PUT", "/recovery/share",
-            json: ["share": shareBase64, "key_epoch": keyEpoch], auth: true)
+            json: ["share": shareBase64, "key_epoch": keyEpoch, "split_id": splitID,
+                   "possession_hash": possessionHashBase64], auth: true)
+    }
+
+    func finalizeRecoveryShare(keyEpoch: Int, splitID: String) async throws {
+        guard keyEpoch >= 1, !splitID.isEmpty else {
+            throw ServerError(status: 0, body: "valid recovery epoch and split ID are required")
+        }
+        let _: EmptyResponse = try await request(
+            "POST", "/recovery/share/finalize",
+            json: ["key_epoch": keyEpoch, "split_id": splitID], auth: true)
     }
 
     struct RecoveryShareResponse: Decodable { let share: String }
@@ -459,6 +485,7 @@ actor VelaClient {
         let shareBase64: String
         let recoveryGrant: String
         let keyEpoch: Int
+        let splitID: String?
     }
 
     /// Submits the WebAuthn assertion; the server releases Share 2 plus a
@@ -470,14 +497,19 @@ actor VelaClient {
         let (data, _) = try await requestRaw(
             "POST", "/recovery/recover", body: bodyData,
             headers: ["Content-Type": "application/json"], auth: false)
-        struct Resp: Decodable { let share: String; let recovery_grant: String; let key_epoch: Int }
+        struct Resp: Decodable {
+            let share: String
+            let recovery_grant: String
+            let key_epoch: Int
+            let split_id: String?
+        }
         let resp = try JSONDecoder().decode(Resp.self, from: data)
         guard resp.key_epoch >= 1 else {
             throw ServerError(status: 0, body: "server returned an invalid recovery epoch")
         }
         return RecoveryRecoverResult(
             shareBase64: resp.share, recoveryGrant: resp.recovery_grant,
-            keyEpoch: resp.key_epoch)
+            keyEpoch: resp.key_epoch, splitID: resp.split_id)
     }
 
     /// Registers this device's identity key against an existing account once

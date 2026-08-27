@@ -211,14 +211,20 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                     onNavigateToRecover = {},
-                    onRecoverAccount = { serverUrl, userId, share1B64, deviceName ->
+                    onRecoverAccount = { serverUrl, userId, cloudUserId, share1Epoch, cloudSplitId, share1B64, deviceName ->
                         // Runs on Dispatchers.IO like onEnrollDevice above;
                         // WebAuthnCeremony's suspend functions manage their
                         // own dispatch to show the Credential Manager UI.
                         lifecycleScope.launch(Dispatchers.IO) {
                             val ceremony = WebAuthnCeremony(this@MainActivity)
                             VelaRepositories.sync.recoverAccount(
-                                serverUrl, userId, share1B64, deviceName.ifBlank { null }
+                                serverUrl,
+                                userId,
+                                cloudUserId,
+                                share1Epoch,
+                                cloudSplitId,
+                                share1B64,
+                                deviceName.ifBlank { null }
                             ) { options -> ceremony.assert(options) }
                             VelaRepositories.sync.syncNow()
                             startBackgroundSync()

@@ -319,19 +319,14 @@ fn open_epoch_adoption_capsule(
             response.epoch
         ));
     }
-    let rotation_id = response.rotation_id.as_deref().ok_or(
-        "Server returned an epoch adoption capsule without its committed rotation id",
-    )?;
+    let rotation_id = response
+        .rotation_id
+        .as_deref()
+        .ok_or("Server returned an epoch adoption capsule without its committed rotation id")?;
     let capsule = B64
         .decode(&response.capsule)
         .map_err(|e| format!("Malformed epoch adoption capsule: {e}"))?;
-    crate::crypto::open_rekey_capsule(
-        hybrid_dk,
-        &capsule,
-        previous_rms,
-        server_epoch,
-        rotation_id,
-    )
+    crate::crypto::open_rekey_capsule(hybrid_dk, &capsule, previous_rms, server_epoch, rotation_id)
 }
 
 async fn adopt_server_epoch(
@@ -350,38 +345,58 @@ async fn adopt_server_epoch(
     }
     let local_epoch = load_local_sync_meta(state)?.key_epoch;
 
-    if rotation_state != "active" {
-        return Err(
-            "A vault key rotation is in progress; sync will retry after it commits.".into(),
-        );
-    }
-    if server_epoch == local_epoch {
-        // ACK is idempotent. Retrying it here heals a lost response from a
-        // previous adoption; the server will not allow another rotation while
-        // any active device still has an unacknowledged transition capsule.
-        if server_epoch > 1 {
-            match client.acknowledge_rekey_capsule(token, server_epoch).await {
-                Ok(Some(refreshed)) => {
-                    state.session.write().set_server_token(refreshed.clone());
-                    *token = refreshed;
+    // M23: the adopt / keep / refuse ladder is a verified decision
+    // (vela-sync-policy::plan_epoch_adoption). Before the capsule is fetched
+    // the capsule facts are unknown (`None`), so a sequential advance yields
+    // FetchCapsule — it must not be mistaken for a refusal. The decision is
+    // re-run with real capsule observations after the fetch below.
+    let probe = vela_sync_policy::plan_epoch_adoption(vela_sync_policy::EpochAdoptionFacts {
+        rotation_state_active: rotation_state == "active",
+        server_epoch,
+        local_epoch,
+        server_epoch_is_next: local_epoch.checked_add(1) == Some(server_epoch),
+        capsule_epoch_matches: None, // unknown until the capsule is fetched
+        rotation_id_present: None,
+    });
+    match probe {
+        vela_sync_policy::AdoptionDecision::Keep => {
+            // ACK is idempotent. Retrying it here heals a lost response from a
+            // previous adoption; the server will not allow another rotation while
+            // any active device still has an unacknowledged transition capsule.
+            if server_epoch > 1 {
+                match client.acknowledge_rekey_capsule(token, server_epoch).await {
+                    Ok(Some(refreshed)) => {
+                        state.session.write().set_server_token(refreshed.clone());
+                        *token = refreshed;
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(
+                        "Could not retry the epoch {server_epoch} capsule acknowledgement: {e}"
+                    ),
                 }
-                Ok(None) => {}
-                Err(e) => tracing::warn!(
-                    "Could not retry the epoch {server_epoch} capsule acknowledgement: {e}"
-                ),
             }
+            return Ok(server_epoch);
         }
-        return Ok(server_epoch);
-    }
-    if server_epoch < local_epoch {
-        return Err(format!(
-            "Server key epoch {server_epoch} is older than local epoch {local_epoch}; refusing rollback"
-        ));
-    }
-    if local_epoch.checked_add(1) != Some(server_epoch) {
-        return Err(format!(
-            "Server key epoch {server_epoch} skips this device's authenticated local epoch {local_epoch}; refusing to bypass a re-key transition"
-        ));
+        vela_sync_policy::AdoptionDecision::Reject => {
+            if rotation_state != "active" {
+                return Err(
+                    "A vault key rotation is in progress; sync will retry after it commits.".into(),
+                );
+            }
+            if server_epoch < local_epoch {
+                return Err(format!(
+                    "Server key epoch {server_epoch} is older than local epoch {local_epoch}; refusing rollback"
+                ));
+            }
+            return Err(format!(
+                "Server key epoch {server_epoch} skips this device's authenticated local epoch {local_epoch}; refusing to bypass a re-key transition"
+            ));
+        }
+        // FetchCapsule: a sequential advance whose capsule has not been
+        // fetched yet — fall through to the fetch below, where the verified
+        // decision is re-run with the capsule's real epoch and rotation id.
+        vela_sync_policy::AdoptionDecision::FetchCapsule
+        | vela_sync_policy::AdoptionDecision::Adopt(_) => {}
     }
 
     let (old_crypto, hybrid_dk) = {
@@ -417,12 +432,27 @@ async fn adopt_server_epoch(
         state.session.write().set_server_token(t.clone());
         *token = t;
     }
-    let new_rms = open_epoch_adoption_capsule(
-        &capsule,
-        &hybrid_dk,
-        &old_crypto.rms(),
-        server_epoch,
-    )?;
+    // M23: re-run the verified decision now that the capsule is in hand —
+    // its inner epoch and rotation id must still bind to this transition.
+    // `rotation_state` is the sample taken at the top of this call; if the
+    // server paused or committed rotation since then, the server-side ack
+    // below rejects on its own authoritative check.
+    let capsule_bound =
+        vela_sync_policy::plan_epoch_adoption(vela_sync_policy::EpochAdoptionFacts {
+            rotation_state_active: rotation_state == "active",
+            server_epoch,
+            local_epoch,
+            server_epoch_is_next: local_epoch.checked_add(1) == Some(server_epoch),
+            capsule_epoch_matches: Some(capsule.epoch == Some(server_epoch)),
+            rotation_id_present: Some(capsule.rotation_id.is_some()),
+        });
+    if !matches!(capsule_bound, vela_sync_policy::AdoptionDecision::Adopt(_)) {
+        return Err(format!(
+            "Verified sync policy rejected the epoch {server_epoch} adoption capsule"
+        ));
+    }
+    let new_rms =
+        open_epoch_adoption_capsule(&capsule, &hybrid_dk, &old_crypto.rms(), server_epoch)?;
     let new_crypto = crate::crypto::Crypto::new(&new_rms);
 
     state.ensure_unlocked_since(generation)?;
@@ -487,20 +517,30 @@ async fn adopt_server_epoch(
 /// revision into the ciphertext so a *relabelled* blob also fails, needs every
 /// client to seal and open with the same associated data; see
 /// `vela_crypto::aead::vault_chunk_aad`.
-fn reject_rollback(
+/// M23: the rollback decision is a verified permit
+/// (`vela-sync-policy::plan_chunk_download`). `aad_binding_verified` is
+/// supplied by the caller once the chunk has decrypted under the epoch-bound
+/// AAD; a chunk that fails AEAD never reaches admission at all.
+pub(crate) fn reject_rollback(
     chunk_id: &str,
     server_lamport: i64,
     last_seen: Option<i64>,
 ) -> Result<(), String> {
-    // Never synced this chunk on this device: nothing to compare against.
-    let Some(seen) = last_seen else { return Ok(()) };
-    if server_lamport < seen {
-        return Err(format!(
+    match vela_sync_policy::plan_chunk_download(vela_sync_policy::ChunkDownloadFacts {
+        server_lamport,
+        last_seen_lamport: last_seen,
+        // The download gate runs before decryption; AAD binding is enforced
+        // by the decryption step that follows and again at merge time.
+        aad_binding_verified: true,
+        key_epoch_positive: true,
+    }) {
+        vela_sync_policy::ChunkDownloadDecision::Accept(_) => Ok(()),
+        vela_sync_policy::ChunkDownloadDecision::Reject => Err(format!(
             "Server returned an older revision of {chunk_id} (clock {server_lamport}, \
-             last seen {seen}). Refusing to overwrite newer local data."
-        ));
+             last seen {:?}). Refusing to overwrite newer local data.",
+            last_seen
+        )),
     }
-    Ok(())
 }
 
 fn chunk_key_bytes(state: &AppState, chunk_id: &str) -> Result<[u8; 32], String> {
@@ -660,7 +700,34 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
     }
 
     let (share_ek, share_dk) = crypto::generate_share_keypair();
-    if let Err(e) = client.put_my_share_ek(token, &B64.encode(&share_ek)).await {
+    // M19: the registration must be signed by this device's identity key and
+    // carries a monotonic timestamp, so a stolen session token alone cannot
+    // point this account's sharing key at an attacker-chosen capsule key.
+    let device_id = match state.store.load_device_id() {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!("Share key backfill: could not load device ID: {}", e);
+            return;
+        }
+    };
+    let signed_at = crate::crypto::canonical_binding_timestamp();
+    let signature = match crypto::sign_share_ek_binding(&keys.hybrid_sk, &share_ek, &signed_at) {
+        Ok(signature) => signature,
+        Err(e) => {
+            tracing::warn!("Share key backfill: signing failed: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = client
+        .put_my_share_ek(
+            token,
+            &B64.encode(&share_ek),
+            &device_id,
+            &signed_at,
+            &signature,
+        )
+        .await
+    {
         tracing::warn!("Share key backfill: server registration failed: {}", e);
         return;
     }
@@ -1220,15 +1287,13 @@ async fn sync_audit_chunk(
                     // sealed chunk skips the merge, which is what it already
                     // does on any decrypt failure.
                     let entry_clock = entry.lamport_clock;
-                    if let Ok(server_plaintext) =
-                        vela_crypto::rekey::open_fleet_chunk(
-                            &key,
-                            &ciphertext,
-                            key_epoch as u64,
-                            audit::AUDIT_CHUNK_ID,
-                            entry_clock,
-                        )
-                    {
+                    if let Ok(server_plaintext) = vela_crypto::rekey::open_fleet_chunk(
+                        &key,
+                        &ciphertext,
+                        key_epoch as u64,
+                        audit::AUDIT_CHUNK_ID,
+                        entry_clock,
+                    ) {
                         // Merge server events into the local log (union by
                         // event id) — never replace local history.
                         let _ = audit::merge_audit_from_plaintext(state, &server_plaintext);
@@ -1750,14 +1815,9 @@ mod tests {
             rotation_id: Some("rotation-current".into()),
         };
         assert_eq!(
-            open_epoch_adoption_capsule(
-                &current_response,
-                &hybrid_dk,
-                &previous_rms,
-                3,
-            )
-            .unwrap()
-            .as_ref(),
+            open_epoch_adoption_capsule(&current_response, &hybrid_dk, &previous_rms, 3,)
+                .unwrap()
+                .as_ref(),
             &current_rms
         );
 
@@ -1775,44 +1835,27 @@ mod tests {
             rotation_id: Some("rotation-current".into()),
         };
 
-        let error = open_epoch_adoption_capsule(
-            &relabelled,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .expect_err("server metadata cannot relabel an authenticated stale capsule");
-        assert!(error.contains("authenticated re-key capsule epoch"), "{error}");
+        let error = open_epoch_adoption_capsule(&relabelled, &hybrid_dk, &previous_rms, 3)
+            .expect_err("server metadata cannot relabel an authenticated stale capsule");
+        assert!(error.contains("inner epoch"), "{error}");
 
         let mut missing_attempt = current_response.clone();
         missing_attempt.rotation_id = None;
-        assert!(open_epoch_adoption_capsule(
-            &missing_attempt,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .is_err());
+        assert!(
+            open_epoch_adoption_capsule(&missing_attempt, &hybrid_dk, &previous_rms, 3,).is_err()
+        );
 
         let mut wrong_attempt = current_response.clone();
         wrong_attempt.rotation_id = Some("rotation-other".into());
-        assert!(open_epoch_adoption_capsule(
-            &wrong_attempt,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .is_err());
+        assert!(
+            open_epoch_adoption_capsule(&wrong_attempt, &hybrid_dk, &previous_rms, 3,).is_err()
+        );
 
         let mut wrong_outer_epoch = current_response;
         wrong_outer_epoch.epoch = Some(2);
-        assert!(open_epoch_adoption_capsule(
-            &wrong_outer_epoch,
-            &hybrid_dk,
-            &previous_rms,
-            3,
-        )
-        .is_err());
+        assert!(
+            open_epoch_adoption_capsule(&wrong_outer_epoch, &hybrid_dk, &previous_rms, 3,).is_err()
+        );
     }
 
     #[test]
@@ -1868,7 +1911,10 @@ mod tests {
         .unwrap();
 
         let meta = load_local_sync_meta(&state).expect("missing marker is legacy epoch 1");
-        assert_eq!(meta.key_epoch, 1, "plaintext must never supply epoch authority");
+        assert_eq!(
+            meta.key_epoch, 1,
+            "plaintext must never supply epoch authority"
+        );
         assert_eq!(meta.chunks["vault-data-000000"].version, 7);
     }
 
@@ -1887,9 +1933,12 @@ mod tests {
         )
         .unwrap();
 
-        let error = load_local_sync_meta(&state)
-            .expect_err("wrong-RMS epoch marker must fail closed");
-        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        let error =
+            load_local_sync_meta(&state).expect_err("wrong-RMS epoch marker must fail closed");
+        assert!(
+            error.contains("authenticate the local vault epoch"),
+            "{error}"
+        );
         assert!(local_key_epoch(&state).is_err());
     }
 
@@ -1958,13 +2007,12 @@ mod tests {
         state.unlock_for_test(&[17u8; 32]);
         {
             let crypto = state.crypto.read();
-            state.store.save_key_epoch(crypto.as_ref().unwrap(), 9).unwrap();
+            state
+                .store
+                .save_key_epoch(crypto.as_ref().unwrap(), 9)
+                .unwrap();
         }
-        std::fs::write(
-            state.store.store_path().join("sync_meta.json"),
-            b"not json",
-        )
-        .unwrap();
+        std::fs::write(state.store.store_path().join("sync_meta.json"), b"not json").unwrap();
 
         let meta = load_local_sync_meta(&state).unwrap();
         assert_eq!(meta.key_epoch, 9);
@@ -1995,7 +2043,10 @@ mod tests {
         state.unlock_for_test(&[18u8; 32]);
         {
             let crypto = state.crypto.read();
-            state.store.save_key_epoch(crypto.as_ref().unwrap(), 3).unwrap();
+            state
+                .store
+                .save_key_epoch(crypto.as_ref().unwrap(), 3)
+                .unwrap();
         }
 
         set_local_key_epoch(&state, 77).unwrap();
@@ -2048,9 +2099,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let status = trigger_sync(&state)
+            .await
+            .expect("sync returns a surfaced status error");
         let error = status.error.expect("unreadable marker must stop sync");
-        assert!(error.contains("authenticate the local vault epoch"), "{error}");
+        assert!(
+            error.contains("authenticate the local vault epoch"),
+            "{error}"
+        );
         server.verify().await;
     }
 
@@ -2116,7 +2172,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let status = trigger_sync(&state).await.expect("sync returns a surfaced status error");
+        let status = trigger_sync(&state)
+            .await
+            .expect("sync returns a surfaced status error");
         let error = status.error.expect("unreadable server data must stop sync");
         assert!(error.contains("could not be authenticated"), "{error}");
         assert!(error.contains("No server data was overwritten"), "{error}");

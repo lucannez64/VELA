@@ -60,7 +60,7 @@ fun RecoverAccountScreen(
     errorMessage: String?,
     isRecovering: Boolean,
     isRecovered: Boolean,
-    onRecover: (serverUrl: String, userId: String, share1B64: String, deviceName: String) -> Unit,
+    onRecover: (serverUrl: String, userId: String, cloudUserId: String, share1Epoch: Long, cloudSplitId: String?, share1B64: String, deviceName: String) -> Unit,
     onProtectBiometric: () -> Unit,
     onProtectPassword: (String) -> Unit,
     onBack: () -> Unit
@@ -72,6 +72,9 @@ fun RecoverAccountScreen(
     var serverUrl by remember { mutableStateOf("") }
     var userId by remember { mutableStateOf("") }
     var share1 by remember { mutableStateOf("") }
+    var share1UserId by remember { mutableStateOf<String?>(null) }
+    var share1SplitId by remember { mutableStateOf("") }
+    var share1Epoch by remember { mutableStateOf("") }
     var deviceName by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showPasswordSetup by remember { mutableStateOf(false) }
@@ -215,6 +218,9 @@ fun RecoverAccountScreen(
                                     if (backup != null) {
                                         userId = backup.userId
                                         share1 = backup.shareB64
+                                        share1UserId = backup.userId
+                                        share1SplitId = backup.splitId.orEmpty()
+                                        share1Epoch = backup.keyEpoch.toString()
                                     } else {
                                         driveError = "No recovery backup found on this Google account"
                                     }
@@ -255,9 +261,33 @@ fun RecoverAccountScreen(
 
                 VelaTextField(
                     value = share1,
-                    onValueChange = { share1 = it },
+                    onValueChange = {
+                        share1 = it
+                        share1UserId = null
+                        share1SplitId = ""
+                    },
                     label = "Recovery Share 1",
                     placeholder = "From Google Drive, or paste it manually",
+                    enabled = !isRecovering
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                VelaTextField(
+                    value = share1Epoch,
+                    onValueChange = { value -> share1Epoch = value.filter(Char::isDigit) },
+                    label = "Recovery share epoch",
+                    placeholder = "From the backup envelope",
+                    enabled = !isRecovering
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                VelaTextField(
+                    value = share1SplitId,
+                    onValueChange = { share1SplitId = it.trim() },
+                    label = "Recovery split ID",
+                    placeholder = "From the backup envelope (blank for legacy)",
                     enabled = !isRecovering
                 )
 
@@ -284,12 +314,22 @@ fun RecoverAccountScreen(
                 VelaButton(
                     text = if (isRecovering) "Recovering..." else "Recover Account",
                     onClick = {
-                        if (userId.isNotBlank() && share1.isNotBlank()) {
-                            onRecover(serverUrl.trim(), userId.trim(), share1.trim(), deviceName.trim())
+                        val epoch = share1Epoch.toLongOrNull()
+                        if (userId.isNotBlank() && share1.isNotBlank() && epoch != null && epoch >= 1) {
+                            onRecover(
+                                serverUrl.trim(),
+                                userId.trim(),
+                                share1UserId ?: userId.trim(),
+                                epoch,
+                                share1SplitId.takeIf { it.isNotBlank() },
+                                share1.trim(),
+                                deviceName.trim()
+                            )
                         }
                     },
                     style = VelaButtonStyle.Gradient,
-                    enabled = userId.isNotBlank() && share1.isNotBlank() && !isRecovering,
+                    enabled = userId.isNotBlank() && share1.isNotBlank() &&
+                        (share1Epoch.toLongOrNull() ?: 0) >= 1 && !isRecovering,
                     icon = Icons.Filled.Restore
                 )
 

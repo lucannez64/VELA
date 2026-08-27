@@ -16,6 +16,10 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::json;
 use tower::ServiceExt;
 use uuid::Uuid;
+use vela_rekey_policy::{
+    MutationAuthority, MutationDecision, MutationKind, MutationRequest, Phase as PolicyPhase,
+    RekeyState as PolicyState, ShadowDecision,
+};
 
 mod helpers;
 
@@ -532,6 +536,89 @@ fn assert_invariants(state: State) {
         assert_eq!(shadows & !CHUNKS, 0);
         assert_eq!(capsules & !DEVICES, 0);
         assert_eq!(state.pending, [None, None]);
+    }
+}
+
+#[test]
+fn verified_mutation_permit_matches_the_m11c_authority_relation() {
+    let kinds = [
+        MutationKind::Vault,
+        MutationKind::Recovery,
+        MutationKind::Enrollment,
+    ];
+    let authorities = [
+        MutationAuthority::Device,
+        MutationAuthority::WebSession,
+        MutationAuthority::RecoveryGrant,
+    ];
+    for state_epoch in 1..=3i64 {
+        for phase in [PolicyPhase::Active, PolicyPhase::Freezing] {
+            let state = PolicyState {
+                epoch: state_epoch,
+                phase,
+            };
+            for declared_epoch in 0..=4i64 {
+                for authority_epoch in 0..=4i64 {
+                    for kind in kinds {
+                        for authority in authorities {
+                            let request = MutationRequest {
+                                declared_epoch,
+                                authority_epoch,
+                                kind,
+                                authority,
+                            };
+                            let scope_allowed = match kind {
+                                MutationKind::Vault => {
+                                    authority == MutationAuthority::Device
+                                        || authority == MutationAuthority::WebSession
+                                }
+                                MutationKind::Recovery => authority == MutationAuthority::Device,
+                                MutationKind::Enrollment => {
+                                    authority == MutationAuthority::Device
+                                        || authority == MutationAuthority::RecoveryGrant
+                                }
+                            };
+                            let request_expected = declared_epoch >= 1
+                                && authority_epoch >= 1
+                                && declared_epoch == authority_epoch
+                                && scope_allowed;
+                            let decision = vela_rekey_policy::plan_active_mutation(request);
+                            assert_eq!(
+                                matches!(decision, MutationDecision::Permit(_)),
+                                request_expected,
+                                "request mismatch: {request:?}"
+                            );
+                            if let MutationDecision::Permit(permit) = decision {
+                                let state_expected =
+                                    phase == PolicyPhase::Active && state_epoch == declared_epoch;
+                                assert_eq!(
+                                    vela_rekey_policy::authorize_active_mutation(state, permit)
+                                        == ShadowDecision::Allow,
+                                    state_expected,
+                                    "state mismatch: {state:?} {request:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let permit = match vela_rekey_policy::plan_active_mutation(MutationRequest {
+            declared_epoch: state_epoch,
+            authority_epoch: state_epoch,
+            kind: MutationKind::Vault,
+            authority: MutationAuthority::Device,
+        }) {
+            MutationDecision::Permit(permit) => permit,
+            MutationDecision::Reject => unreachable!(),
+        };
+        assert!(!vela_rekey_policy::stale_permit_authorizes_successor(
+            PolicyState {
+                epoch: state_epoch,
+                phase: PolicyPhase::Active,
+            },
+            permit,
+        ));
     }
 }
 

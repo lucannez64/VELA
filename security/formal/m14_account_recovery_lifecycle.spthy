@@ -1,0 +1,196 @@
+theory M14_AccountRecoveryLifecycle
+/*
+  WebAuthn-gated account recovery and recovered-device enrollment.
+
+  Challenges bind user, attempt, credential and epoch. A valid assertion with
+  user verification consumes the challenge, releases the exact active share,
+  and mints one credential/epoch-bound grant. Grant redemption is linear and
+  enrolls at most one device. Credential replacement, recovery revocation,
+  expiry, and epoch commit invalidate artifacts issued under prior authority.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+rule SetupRecovery:
+    [ Fr(~user), Fr(~credential), Fr(~credential_secret), Fr(~share),
+      Fr(~epoch), Fr(~device) ]
+  --[ CredentialAuthority(~user, ~credential),
+      EpochAuthority(~user, ~share, ~epoch),
+      DeviceAuthorized(~user, ~device) ]->
+    [ CredentialCurrent(~user, ~credential),
+      EpochCurrent(~user, ~share, ~epoch), RecoveryEnabled(~user),
+      RecoveryReady(~user), RegistrationReady(~user), CommitReady(~user),
+      !CredentialSecret(~user, ~credential, ~credential_secret),
+      !DeviceAuthority(~user, ~device) ]
+
+rule StartRecovery:
+    [ RecoveryReady(U), CredentialCurrent(U, C), EpochCurrent(U, S, E),
+      RecoveryEnabled(U), Fr(~attempt) ]
+  --[ RecoveryStarted(~attempt, U, C, E) ]->
+    [ CredentialCurrent(U, C), EpochCurrent(U, S, E), RecoveryEnabled(U),
+      Pending(~attempt, U, C, E),
+      ChallengeData(~attempt, U, C) ]
+
+rule CredentialProducesAssertion:
+    [ !CredentialSecret(U, C, K), ChallengeData(A, U, C) ]
+  -->
+    [ ValidAssertion(A, U, C, K) ]
+
+rule VerifyAndRelease:
+    [ Pending(A, U, C, E), CredentialCurrent(U, C), EpochCurrent(U, S, E),
+      RecoveryEnabled(U),
+      !CredentialSecret(U, C, K), ValidAssertion(A, U, C, K), Fr(~grant) ]
+  --[ WebAuthnVerified(A, U, C), UserVerified(A, U),
+      ShareReleased(A, U, C, S, E),
+      RecoveryGrantIssued(~grant, A, U, C, E) ]->
+    [ CredentialCurrent(U, C), EpochCurrent(U, S, E), RecoveryEnabled(U),
+      Grant(~grant, A, U, C, E) ]
+
+rule EnrollRecoveredDevice:
+    [ Grant(G, A, U, C, E), CredentialCurrent(U, C), EpochCurrent(U, S, E),
+      RecoveryEnabled(U),
+      Fr(~new_device), Fr(~hybrid_ek), Fr(~hybrid_vk) ]
+  --[ RecoveryGrantConsumed(G, U, C, E),
+      RecoveredDeviceEnrolled(G, U, ~new_device, C, E, ~hybrid_ek, ~hybrid_vk) ]->
+    [ CredentialCurrent(U, C), EpochCurrent(U, S, E), RecoveryEnabled(U),
+      RecoveredDevice(U, ~new_device, ~hybrid_ek, ~hybrid_vk) ]
+
+rule StartCredentialRegistration:
+    [ RegistrationReady(U), CredentialCurrent(U, C),
+      !DeviceAuthority(U, D), Fr(~registration) ]
+  --[ CredentialRegistrationStarted(~registration, U, D, C) ]->
+    [ CredentialCurrent(U, C), RegistrationPending(~registration, U, D, C) ]
+
+rule FinishCredentialRegistration:
+    [ RegistrationPending(R, U, D, Old), CredentialCurrent(U, Old),
+      !DeviceAuthority(U, D), Fr(~new_credential), Fr(~new_secret) ]
+  --[ CredentialReplaced(R, U, D, Old, ~new_credential),
+      CredentialAuthority(U, ~new_credential) ]->
+    [ CredentialCurrent(U, ~new_credential),
+      !CredentialSecret(U, ~new_credential, ~new_secret) ]
+
+rule RevokeRecovery:
+    [ RecoveryEnabled(U), CredentialCurrent(U, C), EpochCurrent(U, S, E) ]
+  --[ RecoveryRevoked(U, C, E) ]->
+    [ Revoked(U) ]
+
+rule CommitEpoch:
+    [ CommitReady(U), EpochCurrent(U, S, E), Fr(~next_epoch), Fr(~next_share) ]
+  --[ EpochCommitted(U, E, ~next_epoch) ]->
+    [ CommittedEpoch(U, ~next_epoch, ~next_share) ]
+
+rule ExpireChallenge:
+    [ Pending(A, U, C, E) ]
+  --[ RecoveryChallengeExpired(A) ]->
+    [ ExpiredChallenge(A) ]
+
+rule ExpireGrant:
+    [ Grant(G, A, U, C, E) ]
+  --[ RecoveryGrantExpired(G) ]->
+    [ ExpiredGrant(G) ]
+
+rule ExpireRegistration:
+    [ RegistrationPending(R, U, D, C) ]
+  --[ RegistrationExpired(R) ]->
+    [ ExpiredRegistration(R) ]
+
+lemma attempt_identifier_is_unique:
+  "All A U1 C1 E1 U2 C2 E2 #i #j.
+     RecoveryStarted(A, U1, C1, E1) @ i & RecoveryStarted(A, U2, C2, E2) @ j
+     ==> #i = #j & U1 = U2 & C1 = C2 & E1 = E2"
+
+lemma share_release_requires_the_exact_attempt:
+  "All A U C S E #i.
+     ShareReleased(A, U, C, S, E) @ i
+     ==> Ex #j. RecoveryStarted(A, U, C, E) @ j & #j < #i"
+
+lemma share_release_requires_webauthn:
+  "All A U C S E #i.
+     ShareReleased(A, U, C, S, E) @ i
+     ==> Ex #j. WebAuthnVerified(A, U, C) @ j & UserVerified(A, U) @ j & #j = #i"
+
+lemma released_share_has_exact_active_authority:
+  "All A U C S E #i.
+     ShareReleased(A, U, C, S, E) @ i
+     ==> (Ex #j. CredentialAuthority(U, C) @ j & #j < #i)
+       & (Ex #k. EpochAuthority(U, S, E) @ k & #k < #i)"
+
+lemma challenge_is_consumed_once:
+  "All A U1 C1 S1 E1 U2 C2 S2 E2 #i #j.
+     ShareReleased(A, U1, C1, S1, E1) @ i &
+     ShareReleased(A, U2, C2, S2, E2) @ j
+     ==> #i = #j"
+
+lemma grant_is_issued_by_share_release:
+  "All G A U C E #i.
+     RecoveryGrantIssued(G, A, U, C, E) @ i
+     ==> Ex S. ShareReleased(A, U, C, S, E) @ i"
+
+lemma enrollment_requires_the_exact_grant:
+  "All G U New C E EK VK #i.
+     RecoveredDeviceEnrolled(G, U, New, C, E, EK, VK) @ i
+     ==> Ex A #j. RecoveryGrantIssued(G, A, U, C, E) @ j & #j < #i"
+
+lemma grant_enrolls_at_most_one_device:
+  "All G U1 N1 C1 E1 EK1 VK1 U2 N2 C2 E2 EK2 VK2 #i #j.
+     RecoveredDeviceEnrolled(G, U1, N1, C1, E1, EK1, VK1) @ i &
+     RecoveredDeviceEnrolled(G, U2, N2, C2, E2, EK2, VK2) @ j
+     ==> #i = #j & U1 = U2 & N1 = N2"
+
+lemma enrollment_consumes_credential_and_epoch_bound_grant:
+  "All G U New C E EK VK #i.
+     RecoveredDeviceEnrolled(G, U, New, C, E, EK, VK) @ i
+     ==> RecoveryGrantConsumed(G, U, C, E) @ i"
+
+lemma credential_replacement_blocks_old_challenge:
+  "All R U D Old New A E S #i #j.
+     CredentialReplaced(R, U, D, Old, New) @ i &
+     ShareReleased(A, U, Old, S, E) @ j
+     ==> not (#i < #j)"
+
+lemma credential_replacement_blocks_old_grant:
+  "All R U D Old New G N E EK VK #i #j.
+     CredentialReplaced(R, U, D, Old, New) @ i &
+     RecoveredDeviceEnrolled(G, U, N, Old, E, EK, VK) @ j
+     ==> not (#i < #j)"
+
+lemma revocation_blocks_later_share_release:
+  "All U C E A S #i #j.
+     RecoveryRevoked(U, C, E) @ i & ShareReleased(A, U, C, S, E) @ j
+     ==> not (#i < #j)"
+
+lemma epoch_commit_blocks_old_challenge:
+  "All U E Next A C S #i #j.
+     EpochCommitted(U, E, Next) @ i & ShareReleased(A, U, C, S, E) @ j
+     ==> not (#i < #j)"
+
+lemma epoch_commit_blocks_old_grant:
+  "All U E Next G N C EK VK #i #j.
+     EpochCommitted(U, E, Next) @ i &
+     RecoveredDeviceEnrolled(G, U, N, C, E, EK, VK) @ j
+     ==> not (#i < #j)"
+
+lemma expired_challenge_cannot_release_share:
+  "All A #i U C S E #j.
+     RecoveryChallengeExpired(A) @ i & ShareReleased(A, U, C, S, E) @ j
+     ==> not (#i < #j)"
+
+lemma expired_grant_cannot_enroll:
+  "All G #i U N C E EK VK #j.
+     RecoveryGrantExpired(G) @ i & RecoveredDeviceEnrolled(G, U, N, C, E, EK, VK) @ j
+     ==> not (#i < #j)"
+
+lemma credential_registration_requires_device_authority_and_is_one_shot:
+  "All R U D Old New #i.
+     CredentialReplaced(R, U, D, Old, New) @ i
+     ==> (Ex #j. DeviceAuthorized(U, D) @ j & #j < #i)
+       & (All U2 D2 O2 N2 #k. CredentialReplaced(R, U2, D2, O2, N2) @ k ==> #k = #i)"
+
+lemma legitimate_recovery_and_enrollment_is_reachable:
+  exists-trace
+  "Ex A U C S E G N EK VK #i #j.
+     ShareReleased(A, U, C, S, E) @ i &
+     RecoveredDeviceEnrolled(G, U, N, C, E, EK, VK) @ j & #i < #j"
+
+end

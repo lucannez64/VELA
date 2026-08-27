@@ -125,7 +125,7 @@ fun VelaNavHost(
     /// and only returns once the other device's user has confirmed it.
     onJoinDeviceV3: suspend (String, String, (String) -> Unit) -> Unit,
     onNavigateToRecover: () -> Unit,
-    onRecoverAccount: (String, String, String, String) -> Unit,
+    onRecoverAccount: (String, String, String, Long, String?, String, String) -> Unit,
     onProtectEnrolledBiometric: () -> Unit,
     onProtectEnrolledPassword: (String) -> Unit,
     serverUrl: String,
@@ -328,12 +328,20 @@ fun VelaNavHost(
                     errorMessage = error,
                     isRecovering = recovering,
                     isRecovered = recovered,
-                    onRecover = { url, userIdInput, share1B64, deviceName ->
+                    onRecover = { url, userIdInput, cloudUserId, share1Epoch, cloudSplitId, share1B64, deviceName ->
                         recovering = true
                         error = null
                         scope.launch(Dispatchers.IO) {
                             try {
-                                onRecoverAccount(url, userIdInput, share1B64, deviceName)
+                                onRecoverAccount(
+                                    url,
+                                    userIdInput,
+                                    cloudUserId,
+                                    share1Epoch,
+                                    cloudSplitId,
+                                    share1B64,
+                                    deviceName,
+                                )
                                 withContext(Dispatchers.Main) {
                                     recovered = true
                                 }

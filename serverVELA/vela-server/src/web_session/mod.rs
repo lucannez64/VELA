@@ -27,9 +27,13 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
+use vela_session_policy::{
+    GrantDecision, GrantFacts, SessionMode as PolicyMode, SessionPhase as PolicyPhase,
+    TokenDecision, WebTokenFacts,
+};
 
 use crate::{
-    auth::token::{TokenScope, TokenService},
+    auth::token::TokenService,
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
@@ -56,8 +60,9 @@ const PENDING_TTL_SECS: i64 = 5 * 60;
 /// RO snapshots seal the whole decrypted vault, so allow a generous ceiling.
 const MAX_CAPSULE_BYTES: usize = 16 * 1024 * 1024;
 
+/// M25: the clamp lives in the verified policy layer.
 fn clamp_ttl(requested: Option<i64>) -> i64 {
-    requested.unwrap_or(DEFAULT_TTL_SECS).clamp(MIN_TTL_SECS, MAX_TTL_SECS)
+    vela_session_policy::clamp_web_ttl(requested)
 }
 
 fn decode_exact(b64: &str, len: usize, what: &str) -> Result<()> {
@@ -122,7 +127,11 @@ pub async fn post_start(
 
     decode_exact(&body.ephemeral_pk, EPHEMERAL_PK_LEN, "ephemeral_pk")?;
     decode_exact(&body.link_nonce, LINK_NONCE_LEN, "link_nonce")?;
-    decode_exact(&body.poll_secret_hash, POLL_SECRET_HASH_LEN, "poll_secret_hash")?;
+    decode_exact(
+        &body.poll_secret_hash,
+        POLL_SECRET_HASH_LEN,
+        "poll_secret_hash",
+    )?;
     if let Some(ref vk) = body.web_vk {
         decode_exact(vk, WEB_VK_LEN, "web_vk")?;
     }
@@ -232,8 +241,13 @@ async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
     })
 }
 
+/// M25: the expiry decision lives in the verified policy layer; the
+/// handler converts the stored timestamp to unix seconds.
 fn is_expired(expires_at: Option<DateTime<Utc>>) -> bool {
-    expires_at.map(|e| Utc::now() > e).unwrap_or(false)
+    vela_session_policy::web_session_expired(
+        Utc::now().timestamp(),
+        expires_at.map(|e| e.timestamp()),
+    )
 }
 
 /// Verify the caller is the browser that started this session.
@@ -406,7 +420,13 @@ pub async fn get_keys(
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(KeysResponse { ephemeral_pk, web_vk })))
+    Ok((
+        headers,
+        Json(KeysResponse {
+            ephemeral_pk,
+            web_vk,
+        }),
+    ))
 }
 
 // ── POST /web-session/:id/grant (approver) ──────────────────────────────────────
@@ -480,7 +500,9 @@ pub async fn post_grant(
     // any failure yields the same error so an attacker cannot tell a missing
     // session from a nonce mismatch.
     let given_nonce = B64.decode(body.link_nonce.as_bytes()).map_err(|_| {
-        AppError::Unauthorized("link_nonce mismatch — scanned QR does not match this session".into())
+        AppError::Unauthorized(
+            "link_nonce mismatch — scanned QR does not match this session".into(),
+        )
     })?;
     let stored_nonce = existing
         .link_nonce
@@ -503,6 +525,33 @@ pub async fn post_grant(
         ));
     }
 
+    let grant_decision = vela_session_policy::plan_grant(GrantFacts {
+        phase: match existing.status.as_str() {
+            "pending" => PolicyPhase::Pending,
+            "granted" => PolicyPhase::Granted,
+            "revoked" => PolicyPhase::Revoked,
+            _ => PolicyPhase::Expired,
+        },
+        mode: if mode == "rw" {
+            PolicyMode::ReadWrite
+        } else {
+            PolicyMode::ReadOnly
+        },
+        approver_matches: existing.approver_user_id == Some(session.user_id),
+        nonce_matches: ct_eq(&given_nonce, &stored_nonce),
+        has_web_vk: existing.web_vk.is_some(),
+        declared_epoch: body.key_epoch,
+    });
+    let GrantDecision::Grant(grant_permit) = grant_decision else {
+        return Err(AppError::Forbidden(
+            "web session grant capability facts are inconsistent".into(),
+        ));
+    };
+    let verified_mode = match grant_permit.mode() {
+        PolicyMode::ReadOnly => "ro",
+        PolicyMode::ReadWrite => "rw",
+    };
+
     let ttl = clamp_ttl(body.ttl_secs);
     let expires_at = Utc::now() + chrono::Duration::seconds(ttl);
 
@@ -522,15 +571,15 @@ pub async fn post_grant(
                )",
             vec![
                 TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(mode.to_string()),
+                TursoValue::Text(verified_mode.to_string()),
                 TursoValue::Text(body.capsule),
                 TursoValue::Text(session.device_id.to_string()),
                 TursoValue::Text(expires_at.to_rfc3339()),
-                TursoValue::Integer(body.key_epoch),
+                TursoValue::Integer(grant_permit.epoch()),
                 TursoValue::Text(id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(body.key_epoch),
+                TursoValue::Integer(grant_permit.epoch()),
             ],
         )
         .await
@@ -545,7 +594,13 @@ pub async fn post_grant(
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(GrantResponse { granted: true, expires_at })))
+    Ok((
+        headers,
+        Json(GrantResponse {
+            granted: true,
+            expires_at,
+        }),
+    ))
 }
 
 // ── POST /web-session/:id/token (browser, RW) ───────────────────────────────────
@@ -623,7 +678,8 @@ pub async fn post_token(
         .decode(&body.challenge)
         .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
 
-    if let Err(e) = verify_auth_signature(&web_vk, &challenge_bytes, &id.to_string(), &body.signature)
+    if let Err(e) =
+        verify_auth_signature(&web_vk, &challenge_bytes, &id.to_string(), &body.signature)
     {
         rate_limit::record_backoff_failure(&state.store, &backoff_scope)?;
         return Err(e);
@@ -643,14 +699,36 @@ pub async fn post_token(
     // capsule. Using the epoch at token-exchange time would let a pre-rotation
     // grant redeemed after commit masquerade as current.
     let key_epoch = session.key_epoch.unwrap_or(1);
+    let now = Utc::now();
+    let decision = vela_session_policy::plan_web_session_token(
+        WebTokenFacts {
+            phase: match session.status.as_str() {
+                "pending" => PolicyPhase::Pending,
+                "granted" => PolicyPhase::Granted,
+                "revoked" => PolicyPhase::Revoked,
+                _ => PolicyPhase::Expired,
+            },
+            mode: match session.mode.as_deref() {
+                Some("rw") => PolicyMode::ReadWrite,
+                _ => PolicyMode::ReadOnly,
+            },
+            approver_bound: session.user_id.is_some()
+                && session.user_id == session.approver_user_id,
+            nonce_bound: session.link_nonce.is_some(),
+            challenge_consumed: consumed.is_some(),
+            signature_valid: true,
+        },
+        now.timestamp(),
+        expires_at.timestamp(),
+        key_epoch,
+    );
+    let TokenDecision::Issue(plan) = decision else {
+        return Err(AppError::Unauthorized(
+            "web session capability facts are inconsistent".into(),
+        ));
+    };
     let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
-    let (token, jti) = ts.issue_scoped_at_epoch(
-        user_id,
-        id,
-        Some(expires_at),
-        TokenScope::WebSession,
-        Some(key_epoch),
-    )?;
+    let (token, jti) = ts.issue_from_plan(user_id, id, plan)?;
     rate_limit::track_device_jti(&state.store, &id.to_string(), &jti)?;
 
     tracing::info!(session_id = %id, user_id = %user_id, "web session rw token issued");

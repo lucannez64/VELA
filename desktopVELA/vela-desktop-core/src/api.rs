@@ -42,6 +42,10 @@ pub struct RegisterRequest {
     pub device_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub share_ek: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_ek_signed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_ek_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -818,7 +822,10 @@ impl ApiClient {
             "device_name": device_name,
             "device_type": device_type,
         });
-        let url = format!("{}/device/enrollment-grant/{}/claim", self.base_url, grant_id);
+        let url = format!(
+            "{}/device/enrollment-grant/{}/claim",
+            self.base_url, grant_id
+        );
         let resp = self
             .send_request(false, move |client| client.post(&url).json(&body))
             .await?;
@@ -1104,10 +1111,7 @@ impl ApiClient {
         let resp = self
             .send_request(false, |client| {
                 client
-                    .get(format!(
-                        "{}/share/recipient/{}/ek",
-                        self.base_url, user_id
-                    ))
+                    .get(format!("{}/share/recipient/{}/ek", self.base_url, user_id))
                     .header("Authorization", format!("Bearer {}", token))
             })
             .await?;
@@ -1178,7 +1182,10 @@ impl ApiClient {
         let resp = self
             .send_request(false, |client| {
                 client
-                    .post(format!("{}/web-session/{}/grant", self.base_url, session_id))
+                    .post(format!(
+                        "{}/web-session/{}/grant",
+                        self.base_url, session_id
+                    ))
                     .header("Authorization", format!("Bearer {}", token))
                     .json(&GrantBody {
                         mode,
@@ -1227,7 +1234,11 @@ impl ApiClient {
     }
 
     /// Revoke an active web session.
-    pub async fn revoke_web_session(&self, token: &str, session_id: &str) -> Result<Option<String>> {
+    pub async fn revoke_web_session(
+        &self,
+        token: &str,
+        session_id: &str,
+    ) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
@@ -1250,13 +1261,25 @@ impl ApiClient {
 
     /// Register (or update) the caller's own share encapsulation key. Backfill
     /// path for accounts created before share keys existed.
-    pub async fn put_my_share_ek(&self, token: &str, share_ek: &str) -> Result<Option<String>> {
+    pub async fn put_my_share_ek(
+        &self,
+        token: &str,
+        share_ek: &str,
+        device_id: &str,
+        signed_at: &str,
+        signature: &str,
+    ) -> Result<Option<String>> {
         let resp = self
             .send_request(false, |client| {
                 client
                     .put(format!("{}/share/my-ek", self.base_url))
                     .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({ "share_ek": share_ek }))
+                    .json(&serde_json::json!({
+                        "share_ek": share_ek,
+                        "device_id": device_id,
+                        "signed_at": signed_at,
+                        "signature": signature,
+                    }))
             })
             .await?;
 
@@ -1517,6 +1540,10 @@ impl ApiClient {
                     .json(&serde_json::json!({
                         "share": share.share,
                         "key_epoch": share.key_epoch,
+                        "split_id": share.split_id,
+                        // M18: blind RMS commitment staged and finalized with
+                        // the share; enables possession-proof recovery.
+                        "possession_hash": share.possession_hash,
                     }))
             })
             .await?;
@@ -1525,6 +1552,78 @@ impl ApiClient {
             anyhow::bail!("Put recovery share failed: {}", resp.status());
         }
 
+        Ok(extract_new_token(&resp))
+    }
+
+    /// Start an M18 RMS-possession recovery attempt: the server returns a
+    /// fresh challenge bound to a single-use attempt id, releasing nothing.
+    pub async fn initiate_possession_recovery(
+        &self,
+        user_id: &str,
+    ) -> Result<PossessionInitiateResponse> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/recovery/initiate-proof", self.base_url))
+                    .json(&serde_json::json!({ "user_id": user_id }))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Possession recovery initiation failed: {}", resp.status());
+        }
+
+        let result: PossessionInitiateResponse = resp.json().await?;
+        Ok(result)
+    }
+
+    /// Redeem a possession proof for a single-use device-enrollment grant.
+    pub async fn recover_with_possession_proof(
+        &self,
+        user_id: &str,
+        recovery_id: &str,
+        proof_b64: &str,
+    ) -> Result<PossessionRecoverResponse> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/recovery/recover/proof", self.base_url))
+                    .json(&serde_json::json!({
+                        "user_id": user_id,
+                        "recovery_id": recovery_id,
+                        "proof_b64": proof_b64,
+                    }))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("RMS possession proof failed: {}", resp.status());
+        }
+
+        let result: PossessionRecoverResponse = resp.json().await?;
+        Ok(result)
+    }
+
+    pub async fn finalize_recovery_share(
+        &self,
+        token: &str,
+        key_epoch: i64,
+        split_id: &str,
+    ) -> Result<Option<String>> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/recovery/share/finalize", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&serde_json::json!({
+                        "key_epoch": key_epoch,
+                        "split_id": split_id,
+                    }))
+            })
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("Finalize recovery share failed: {}", resp.status());
+        }
         Ok(extract_new_token(&resp))
     }
 
@@ -1670,6 +1769,8 @@ pub struct RecoveryRecoverRequest {
 pub struct RecoveryRecoverResponse {
     pub share: String,
     pub key_epoch: i64,
+    #[serde(default)]
+    pub split_id: Option<String>,
     pub recovery_grant: String,
 }
 
@@ -1691,12 +1792,36 @@ pub struct EnrollDeviceViaRecoveryResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryShareResponse {
     pub share: String,
+    #[serde(default)]
+    pub split_id: Option<String>,
+    #[serde(default = "default_recovery_epoch")]
+    pub key_epoch: i64,
+}
+
+fn default_recovery_epoch() -> i64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryShareData {
     pub share: String,
     pub key_epoch: i64,
+    pub split_id: String,
+    /// Base64 blind commitment to the RMS (`vela rms possession v1`).
+    pub possession_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PossessionInitiateResponse {
+    pub recovery_id: uuid::Uuid,
+    pub challenge_b64: String,
+    pub key_epoch: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PossessionRecoverResponse {
+    pub key_epoch: i64,
+    pub recovery_grant: uuid::Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1877,7 +2002,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/vault/sync"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "chunks": [] })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "chunks": [] })),
+            )
             .mount(&server)
             .await;
         let client = ApiClient::new(&server.uri());
@@ -1914,11 +2041,16 @@ mod tests {
             .and(path("/vault/chunk/c1"))
             .and(header("If-Match", "5"))
             .and(header("X-Lamport-Clock", "77"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "version": 6 })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "version": 6 })),
+            )
             .mount(&server)
             .await;
         let client = ApiClient::new(&server.uri());
-        let (version, _token) = client.put_chunk("t", "c1", 5, vec![9u8; 4], 77).await.unwrap();
+        let (version, _token) = client
+            .put_chunk("t", "c1", 5, vec![9u8; 4], 77)
+            .await
+            .unwrap();
         assert_eq!(version, 6);
     }
 
@@ -1931,8 +2063,7 @@ mod tests {
             .and(header("X-Vela-Epoch", "2"))
             .and(header("X-Vela-Rekey-Id", "attempt-2"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "version": 1 })),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "version": 1 })),
             )
             .mount(&server)
             .await;
@@ -1951,9 +2082,10 @@ mod tests {
             .and(path("/vault/chunk/c1"))
             .and(header("If-Match", "4"))
             .and(header("X-Vela-Epoch", "3"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({ "deleted": true, "version": 4 }),
-            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "deleted": true, "version": 4 })),
+            )
             .mount(&server)
             .await;
         let client = ApiClient::new(&server.uri());
@@ -1971,10 +2103,25 @@ mod tests {
             .and(body_json(serde_json::json!({
                 "share": "c2hhcmU=",
                 "key_epoch": 4,
+                "split_id": "11111111-1111-1111-1111-111111111111",
+                "possession_hash": "cG9zc2Vzc2lvbg==",
             })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({ "stored": true }),
-            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "staged": true,
+                "split_id": "11111111-1111-1111-1111-111111111111"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/recovery/share/finalize"))
+            .and(body_json(serde_json::json!({
+                "key_epoch": 4,
+                "split_id": "11111111-1111-1111-1111-111111111111",
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "finalized": true,
+                "split_id": "11111111-1111-1111-1111-111111111111"
+            })))
             .mount(&server)
             .await;
         Mock::given(method("DELETE"))
@@ -1991,8 +2138,14 @@ mod tests {
                 RecoveryShareData {
                     share: "c2hhcmU=".into(),
                     key_epoch: 4,
+                    split_id: "11111111-1111-1111-1111-111111111111".into(),
+                    possession_hash: "cG9zc2Vzc2lvbg==".into(),
                 },
             )
+            .await
+            .unwrap();
+        client
+            .finalize_recovery_share("t", 4, "11111111-1111-1111-1111-111111111111")
             .await
             .unwrap();
         client.delete_recovery_share("t", 4).await.unwrap();
@@ -2022,7 +2175,11 @@ mod tests {
             .mount(&server)
             .await;
         let client = ApiClient::new(&server.uri());
-        let err = client.put_chunk("t", "c1", 5, vec![9u8; 4], 77).await.unwrap_err().to_string();
+        let err = client
+            .put_chunk("t", "c1", 5, vec![9u8; 4], 77)
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("Chunk upload failed"), "{err}");
     }
 

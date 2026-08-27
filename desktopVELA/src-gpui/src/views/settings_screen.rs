@@ -90,6 +90,8 @@ pub struct SettingsScreen {
     cloud_backup_error: Option<SharedString>,
     show_trusted_contact_modal: bool,
     trusted_contact_share: Option<SharedString>,
+    /// Contact KEM public key pasted by the user before sealing (M18).
+    contact_key_state: gpui::Entity<EditableTextState>,
     loading_trusted_contact: bool,
     acknowledging_trusted_contact: bool,
     trusted_contact_error: Option<SharedString>,
@@ -174,6 +176,7 @@ impl SettingsScreen {
             cloud_backup_error: None,
             show_trusted_contact_modal: false,
             trusted_contact_share: None,
+            contact_key_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             loading_trusted_contact: false,
             acknowledging_trusted_contact: false,
             trusted_contact_error: None,
@@ -334,22 +337,49 @@ impl SettingsScreen {
     fn open_trusted_contact_modal(&mut self, cx: &mut Context<Self>) {
         self.trusted_contact_error = None;
         self.trusted_contact_share = None;
-        self.loading_trusted_contact = true;
+        self.loading_trusted_contact = false;
         self.show_trusted_contact_modal = true;
+        cx.notify();
+    }
+
+    /// Seal Share 3 into an authenticated envelope for the pasted contact
+    /// public key (M18). The result is a self-describing handoff the contact's
+    /// VELA app can open; nothing usable leaks if it is forwarded.
+    fn seal_trusted_contact_envelope(&mut self, cx: &mut Context<Self>) {
+        let contact_key = self.contact_key_state.read(cx).as_str().trim().to_string();
+        if contact_key.is_empty() {
+            self.trusted_contact_error = Some("Paste your contact's public key first".into());
+            cx.notify();
+            return;
+        }
+        self.trusted_contact_error = None;
+        self.loading_trusted_contact = true;
         cx.notify();
 
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn_guarded("read trusted contact share", async move {
-                    vela_desktop_core::recovery::get_trusted_contact_share(&app_state).await
+                .background_spawn_guarded("seal trusted contact envelope", async move {
+                    vela_desktop_core::recovery::seal_trusted_contact_share(
+                        &app_state,
+                        &contact_key,
+                    )
+                    .await
                 })
                 .await
-                .unwrap_or_else(|| Err("Generating the recovery share failed unexpectedly".to_string()));
+                .unwrap_or_else(|| Err("Sealing the recovery envelope failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.loading_trusted_contact = false;
                 match result {
-                    Ok(share) => this.trusted_contact_share = Some(share.into()),
+                    Ok(handoff) => {
+                        // Keep the handoff self-describing so the contact's
+                        // app can verify what it opens.
+                        this.trusted_contact_share = Some(
+                            serde_json::to_string(&handoff)
+                                .unwrap_or_else(|_| "{}".into())
+                                .into(),
+                        );
+                    }
                     Err(e) => this.trusted_contact_error = Some(e.into()),
                 }
                 cx.notify();
@@ -2748,16 +2778,43 @@ fn trusted_contact_modal(
     backdrop.child(
         body.child(modal_title(palette, "Trusted contact"))
             .child(div().text_sm().text_color(palette.on_surface_variant).child(
-                "One of three recovery pieces. Send it to someone you trust — they only need to \
-                 hand it back if you lose every device.",
+                "One of three recovery pieces. Paste your contact's public key to seal this \
+                 recovery share into an envelope only they can open — they only need to hand \
+                 it back if you lose every device.",
             ))
+            .when(screen.trusted_contact_share.is_none(), |el| {
+                el.child(fonts::tracked_text("CONTACT PUBLIC KEY", px(10.), 0.15).text_xs().text_color(palette.outline))
+                    .child(
+                        text_input("contact-public-key-input")
+                            .state(screen.contact_key_state.downgrade())
+                            .placeholder("Base64 contact public key")
+                            .caret_blink_interval_500ms()
+                            .font_family(fonts::MONO)
+                            .bg(palette.surface_container_highest)
+                            .text_color(palette.on_surface)
+                            .caret_color(palette.on_surface)
+                            .rounded_lg()
+                            .p_3()
+                            .w_full()
+                            .min_h_auto(),
+                    )
+                    .child(
+                        div().flex().justify_end().child(
+                            action_button(palette, "seal-contact-envelope", "Seal envelope", window, cx)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| this.seal_trusted_contact_envelope(cx)),
+                                ),
+                        ),
+                    )
+            })
             .map(|el| {
                 if screen.loading_trusted_contact {
                     return el.child(
                         div()
                             .text_sm()
                             .text_color(palette.on_surface_variant)
-                            .child("Generating recovery share…"),
+                            .child("Sealing recovery envelope…"),
                     );
                 }
                 match screen.trusted_contact_share.as_ref() {
@@ -2785,7 +2842,7 @@ fn trusted_contact_modal(
             .when(has_share, |el| {
                 el.child(
                     div().flex().justify_end().child(
-                        action_button(palette, "copy-trusted-contact-share", "Copy share", window, cx)
+                        action_button(palette, "copy-trusted-contact-share", "Copy envelope", window, cx)
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, _, cx| this.copy_trusted_contact_share(cx)),

@@ -76,9 +76,8 @@ fuzz_target!(|data: &[u8]| {
             let payload: Option<Vec<u8>> = $payload;
             let old_leaf = oram.prepare_access(&id).unwrap();
             let path = server.download(height, old_leaf);
-            let (got, write_back) = oram.access(path, &id, payload).unwrap();
-            let new_leaf = oram.position_map()[&id];
-            server.upload(height, new_leaf, write_back);
+            let (got, write_back) = oram.access(path, old_leaf, &id, payload).unwrap();
+            server.upload(height, old_leaf, write_back);
             got
         }};
     }

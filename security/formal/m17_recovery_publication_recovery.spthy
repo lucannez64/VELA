@@ -1,0 +1,201 @@
+theory M17_RecoveryPublicationRecovery
+/*
+  Crash-consistent client recovery publication.
+
+  A durable journal binds one account, epoch and split before external I/O.
+  Each external operation may either commit its local phase or crash first;
+  restart retries the same idempotent operation and same split. Rotation
+  consumes the active epoch authority, and abort exists only before server
+  finalization.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+rule CreateDurableJournal:
+    [ Fr(~user), Fr(~epoch), Fr(~split), Fr(~cloud), Fr(~server) ]
+  --[ JournalCommitted(~user, ~epoch, ~split, ~cloud, ~server) ]->
+    [ !PublicationJournal(~user, ~epoch, ~split, ~cloud, ~server),
+      Generated(~user, ~epoch, ~split) ]
+
+rule StageServerAndCommit:
+    [ !PublicationJournal(U, E, S, C, V), Generated(U, E, S) ]
+  --[ ExternalEffect('stage', U, E, S), ServerStaged(U, E, S, V) ]->
+    [ ServerCommitted(U, E, S) ]
+
+rule StageServerThenCrash:
+    [ !PublicationJournal(U, E, S, C, V), Generated(U, E, S) ]
+  --[ ExternalEffect('stage', U, E, S), ServerStaged(U, E, S, V),
+      CrashAfter('stage', U, E, S) ]->
+    [ RetryServer(U, E, S) ]
+
+rule ResumeServerStage:
+    [ !PublicationJournal(U, E, S, C, V), RetryServer(U, E, S) ]
+  --[ ExternalEffect('stage', U, E, S), Retried('stage', U, E, S) ]->
+    [ ServerCommitted(U, E, S) ]
+
+rule UploadCloudAndCommit:
+    [ !PublicationJournal(U, E, S, C, V), ServerCommitted(U, E, S) ]
+  --[ ExternalEffect('cloud', U, E, S), CloudCandidateDurable(U, E, S, C) ]->
+    [ CloudCommitted(U, E, S) ]
+
+rule UploadCloudThenCrash:
+    [ !PublicationJournal(U, E, S, C, V), ServerCommitted(U, E, S) ]
+  --[ ExternalEffect('cloud', U, E, S), CloudCandidateDurable(U, E, S, C),
+      CrashAfter('cloud', U, E, S) ]->
+    [ RetryCloud(U, E, S) ]
+
+rule ResumeCloudUpload:
+    [ !PublicationJournal(U, E, S, C, V), RetryCloud(U, E, S) ]
+  --[ ExternalEffect('cloud', U, E, S), Retried('cloud', U, E, S) ]->
+    [ CloudCommitted(U, E, S) ]
+
+rule FinalizeServerAndCommit:
+    [ !PublicationJournal(U, E, S, C, V), CloudCommitted(U, E, S) ]
+  --[ ExternalEffect('finalize', U, E, S), ServerFinalized(U, E, S, C, V) ]->
+    [ FinalizedCommitted(U, E, S) ]
+
+rule FinalizeServerThenCrash:
+    [ !PublicationJournal(U, E, S, C, V), CloudCommitted(U, E, S) ]
+  --[ ExternalEffect('finalize', U, E, S), ServerFinalized(U, E, S, C, V),
+      CrashAfter('finalize', U, E, S) ]->
+    [ RetryFinalize(U, E, S) ]
+
+rule ResumeServerFinalization:
+    [ !PublicationJournal(U, E, S, C, V), RetryFinalize(U, E, S) ]
+  --[ ExternalEffect('finalize', U, E, S), Retried('finalize', U, E, S) ]->
+    [ FinalizedCommitted(U, E, S) ]
+
+rule PromoteCloudAndCommit:
+    [ !PublicationJournal(U, E, S, C, V), FinalizedCommitted(U, E, S) ]
+  --[ ExternalEffect('promote', U, E, S), CloudPromoted(U, E, S, C) ]->
+    [ ActiveCommitted(U, E, S) ]
+
+rule PromoteCloudThenCrash:
+    [ !PublicationJournal(U, E, S, C, V), FinalizedCommitted(U, E, S) ]
+  --[ ExternalEffect('promote', U, E, S), CloudPromoted(U, E, S, C),
+      CrashAfter('promote', U, E, S) ]->
+    [ RetryPromote(U, E, S) ]
+
+rule ResumeCloudPromotion:
+    [ !PublicationJournal(U, E, S, C, V), RetryPromote(U, E, S) ]
+  --[ ExternalEffect('promote', U, E, S), Retried('promote', U, E, S) ]->
+    [ ActiveCommitted(U, E, S) ]
+
+rule CompletePublication:
+    [ !PublicationJournal(U, E, S, C, V), ActiveCommitted(U, E, S) ]
+  --[ RecoveryPublicationReady(U, E, S, C, V) ]->
+    [ ]
+
+rule AbortGenerated:
+    [ Generated(U, E, S) ]
+  --[ PublicationAborted(U, E, S) ]-> [ ]
+
+rule AbortAfterServerCandidate:
+    [ ServerCommitted(U, E, S) ]
+  --[ PublicationAborted(U, E, S) ]-> [ ]
+
+rule AbortAfterCloudCandidate:
+    [ CloudCommitted(U, E, S) ]
+  --[ PublicationAborted(U, E, S) ]-> [ ]
+
+rule RetireGeneratedOnRotation:
+    [ Generated(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetireServerCommittedOnRotation:
+    [ ServerCommitted(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetireCloudCommittedOnRotation:
+    [ CloudCommitted(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetireFinalizedCommittedOnRotation:
+    [ FinalizedCommitted(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetireActiveCommittedOnRotation:
+    [ ActiveCommitted(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetireServerRetryOnRotation:
+    [ RetryServer(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetireCloudRetryOnRotation:
+    [ RetryCloud(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetireFinalizeRetryOnRotation:
+    [ RetryFinalize(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+rule RetirePromoteRetryOnRotation:
+    [ RetryPromote(U, E, S) ]
+  --[ EpochRotated(U, E), JournalRetired(U, E) ]-> [ ]
+
+lemma server_stage_requires_durable_journal:
+  "All U E S V #i. ServerStaged(U, E, S, V) @ i
+     ==> Ex C #j. JournalCommitted(U, E, S, C, V) @ j & #j < #i"
+
+lemma cloud_upload_requires_durable_journal:
+  "All U E S C #i. CloudCandidateDurable(U, E, S, C) @ i
+     ==> Ex V #j. JournalCommitted(U, E, S, C, V) @ j & #j < #i"
+
+lemma server_finalization_requires_durable_journal:
+  "All U E S C V #i. ServerFinalized(U, E, S, C, V) @ i
+     ==> Ex #j. JournalCommitted(U, E, S, C, V) @ j & #j < #i"
+
+lemma cloud_promotion_requires_durable_journal:
+  "All U E S C #i. CloudPromoted(U, E, S, C) @ i
+     ==> Ex V #j. JournalCommitted(U, E, S, C, V) @ j & #j < #i"
+
+lemma finalization_requires_exact_candidates:
+  "All U E S C V #i. ServerFinalized(U, E, S, C, V) @ i
+     ==> (Ex #j #k. ServerStaged(U, E, S, V) @ j &
+                      CloudCandidateDurable(U, E, S, C) @ k & #j < #i & #k < #i)"
+
+lemma promotion_requires_exact_finalization:
+  "All U E S C #i. CloudPromoted(U, E, S, C) @ i
+     ==> Ex V #j. ServerFinalized(U, E, S, C, V) @ j & #j < #i"
+
+lemma readiness_requires_exact_promotion:
+  "All U E S C V #i. RecoveryPublicationReady(U, E, S, C, V) @ i
+     ==> Ex #j. CloudPromoted(U, E, S, C) @ j & #j < #i"
+
+lemma readiness_keeps_one_journal_identity:
+  "All U E S C V #i. RecoveryPublicationReady(U, E, S, C, V) @ i
+     ==> Ex #j. JournalCommitted(U, E, S, C, V) @ j & #j < #i"
+
+lemma retry_requires_a_prior_crash:
+  "All Op U E S #i. Retried(Op, U, E, S) @ i
+     ==> Ex #j. CrashAfter(Op, U, E, S) @ j & #j < #i"
+
+lemma retry_preserves_external_identity:
+  "All Op U E S #i. Retried(Op, U, E, S) @ i
+     ==> Ex #j. ExternalEffect(Op, U, E, S) @ j & #j < #i"
+
+lemma rotation_blocks_old_epoch_external_effects:
+  "All U E Op S #i #j. EpochRotated(U, E) @ i & ExternalEffect(Op, U, E, S) @ j
+     ==> not (#i < #j)"
+
+lemma finalized_publication_cannot_be_aborted:
+  "All U E S C V #i #j. ServerFinalized(U, E, S, C, V) @ i &
+                            PublicationAborted(U, E, S) @ j
+     ==> not (#i < #j)"
+
+lemma four_crashes_resume_to_ready:
+  exists-trace
+  "Ex U E S C V #a #b #c #d #r.
+     CrashAfter('stage', U, E, S) @ a &
+     CrashAfter('cloud', U, E, S) @ b &
+     CrashAfter('finalize', U, E, S) @ c &
+     CrashAfter('promote', U, E, S) @ d &
+     RecoveryPublicationReady(U, E, S, C, V) @ r"
+
+lemma stale_journal_retirement_is_reachable:
+  exists-trace
+  "Ex U E #i. JournalRetired(U, E) @ i"
+
+end

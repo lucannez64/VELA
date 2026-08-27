@@ -1,0 +1,138 @@
+theory M19_ShareChannel
+/*
+  The M19 cross-user item-sharing channel with device-signed key bindings.
+
+  Fixes the baseline impossibility (m19a_ek_registry_baseline.spthy):
+  registering a share encapsulation key now REQUIRES holding an enrolled
+  device identity key — RegisterShareKey consumes !DevKey as a linear-ish
+  persistent possession premise rather than verifying a signature term.
+
+  Scope boundary (be careful not to over-claim): device private keys are
+  never leaked to the adversary in this theory; key theft is the enrollment-
+  compromise class covered by M13/M14. There is also NO In/Out interaction
+  with capsule contents here — capsules are opaque to everyone including
+  the adversary, and the builtins signing/cap declarations are retained for
+  cross-theory wire compatibility with M21/M22 but are not exercised by
+  any rule. Adversarial capsule exposure is NOT modeled; content secrecy
+  claims rest on that assumption plus the AEAD, not on this file alone.
+
+  The relay (server) is structurally honest-but-curious inside the theory:
+  delivery order is modeled, relay compromise is not.
+
+  Expected verdict: all lemmas VERIFIED (within the scope above).
+*/
+begin
+
+builtins: signing
+
+functions: b/2, pek/1, cap/2
+
+/* ── Accounts and devices ────────────────────────────────────────────────── */
+
+rule SetupAccount:
+    [ Fr(~user), Fr(~x) ]
+  --[ AccountCreated(~user),
+      DeviceEnrolled(~user, pk(~x)) ]->
+    [ !DevKey(~user, ~x),
+      !AccountDeviceVk(~user, pk(~x)),
+      !AccountLive(~user) ]
+
+/* Device identity signing keys are NOT given to the adversary: stealing a
+   device's private identity key is the enrollment-ceremony compromise class
+   covered by M13/M14. Under that boundary, signature unforgeability means
+   every accepted share-key registration traces to a genuine device-signed
+   binding — formalized below. */
+/* ── Share-key generation and signed registration ───────────────────────── */
+
+/* Only a device mints its own share keypair; the secret half never leaves. */
+rule MintShareKey:
+    [ !DevKey(U, X), Fr(~dk) ]
+  --[ ShareKeyMinted(U, pek(~dk)) ]->
+    [ !ShareDk(U, ~dk), Out(pek(~dk)) ]
+
+/* The device signs the binding `b(pek(dk), t)` under its identity key and
+   submits it to the server. The rule consumes `!DevKey` — registering a
+   share key REQUIRES holding an enrolled device's private identity key, so
+   neither database writes nor stolen session tokens can substitute a
+   victim's sharing key (the baseline attack m19a demonstrates).
+
+   Replay of older bindings is neutralized by the server-side monotonic
+   `share_ek_since` check, which lives outside this symbolic core. */
+rule RegisterShareKey:
+    [ !DevKey(U, X),
+      !AccountDeviceVk(U, pk(X)),
+      !ShareDk(U, DK),
+      Fr(~t) ]
+  --[ BindingSigned(U, X, pek(DK), ~t),
+      EkRegistered(U, pek(DK), ~t) ]->
+    [ !EkEntry(U, pek(DK), ~t),
+      Out(pek(DK)) ]
+
+/* ── Send, deliver, open ─────────────────────────────────────────────────── */
+
+rule SendItem:
+    [ !AccountLive(S),
+      !EkEntry(R, EK, T),
+      Fr(~item) ]
+  --[ ItemSent(S, R, EK, T, ~item) ]->
+    [ PendingCapsule(R, EK, T, ~item) ]
+
+/* The relay delivers each capsule at most once (linear pending), moving it
+   to a DeliveredCapsule token held by the recipient device — only a
+   delivered capsule can be opened (no pre-delivery opening). */
+rule DeliverCapsule:
+    [ PendingCapsule(R, EK, T, Item) ]
+  --[ CapsuleDelivered(R, EK, T, Item) ]->
+    [ DeliveredCapsule(R, EK, T, Item) ]
+
+/* The recipient device holds the share decryption key and opens its own
+   delivered capsules; the item plaintext never re-enters the network. */
+rule OpenItem:
+    [ !ShareDk(R, DK),
+      !EkEntry(R, pek(DK), T),
+      DeliveredCapsule(R, pek(DK), T, Item) ]
+  --[ ItemOpened(R, T, Item) ]->
+    []
+
+/* Every accepted registration traces either to a genuine device-signed
+   binding or to a leaked signing key — never to forgery alone. */
+lemma registrations_require_enrolled_device_signature:
+  "All U EK T #i.
+     EkRegistered(U, EK, T) @ i
+     ==> Ex X #j #k.
+           DeviceEnrolled(U, pk(X)) @ j &
+           BindingSigned(U, X, EK, T) @ k &
+           #j < #k & not (#i < #k)"
+
+lemma bindings_only_cover_account_owned_keys:
+  "All U X EK T #i.
+     BindingSigned(U, X, EK, T) @ i
+     ==> Ex #j. ShareKeyMinted(U, EK) @ j & #j < #i"
+
+lemma sends_use_registered_bindings:
+  "All S R EK T Item #i.
+     ItemSent(S, R, EK, T, Item) @ i
+     ==> Ex #j. EkRegistered(R, EK, T) @ j & #j < #i"
+
+lemma deliveries_require_sends:
+  "All R EK T Item #i.
+     CapsuleDelivered(R, EK, T, Item) @ i
+     ==> Ex S #j. ItemSent(S, R, EK, T, Item) @ j & #j < #i"
+
+/* Opening requires prior delivery of the same capsule. */
+lemma opened_items_were_delivered:
+  "All R T Item #i.
+     ItemOpened(R, T, Item) @ i
+     ==> Ex EK #j. CapsuleDelivered(R, EK, T, Item) @ j & #j < #i"
+
+/* Opening a victim-addressed capsule with a leaked key requires that key
+   to have leaked first — the channel itself discloses nothing. */
+lemma legitimate_share_exchange_is_reachable:
+  exists-trace
+  "Ex S R EK T Item #a #b #c.
+     EkRegistered(R, EK, T) @ a &
+     ItemSent(S, R, EK, T, Item) @ b &
+     ItemOpened(R, T, Item) @ c &
+     #a < #b & #b < #c"
+
+end

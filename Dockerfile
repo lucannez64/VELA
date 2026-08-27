@@ -22,6 +22,7 @@ ENV PATH="/root/.bun/bin:${PATH}"
 WORKDIR /src
 # vela-wasm-bridge depends on vela-crypto + vela-core.
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+COPY libVELA/vela-client-recovery-policy/ libVELA/vela-client-recovery-policy/
 COPY libVELA/vela-core/ libVELA/vela-core/
 COPY libVELA/vela-wasm-bridge/ libVELA/vela-wasm-bridge/
 COPY webVELA/ webVELA/
@@ -35,6 +36,7 @@ WORKDIR /src
 # vela-server's Cargo.toml expects: vela-crypto = { path = "../../libVELA/vela-crypto" }.
 COPY serverVELA/ serverVELA/
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+COPY libVELA/vela-client-recovery-policy/ libVELA/vela-client-recovery-policy/
 WORKDIR /src/serverVELA
 # The workspace release profile uses fat LTO + codegen-units=1, whose final link
 # can need >2 GB — too much for small home servers. Relax it for the container

@@ -92,6 +92,36 @@ pub struct PathOram {
     num_leaves: u64,
 }
 
+// ── Pure policy functions shared with the ProVerif model (M22) ──────────────
+//
+// These free functions mirror the associated API so hax can extract the
+// decision logic verbatim into `proofs/proverif/extraction/lib.pvl`, where
+// the access-pattern-hiding equivalence model (m22_oram_access_hiding.pv)
+// consults them. Keep them pure: no state, no RNG, no I/O.
+
+/// Decision with an explicit threshold — the extraction shape shared with
+/// the ProVerif access-hiding model (M22). Pure `nat → nat → bool`: no
+/// constants, no state, no RNG, so hax's ProVerif backend emits a letfun
+/// that evaluates inside the equivalence model.
+pub fn use_trivial_oram_with_threshold(chunk_count: usize, threshold: usize) -> bool {
+    chunk_count <= threshold
+}
+
+/// The shipped threshold policy (thin wrapper over the extracted shape).
+pub fn use_trivial_oram(chunk_count: usize) -> bool {
+    use_trivial_oram_with_threshold(chunk_count, TRIVIAL_ORAM_THRESHOLD)
+}
+
+/// Tree height for a tree sized to hold at least `capacity` real blocks.
+pub fn oram_height(capacity: usize) -> u32 {
+    PathOram::new(capacity).height()
+}
+
+/// Total number of leaves for a tree of this capacity.
+pub fn oram_num_leaves(capacity: usize) -> u64 {
+    PathOram::new(capacity).num_leaves()
+}
+
 impl PathOram {
     /// Create a new ORAM instance with a tree sized to hold at least
     /// `capacity` real blocks.  Minimum height is 1 (2 leaves).
@@ -164,23 +194,57 @@ impl PathOram {
     /// **Step 2 of a Path ORAM access.**
     ///
     /// Absorb the downloaded path (root→leaf) into the stash, then extract the
-    /// target block (returning its data) and a new block to write back in its
-    /// place (data provided by caller for writes; `None` for reads).
+    /// target block (returning its data) and the merged path to write back
+    /// (data provided by caller for writes; `None` for reads).
     ///
     /// Returns `(target_data, write_back_path)`.
     ///
-    /// * `path`        — decrypted blocks from the server, root-to-leaf.
-    /// * `target`      — the chunk being accessed.
-    /// * `write_data`  — for writes, the new plaintext; `None` for reads.
+    /// * `path`         — decrypted blocks from the server, root-to-leaf.
+    /// * `downloaded`   — the leaf `path` was downloaded from (M24 fix: the
+    ///   merged path is written back to THIS leaf. Writing to the freshly
+    ///   remapped leaf instead would overwrite sibling-subtree buckets that
+    ///   were never read, destroying other chunks' stored blocks).
+    /// * `target`       — the chunk being accessed.
+    /// * `write_data`   — for writes, the new plaintext; `None` for reads.
     pub fn access(
         &mut self,
         path: OramPath,
+        downloaded: LeafIdx,
         target: &ChunkId,
         write_data: Option<Vec<u8>>,
     ) -> Result<(Option<Vec<u8>>, OramPath)> {
-        // Absorb path into stash.
-        for bucket in path {
+        if !self.position_map.contains_key(target) {
+            return Err(VelaError::OramError(format!(
+                "chunk {:?} not found in position map",
+                target
+            )));
+        }
+        // ── Absorb path into stash, deduplicating ──────────────────────────
+        //
+        // Buckets are shared between sibling leaves, so a downloaded path can
+        // contain STALE copies of a block that was since re-evicted onto a
+        // different path, and the same id can appear more than once across
+        // the downloaded levels. Without deduplication the stash grows
+        // without bound and `position()` can surface a stale version
+        // (found by the M24 statistical harness). Policy: the stash copy —
+        // the one that failed eviction earlier — is at least as recent as
+        // anything in the tree; a tree copy whose id is already stashed is
+        // dropped, and within one path the LAST occurrence (deepest, i.e.
+        // most recently placed) wins.
+        let stashed: std::collections::HashSet<ChunkId> = self
+            .stash
+            .iter()
+            .filter_map(|b| b.chunk_id().copied())
+            .collect();
+        let mut seen_this_path: std::collections::HashSet<ChunkId> =
+            std::collections::HashSet::new();
+        for bucket in path.into_iter().rev() {
             for block in bucket {
+                if let OramBlock::Real { id, .. } = block {
+                    if stashed.contains(&id) || !seen_this_path.insert(id) {
+                        continue; // stale tree copy / shallower duplicate loses
+                    }
+                }
                 if block.is_real() {
                     self.stash.push(block);
                 }
@@ -199,16 +263,18 @@ impl PathOram {
         });
 
         // If this is a write (or a read-then-write), push updated block back.
-        let new_leaf = *self.position_map.get(target).ok_or_else(|| {
-            VelaError::OramError(format!("chunk {:?} not found in position map", target))
-        })?;
         let new_data = write_data.or_else(|| existing_data.clone());
         if let Some(data) = new_data {
             self.stash.push(OramBlock::Real { id: *target, data });
         }
 
-        // Evict from stash into write-back path (greedy algorithm).
-        let write_path = self.evict(new_leaf);
+        // Evict from stash into the DOWNLOADED path (greedy, read-before-
+        // write). Greedy placement uses each block's target leaf, so blocks
+        // whose assigned leaf diverges from this path stay in the stash and
+        // migrate toward their new leaves on future accesses — the standard
+        // lazy-migration scheme. The remapped leaf in the position map takes
+        // effect for whichever future path first reaches it.
+        let write_path = self.evict(downloaded);
 
         Ok((existing_data, write_path))
     }
@@ -287,6 +353,14 @@ impl PathOram {
 
     pub fn stash_size(&self) -> usize {
         self.stash.len()
+    }
+
+    /// Chunk ids currently held in the stash (test/diagnostic surface).
+    pub fn stash_ids(&self) -> Vec<ChunkId> {
+        self.stash
+            .iter()
+            .filter_map(|b| b.chunk_id().copied())
+            .collect()
     }
 
     pub fn position_map(&self) -> &HashMap<ChunkId, LeafIdx> {
@@ -399,12 +473,12 @@ mod tests {
 
         // Fake a downloaded path (all dummies).
         let target = ids[0];
-        let _leaf = oram.prepare_access(&target).unwrap();
+        let old_leaf = oram.prepare_access(&target).unwrap();
         let levels = (oram.height() + 1) as usize;
         let fake_path: OramPath = vec![vec![OramBlock::Dummy; BUCKET_SIZE]; levels];
 
         let (data, write_back) = oram
-            .access(fake_path, &target, Some(b"chunk data".to_vec()))
+            .access(fake_path, old_leaf, &target, Some(b"chunk data".to_vec()))
             .unwrap();
 
         // Target was not in the path, so existing_data is None.
@@ -480,7 +554,7 @@ mod tests {
         let fake_path: OramPath = vec![vec![OramBlock::Dummy; BUCKET_SIZE]; levels];
         // Accessing a chunk that was never registered must return an error,
         // not panic (panics across FFI would abort the host process).
-        let result = oram.access(fake_path, &unknown, None);
+        let result = oram.access(fake_path, 0, &unknown, None);
         assert!(result.is_err());
     }
 }

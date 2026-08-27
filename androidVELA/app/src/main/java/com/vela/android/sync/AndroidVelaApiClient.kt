@@ -179,8 +179,11 @@ class AndroidVelaApiClient(
             .put("hybrid_vk", identity.hybridVkB64)
             .put("device_name", android.os.Build.MODEL ?: "Android")
             .put("device_type", "android")
-        if (identity.shareEkB64.isNotBlank()) {
+        if (identity.shareEkB64.isNotBlank() && !identity.shareEkSignature.isNullOrBlank()) {
+            // M19: the initial share key must arrive device-signed.
             bodyObj.put("share_ek", identity.shareEkB64)
+                .put("share_ek_signed_at", identity.shareEkSignedAt)
+                .put("share_ek_signature", identity.shareEkSignature)
         }
         val body = bodyObj.toString().toByteArray(Charsets.UTF_8)
         val response = request("POST", "/account/register", token = "", body = body, contentType = "application/json")
@@ -221,6 +224,19 @@ class AndroidVelaApiClient(
     }
 
     /** Current vault-key epoch and rotation state ("active" or "freezing"). */
+    fun markRekeyCapable(token: String): String? {
+        val response = request("POST", "/device/rekey-capable", token)
+        response.requireSuccess("Mark rekey-capable failed")
+        return response.newToken
+    }
+
+    fun acknowledgeRekeyCapsule(token: String, epoch: Long): String? {
+        val body = JSONObject().put("epoch", epoch).toString().toByteArray(Charsets.UTF_8)
+        val response = request("POST", "/device/capsule/ack", token, body, contentType = "application/json")
+        response.requireSuccess("Acknowledge rekey capsule failed")
+        return response.newToken
+    }
+
     fun getVaultEpoch(token: String): VaultEpochResponse {
         val response = request("GET", "/vault/epoch", token)
         response.requireSuccess("Vault epoch request failed")
@@ -474,9 +490,12 @@ class AndroidVelaApiClient(
 
     /// Register (or update) the caller's own share encapsulation key. Backfill
     /// path for accounts created before share keys existed.
-    fun putMyShareEk(token: String, shareEkB64: String): String? {
+    fun putMyShareEk(token: String, shareEkB64: String, deviceId: String, signedAt: String, signature: String): String? {
         val body = JSONObject()
             .put("share_ek", shareEkB64)
+            .put("device_id", deviceId)
+            .put("signed_at", signedAt)
+            .put("signature", signature)
             .toString()
             .toByteArray(Charsets.UTF_8)
         val response = request("PUT", "/share/my-ek", token, body, contentType = "application/json")
@@ -558,15 +577,36 @@ class AndroidVelaApiClient(
 
     // Recovery (SPEC.md §4.3)
 
-    fun putRecoveryShare(token: String, shareB64: String, keyEpoch: Long): String? {
+    fun putRecoveryShare(token: String, shareB64: String, keyEpoch: Long, splitId: String, possessionHashB64: String): String? {
         require(keyEpoch >= 1) { "Recovery share epoch must be positive" }
+        require(splitId.isNotBlank()) { "Recovery split ID is required" }
+        require(possessionHashB64.isNotBlank()) { "RMS possession hash is required" }
         val body = JSONObject()
             .put("share", shareB64)
             .put("key_epoch", keyEpoch)
+            .put("split_id", splitId)
+            // M18: blind RMS commitment staged and finalized with the share.
+            .put("possession_hash", possessionHashB64)
             .toString()
             .toByteArray(Charsets.UTF_8)
         val response = request("PUT", "/recovery/share", token, body, contentType = "application/json")
         response.requireSuccess("Store recovery share failed")
+        return response.newToken
+    }
+
+    fun finalizeRecoveryShare(token: String, keyEpoch: Long, splitId: String): String? {
+        require(keyEpoch >= 1) { "Recovery share epoch must be positive" }
+        require(splitId.isNotBlank()) { "Recovery split ID is required" }
+        val body = JSONObject()
+            .put("key_epoch", keyEpoch)
+            .put("split_id", splitId)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val response = request(
+            "POST", "/recovery/share/finalize", token, body,
+            contentType = "application/json"
+        )
+        response.requireSuccess("Finalize recovery share failed")
         return response.newToken
     }
 
@@ -601,7 +641,12 @@ class AndroidVelaApiClient(
         )
     }
 
-    data class RecoveryRecoverResult(val shareB64: String, val recoveryGrant: String)
+    data class RecoveryRecoverResult(
+        val shareB64: String,
+        val recoveryGrant: String,
+        val keyEpoch: Long,
+        val splitId: String?
+    )
 
     /// Submits the WebAuthn assertion; the server releases Share 2 plus a
     /// single-use grant redeemable at `enrollDeviceViaRecovery`.
@@ -611,7 +656,14 @@ class AndroidVelaApiClient(
         val response = request("POST", "/recovery/recover", token = "", body = bodyObj.toString().toByteArray(Charsets.UTF_8), contentType = "application/json")
         response.requireSuccess("Account recovery failed")
         val json = JSONObject(response.body.toString(Charsets.UTF_8))
-        return RecoveryRecoverResult(shareB64 = json.getString("share"), recoveryGrant = json.getString("recovery_grant"))
+        val keyEpoch = json.getLong("key_epoch")
+        require(keyEpoch >= 1) { "Server returned an invalid recovery epoch" }
+        return RecoveryRecoverResult(
+            shareB64 = json.getString("share"),
+            recoveryGrant = json.getString("recovery_grant"),
+            keyEpoch = keyEpoch,
+            splitId = json.optString("split_id").takeIf { it.isNotBlank() }
+        )
     }
 
     /// Registers this device's identity key against an existing account once

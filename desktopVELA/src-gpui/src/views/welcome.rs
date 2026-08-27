@@ -369,6 +369,7 @@ impl WelcomeScreen {
                     share.user_id.clone(),
                     share.share_b64.clone(),
                     share.key_epoch,
+                    share.split_id.clone(),
                     recover_response,
                     password,
                     (!device_name.is_empty()).then_some(device_name),

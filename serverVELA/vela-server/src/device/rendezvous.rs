@@ -47,6 +47,14 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
+use vela_enrollment_policy::{
+    CeremonyPhase, ClaimDecision, ClaimFacts, CompletionDecision, CompletionFacts, InspectDecision,
+    InspectFacts, OpenDecision, OpenFacts, ResultDecision, ResultFacts, ResultKind,
+};
+use vela_rekey_policy::{
+    MutationAuthority, MutationDecision, MutationKind, MutationRequest, Phase as PolicyPhase,
+    RekeyState as PolicyState, ShadowDecision,
+};
 
 use crate::{
     error::{AppError, Result},
@@ -128,6 +136,20 @@ pub async fn post_grant(
 ) -> Result<(HeaderMap, Json<CreateGrantResponse>)> {
     rate_limit::enrollment_grant_by_user(&state.store, &session.user_id.to_string())?;
 
+    let _permit = match vela_enrollment_policy::plan_open(OpenFacts {
+        device_scope: true,
+        user_bound: true,
+        opener_bound: true,
+        ttl_positive: GRANT_TTL_SECS > 0,
+    }) {
+        OpenDecision::Open(permit) => permit,
+        OpenDecision::Reject => {
+            return Err(AppError::Internal(
+                "verified enrollment policy rejected an authenticated device grant".into(),
+            ));
+        }
+    };
+
     let grant_id = Uuid::new_v4().to_string();
     let grant = Grant {
         user_id: session.user_id.to_string(),
@@ -176,12 +198,39 @@ pub async fn post_claim(
     // The grant must exist, but is deliberately *not* consumed here: the primary
     // still has to read the claim and complete, and burning it now would let an
     // unauthenticated caller destroy a grant it cannot otherwise use.
-    if !state.store.exists(&grant_key(grant_id))? {
-        return Err(AppError::NotFound("enrollment grant not found or expired".into()));
+    let grant_live = state.store.exists(&grant_key(grant_id))?;
+    if !grant_live {
+        return Err(AppError::NotFound(
+            "enrollment grant not found or expired".into(),
+        ));
     }
 
     let ek = decode_exact(&body.hybrid_ek, HYBRID_EK_LEN, "hybrid_ek")?;
     let vk = decode_exact(&body.hybrid_vk, HYBRID_VK_LEN, "hybrid_vk")?;
+
+    let no_existing_claim = !state.store.exists(&claim_key(grant_id))?;
+    let _permit = match vela_enrollment_policy::plan_claim(ClaimFacts {
+        phase: if no_existing_claim {
+            CeremonyPhase::Open
+        } else {
+            CeremonyPhase::Claimed
+        },
+        grant_live,
+        no_existing_claim,
+        public_keys_valid: ek.len() == HYBRID_EK_LEN && vk.len() == HYBRID_VK_LEN,
+    }) {
+        ClaimDecision::Claim(permit) => permit,
+        ClaimDecision::Reject if !no_existing_claim => {
+            return Err(AppError::Conflict(
+                "this enrollment code has already been used by another device".into(),
+            ));
+        }
+        ClaimDecision::Reject => {
+            return Err(AppError::BadRequest(
+                "enrollment claim is not authorized".into(),
+            ));
+        }
+    };
 
     let claim = Claim {
         hybrid_ek: B64.encode(&ek),
@@ -190,20 +239,29 @@ pub async fn post_claim(
         device_type: body.device_type.clone(),
     };
 
-    // First claim wins, atomically. A second device — including one racing with
-    // a stolen code — is told it lost rather than replacing the first, so the
-    // user sees a failure on the device they are actually holding.
-    let won = state.store.set_ex_nx(
+    // First claim wins while the grant is live, atomically. A second device —
+    // including one racing with a stolen code — is told it lost rather than
+    // replacing the first, and expiry cannot leave behind an orphan claim.
+    let outcome = state.store.set_ex_nx_if_live(
+        &grant_key(grant_id),
         &claim_key(grant_id),
         serde_json::to_vec(&claim)
             .map_err(|e| AppError::Internal(e.to_string()))?
             .as_slice(),
         GRANT_TTL_SECS,
     )?;
-    if !won {
-        return Err(AppError::Conflict(
-            "this enrollment code has already been used by another device".into(),
-        ));
+    match outcome {
+        crate::store::GuardedSetOutcome::Inserted => {}
+        crate::store::GuardedSetOutcome::GuardMissing => {
+            return Err(AppError::NotFound(
+                "enrollment grant not found or expired".into(),
+            ));
+        }
+        crate::store::GuardedSetOutcome::KeyExists => {
+            return Err(AppError::Conflict(
+                "this enrollment code has already been used by another device".into(),
+            ))
+        }
     }
 
     Ok(Json(serde_json::json!({ "claimed": true })))
@@ -225,10 +283,23 @@ pub async fn get_claim(
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<ClaimView>)> {
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
-    authorize_grant(&state, grant_id, &session)?;
+    let (grant, _) = authorize_grant(&state, grant_id, &session)?;
 
     let claim = load_claim(&state, grant_id)?
         .ok_or_else(|| AppError::NotFound("no device has claimed this code yet".into()))?;
+    let _permit = match vela_enrollment_policy::authorize_inspection(InspectFacts {
+        phase: CeremonyPhase::Claimed,
+        user_matches: grant.user_id == session.user_id.to_string(),
+        opener_matches: grant.device_id == session.device_id.to_string(),
+        claim_present: true,
+    }) {
+        InspectDecision::Inspect(permit) => permit,
+        InspectDecision::Reject => {
+            return Err(AppError::NotFound(
+                "enrollment grant not found or expired".into(),
+            ));
+        }
+    };
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -269,7 +340,7 @@ pub async fn post_complete(
     Json(body): Json<CompleteRequest>,
 ) -> Result<(HeaderMap, Json<CompleteResponse>)> {
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
-    let grant = authorize_grant(&state, grant_id, &session)?;
+    let (grant, expected_grant_bytes) = authorize_grant(&state, grant_id, &session)?;
 
     let user_rows = state
         .sqldb
@@ -284,24 +355,42 @@ pub async fn post_complete(
     if body.key_epoch < 1 {
         return Err(AppError::BadRequest("key_epoch must be positive".into()));
     }
-    if current_epoch != Some(body.key_epoch) || rotation_state.is_some() {
+    let permit = match vela_rekey_policy::plan_active_mutation(MutationRequest {
+        declared_epoch: body.key_epoch,
+        authority_epoch: body.key_epoch,
+        kind: MutationKind::Enrollment,
+        authority: MutationAuthority::Device,
+    }) {
+        MutationDecision::Permit(permit) => permit,
+        MutationDecision::Reject => {
+            return Err(AppError::BadRequest(
+                "device enrollment requires a positive device-authority epoch".into(),
+            ));
+        }
+    };
+    let observed_state = PolicyState {
+        epoch: current_epoch.unwrap_or(0),
+        phase: if rotation_state.is_some() {
+            PolicyPhase::Freezing
+        } else {
+            PolicyPhase::Active
+        },
+    };
+    if vela_rekey_policy::authorize_active_mutation(observed_state, permit) != ShadowDecision::Allow
+    {
         return Err(AppError::Conflict(
             "device enrollment key epoch changed or rotation is in progress".into(),
         ));
     }
 
-    // Take both together. A replayed completion finds nothing, and a grant that
-    // failed midway cannot be retried with a different claim.
-    let claim_bytes = state
+    // Read without consuming first. Invalid signatures must not let an
+    // unauthenticated or corrupted request burn a legitimate ceremony.
+    let expected_claim_bytes = state
         .store
-        .get_del(&claim_key(grant_id))?
+        .get(&claim_key(grant_id))?
         .ok_or_else(|| AppError::NotFound("no device has claimed this code yet".into()))?;
-    let grant_bytes = state
-        .store
-        .get_del(&grant_key(grant_id))?
-        .ok_or_else(|| AppError::NotFound("enrollment grant not found or expired".into()))?;
 
-    let claim: Claim = serde_json::from_slice(&claim_bytes)
+    let claim: Claim = serde_json::from_slice(&expected_claim_bytes)
         .map_err(|e| AppError::Internal(format!("stored claim is unreadable: {e}")))?;
 
     // The keys enrolled below come from `claim` — what the joining device
@@ -322,6 +411,49 @@ pub async fn post_complete(
         &signature,
     )?;
 
+    let ceremony_permit = match vela_enrollment_policy::plan_completion(CompletionFacts {
+        phase: CeremonyPhase::Claimed,
+        user_matches: grant.user_id == session.user_id.to_string(),
+        opener_matches: grant.device_id == session.device_id.to_string(),
+        opener_active: true,
+        claim_present: true,
+        // The view and insertion both deserialize the same immutable claim
+        // record; there is no request field that can substitute either key.
+        displayed_claim_is_stored_claim: true,
+        // The verifier above covers stored EK || stored VK || capsule.
+        signature_covers_stored_claim: true,
+        account_epoch_active: true,
+    }) {
+        CompletionDecision::Complete(permit) => permit,
+        CompletionDecision::Reject => {
+            return Err(AppError::Unauthorized(
+                "device enrollment completion is not authorized".into(),
+            ));
+        }
+    };
+    debug_assert!(ceremony_permit.consumes_grant_and_claim());
+
+    // This sled transaction is the ceremony's linearization point. Exactly one
+    // racing/replayed completion gets both records; every loser gets neither.
+    let (grant_bytes, claim_bytes) = state
+        .store
+        .take_live_pair(&grant_key(grant_id), &claim_key(grant_id))?
+        .ok_or_else(|| {
+            AppError::NotFound("enrollment grant or claim was already consumed".into())
+        })?;
+    if grant_bytes != expected_grant_bytes || claim_bytes != expected_claim_bytes {
+        state.store.set_ex_pair(
+            &grant_key(grant_id),
+            &grant_bytes,
+            &claim_key(grant_id),
+            &claim_bytes,
+            GRANT_TTL_SECS,
+        )?;
+        return Err(AppError::Conflict(
+            "enrollment ceremony changed while it was being confirmed".into(),
+        ));
+    }
+
     let new_device_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     let device_name = claim
@@ -333,7 +465,7 @@ pub async fn post_complete(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let inserted = state.sqldb.execute(
+    let inserted = match state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
          SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
@@ -352,19 +484,32 @@ pub async fn post_complete(
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
             TursoValue::Text(grant.user_id.clone()),
-            TursoValue::Integer(body.key_epoch),
+            TursoValue::Integer(permit.epoch()),
         ],
-    ).await.map_err(|e| AppError::Internal(e.to_string()))?;
+    ).await {
+        Ok(inserted) => inserted,
+        Err(error) => {
+            state.store.set_ex_pair(
+                &grant_key(grant_id),
+                &grant_bytes,
+                &claim_key(grant_id),
+                &claim_bytes,
+                GRANT_TTL_SECS,
+            )?;
+            return Err(AppError::Internal(error.to_string()));
+        }
+    };
     if inserted == 0 {
         // A rotation may have started after the fast check but before the
         // guarded insert. Restore the exact consumed claim and grant so the
         // already-confirmed pairing can be retried once rotation completes.
-        state
-            .store
-            .set_ex(&claim_key(grant_id), &claim_bytes, GRANT_TTL_SECS)?;
-        state
-            .store
-            .set_ex(&grant_key(grant_id), &grant_bytes, GRANT_TTL_SECS)?;
+        state.store.set_ex_pair(
+            &grant_key(grant_id),
+            &grant_bytes,
+            &claim_key(grant_id),
+            &claim_bytes,
+            GRANT_TTL_SECS,
+        )?;
         return Err(AppError::Conflict(
             "device enrollment key epoch changed or rotation is in progress".into(),
         ));
@@ -394,7 +539,12 @@ pub async fn post_complete(
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(CompleteResponse { device_id: new_device_id })))
+    Ok((
+        headers,
+        Json(CompleteResponse {
+            device_id: new_device_id,
+        }),
+    ))
 }
 
 // ── 5. The joining device collects the outcome ──────────────────────────────
@@ -414,7 +564,9 @@ pub enum ResultResponse {
     /// The primary has not completed yet. The user is probably still comparing
     /// fingerprints; keep waiting.
     Pending,
-    Enrolled { device_id: String },
+    Enrolled {
+        device_id: String,
+    },
 }
 
 /// Tell a device that claimed a grant which device it became.
@@ -444,6 +596,19 @@ pub async fn post_result(
             .map_err(|e| AppError::Internal(format!("stored result is unreadable: {e}")))?;
         let vk = crate::db::decode_b64(&result.hybrid_vk)?;
         verify_result_signature(&vk, grant_id, &signature)?;
+        let permit = match vela_enrollment_policy::authorize_result(ResultFacts {
+            phase: CeremonyPhase::Completed,
+            claimed_key_present: true,
+            claimed_key_proof_valid: true,
+        }) {
+            ResultDecision::Return(permit) => permit,
+            ResultDecision::Reject => {
+                return Err(AppError::Unauthorized(
+                    "enrollment result is not authorized".into(),
+                ));
+            }
+        };
+        debug_assert_eq!(permit.kind(), ResultKind::Enrolled);
         return Ok(Json(ResultResponse::Enrolled {
             device_id: result.device_id,
         }));
@@ -454,6 +619,19 @@ pub async fn post_result(
     if let Some(claim) = load_claim(&state, grant_id)? {
         let vk = crate::db::decode_b64(&claim.hybrid_vk)?;
         verify_result_signature(&vk, grant_id, &signature)?;
+        let permit = match vela_enrollment_policy::authorize_result(ResultFacts {
+            phase: CeremonyPhase::Claimed,
+            claimed_key_present: true,
+            claimed_key_proof_valid: true,
+        }) {
+            ResultDecision::Return(permit) => permit,
+            ResultDecision::Reject => {
+                return Err(AppError::Unauthorized(
+                    "enrollment result is not authorized".into(),
+                ));
+            }
+        };
+        debug_assert_eq!(permit.kind(), ResultKind::Pending);
         return Ok(Json(ResultResponse::Pending));
     }
 
@@ -472,14 +650,14 @@ pub async fn post_result(
 /// 500 would file the caller's own garbage as an internal error and bury real
 /// faults among them.
 fn verify_result_signature(vk: &[u8], grant_id: &str, signature: &[u8]) -> Result<()> {
-    super::enroll::verify_enrollment_result_signature(vk, grant_id, signature).map_err(|e| {
-        match e {
+    super::enroll::verify_enrollment_result_signature(vk, grant_id, signature).map_err(
+        |e| match e {
             AppError::Internal(_) => AppError::Unauthorized(
                 "signature does not match the key this grant was claimed with".into(),
             ),
             other => other,
-        }
-    })
+        },
+    )
 }
 
 // ── shared ──────────────────────────────────────────────────────────────────
@@ -490,7 +668,11 @@ fn verify_result_signature(vk: &[u8], grant_id: &str, signature: &[u8]) -> Resul
 /// able to drive an enrollment its owner started elsewhere, because then a
 /// compromised secondary could enroll an attacker's key against a code the user
 /// is reading off their primary.
-fn authorize_grant(state: &AppState, grant_id: &str, session: &AuthSession) -> Result<Grant> {
+fn authorize_grant(
+    state: &AppState,
+    grant_id: &str,
+    session: &AuthSession,
+) -> Result<(Grant, Vec<u8>)> {
     let bytes = state
         .store
         .get(&grant_key(grant_id))?
@@ -498,13 +680,16 @@ fn authorize_grant(state: &AppState, grant_id: &str, session: &AuthSession) -> R
     let grant: Grant = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Internal(format!("stored grant is unreadable: {e}")))?;
 
-    if grant.user_id != session.user_id.to_string() || grant.device_id != session.device_id.to_string()
+    if grant.user_id != session.user_id.to_string()
+        || grant.device_id != session.device_id.to_string()
     {
         // Same message as "not found": whether a grant exists is not something
         // an unrelated caller should be able to probe.
-        return Err(AppError::NotFound("enrollment grant not found or expired".into()));
+        return Err(AppError::NotFound(
+            "enrollment grant not found or expired".into(),
+        ));
     }
-    Ok(grant)
+    Ok((grant, bytes))
 }
 
 fn load_claim(state: &AppState, grant_id: &str) -> Result<Option<Claim>> {

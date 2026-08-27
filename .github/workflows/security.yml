@@ -19,11 +19,14 @@ on:
       - "security/**"
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-client-recovery-policy/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
       - "libVELA/vela-apple-bridge/**"
       - "libVELA/vela-wasm-bridge/**"
-      - "desktopVELA/vela-desktop-core/**"
+      - "desktopVELA/**"
+      - "androidVELA/**"
+      - "iosVELA/**"
       - "extension/src/**"
       - "Cargo.lock"
       - "**/Cargo.lock"
@@ -34,11 +37,14 @@ on:
       - "security/**"
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-client-recovery-policy/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
       - "libVELA/vela-apple-bridge/**"
       - "libVELA/vela-wasm-bridge/**"
-      - "desktopVELA/vela-desktop-core/**"
+      - "desktopVELA/**"
+      - "androidVELA/**"
+      - "iosVELA/**"
       - "extension/src/**"
       - "Cargo.lock"
       - "**/Cargo.lock"
@@ -72,11 +78,74 @@ jobs:
       - name: Prove rekey state, capsule, and mutation invariants
         run: ./security/formal/run-rekey-proofs.sh
 
+      - name: Prove web-session capability lifecycle
+        run: ./security/formal/run-session-proofs.sh
+
+      - name: Prove permanent-device enrollment ceremony
+        run: ./security/formal/run-enrollment-proofs.sh
+
+      - name: Prove account-recovery lifecycle
+        run: ./security/formal/run-recovery-proofs.sh
+
+      - name: Prove client recovery reconstruction boundary
+        run: ./security/formal/run-client-recovery-proofs.sh
+
+      - name: Prove recovery setup publication consistency
+        run: ./security/formal/run-recovery-publication-proofs.sh
+
+      - name: Prove crash-consistent recovery publication
+        run: ./security/formal/run-recovery-publication-recovery-proofs.sh
+
+      - name: Prove the full 2-of-3 pair-selection threshold
+        run: ./security/formal/run-pair-selection-proofs.sh
+
+      - name: Prove the cross-user share-channel binding integrity
+        run: ./security/formal/run-share-channel-proofs.sh
+
+      - name: Prove the web-session vault pass-through gating
+        run: ./security/formal/run-web-session-pass-through-proofs.sh
+
+      - name: Prove linked-item revocation finality
+        run: ./security/formal/run-link-revocation-finality-proofs.sh
+
+      - name: Prove cross-milestone rotation-stranding composition
+        run: ./security/formal/run-composition-proofs.sh
+
+      - name: Prove the client sync-admission policy
+        run: ./security/formal/run-sync-admission-proofs.sh
+
+      - name: Statistical stash-bounds verification over the real ORAM
+        run: ./security/formal/run-oram-stash-bounds-tests.sh
+
+      - name: Prove Path-ORAM access-pattern hiding (ProVerif)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq opam libgtk2.0-dev pkg-config
+          opam init --auto-setup --bare -y
+          if ! opam switch list | grep -q 'vela-proverif'; then
+            opam switch create vela-proverif ocaml-base-compiler.5.1.1
+          fi
+          # proverif's opam depext pulls GUI libs the headless runner lacks;
+          # they are optional for the CLI solver, so skip depext handling.
+          if ! opam list --switch vela-proverif --installed 2>/dev/null | grep -q 'proverif'; then
+            opam install --switch vela-proverif --yes proverif
+          fi
+          eval "$(opam env --switch vela-proverif)"
+          ./security/formal/run-oram-access-hiding-proofs.sh
+
       - name: Exhaust the bounded model against real handlers and Turso
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
+        run: |
+          cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
+          cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
+          cargo test --manifest-path serverVELA/Cargo.toml --test enrollment_ceremony_model
+          cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
+          cargo test --manifest-path serverVELA/Cargo.toml --test integration \
+            recovery_publication_finalizes_exactly_the_current_staged_split
+          cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
 
       - name: Verify the desktop, Android, Apple, and web epoch wire contract
         run: |
+          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml recovery::tests
           cargo test --manifest-path libVELA/vela-crypto/Cargo.toml \
             rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible
           cargo test --manifest-path libVELA/vela-android-bridge/Cargo.toml --lib

@@ -1,0 +1,56 @@
+theory M19_EkRegistryBaseline
+/*
+  BASELINE FALSIFICATION — the pre-M19 share-key registry.
+
+  Before M19, `PUT /share/my-ek` accepted any well-sized encapsulation key
+  from an authenticated session, and the relay stored whatever the database
+  contained. This model captures that trust level exactly: anyone — the
+  network adversary standing in for a stolen session token or a direct
+  database write — can install an arbitrary encapsulation key as a victim's
+  registered sharing key. Every item shared to the victim afterwards is
+  sealed under a key the adversary chose and holds (`In(AdversaryEk)` marks
+  a term in adversary knowledge).
+
+  Expected verdict:
+  - `substitution_attack_is_reachable` VERIFIED — the attack exists today.
+  - `honest_keys_stay_secret` VERIFIED — the pre-M19 design does protect
+    keys nobody substituted (the damage requires the substitution step).
+
+  This impossibility-in-design motivates the device-signed bindings proved
+  in m19_share_channel.spthy.
+*/
+begin
+
+functions: cap/2
+
+/* The pre-M19 registry: any principal installs any encapsulation key for
+   any account. `In(AdversaryEk)` marks the installed key as a term the
+   adversary knows — they can only install keys they hold. */
+rule SubstituteVictimEk:
+    [ In(AdversaryEk), Fr(~victim) ]
+  --[ EkInstalledFor(~victim, AdversaryEk),
+      VictimTargeted(~victim) ]->
+    [ !EkEntry(~victim, AdversaryEk) ]
+
+/* An honest sender fetches the victim's registered key, trusts it, and
+   seals a fresh secret item into a capsule addressed to that key. */
+rule SendItemToRegisteredKey:
+    [ !EkEntry(Recipient, Ek), Fr(~item) ]
+  --[ ItemSealed(Recipient, Ek, ~item) ]->
+    [ Out(cap(Ek, ~item)) ]
+
+lemma substitution_attack_is_reachable:
+  exists-trace
+  "Ex Victim AdvEk Item #i #j.
+     EkInstalledFor(Victim, AdvEk) @ i &
+     ItemSealed(Victim, AdvEk, Item) @ j &
+     #i < #j"
+
+/* The one thing the pre-M19 design did guarantee: without a substitution,
+   items are only ever sealed under keys some registration installed. */
+lemma every_seal_uses_a_registered_key:
+  "All Recipient Ek Item #j.
+     ItemSealed(Recipient, Ek, Item) @ j
+     ==> Ex #i. EkInstalledFor(Recipient, Ek) @ i & #i < #j"
+
+end

@@ -1,0 +1,64 @@
+(* ══════════════════════════════════════════════════════════════════════
+   M22b · TRIVIAL-ORAM MODE — whole-tree access pattern.
+
+   At or below TRIVIAL_ORAM_THRESHOLD (4) chunks, every sync downloads and
+   re-uploads the entire tree regardless of which chunk the user touched
+   (`vela_crypto::oram::use_trivial_oram_with_threshold`, extracted by hax
+   into lib.pvl).
+
+   What is proven: the two worlds are observationally INDISTINGUISHABLE,
+   not transcript-identical. Both worlds issue the same whole-tree
+   get_tree request and the same put_tree write shape; the only difference
+   is which chunk's payload (chunkA vs chunkB) is folded into the AEAD
+   stash blob, sealed under a fresh key k. aead_stash output length varies
+   with input length in reality and is abstracted here.
+
+   Expected verdict: equivalence TRUE (indistinguishability under the
+   fresh sealing key k), NOT literal transcript equality.
+
+   Concatenated at runner level after:
+     security/formal/hax_pv_prelude.pvl
+     libVELA/vela-crypto/proofs/proverif/extraction/lib.pvl
+   ══════════════════════════════════════════════════════════════════════ *)
+
+type leaf.
+type chunkid.
+type key.
+type tree.
+
+(* the relay channel is `c`, declared by the hax-extracted lib.pvl preamble *)
+
+(* The single tree; its id is public (it rides in the URL). In trivial
+   mode the sweep covers the whole tree, so the request does not carry a
+   leaf at all — modeled as the whole-tree request shape. *)
+free tree_id: tree.
+fun get_tree(tree): bitstring [data].
+fun put_tree(tree, bitstring): bitstring [data].
+
+fun get_path(leaf): bitstring [data].
+fun put_path(leaf, bitstring): bitstring [data].
+fun aead_stash(key, bitstring): bitstring.
+fun concat(bitstring, bitstring): bitstring [data].
+fun chunk_payload(chunkid): bitstring [private].
+
+(* Chunk ids are known to the server via the sync manifest. *)
+free chunkA: chunkid.
+free chunkB: chunkid.
+
+(* The touched chunk's payload is folded into the opaque stash write-back:
+   world A writes back chunkA, world B writes back chunkB. The requests
+   (whole-tree get_tree) and the write shape (put_tree + aead_stash) are
+   identical, so only the hidden chunk distinguishes the worlds — and it
+   is sealed under the fresh key k. The equivalence therefore models
+   access(chunkA) ~ access(chunkB), not a trivial self-equivalence. *)
+equivalence
+  (* world A: user opens chunk A; trivial mode sweeps everything *)
+  new k: key;
+    out(c, get_tree(tree_id));
+    in(c, downloadedA: bitstring);
+    out(c, put_tree(tree_id, aead_stash(k, concat(downloadedA, chunk_payload(chunkA)))))
+  (* world B: user opens chunk B; identical sweep *)
+  new k: key;
+    out(c, get_tree(tree_id));
+    in(c, downloadedB: bitstring);
+    out(c, put_tree(tree_id, aead_stash(k, concat(downloadedB, chunk_payload(chunkB)))))

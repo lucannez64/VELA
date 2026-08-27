@@ -26,7 +26,10 @@ data class ServerIdentity(
     val hybridVkB64: String,
     val shareEkB64: String = "",
     val sealedB64: String = "",
-    val shareEkRegistrationPending: Boolean = false
+    val shareEkRegistrationPending: Boolean = false,
+    /** M19: device-signed binding metadata for the initial share key. */
+    val shareEkSignedAt: String? = null,
+    val shareEkSignature: String? = null,
 )
 
 class ServerIdentityStore(context: Context) {
@@ -50,13 +53,26 @@ class ServerIdentityStore(context: Context) {
         val created = NativeVelaCore.identityCreate(sealKey())
             ?: error("Native VELA bridge cannot generate server identity")
         handle = created
+        // M19: sign the initial share-key binding now, while the identity is
+        // open; the signature travels with the publics to registration.
+        val signedAt = canonicalTimestamp()
+        val shareEkSignature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(
+            handle = created.handle,
+            shareEkB64 = created.shareEkB64,
+            signedAt = signedAt,
+        )
         val identity = ServerIdentity(
             userId = null,
             deviceId = null,
             hybridEkB64 = created.hybridEkB64,
             hybridVkB64 = created.hybridVkB64,
             shareEkB64 = created.shareEkB64,
-            sealedB64 = created.sealedB64
+            sealedB64 = created.sealedB64,
+            // The initial share key has not reached the server yet; keep it
+            // eligible for backfill if registration is interrupted.
+            shareEkRegistrationPending = true,
+            shareEkSignedAt = signedAt,
+            shareEkSignature = shareEkSignature,
         )
         save(identity)
         return identity
@@ -77,13 +93,26 @@ class ServerIdentityStore(context: Context) {
         val created = NativeVelaCore.identityCreate(sealKey())
             ?: error("Native VELA bridge cannot generate a device identity")
         handle = created
+        // M19: sign the initial share-key binding now, while the identity is
+        // open; the signature travels with the publics to registration.
+        val signedAt = canonicalTimestamp()
+        val shareEkSignature = com.vela.android.core.NativeVelaCore.identitySignShareEkBinding(
+            handle = created.handle,
+            shareEkB64 = created.shareEkB64,
+            signedAt = signedAt,
+        )
         val identity = ServerIdentity(
             userId = null,
             deviceId = null,
             hybridEkB64 = created.hybridEkB64,
             hybridVkB64 = created.hybridVkB64,
             shareEkB64 = created.shareEkB64,
-            sealedB64 = created.sealedB64
+            sealedB64 = created.sealedB64,
+            // The initial share key has not reached the server yet; keep it
+            // eligible for backfill if registration is interrupted.
+            shareEkRegistrationPending = true,
+            shareEkSignedAt = signedAt,
+            shareEkSignature = shareEkSignature,
         )
         save(identity)
         return identity
@@ -135,17 +164,34 @@ class ServerIdentityStore(context: Context) {
         return opened.handle
     }
 
-    /** Generate a share keypair and remember that its public half still needs registration. */
+    /** Generate a share keypair and remember that its public half still needs registration.
+     *
+     * The binding metadata (signedAt + signature) is refreshed for the ROTATED
+     * key in the same persisted update: retaining the previous key's signature
+     * would bind the old `shareEkB64`, so a registration retry for the rotated
+     * key fails server verification and leaves the pending flag stuck. */
     fun rotateShareKey(): String? {
         val handleId = handle() ?: return null
         val rotated = NativeVelaCore.identityRotateShareKey(sealKey(), handleId) ?: return null
         val (shareEk, sealed) = rotated
+        val signedAt = canonicalTimestamp()
+        val signature = handleId.takeIf { shareEk.isNotBlank() }?.let {
+            NativeVelaCore.identitySignShareEkBinding(
+                handle = it,
+                shareEkB64 = shareEk,
+                signedAt = signedAt,
+            )
+        }
         load()?.let {
             save(
                 it.copy(
                     shareEkB64 = shareEk,
                     sealedB64 = sealed,
-                    shareEkRegistrationPending = true
+                    shareEkRegistrationPending = true,
+                    // Fresh binding metadata for the NEW key — never carry the
+                    // old key's signature forward.
+                    shareEkSignedAt = signature?.let { _ -> signedAt },
+                    shareEkSignature = signature,
                 )
             )
         }
@@ -226,7 +272,9 @@ class ServerIdentityStore(context: Context) {
             hybridVkB64 = json.getString("hybrid_vk_b64"),
             shareEkB64 = json.optString("share_ek_b64"),
             sealedB64 = json.optString("sealed_b64"),
-            shareEkRegistrationPending = json.optBoolean("share_ek_registration_pending", false)
+            shareEkRegistrationPending = json.optBoolean("share_ek_registration_pending", false),
+            shareEkSignedAt = json.optString("share_ek_signed_at").takeIf { it.isNotBlank() },
+            shareEkSignature = json.optString("share_ek_signature").takeIf { it.isNotBlank() },
         )
     }
 
@@ -239,11 +287,23 @@ class ServerIdentityStore(context: Context) {
             .put("share_ek_b64", shareEkB64)
             .put("sealed_b64", sealedB64)
             .put("share_ek_registration_pending", shareEkRegistrationPending)
+            .put("share_ek_signed_at", shareEkSignedAt)
+            .put("share_ek_signature", shareEkSignature)
     }
 
     companion object {
         private const val TAG = "ServerIdentityStore"
         private const val KEY_IDENTITY_JSON = "identity_json"
         private const val KEY_SEAL_KEY = "identity_seal_key"
+
+        /**
+         * Canonical M19 binding timestamp: second-precision UTC ("...:SSZ",
+         * exactly 20 chars). The server rejects anything else, so every client
+         * must mint timestamps through this helper — Instant.toString() alone
+         * emits fractional seconds whenever nanos are nonzero.
+         */
+        fun canonicalTimestamp(): String =
+            java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                .toString()
     }
 }

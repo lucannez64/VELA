@@ -2,6 +2,7 @@ use axum::{extract::State, http::HeaderMap, Json};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use vela_recovery_policy::{RegistrationDecision, RegistrationFacts};
 use webauthn_rs::prelude::{
     CreationChallengeResponse, CredentialID, Passkey, PasskeyRegistration,
     RegisterPublicKeyCredential,
@@ -15,7 +16,7 @@ use crate::{
     state::AppState,
 };
 
-fn cred_id_b64(passkey: &Passkey) -> String {
+pub(crate) fn cred_id_b64(passkey: &Passkey) -> String {
     B64.encode(passkey.cred_id().as_slice())
 }
 
@@ -36,9 +37,7 @@ pub struct WebauthnConfigResponse {
 /// a secret: `rp_id` is echoed back in every registration/assertion
 /// challenge already, and `rp_origin` is comparable to a public redirect URI
 /// in OAuth — deployment metadata, not an authorization credential.
-pub async fn get_webauthn_config(
-    State(state): State<AppState>,
-) -> Json<WebauthnConfigResponse> {
+pub async fn get_webauthn_config(State(state): State<AppState>) -> Json<WebauthnConfigResponse> {
     Json(WebauthnConfigResponse {
         rp_id: state.config.webauthn_rp_id.clone(),
         rp_origin: state.config.webauthn_rp_origin.clone(),
@@ -121,10 +120,26 @@ pub async fn post_register_finish(
 
     assert_credential_not_registered_elsewhere(&state, session.user_id, &passkey).await?;
 
+    let _permit = match vela_recovery_policy::plan_registration(RegistrationFacts {
+        device_scope: true,
+        account_matches: true,
+        challenge_pending: true,
+        challenge_consumed: true,
+        credential_valid: true,
+        credential_unique: true,
+    }) {
+        RegistrationDecision::Register(permit) => permit,
+        RegistrationDecision::Reject => {
+            return Err(AppError::Unauthorized(
+                "verified recovery policy rejected credential registration".into(),
+            ));
+        }
+    };
+
     let passkey_json = serde_json::to_string(&passkey)
         .map_err(|e| AppError::Internal(format!("failed to serialize passkey: {e}")))?;
     let cred_id = cred_id_b64(&passkey);
-    state
+    let updated = state
         .sqldb
         .execute(
             "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ? WHERE id = ?",
@@ -136,6 +151,9 @@ pub async fn post_register_finish(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    if updated != 1 {
+        return Err(AppError::NotFound("account no longer exists".into()));
+    }
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -155,39 +173,44 @@ pub(crate) async fn recovery_passkey_for_user(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows
-        .first()
-        .ok_or_else(|| AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into()))?;
+    let row = rows.first().ok_or_else(|| {
+        AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
+    })?;
     match row.get(0) {
         Some(TursoValue::Null) | None => Ok(None),
         Some(TursoValue::Text(passkey_json)) => serde_json::from_str(passkey_json)
             .map(Some)
             .map_err(|e| AppError::Internal(format!("invalid stored WebAuthn credential: {e}"))),
-        _ => Err(AppError::Internal("expected WebAuthn credential JSON".into())),
+        _ => Err(AppError::Internal(
+            "expected WebAuthn credential JSON".into(),
+        )),
     }
 }
 
-pub(crate) async fn update_recovery_passkey(
+pub(crate) async fn update_recovery_passkey_if_current(
     state: &AppState,
     user_id: Uuid,
+    expected_cred_id: &str,
     passkey: &Passkey,
-) -> Result<()> {
+) -> Result<bool> {
     let passkey_json = serde_json::to_string(passkey)
         .map_err(|e| AppError::Internal(format!("failed to serialize passkey: {e}")))?;
     let cred_id = cred_id_b64(passkey);
-    state
+    let updated = state
         .sqldb
         .execute(
-            "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ? WHERE id = ?",
+            "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ?
+             WHERE id = ? AND recovery_webauthn_cred_id = ?",
             vec![
                 TursoValue::Text(passkey_json),
                 TursoValue::Text(cred_id),
                 TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(expected_cred_id.to_string()),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(())
+    Ok(updated == 1)
 }
 
 /// One-time startup backfill: populate `recovery_webauthn_cred_id` for rows

@@ -19,11 +19,15 @@ struct RecoverAccountView: View {
     @State private var confirm = ""
     @State private var foundICloudBackup = false
     @State private var share1Epoch: Int?
+    @State private var share1EpochText = ""
     @State private var iCloudShare1 = ""
+    @State private var share1UserID: String?
+    @State private var share1SplitID = ""
 
     private var canRecover: Bool {
         guard !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard !share1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard (Int(share1EpochText) ?? 0) >= 1 else { return false }
         if usePassword { return password.count >= 8 && password == confirm }
         return true
     }
@@ -56,9 +60,24 @@ struct RecoverAccountView: View {
                         .onChange(of: share1) { value in
                             if foundICloudBackup && value != iCloudShare1 {
                                 foundICloudBackup = false
+                                share1UserID = nil
+                                share1SplitID = ""
                                 share1Epoch = nil
+                                share1EpochText = ""
                             }
                         }
+                    TextField("Recovery share epoch", text: $share1EpochText)
+                        .keyboardType(.numberPad)
+                        .accessibilityIdentifier("recoverShare1EpochField")
+                        .onChange(of: share1EpochText) { value in
+                            let digits = value.filter { $0.isNumber }
+                            if digits != value { share1EpochText = digits }
+                            share1Epoch = Int(digits)
+                        }
+                    TextField("Recovery split ID (blank for legacy)", text: $share1SplitID)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("recoverShare1SplitIDField")
                     Text(
                         foundICloudBackup
                             ? "Backed up automatically to this iCloud account during recovery setup. Edit only if this isn't the right one."
@@ -85,6 +104,8 @@ struct RecoverAccountView: View {
                     Button("Recover account") {
                         account.restoreAccount(
                             serverURL: serverURL, userID: userID.trimmingCharacters(in: .whitespacesAndNewlines),
+                            cloudUserID: share1UserID ?? userID.trimmingCharacters(in: .whitespacesAndNewlines),
+                            cloudSplitID: share1SplitID.isEmpty ? nil : share1SplitID,
                             share1Base64: share1.trimmingCharacters(in: .whitespacesAndNewlines),
                             share1Epoch: share1Epoch,
                             secure: usePassword ? .password : .biometric,
@@ -115,8 +136,11 @@ struct RecoverAccountView: View {
                 guard let storedUserID = CloudRecoveryBackup.storedUserID() else { return }
                 if let backup = CloudRecoveryBackup.download(userID: storedUserID) {
                     userID = storedUserID
+                    share1UserID = backup.userID
+                    share1SplitID = backup.splitID ?? ""
                     iCloudShare1 = backup.shareBase64
                     share1Epoch = backup.keyEpoch
+                    share1EpochText = String(backup.keyEpoch)
                     foundICloudBackup = true
                     share1 = backup.shareBase64
                 }

@@ -15,7 +15,7 @@
 //! }
 //! ```
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use pasetors::{
     claims::{Claims, ClaimsValidationRules},
     keys::{AsymmetricPublicKey, AsymmetricSecretKey},
@@ -25,12 +25,12 @@ use pasetors::{
     Public,
 };
 use uuid::Uuid;
+use vela_session_policy::{CapabilityScope, ScopeClaim, ScopeDecision, TokenDecision, TokenPlan};
 
 use crate::error::{AppError, Result};
 
 const ISSUER: &str = "vela-server";
-const TOKEN_LIFE: i64 = 15 * 60; // 15 min in seconds
-const HARD_CAP_SECS: i64 = 8 * 60 * 60; // 8 h in seconds
+pub use vela_session_policy::CapabilityScope as TokenScope;
 
 /// Parsed, validated claims extracted from a PASETO token.
 #[derive(Debug, Clone)]
@@ -58,32 +58,10 @@ pub struct VelaClaims {
 /// The boundary that promise describes is an authorization boundary, not just an
 /// expiry one — so it has to be written into the token and checked at the routes
 /// that outlive the session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TokenScope {
-    /// A real enrolled device. Full authority over the account.
-    Device,
-    /// An ephemeral web session. May read and write the vault it was granted,
-    /// and nothing that survives the session.
-    WebSession,
-}
-
-impl TokenScope {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TokenScope::Device => "device",
-            TokenScope::WebSession => "web_session",
-        }
-    }
-
-    fn from_claim(value: Option<&str>) -> Self {
-        match value {
-            Some("web_session") => TokenScope::WebSession,
-            // Tokens minted before this claim existed carry no scope. They are
-            // treated as device tokens, which is the permissive reading — but
-            // the window is bounded by TOKEN_LIFE (15 min), after which every
-            // token in circulation is scoped.
-            _ => TokenScope::Device,
-        }
+fn scope_name(scope: TokenScope) -> &'static str {
+    match scope {
+        TokenScope::Device => "device",
+        TokenScope::WebSession => "web_session",
     }
 }
 
@@ -114,37 +92,30 @@ impl TokenService {
         device_id: Uuid,
         hard_cap: Option<DateTime<Utc>>,
     ) -> Result<(String, String)> {
-        self.issue_scoped(user_id, device_id, hard_cap, TokenScope::Device)
+        let now = Utc::now().timestamp();
+        let decision =
+            vela_session_policy::plan_device_token(now, hard_cap.map(|cap| cap.timestamp()));
+        let TokenDecision::Issue(plan) = decision else {
+            return Err(AppError::Internal("invalid device token lifetime".into()));
+        };
+        self.issue_from_plan(user_id, device_id, plan)
     }
 
-    /// Issue a token, saying what kind of caller it speaks for (red-team RT-4).
-    pub fn issue_scoped(
+    /// Sign only claims produced by the formally verified capability policy.
+    pub fn issue_from_plan(
         &self,
         user_id: Uuid,
         device_id: Uuid,
-        hard_cap: Option<DateTime<Utc>>,
-        scope: TokenScope,
-    ) -> Result<(String, String)> {
-        self.issue_scoped_at_epoch(user_id, device_id, hard_cap, scope, None)
-    }
-
-    /// Issue a scoped token bound to the account key epoch at which its
-    /// authority was granted. Web sessions use this so RMS rotation also
-    /// retires their server-side write and delete authority.
-    pub fn issue_scoped_at_epoch(
-        &self,
-        user_id: Uuid,
-        device_id: Uuid,
-        hard_cap: Option<DateTime<Utc>>,
-        scope: TokenScope,
-        key_epoch: Option<i64>,
+        plan: TokenPlan,
     ) -> Result<(String, String)> {
         let now = Utc::now();
-        let hcap = hard_cap.unwrap_or_else(|| now + Duration::seconds(HARD_CAP_SECS));
-        // Never let a token outlive its session ceiling. For permanent devices the
-        // 8 h cap is far away so this is a no-op; for ephemeral web sessions the
-        // ceiling is the granted TTL, so a short-lived session gets a short exp.
-        let exp = (now + Duration::seconds(TOKEN_LIFE)).min(hcap);
+        let hcap = DateTime::<Utc>::from_timestamp(plan.hard_cap(), 0)
+            .ok_or_else(|| AppError::Internal("token hard cap is out of range".into()))?;
+        let exp = DateTime::<Utc>::from_timestamp(plan.expires_at(), 0)
+            .ok_or_else(|| AppError::Internal("token expiry is out of range".into()))?;
+        if exp <= now || hcap <= now || exp > hcap {
+            return Err(AppError::Internal("token plan is no longer live".into()));
+        }
         let jti = Uuid::new_v4().to_string();
 
         let mut claims =
@@ -175,12 +146,9 @@ impl TokenService {
             .add_additional("hard_cap", serde_json::json!(hcap.to_rfc3339()))
             .map_err(|e| AppError::Internal(format!("hard_cap claim: {e:?}")))?;
         claims
-            .add_additional("scope", serde_json::json!(scope.as_str()))
+            .add_additional("scope", serde_json::json!(scope_name(plan.scope())))
             .map_err(|e| AppError::Internal(format!("scope claim: {e:?}")))?;
-        if let Some(epoch) = key_epoch {
-            if epoch < 1 {
-                return Err(AppError::Internal("invalid key epoch for token".into()));
-            }
+        if let Some(epoch) = plan.key_epoch() {
             claims
                 .add_additional("key_epoch", serde_json::json!(epoch))
                 .map_err(|e| AppError::Internal(format!("key_epoch claim: {e:?}")))?;
@@ -239,11 +207,38 @@ impl TokenService {
             .map(|dt| dt.with_timezone(&Utc))
             .ok_or_else(|| AppError::Unauthorized("missing hard_cap claim".into()))?;
 
-        let scope = TokenScope::from_claim(p.get_claim("scope").and_then(|v| v.as_str()));
+        let raw_scope = p.get_claim("scope").and_then(|v| v.as_str());
+        let scope_claim = match raw_scope {
+            None => ScopeClaim::MissingLegacy,
+            Some("device") => ScopeClaim::Device,
+            Some("web_session") => ScopeClaim::WebSession,
+            Some(_) => ScopeClaim::Unknown,
+        };
+        let scope = match vela_session_policy::parse_scope_claim(scope_claim) {
+            ScopeDecision::Accept(scope) => scope,
+            ScopeDecision::Reject => {
+                return Err(AppError::Unauthorized("unknown token scope".into()));
+            }
+        };
         let key_epoch = p
             .get_claim("key_epoch")
             .and_then(|v| v.as_i64())
             .filter(|epoch| *epoch >= 1);
+
+        let policy_claims = vela_session_policy::TokenClaims {
+            scope: match scope {
+                TokenScope::Device => CapabilityScope::Device,
+                TokenScope::WebSession => CapabilityScope::WebSession,
+            },
+            key_epoch,
+            expires_at: exp.timestamp(),
+            hard_cap: hard_cap.timestamp(),
+        };
+        if !vela_session_policy::renewal_input_is_valid(policy_claims, Utc::now().timestamp()) {
+            return Err(AppError::Unauthorized(
+                "token capability claims are inconsistent".into(),
+            ));
+        }
 
         Ok(VelaClaims {
             user_id,

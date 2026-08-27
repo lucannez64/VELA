@@ -1,0 +1,89 @@
+theory M21_LinkRevocationFinality
+/*
+  HTTP-level revocation finality for the cross-user share link (M20 follow-up).
+  A linked share (capsule in the server inbox) is delivered once; after
+  revocation (`PUT /share/linked` setting revoked=true, verified only by
+  the sender's device-signed identity, plus ETag `If-Match` on capsule), the
+  link can never be read again by any recipient (tombstone visibility).
+
+  Scope note: this theory models ceremony ORDERING over opaque capsules.
+  There is no adversary In/Out interaction with capsule contents — `Cap`
+  never leaves the model except inside the opaque `cap/2` constructor sent
+  on Out() in DeliverCapsule. Content secrecy is the M19b share-channel
+  theory's job; here we prove finality/provenance ordering.
+*/
+begin
+
+functions: cap/2
+
+/* Sender identity bound: only an enrolled device of the sender can revoke
+   a link. The device identity is the hybrid signing key. */
+
+rule SetupDeviceKey:
+    [ Fr(~sender), Fr(~x) ]
+  --[ DeviceEnrolled(~sender, ~x) ]->
+    [ !DevKey(~sender, ~x) ]
+
+/* The link is created by an already-enrolled sender device: creation and
+   revocation therefore reference the same identity. */
+rule LinkCreated:
+    [ !DevKey(S, X), Fr(~recipient), Fr(~capsule) ]
+  --[ LinkCreated(S, ~recipient, ~capsule) ]->
+    [ PendingCapsule(S, ~recipient, ~capsule) ]
+
+/* Delivery: the server relays the opaque capsule to the recipient.
+   Each capsule is delivered at most once by consuming the linear pending
+   token. Delivery mints ONE read allowance alongside the live link. */
+rule DeliverCapsule:
+    [ PendingCapsule(S, R, Cap) ]
+  --[ CapsuleDelivered(S, R, Cap) ]->
+    [ LinkLive(S, R, Cap), ReadAllowance(S, R, Cap), Out(cap(Cap, S)) ]
+
+/* A delivered link grants the recipient exactly one read: ReadAllowance is
+   consumed and NOT re-emitted (unbounded reads would diverge). The live
+   state survives the read and REMAINS revocable — mirroring the server,
+   where a tombstone can be committed after any number of reads. */
+rule ReadLink:
+    [ LinkLive(S, R, Cap), ReadAllowance(S, R, Cap) ]
+  --[ LinkRead(S, R, Cap) ]->
+    [ LinkLive(S, R, Cap) ]
+
+/* Revocation is possible both before and after the read: it consumes the
+   live access state and archives the link permanently. */
+rule RevokeLink:
+    [ LinkLive(S, R, Cap),
+      !DevKey(S, X) ]
+  --[ LinkRevoked(S, R, Cap) ]->
+    [ !LinkArchived(S, R, Cap) ]
+
+/* ── Finality ──────────────────────────────────────────────────────────── */
+
+/* No read of the same link may OCCUR AFTER its revocation event. This is
+   genuine temporal finality: reads before revocation are allowed (and
+   witnessed below); reads after are structurally impossible because the
+   live access state was consumed at revocation time. */
+lemma revoked_links_can_never_be_read_again:
+  "All S R Cap #r.
+     LinkRevoked(S, R, Cap) @ r
+     ==> not (Ex #d. LinkRead(S, R, Cap) @ d & #r < #d)"
+
+/* Only the original sender (verified by device identity binding) can revoke,
+   and only links that were actually created. */
+lemma only_sender_can_revoke_link:
+  "All S R Cap #r.
+     LinkRevoked(S, R, Cap) @ r
+     ==> Ex X #c #e. LinkCreated(S, R, Cap) @ #c &
+                     DeviceEnrolled(S, X) @ #e & #c < #r & #e < #r"
+
+/* Availability with full ordering: an honest link reaches delivery, is
+   read, and THEN revoked by the sender — every stage in order. */
+lemma revocation_is_reachable:
+  exists-trace
+  "Ex S R Cap #c #d #dv #r.
+     LinkCreated(S, R, Cap) @ #c &
+     CapsuleDelivered(S, R, Cap) @ #dv &
+     LinkRead(S, R, Cap) @ #d &
+     LinkRevoked(S, R, Cap) @ #r &
+     #c < #dv & #dv < #d & #d < #r"
+
+end

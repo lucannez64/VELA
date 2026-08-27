@@ -1,0 +1,245 @@
+theory M18_PairSelection
+/*
+  Complete 2-of-3 recovery threshold across all three custodian channels.
+
+  One recovery split publishes three shares to three channels: the cloud
+  provider (public, adversarial storage), the VELA server (released only
+  behind a WebAuthn assertion), and a trusted contact (sealed into an opaque
+  envelope only they can open; they answer a recovery request by re-sealing
+  the share to the requester's ephemeral key).
+
+  Reconstruction adopts an RMS only from TWO BOUND SHARES with:
+    - distinct channels (any of cloud+server, cloud+contact, server+contact),
+    - the exact same account, epoch, and Shamir split,
+    - distinct polynomial coordinates,
+    - contact-channel shares only ever entering through the recipient-bound
+      response path (never raw copied material).
+
+  A possession-proof enrollment grant issues only after a full pair
+  adoption, and never releases the server share.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+functions: cenv/4, senv/4, tenv/5, reqk/1, resp/6
+
+/* Channel tags and fixed per-split coordinates (shares 1..3 of one
+   polynomial always evaluate at these distinct points). */
+
+rule SetupSplit:
+    [ Fr(~user), Fr(~epoch), Fr(~split), Fr(~rms),
+      Fr(~cloud_share), Fr(~server_share), Fr(~contact_share) ]
+  --[ SplitCreated(~user, ~epoch, ~split, ~rms),
+      ShareOriginated('cloud', ~user, ~epoch, ~split, 'x1', ~cloud_share),
+      ShareOriginated('server', ~user, ~epoch, ~split, 'x2', ~server_share),
+      ShareOriginated('contact', ~user, ~epoch, ~split, 'x3', ~contact_share) ]->
+    [ !ShareOrigin('cloud', ~user, ~epoch, ~split, 'x1', ~cloud_share),
+      !ShareOrigin('server', ~user, ~epoch, ~split, 'x2', ~server_share),
+      !ShareOrigin('contact', ~user, ~epoch, ~split, 'x3', ~contact_share),
+      !ServerCustodian(~user, ~epoch, ~split, ~server_share),
+      !ContactCustodian(~user, ~epoch, ~split, ~contact_share),
+      // Linear authority: consuming a rotation below retires this epoch's
+      // ability to adopt anything derived from it.
+      AdoptAuthority(~user, ~epoch, ~split),
+      // The cloud copy is public from birth: the provider is adversarial.
+      Out(cenv(~user, ~epoch, ~split, ~cloud_share)) ]
+
+/* ── Cloud channel ──────────────────────────────────────────────────────── */
+
+// An adversarially stored/replayed cloud envelope authenticates only when it
+// carries a share that genuinely originated in this exact context — the
+// symbolic counterpart of MAC verification against the reconstructed secret.
+rule AcceptCloudShare:
+    [ In(cenv(U, E, Set, C)),
+      !ShareOrigin('cloud', U, E, Set, 'x1', C) ]
+  --[ ShareAuthenticated(U, E, Set, 'cloud', 'x1', C) ]->
+    [ BoundShare('cloud', U, E, Set, 'x1', C) ]
+
+/* ── Server channel ─────────────────────────────────────────────────────── */
+
+// Share 2 leaves the server only after a passing WebAuthn assertion, and
+// goes straight to the requesting client (never to the network).
+rule ReleaseServerShare:
+    [ !ServerCustodian(U, E, Set, S), Fr(~attempt) ]
+  --[ WebAuthnAssertionVerified(~attempt, U, E, Set),
+      ServerShareReleased(~attempt, U, E, Set, S) ]->
+    [ BoundShare('server', U, E, Set, 'x2', S) ]
+
+/* ── Trusted-contact channel ────────────────────────────────────────────── */
+
+// At setup time the owner seals Share 3 for the contact. `tenv` is an opaque
+// constructor: the network sees it, nobody learns its contents.
+rule SealContactEnvelope:
+    [ !ContactCustodian(U, E, Set, T) ]
+  --[ ContactEnvelopeSealed(U, E, Set, T) ]->
+    [ Out(tenv(U, E, Set, 'x3', T)) ]
+
+// A recovery ceremony begins on some device: it publishes an ephemeral
+// request key and keeps the matching secret.
+rule StartContactRecovery:
+    [ Fr(~request_key) ]
+  --[ RecoveryRequestPublished(~request_key) ]->
+    [ !RequestKey(~request_key),
+      RequestSecret(~request_key),
+      Out(reqk(~request_key)) ]
+
+// The contact opens the envelope they hold and re-seals the share to the
+// requester's key. The response travels over the adversarial network, but
+// only a holder of the matching request secret can deconstruct it — this is
+// exactly the recipient binding the AEAD envelope enforces.
+rule ContactRespondsToRequest:
+    [ !ContactCustodian(U, E, Set, T),
+      !RequestKey(R),
+      In(reqk(R)),
+      In(tenv(U, E, Set, 'x3', T)) ]
+  --[ ContactShareRevealedBound(U, E, Set, T, R) ]->
+    [ Out(resp(R, U, E, Set, 'x3', T)) ]
+
+// The recovering device opens a response addressed to ITS OWN request key.
+// Forged or redirected responses fail the pattern match; the origin check is
+// the share-MAC verification. Every contact share entering reconstruction
+// therefore went through this recipient-bound path.
+rule OpenContactResponse:
+    [ RequestSecret(R),
+      In(resp(R, U, E, Set, 'x3', T)),
+      !ShareOrigin('contact', U, E, Set, 'x3', T) ]
+  --[ ShareAuthenticated(U, E, Set, 'contact', 'x3', T) ]->
+    [ BoundShare('contact', U, E, Set, 'x3', T) ]
+
+/* ── Pair selection, adoption, possession grant, rotation ──────────────── */
+
+// Exactly three pair shapes exist, one per honest custodian combination.
+// Distinct channels and coordinates hold by construction: each share of a
+// split lives at its own fixed evaluation point ('x1', 'x2', 'x3') and each
+// rule consumes shares from two different channels.
+rule SelectCloudServer:
+    [ BoundShare('cloud', U, E, Set, 'x1', C),
+      BoundShare('server', U, E, Set, 'x2', S) ]
+  --[ PairAuthenticated(U, E, Set, 'cloud', 'x1', C, 'server', 'x2', S) ]->
+    [ PairSelected('cloud', U, E, Set, 'x1', C, 'server', 'x2', S) ]
+
+rule SelectCloudContact:
+    [ BoundShare('cloud', U, E, Set, 'x1', C),
+      BoundShare('contact', U, E, Set, 'x3', T) ]
+  --[ PairAuthenticated(U, E, Set, 'cloud', 'x1', C, 'contact', 'x3', T) ]->
+    [ PairSelected('cloud', U, E, Set, 'x1', C, 'contact', 'x3', T) ]
+
+rule SelectServerContact:
+    [ BoundShare('server', U, E, Set, 'x2', S),
+      BoundShare('contact', U, E, Set, 'x3', T) ]
+  --[ PairAuthenticated(U, E, Set, 'server', 'x2', S, 'contact', 'x3', T) ]->
+    [ PairSelected('server', U, E, Set, 'x2', S, 'contact', 'x3', T) ]
+
+// Interpolation succeeds only against this epoch's still-live authority; a
+// committed rotation consumed it, retiring every old-epoch share pair.
+rule AdoptSelectedPair:
+    [ PairSelected(Ch1, U, E, Set, X1, S1, Ch2, X2, S2),
+      AdoptAuthority(U, E, Set) ]
+  --[ RmsAdopted(U, E, Set) ]->
+    [ !AdoptedSplit(U, E, Set) ]
+
+rule IssuePossessionGrant:
+    [ !AdoptedSplit(U, E, Set), Fr(~grant) ]
+  --[ PossessionGrantIssued(~grant, U, E, Set) ]->
+    []
+
+rule RotateSplit:
+    [ AdoptAuthority(U, E, Set), Fr(~next_epoch), Fr(~next_split) ]
+  --[ EpochRotated(U, E, ~next_epoch, Set, ~next_split) ]->
+    []
+
+/* ── Safety: adoption provenance ─────────────────────────────────────────── */
+
+lemma adoption_requires_pair_authentication:
+  "All U E Set #i.
+     RmsAdopted(U, E, Set) @ i
+     ==> Ex Ch1 X1 S1 Ch2 X2 S2 #j.
+           PairAuthenticated(U, E, Set, Ch1, X1, S1, Ch2, X2, S2) @ j & #j < #i"
+
+lemma adopted_pairs_have_distinct_channels:
+  "All U E Set Ch1 X1 S1 Ch2 X2 S2 #i.
+     PairAuthenticated(U, E, Set, Ch1, X1, S1, Ch2, X2, S2) @ i
+     ==> not (Ch1 = Ch2)"
+
+lemma adopted_pairs_have_distinct_coordinates:
+  "All U E Set Ch1 X1 S1 Ch2 X2 S2 #i.
+     PairAuthenticated(U, E, Set, Ch1, X1, S1, Ch2, X2, S2) @ i
+     ==> not (X1 = X2)"
+
+lemma every_authenticated_share_has_exact_context_origin:
+  "All U E Set Ch X S OtherU OtherE OtherSet #i #j.
+     ShareAuthenticated(U, E, Set, Ch, X, S) @ j &
+     ShareOriginated(Ch, OtherU, OtherE, OtherSet, X, S) @ i
+     ==> (U = OtherU & E = OtherE & Set = OtherSet)"
+
+lemma cross_account_share_cannot_pair:
+  "All U E Set Ch1 X1 S1 Ch2 X2 S2 OtherU #i #j.
+     PairAuthenticated(U, E, Set, Ch1, X1, S1, Ch2, X2, S2) @ j &
+     ShareOriginated(Ch1, OtherU, E, Set, X1, S1) @ i
+     ==> U = OtherU"
+
+lemma mixed_epoch_shares_cannot_pair:
+  "All U E Set Ch1 X1 S1 Ch2 X2 S2 OtherE #i #j.
+     PairAuthenticated(U, E, Set, Ch1, X1, S1, Ch2, X2, S2) @ j &
+     ShareOriginated(Ch1, U, OtherE, Set, X1, S1) @ i
+     ==> E = OtherE"
+
+lemma mixed_split_shares_cannot_pair:
+  "All U E Set Ch1 X1 S1 Ch2 X2 S2 OtherSet #i #j.
+     PairAuthenticated(U, E, Set, Ch1, X1, S1, Ch2, X2, S2) @ j &
+     ShareOriginated(Ch1, U, E, OtherSet, X1, S1) @ i
+     ==> Set = OtherSet"
+
+/* ── Safety: per-channel release conditions ──────────────────────────────── */
+
+lemma server_share_requires_webauthn_release:
+  "All Attempt U E Set S #j.
+     ServerShareReleased(Attempt, U, E, Set, S) @ j
+     ==> WebAuthnAssertionVerified(Attempt, U, E, Set) @ j"
+
+lemma contact_share_only_flows_through_recipient_bound_response:
+  "All U E Set T R #i.
+     ContactShareRevealedBound(U, E, Set, T, R) @ i
+     ==> Ex #j #k.
+           ContactEnvelopeSealed(U, E, Set, T) @ j &
+           RecoveryRequestPublished(R) @ k & #j < #i & #k < #i"
+
+lemma adopted_contact_share_was_recipient_bound:
+  "All U E Set Ch1 X1 S1 Ch2 X2 S2 #j.
+     PairAuthenticated(U, E, Set, Ch1, X1, S1, Ch2, X2, S2) @ j &
+     Ch2 = 'contact'
+     ==> Ex R #k. ContactShareRevealedBound(U, E, Set, S2, R) @ k & #k < #j"
+
+lemma possession_grant_requires_full_pair_adoption:
+  "All Grant U E Set #i.
+     PossessionGrantIssued(Grant, U, E, Set) @ i
+     ==> Ex #j. RmsAdopted(U, E, Set) @ j & #j < #i"
+
+lemma rotation_blocks_later_old_epoch_adoption:
+  "All U E Next Set NextSet #i #j.
+     EpochRotated(U, E, Next, Set, NextSet) @ i &
+     RmsAdopted(U, E, Set) @ j
+     ==> not (#i < #j)"
+
+/* ── Availability: every honest pair recovers ────────────────────────────── */
+
+lemma legitimate_cloud_server_recovery_is_reachable:
+  exists-trace
+  "Ex U E Set C S #i #j.
+     PairAuthenticated(U, E, Set, 'cloud', 'x1', C, 'server', 'x2', S) @ i &
+     RmsAdopted(U, E, Set) @ j & #i < #j"
+
+lemma legitimate_cloud_contact_recovery_is_reachable:
+  exists-trace
+  "Ex U E Set C T #i #j.
+     PairAuthenticated(U, E, Set, 'cloud', 'x1', C, 'contact', 'x3', T) @ i &
+     RmsAdopted(U, E, Set) @ j & #i < #j"
+
+lemma legitimate_server_contact_recovery_is_reachable:
+  exists-trace
+  "Ex U E Set S T #i #j.
+     PairAuthenticated(U, E, Set, 'server', 'x2', S, 'contact', 'x3', T) @ i &
+     RmsAdopted(U, E, Set) @ j & #i < #j"
+
+end

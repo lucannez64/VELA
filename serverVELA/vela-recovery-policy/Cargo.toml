@@ -1,0 +1,16 @@
+[package]
+name = "vela-recovery-policy"
+version = "0.1.0"
+edition = "2021"
+description = "Pure, formally verified account-recovery policy for VELA"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "vela_recovery_policy"
+path = "src/lib.rs"
+
+[target.'cfg(hax)'.dependencies]
+hax-lib = "=0.3.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(hax)", "cfg(hax_compilation)"] }

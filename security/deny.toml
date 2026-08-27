@@ -13,6 +13,9 @@
 # bumped without an upstream release. Tracked via cargo-audit (which still
 # flags yanked crates) instead of hard-failing here.
 yanked = "warn"
+# proc-macro-error2 (transitive via axum-macros) is unmaintained; no fix
+# available upstream. Tracked until axum/webauthn-rs drop the dependency.
+
 ignore = [
   # RUSTSEC-2024-0384 (instant unmaintained): transitive via UI deps; safe to
   # allow until the dep tree drops it.
@@ -28,6 +31,12 @@ ignore = [
   # reachable. No fixed 0.9 line exists; re-evaluate if rsa is ever used to
   # decrypt.
   "RUSTSEC-2023-0071",
+  # proc-macro-error2: unmaintained successor fork of proc-macro-error
+  # (RUSTSEC-2024-0370). Transitive via axum-macros / webauthn-rs macro deps.
+  # No fix available upstream; tracked until axum/webauthn-rs drop it.
+  # proc-macro-error2 unmaintained (RUSTSEC-2026-0173): transitive via
+  # axum-macros / webauthn-rs macro deps; no fix available upstream.
+  "RUSTSEC-2026-0173",
 ]
 
 [bans]

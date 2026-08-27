@@ -1,0 +1,160 @@
+theory M23_SyncAdmission
+/*
+  Client sync-admission decisions (M23).
+
+  A malicious server can serve chunks stamped with any Lamport clock and
+  advertise any account key epoch. The client admits a downloaded chunk only
+  when its clock matches the one already recorded for that chunk (older or
+  forged clocks have no recorded counterpart), and adopts a new account key
+  epoch only when the advertised epoch is exactly the successor of its local
+  epoch (`succ(local)`), with the capsule bound to that same transition.
+
+  Successor encoding: epochs are terms over the public `succ` constructor,
+  so "exactly local + 1" is structural pattern-matching — no arithmetic.
+
+  Scope restriction (post-review): the clock model admits only the BOOTSTRAP
+  clock value, recorded once. It does not model later clocks ADVANCING from
+  admitted server-supplied revisions (the real client's monotonic succ-based
+  admission). Consequently `recorded_clocks_are_trusted_bootstrap_values`
+  and `admitted_clocks_are_validated_against_the_trusted_record` are proven
+  for this bootstrap-only surface; advancing-revision admission remains
+  future work. Termination bounds: at most TWO adoptions per device
+  (AdoptionFuel) and one first-sync recording (linear TrustedClock).
+
+  Expected verdict: all lemmas VERIFIED within that bounded scope.
+*/
+begin
+
+functions: succ/1
+
+/* A fresh account starts at the base epoch and records its trusted
+   bootstrap clock — an in-model honest value, never network data. */
+rule AccountSetup:
+    [ Fr(~user), Fr(~clock0) ]
+  --[ AccountCreated(~user),
+      BootstrapClockTrusted(~user, ~clock0) ]->
+    [ LocalEpoch('e0'), TrustedClock(~clock0), Out(~clock0),
+      /* Bounded ladder: two adoptions max per device lifetime. Without
+         this fuel the succ-chain climbs forever and the search diverges. */
+      AdoptionFuel(), AdoptionFuel() ]
+
+/* ── Chunk admission ─────────────────────────────────────────────────────── */
+
+/* The server serves a chunk revision stamped with any clock it likes;
+   the clock term is adversary-chosen network data. D ranges over accounts. */
+rule ServeChunk:
+    [ In(clock) ]
+  --[ ChunkServed(clock) ]->
+    [ AdmissionRequest(clock) ]
+
+/* A chunk is admitted only when this device already recorded exactly that
+   clock for it — equal-clock redelivery. The recording is consumed: an
+   admitted redelivery spends the record, which keeps the reachable state
+   space finite (re-emitting it would allow unbounded re-admission loops).
+   Older/forged clocks find no matching recording and are refused. */
+rule AdmitKnownChunk:
+    [ AdmissionRequest(C), RecordedClock(C) ]
+  --[ ChunkAdmitted(C) ]->
+    []
+
+/* The recording itself originates only from a trusted bootstrap: the
+   device records a first clock only when it matches the clock it
+   initialized locally at account creation — adversary-chosen clocks from
+   AdmissionRequest alone cannot be recorded. */
+rule RecordOnFirstSync:
+    [ AdmissionRequest(C), TrustedClock(C) ]
+  --[ ChunkAdmitted(C), ClockRecorded(C) ]->
+    [ RecordedClock(C) ]
+
+lemma every_admitted_chunk_was_served:
+  "All C #i.
+     ChunkAdmitted(C) @ i
+     ==> Ex #j. ChunkServed(C) @ j & #j < #i"
+
+lemma recorded_clock_fact_comes_from_admission:
+  "All C #i.
+     RecordedClock(C) @ i
+     ==> Ex #k. ChunkAdmitted(C) @ k & #k < #i"
+
+/* A first-sync recording happens in the same admitted step. */
+lemma clock_recorded_event_comes_from_admission:
+  "All C #i.
+     ClockRecorded(C) @ i
+     ==> ChunkAdmitted(C) @ i"
+
+/* Validation (not just transmission): every recorded/admitted clock
+   traces to the trusted bootstrap value, never to server-supplied data. */
+lemma recorded_clocks_are_trusted_bootstrap_values:
+  "All C #i.
+     ClockRecorded(C) @ i
+     ==> Ex U #j. BootstrapClockTrusted(U, C) @ j & #j < #i"
+
+lemma admitted_clocks_are_validated_against_the_trusted_record:
+  "All C #i.
+     ChunkAdmitted(C) @ i
+     ==> Ex U #j. BootstrapClockTrusted(U, C) @ j & #j < #i"
+
+/* ── Epoch adoption ladder ───────────────────────────────────────────────── */
+
+/* The server advertises account epochs; the adversary picks the term. */
+rule AdvertiseEpoch:
+    [ In(E) ]
+  --[ EpochAdvertised(E) ]->
+    [ !AdvertisedEpoch(E) ]
+
+/* Adoption consumes this device's local epoch token and accepts ONLY the
+   exact successor. The capsule's inner epoch and rotation id are bound into
+   the event, mirroring plan_epoch_adoption's permit. */
+rule AdoptSuccessorEpoch:
+    [ !AdvertisedEpoch(succ(L)),
+      LocalEpoch(L),
+      AdoptionFuel(),
+      Fr(~rotid),
+      Fr(~rms) ]
+  --[ EpochAdopted(L, succ(L), ~rotid, ~rms) ]->
+    [ LocalEpoch(succ(L)),
+      RetiredLocalEpoch(L) ]
+
+/* ── Safety: the adoption ladder ─────────────────────────────────────────── */
+
+/* An adopted epoch is always exactly the successor of the local epoch the
+   device held — rollback (pred), skip (succ ∘ succ), and unrelated epochs
+   cannot match the rule's premise. */
+lemma adoption_requires_successor_of_local:
+  "All L E Rid Rms #i.
+     EpochAdopted(L, E, Rid, Rms) @ i
+     ==> E = succ(L)"
+
+lemma adopted_epoch_differs_from_retired:
+  "All Old New Rid Rms #i #j.
+     EpochAdopted(Old, New, Rid, Rms) @ i &
+     RetiredLocalEpoch(Old) @ j
+     ==> not (Old = New)"
+
+lemma every_adoption_has_an_advertised_epoch:
+  "All L E Rid Rms #i.
+     EpochAdopted(L, E, Rid, Rms) @ i
+     ==> Ex #j. EpochAdvertised(E) @ j & #j < #i"
+
+/* Two successive adoptions chain: the token consumed at i is exactly the
+   retired token emitted by the prior transition. */
+lemma adopted_epoch_was_never_retired_before:
+  "All L E Rid Rms #i.
+     EpochAdopted(L, E, Rid, Rms) @ i
+     ==> not (Ex #j. RetiredLocalEpoch(L) @ j & #j < #i)"
+
+/* ── Availability ─────────────────────────────────────────────────────────── */
+
+lemma trusted_first_sync_is_reachable:
+  exists-trace
+  "Ex C #a #b.
+     ChunkServed(C) @ a &
+     ClockRecorded(C) @ b & #a < #b"
+
+lemma adoption_is_reachable:
+  exists-trace
+  "Ex L Rid Rms #a #b.
+     EpochAdvertised(succ(L)) @ a &
+     EpochAdopted(L, succ(L), Rid, Rms) @ b & #a < #b"
+
+end

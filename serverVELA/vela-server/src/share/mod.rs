@@ -138,10 +138,26 @@ pub async fn post_send(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let total_bytes = total_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-    if total_bytes + capsule_bytes.len() as i64 > MAX_RECIPIENT_INBOX_BYTES {
+    let inbox_has_capacity = total_bytes + capsule_bytes.len() as i64 <= MAX_RECIPIENT_INBOX_BYTES;
+    if !inbox_has_capacity {
         return Err(AppError::PayloadTooLarge(format!(
             "recipient inbox exceeds {MAX_RECIPIENT_INBOX_BYTES} bytes"
         )));
+    }
+    // Verified send gate (M19): authenticated sender, registered recipient,
+    // bounded capsule, capacity left.
+    match vela_share_policy::plan_send(vela_share_policy::SendCapsuleFacts {
+        sender_authenticated: true,
+        recipient_registered: true,
+        capsule_size_valid: !capsule_bytes.is_empty(),
+        inbox_has_capacity,
+    }) {
+        vela_share_policy::SendDecision::Deliver => {}
+        vela_share_policy::SendDecision::Reject => {
+            return Err(AppError::BadRequest(
+                "verified sharing policy rejected the capsule delivery".into(),
+            ));
+        }
     }
 
     tx.execute(
@@ -508,7 +524,7 @@ pub async fn get_recipient_ek(
     let rows = state
         .sqldb
         .query(
-            "SELECT share_ek FROM users WHERE id = ?",
+            "SELECT share_ek, share_ek_since FROM users WHERE id = ?",
             vec![TursoValue::Text(user_id.to_string())],
         )
         .await
@@ -521,9 +537,19 @@ pub async fn get_recipient_ek(
         .map(String::from)
         .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?;
 
+    let signed_at = rows.first().and_then(|r| r.text(1));
+
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(serde_json::json!({ "share_ek": share_ek }))))
+    Ok((
+        headers,
+        Json(serde_json::json!({
+            "share_ek": share_ek,
+            // M19: binding instant, so senders can pin and detect later
+            // substitutions between fetch and seal.
+            "signed_at": signed_at,
+        })),
+    ))
 }
 
 /// ML-KEM-1024 EK (1568) + X25519 PK (32). Matches `account::SHARE_EK_LEN`.
@@ -532,35 +558,153 @@ const SHARE_EK_LEN: usize = 1568 + 32;
 #[derive(Deserialize)]
 pub struct PutShareEkRequest {
     pub share_ek: String,
+    /// The enrolled device whose hybrid identity key made `signature`.
+    pub device_id: Uuid,
+    /// RFC 3339 instant covered by the binding signature. Registrations are
+    /// monotonic: a signature older than the currently registered binding is
+    /// a replay and is rejected.
+    pub signed_at: String,
+    /// Hybrid identity signature over
+    /// `vela_crypto::signing::share_ek_binding_message(share_ek, signed_at)`.
+    pub signature: String,
+}
+
+/// Verify an EK binding against one of the caller's own enrolled devices.
+///
+/// The signature is the substitution defense (M19): database-level writes or
+/// a stolen session token alone can no longer point a victim's sharing key at
+/// an attacker-chosen capsule key — the attacker needs the private half of an
+/// enrolled device identity. Monotonic `signed_at` turns replayed older
+/// bindings into no-ops.
+///
+/// Returns the *verified* `(device_id, signed_at)` pair from the request body
+/// (not the caller's session), so the database stores exactly what the binding
+/// signature covered.
+async fn authorize_ek_binding(
+    state: &AppState,
+    user_id: Uuid,
+    request: &PutShareEkRequest,
+) -> Result<(Uuid, String)> {
+    use crate::device::enroll::verify_hybrid_signature;
+    use vela_share_policy::{EkRegistrationDecision, EkRegistrationFacts};
+
+    let ek_bytes = B64
+        .decode(&request.share_ek)
+        .map_err(|_| AppError::BadRequest("share_ek is not valid base64".into()))?;
+    let ek_size_valid = ek_bytes.len() == SHARE_EK_LEN;
+    if !ek_size_valid {
+        return Err(AppError::BadRequest(format!(
+            "share_ek must be exactly {SHARE_EK_LEN} bytes"
+        )));
+    }
+    let device_id = request.device_id;
+    // M-signed_at canonicalization (audit fix): the raw string previously went
+    // into a lexicographic freshness compare and the stored `share_ek_since`,
+    // so an offset form like `2026-01-01T01:00:00+01:00` could wind back the
+    // monotonic clock. Require canonical UTC (`...:SSZ`, second precision) and
+    // reject excessive future skew; store/pass only the verified canonical
+    // instant.
+    if !request.signed_at.ends_with('Z') || request.signed_at.len() != 20 {
+        return Err(AppError::BadRequest(
+            "signed_at must be a canonical RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)".into(),
+        ));
+    }
+    let parsed_signed_at =
+        chrono::DateTime::parse_from_rfc3339(&request.signed_at).map_err(|_| {
+            AppError::BadRequest("signed_at must be an RFC 3339 timestamp".into())
+        })?;
+    const MAX_FUTURE_SKEW_SECS: i64 = 300;
+    let skew_secs =
+        parsed_signed_at.timestamp() - chrono::Utc::now().timestamp();
+    if skew_secs > MAX_FUTURE_SKEW_SECS {
+        return Err(AppError::BadRequest(
+            "signed_at is too far in the future".into(),
+        ));
+    }
+    let canonical_signed_at = request.signed_at.clone();
+
+    // The signing device must exist, belong to the caller, and be live.
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT d.hybrid_vk, d.revoked, u.share_ek_since
+             FROM devices d JOIN users u ON u.id = d.user_id
+             WHERE d.id = ? AND d.user_id = ?",
+            vec![
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let row = rows.first().ok_or_else(|| {
+        AppError::BadRequest("signing device is not enrolled for this account".into())
+    })?;
+    let hybrid_vk = row.text(0).ok_or_else(|| {
+        AppError::BadRequest("signing device has no identity public key".into())
+    })?;
+    let device_active = !matches!(row.get(1), Some(TursoValue::Integer(1)))
+        && row.text(1) != Some("1");
+    let current_since = row.text(2);
+    let seq = if current_since.is_some() { 2 } else { 1 };
+
+    let message = vela_crypto::signing::share_ek_binding_message(&ek_bytes, &canonical_signed_at);
+    let signature_verified = verify_hybrid_signature(
+        &crate::db::decode_b64(hybrid_vk)?,
+        &message,
+        &B64.decode(&request.signature)
+            .map_err(|_| AppError::BadRequest("signature is not valid base64".into()))?,
+        "share-key binding signature invalid",
+    )
+    .is_ok();
+
+    // M25: the freshness relation lives in the verified policy layer.
+    let signed_at_is_fresher = vela_share_policy::timestamp_is_fresher(
+        canonical_signed_at.as_bytes(),
+        current_since.as_deref().map(|c| c.as_bytes()),
+    );
+
+    match vela_share_policy::plan_ek_registration(EkRegistrationFacts {
+        ek_size_valid,
+        signature_verified,
+        device_owned_by_caller: true,
+        device_active,
+        signed_at_is_fresher,
+        seq,
+    }) {
+        vela_share_policy::EkRegistrationDecision::Register(_) => {
+            Ok((request.device_id, canonical_signed_at))
+        }
+        vela_share_policy::EkRegistrationDecision::Reject => Err(AppError::Unauthorized(
+            "verified sharing policy rejected the share-key registration".into(),
+        )),
+    }
 }
 
 /// Register (or update) the authenticated user's own share encapsulation key.
 ///
-/// Backfill path for accounts created before share keys existed: an already
-/// registered client that detects an empty local share key generates a fresh
-/// KEM keypair and uploads the public half here, keeping its device identity
-/// and vault intact.
+/// M19: the registration must be signed by one of the caller's enrolled
+/// devices (`vela share-ek binding v1`), so substituting someone's sharing
+/// key requires their device's private identity key — not merely database
+/// write access or a stolen session token. Replay of an older binding fails
+/// the monotonic timestamp check.
 pub async fn put_my_ek(
     State(state): State<AppState>,
     session: DeviceSession,
     Json(body): Json<PutShareEkRequest>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let ek_bytes = B64
-        .decode(&body.share_ek)
-        .map_err(|_| AppError::BadRequest("share_ek is not valid base64".into()))?;
-
-    if ek_bytes.len() != SHARE_EK_LEN {
-        return Err(AppError::BadRequest(format!(
-            "share_ek must be exactly {SHARE_EK_LEN} bytes"
-        )));
-    }
+    let (bound_device_id, signed_at) =
+        authorize_ek_binding(&state, session.user_id, &body).await?;
 
     let n = state
         .sqldb
         .execute(
-            "UPDATE users SET share_ek = ? WHERE id = ?",
+            "UPDATE users SET share_ek = ?, share_ek_since = ?, share_ek_device_id = ?
+             WHERE id = ?",
             vec![
-                TursoValue::Text(body.share_ek),
+                TursoValue::Text(body.share_ek.clone()),
+                TursoValue::Text(signed_at.clone()),
+                TursoValue::Text(bound_device_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
             ],
         )
@@ -571,7 +715,7 @@ pub async fn put_my_ek(
         return Err(AppError::NotFound("user not found".into()));
     }
 
-    tracing::info!(user_id = %session.user_id, "share key registered (backfill)");
+    tracing::info!(user_id = %session.user_id, "share key registered (device-signed binding)");
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);

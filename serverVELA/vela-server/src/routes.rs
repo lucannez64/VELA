@@ -155,16 +155,10 @@ pub fn build(state: AppState) -> Router {
             get(crate::share::get_recipient_ek),
         )
         .route("/share/my-ek", put(crate::share::put_my_ek))
-        .route(
-            "/web-session/start",
-            post(crate::web_session::post_start),
-        )
+        .route("/web-session/start", post(crate::web_session::post_start))
         .route("/web-sessions", get(crate::web_session::get_sessions_list))
         .route("/web-session/:id", get(crate::web_session::get_session))
-        .route(
-            "/web-session/:id/keys",
-            get(crate::web_session::get_keys),
-        )
+        .route("/web-session/:id/keys", get(crate::web_session::get_keys))
         .route(
             "/web-session/:id",
             delete(crate::web_session::delete_session),
@@ -180,6 +174,10 @@ pub fn build(state: AppState) -> Router {
         .route("/recovery/share", put(crate::recovery::put_share))
         .route("/recovery/share", get(crate::recovery::get_share))
         .route("/recovery/share", delete(crate::recovery::delete_share))
+        .route(
+            "/recovery/share/finalize",
+            post(crate::recovery::finalize_share),
+        )
         .route(
             "/recovery/webauthn/config",
             get(crate::recovery::webauthn::get_webauthn_config),
@@ -199,6 +197,16 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/recovery/recover",
             post(crate::recovery::recover::post_recover),
+        )
+        // M18: RMS-possession recovery — enrollment without WebAuthn and
+        // without releasing the server share, for any two-share pair.
+        .route(
+            "/recovery/initiate-proof",
+            post(crate::recovery::possess::post_initiate_proof),
+        )
+        .route(
+            "/recovery/recover/proof",
+            post(crate::recovery::possess::post_recover_proof),
         )
         .route(
             "/recovery/enroll-device",
@@ -406,7 +414,9 @@ mod cf_visitor_tests {
     #[test]
     fn the_string_appearing_elsewhere_is_not_the_scheme() {
         // What substring matching could not tell apart.
-        assert!(!cf_visitor_says_https(r#"{"scheme":"http","note":"\"scheme\":\"https\""}"#));
+        assert!(!cf_visitor_says_https(
+            r#"{"scheme":"http","note":"\"scheme\":\"https\""}"#
+        ));
         assert!(!cf_visitor_says_https(r#"{"other":"scheme\":\"https"}"#));
     }
 

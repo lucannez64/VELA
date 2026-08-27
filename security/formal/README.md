@@ -1,10 +1,14 @@
-# Formal models — credential release and epoch rotation
+# Formal models — credential release, epoch rotation, and session capability
 
 Symbolic (Dolev-Yao) models checked with
-[Tamarin](https://tamarin-prover.com/). The directory contains two independent
-families: thirteen credential-release theories (`m1`–`m10`) and three vault
-epoch-rotation theories (`m11`, `m11b`, `m11c`). Together they contain 119
-lemmas: 114 verified and five intentionally falsified impossibility claims.
+[Tamarin](https://tamarin-prover.com/). The directory contains three independent
+families: thirteen credential-release theories (`m1`–`m10`), three vault
+epoch-rotation theories (`m11`, `m11b`, `m11c`), the M12 web-session
+capability lifecycle, the M13 permanent-device enrollment ceremony, the M14
+account-recovery lifecycle, the M15 client recovery boundary, the M16
+two-phase recovery-publication protocol, and the M17 crash/restart publication
+journal. Together they contain 216 lemmas: 211 verified and five
+intentionally falsified impossibility claims.
 
 Read the assurance record for the family being changed:
 
@@ -12,6 +16,25 @@ Read the assurance record for the family being changed:
   covers credential release.
 - [`rekey-tamarin-results.md`](rekey-tamarin-results.md) covers epoch rotation,
   capsule binding, and mutation authority.
+- [`session-tamarin-results.md`](session-tamarin-results.md) covers temporary
+  browser grants, token scope, renewal, revocation, and expiry.
+- [`enrollment-tamarin-results.md`](enrollment-tamarin-results.md) covers the
+  permanent-device rendezvous, exact key binding, replay, and invalidation.
+- [`recovery-tamarin-results.md`](recovery-tamarin-results.md) covers WebAuthn
+  recovery, share release, credential replacement, and recovered enrollment.
+- [`client-recovery-tamarin-results.md`](client-recovery-tamarin-results.md)
+  covers cloud/server share binding, authenticated reconstruction, and RMS
+  adoption across the desktop, Android, and Apple clients.
+- [`recovery-publication-tamarin-results.md`](recovery-publication-tamarin-results.md)
+  covers staging, immutable cloud durability, exact finalization, active-pointer
+  promotion, same-epoch races, retries, and epoch invalidation.
+- [`recovery-publication-recovery-tamarin-results.md`](recovery-publication-recovery-tamarin-results.md)
+  covers durable client journaling, crashes at every external-effect boundary,
+  same-split resume, abort limits, and stale-epoch retirement.
+
+[`web-session-pass-through-tamarin-results.md`](web-session-pass-through-tamarin-results.md)
+  covers dynamic route gating: a web-session token passes through to vault
+  routes only and is structurally blocked from permanent-account routes.
 
 | File | What it models |
 |---|---|
@@ -31,6 +54,12 @@ Read the assurance record for the family being changed:
 | `m11_rekey_epoch_state_machine.spthy` | ACTIVE/FREEZING lifecycle, completeness, commit/abort/timeout, acknowledgements, and epoch invalidation |
 | `m11b_rekey_capsule_binding.spthy` | authenticated `{epoch, rotation_id, rms}` capsules over an adversarial transport, including relabel/replay attempts |
 | `m11c_rekey_mutation_authority.spthy` | atomic web, recovery, and enrollment authorization at the mutation boundary across epoch commits |
+| `m12_web_session_capability.spthy` | pending/granted/terminal web-session lifecycle, one-shot artifacts, scope preservation, and permanent-route separation |
+| `m20_web_session_pass_through.spthy` | web-session vault pass-through gating (M20) |
+| `m13_device_enrollment_ceremony.spthy` | opener-bound permanent-device claim, inspection, exact key/signature binding, atomic completion, result proof, and terminal states |
+| `m14_account_recovery_lifecycle.spthy` | attempt/credential-bound WebAuthn recovery, exact share release, one-shot enrollment grant, credential replacement, expiry, and epoch invalidation |
+| `m15_client_recovery_boundary.spthy` | adversarial cloud envelopes, exact account/epoch/channel binding, authenticated same-split Shamir reconstruction, and current-epoch RMS adoption |
+| `m16_recovery_publication_consistency.spthy` | two-phase server staging/finalization and cloud candidate/pointer promotion, with exact split binding under retries, same-epoch races, and rotation |
 
 `password-manager-ipc-leak-graph.py` produces the quantitative companion
 (`.png`): the symbolic models say *which* items can leak, the graph says *how
@@ -69,3 +98,321 @@ falsifications, and lemma-count drift:
 
 Expected: **31 verified, 0 falsified, 0 warnings** across the three theories.
 The same command is a required job in `.github/workflows/security.yml`.
+
+## Checking the rekey implementation
+
+Tamarin establishes the protocol properties; hax and F* check that the pure
+Rust decisions used by the server refine the corresponding M11/M11c rules.
+The implementation proof covers epoch routing, overflow-safe successor
+selection, shadow and attempt authority, start readiness, commit completeness,
+exact epoch advancement, abort/timeout preservation, commit replay binding, and
+the M11c ACTIVE-state permit shared by vault, recovery, and enrollment
+mutations. The executable state model checks that the atomic SQL guards accept
+exactly the state/epoch relation carried by that permit:
+
+```bash
+cd ../../serverVELA/vela-rekey-policy
+./verify-fstar.sh
+```
+
+See [`../../serverVELA/vela-rekey-policy/README.md`](../../serverVELA/vela-rekey-policy/README.md)
+for the pinned hax, F*, and Z3 installation commands and the exact proof
+boundary.
+
+## Checking the web-session implementation
+
+M12 checks the protocol lifecycle, while `vela-session-policy` verifies the
+production Rust decisions for grant binding, token issuance, renewal, and route
+authorization:
+
+```bash
+./run-session-proofs.sh
+cd ../../serverVELA/vela-session-policy
+./verify-fstar.sh
+```
+
+Expected: **14 Tamarin lemmas verified** and all F* verification conditions
+discharged. See
+[`../../serverVELA/vela-session-policy/README.md`](../../serverVELA/vela-session-policy/README.md)
+for the exact implementation-proof boundary.
+
+## Checking permanent-device enrollment
+
+M13 proves the symbolic v3 rendezvous lifecycle, while
+`vela-enrollment-policy` verifies the Rust decisions used by the grant, claim,
+inspection, completion, and result handlers:
+
+```bash
+./run-enrollment-proofs.sh
+cd ../../serverVELA/vela-enrollment-policy
+./verify-fstar.sh
+```
+
+Expected: **15 Tamarin lemmas verified** and all F* verification conditions
+discharged. The production boundary additionally has a serializable sled
+grant+claim take and concurrency tests proving exactly one racing completion
+wins. See
+[`../../serverVELA/vela-enrollment-policy/README.md`](../../serverVELA/vela-enrollment-policy/README.md).
+
+## Checking account recovery
+
+M14 proves the symbolic WebAuthn recovery and recovered-device lifecycle,
+while `vela-recovery-policy` verifies the Rust decisions used by initiation,
+credential registration/update, share release, and device enrollment:
+
+```bash
+./run-recovery-proofs.sh
+cd ../../serverVELA/vela-recovery-policy
+./verify-fstar.sh
+```
+
+Expected: **18 Tamarin lemmas verified** and all F* verification conditions
+discharged. The production boundary binds challenges and grants to the current
+credential, atomically consumes sled artifacts, and guards SQL enrollment by
+both epoch and credential id. See
+[`../../serverVELA/vela-recovery-policy/README.md`](../../serverVELA/vela-recovery-policy/README.md).
+
+## Checking client-side recovery reconstruction
+
+M15 treats the cloud envelope as adversary-controlled and proves that only the
+exact cloud/server shares for one account, epoch, and split can reach RMS
+adoption. `vela-client-recovery-policy` verifies the shared Rust decisions used
+by desktop, Android, and Apple before authenticated Shamir reconstruction:
+
+```bash
+./run-client-recovery-proofs.sh
+cd ../../libVELA/vela-client-recovery-policy
+./verify-fstar.sh
+```
+
+Expected: **15 Tamarin lemmas verified** and all F* verification conditions
+discharged. The production boundary accepts either a matching split ID on both
+shares or the legacy case where both IDs are absent, and rejects one-sided or
+mismatched IDs, accounts, epochs, channels, coordinates, and unauthenticated
+splits before any RMS is adopted.
+See
+[`../../libVELA/vela-client-recovery-policy/README.md`](../../libVELA/vela-client-recovery-policy/README.md).
+
+## Checking recovery setup publication
+
+M16 proves that a setup is reported ready only after the exact staged server
+share and durable cloud candidate are finalized under one account epoch and
+split, then promoted to the active cloud pointer. It also proves that only one
+same-epoch racing candidate wins and that rotation blocks old-epoch
+finalization. The server policy verifies the production stage/finalize permits:
+
+```bash
+./run-recovery-publication-proofs.sh
+cd ../../serverVELA/vela-recovery-policy
+./verify-fstar.sh
+```
+
+Expected: **14 Tamarin lemmas verified** and all F* verification conditions
+discharged. The SQL integration test exercises the exact pending-row compare
+and atomic promotion used by the HTTP handlers.
+
+## Checking crash-consistent recovery publication
+
+M17 proves that desktop, Android, and Apple can crash after any recovery
+publication effect and resume the same account/epoch/split journal without
+mixing shares or abandoning a server-finalized publication. Rotation retires
+the journal and blocks further writes under its old epoch. The shared Rust
+reducer is verified by hax/F* and used directly or through each native bridge:
+
+```bash
+./run-recovery-publication-recovery-proofs.sh
+cd ../../libVELA/vela-client-recovery-policy
+./verify-fstar.sh
+```
+
+Expected: **14 Tamarin lemmas verified** and all F* verification conditions
+discharged. Client tests cover encrypted journal round trips and impossible
+phase rejection; the bounded Rust test exhausts the reducer's Boolean state
+space across valid, malformed, and retired epochs.
+
+## Checking the full 2-of-3 pair-selection threshold
+
+M18 proves the complete recovery threshold: any two *distinct* channels —
+cloud + server, cloud + trusted contact, or server + trusted contact —
+reconstruct the RMS, while cross-account, mixed-epoch, mixed-split,
+duplicate-coordinate, duplicate-channel, and raw (non-recipient-bound)
+contact shares can never pair. The server releases Share 2 only behind
+WebAuthn; trusted-contact shares move exclusively through opaque sealed
+envelopes answered to a requester-held ephemeral key; rotation retires every
+old-epoch pair. All three honest pairs remain recoverable (availability).
+
+```bash
+./run-pair-selection-proofs.sh
+cd ../../libVELA/vela-client-recovery-policy
+./verify-fstar.sh
+```
+
+Expected: **15 Tamarin lemmas verified**. The shared Rust policy is
+`vela-client-recovery-policy::plan_reconstruction` /
+`plan_contact_delivery`; the recipient-bound envelope construction lives in
+`vela-crypto::recovery` (`seal_contact_share`, `open_contact_share_response`)
+and the WebAuthn-free enrollment path in the server's possession-proof
+endpoints (`/recovery/initiate-proof`, `/recovery/recover/proof`).
+
+## Checking the cross-user share channel
+
+M19 proves the item-sharing protocol: the pre-M19 registry's key-substitution
+attack is demonstrated reachable in `m19a_ek_registry_baseline.spthy`
+(falsification baseline), and `m19b_share_channel.spthy` proves the fixed
+design — share keys register only under a device-signed binding
+(`vela share-ek binding v1`, monotonic timestamps), items are sealed only
+under registered bindings, deliveries trace to sends, and the honest
+exchange is reachable.
+
+```bash
+./run-share-channel-proofs.sh
+cd ../../serverVELA/vela-share-policy
+./verify-fstar.sh
+```
+
+Expected: **2 + 5 Tamarin lemmas verified** and all F* verification
+conditions discharged. The enforced policy lives in
+`serverVELA/vela-share-policy`; the binding construction in
+`libVELA/vela-crypto/src/signing.rs`; enforcement in
+`serverVELA/vela-server/src/share/mod.rs` and `src/account/mod.rs`.
+
+## Checking the web-session pass-through gating (M20)
+
+M20 proves the final credential-release property: a web-session token grants
+pass-through access to vault routes only and is structurally blocked from
+permanent-account routes (recovery, device enrollment, account deletion). The
+gating is `vela-session-policy::authorize_route` /
+`route_is_authorized = scope == Device || class == Vault`, enforced by the
+`DeviceSession` extractor in `serverVELA/vela-server/src/middleware.rs`.
+M12 covers the capability lifecycle and proves issued tokens carry the `web`
+scope; M20 proves what that scope *allows*. Token reuse (renewal) is
+single-use here to keep the state space finite — M12 already covers reuse, and
+the gating depends only on the scope M12 proves is `web`.
+
+```bash
+./run-web-session-pass-through-proofs.sh
+```
+
+Expected: **7 Tamarin lemmas verified**. The shared Rust policy is
+`vela-session-policy::authorize_route`; the Tamarin model proves the
+structural gating (`m20_web_session_pass_through.spthy`).
+
+## Checking the linked-item revocation finality (M21 follow-up)
+
+M21 closes M20's pass-through story with the **revocation side**: once a linked
+share's capsule is revoked (`revoke = true` with the original `capsule` ETag),
+the server's `get_linked_items` SQL filter excludes it (`revoked = 0`), and the
+server-side `PUT /share/linked` requires the session user to match the link's
+`sender_user_id`. The formal model proves that after `LinkRevoked`, no
+`LinkRead` for the same `(sender, recipient, capsule)` tuple can exist in any
+trace (structural finality, linear live token consumed by revocation). The
+sender-only provenance (`only_sender_can_revoke_link`) is enforced by the
+`DeviceSession` identity binding (`!DevKey(S, X)` in the model).
+
+```bash
+./run-link-revocation-finality-proofs.sh
+```
+
+Expected: **2 Tamarin lemmas verified**. The enforced rules live in
+`vela-share-policy::plan_link_mutation`; the server predicates live in
+`share/mod.rs` (sender identity match for updates/deletes, `revoked = 0` filter,
+ETag `If-Match` comparison). The shared channel's complete verified stack is
+M19 (binding integrity) + M20 (route gating) + M21 (revocation finality).
+
+## Checking Path-ORAM access-pattern hiding (M22, ProVerif)
+
+Access-pattern leakage is an *indistinguishability* property — outside
+Dolev-Yao reachability, so it is checked with **ProVerif observational
+equivalence** instead of Tamarin. `m22a` falsifies the static-position-map
+design (the server matches observed paths against plaintext manifest chunk
+ids); `m22b` proves trivial mode (≤4 chunks: whole-tree sweep) hides by
+identical transcripts; `m22c` proves full Path ORAM hides because
+`prepare_access` remaps the target to a fresh random leaf per access — even a
+repeated access to the same chunk is unlinkable. The Rust threshold policy is
+extracted with hax's experimental ProVerif backend into
+`libVELA/vela-crypto/proofs/proverif/extraction/lib.pvl`; the minimal prelude
+it needs (hax 0.3.7 does not ship one) is vendored in
+`security/formal/hax_pv_prelude.pvl`.
+
+```bash
+./run-oram-access-hiding-proofs.sh
+```
+
+Requires ProVerif 2.05 (`opam switch create vela-proverif
+ocaml-base-compiler.5.1.1 && opam install --switch vela-proverif --yes
+proverif`). Expected: **2 equivalences proved, 1 baseline falsified, 0
+errors**.
+
+## Checking the client sync-admission policy (M23)
+
+The sync engine decides whether a server response may enter the local vault:
+Lamport rollback guard, epoch probe/adoption ladder, capsule binding, and
+merge classification. `libVELA/vela-sync-policy` owns these decisions as
+hax-extracted pure functions (`plan_epoch_adoption`,
+`plan_chunk_download`, `classify_merge_action`) with negative theorems for
+rollback, skipped transitions, freezing rotations, foreign capsules, and
+tombstone resurrection; `sync.rs` consumes the permits instead of computing
+decisions inline. Tamarin `m23_sync_admission.spthy` encodes epoch succession
+with a public `succ` constructor so "exactly local + 1" is structural.
+
+```bash
+./run-sync-admission-proofs.sh
+cd ../../libVELA/vela-sync-policy && ./verify-fstar.sh
+```
+
+Expected: **8 Tamarin lemmas verified** and all F* verification conditions
+discharged.
+
+## Checking Path-ORAM stash dynamics (M24, statistical)
+
+Stash-overflow behavior is probabilistic and iterative — beyond both
+Dolev-Yao reachability (Tamarin) and hax's unencoded i64 loop internals — so
+it is verified **statistically over the production implementation**:
+`libVELA/vela-crypto/tests/oram_stash_bounds.rs` drives the real `PathOram`
+through a tree-structured fake server under thousands of randomized
+accesses. Hard invariants (round-trip integrity, bucket padding,
+unregister completeness, stash duplicate-freedom) hold on every cycle; the
+stochastic bound is asserted with wide margins per the classical analysis.
+The harness found and pinned three real defects (stale reads, unbounded
+stash growth, write-back clobbering of unread buckets) — all fixed in
+`oram.rs`.
+
+```bash
+./run-oram-stash-bounds-tests.sh
+```
+
+Expected: **4/4 tests passed**. See
+`oram-stash-bounds-statistical-results.md` for the tool-boundary discussion
+(EasyCrypt supermartingale proof explicitly out of scope).
+
+## Checking cross-milestone composition (M26)
+
+Component proofs do not compose themselves. `m26_composition.spthy` puts
+four verified subsystems in one state machine — M18 possession recovery,
+M19 share-key bindings, M20 web-session gating, and the M23 rotation ladder
+— with the account's live epoch as a single linear token every subsystem
+consumes and re-emits. Proven seams: possession grants, challenges, and
+recovered-device enrollment are stranded by an intervening rotation;
+web-session vault actions cannot outlive their bound epoch; share-key
+registration always traces to an onboarded device (setup or recovered
+enrollment — never around it); and the full composed chain from commitment
+staging through vault pass-through is reachable.
+
+```bash
+./run-composition-proofs.sh
+```
+
+Expected: **8 Tamarin lemmas verified**.
+
+## Checking cross-milestone composition stranding (M26)
+
+M26 proves the composition seam: rotation strands ALL THREE subsystem
+validity tokens simultaneously, so neither possession grants, share-key
+updates, nor web-session vault actions can outlive their epoch's rotation.
+This is the interaction property no individual model can express.
+
+```bash
+./run-composition-proofs.sh
+```
+
+Expected: **3 Tamarin lemmas verified**.

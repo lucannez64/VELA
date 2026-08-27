@@ -1,0 +1,230 @@
+theory M12_WebSessionCapability
+/*
+  Capability lifecycle for temporary browser access.
+
+  Pending sessions are bound to an approver and nonce. Exactly one RO or RW
+  grant may consume that pending state. Capsules and challenges are linear;
+  RW token issuance additionally requires a proof under the browser key.
+  Renewal carries the exact web scope, epoch and hard cap forward. Revocation
+  and expiry consume the live session authority, preventing later token use.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+begin
+
+functions: webproof/3 [private]
+
+rule Setup:
+    [ Fr(~session), Fr(~user), Fr(~device), Fr(~nonce), Fr(~poll),
+      Fr(~webkey), Fr(~epoch), Fr(~capsule), Fr(~cap) ]
+  --[ SessionStarted(~session, ~user, ~nonce) ]->
+    [ Pending(~session, ~user, ~nonce, ~poll, ~webkey, ~epoch, ~capsule, ~cap),
+      !Approver(~user, ~device),
+      !PollSecret(~session, ~poll),
+      !WebKey(~session, ~webkey),
+      !DeviceToken(~user, ~device, 'device') ]
+
+rule GrantRW:
+    [ Pending(S, U, N, P, K, E, C, Cap), !Approver(U, D) ]
+  --[ SessionGranted(S, U, D, N, 'rw', E, Cap) ]->
+    [ RWGranted(S, U, E, Cap, K), CapsuleReady(S, P, C) ]
+
+rule GrantRO:
+    [ Pending(S, U, N, P, K, E, C, Cap), !Approver(U, D) ]
+  --[ SessionGranted(S, U, D, N, 'ro', E, Cap) ]->
+    [ LiveRO(S, U, E, Cap), CapsuleReady(S, P, C) ]
+
+rule BrowserPoll:
+    [ !PollSecret(S, P) ]
+  -->
+    [ Out(<'poll', S, P>) ]
+
+rule DeliverCapsule:
+    [ CapsuleReady(S, P, C), In(<'poll', S, P>) ]
+  --[ CapsuleDelivered(S, C) ]->
+    [ Out(C) ]
+
+rule IssueChallenge:
+    [ RWGranted(S, U, E, Cap, K), Fr(~challenge) ]
+  --[ ChallengeIssued(S, ~challenge) ]->
+    [ ChallengeOpen(S, U, E, Cap, K, ~challenge),
+      !ChallengeData(S, ~challenge) ]
+
+rule BrowserSigns:
+    [ !WebKey(S, K), !ChallengeData(S, Ch) ]
+  -->
+    [ Out(webproof(S, Ch, K)) ]
+
+rule ExchangeToken:
+    [ ChallengeOpen(S, U, E, Cap, K, Ch), In(webproof(S, Ch, K)),
+      Fr(~token) ]
+  --[ TokenIssued(S, U, ~token, 'web', E, Cap, Ch) ]->
+    [ Token0(S, U, ~token, 'web', E, Cap) ]
+
+rule RenewToken:
+    [ Token0(S, U, T, 'web', E, Cap), Fr(~new) ]
+  --[ TokenRenewed(S, U, T, ~new, 'web', 'web', E, E, Cap, Cap) ]->
+    [ Token1(S, U, ~new, 'web', E, Cap) ]
+
+rule UseWebToken0:
+    [ Token0(S, U, T, 'web', E, Cap) ]
+  --[ TokenUsed(S, U, T, 'web', E, Cap), VaultAction(U, 'web') ]->
+    [ Used0(S, U, T, E, Cap) ]
+
+rule UseWebToken1:
+    [ Token1(S, U, T, 'web', E, Cap) ]
+  --[ TokenUsed(S, U, T, 'web', E, Cap), VaultAction(U, 'web') ]->
+    [ Used1(S, U, T, E, Cap) ]
+
+rule UseDeviceTokenPermanently:
+    [ !DeviceToken(U, D, 'device') ]
+  --[ PermanentAction(U, D, 'device') ]->
+    [ ]
+
+rule RevokeGranted:
+    [ RWGranted(S, U, E, Cap, K) ]
+  --[ SessionRevoked(S) ]->
+    [ Revoked(S) ]
+
+rule RevokeChallenge:
+    [ ChallengeOpen(S, U, E, Cap, K, Ch) ]
+  --[ SessionRevoked(S) ]->
+    [ Revoked(S) ]
+
+rule RevokeToken0:
+    [ Token0(S, U, T, Scope, E, Cap) ]
+  --[ SessionRevoked(S) ]->
+    [ Revoked(S) ]
+
+rule RevokeToken1:
+    [ Token1(S, U, T, Scope, E, Cap) ]
+  --[ SessionRevoked(S) ]->
+    [ Revoked(S) ]
+
+rule RevokeUsed0:
+    [ Used0(S, U, T, E, Cap) ]
+  --[ SessionRevoked(S) ]->
+    [ Revoked(S) ]
+
+rule RevokeUsed1:
+    [ Used1(S, U, T, E, Cap) ]
+  --[ SessionRevoked(S) ]->
+    [ Revoked(S) ]
+
+rule RevokeRO:
+    [ LiveRO(S, U, E, Cap) ]
+  --[ SessionRevoked(S) ]->
+    [ Revoked(S) ]
+
+rule ExpireGranted:
+    [ RWGranted(S, U, E, Cap, K) ]
+  --[ SessionExpired(S) ]->
+    [ Expired(S) ]
+
+rule ExpireChallenge:
+    [ ChallengeOpen(S, U, E, Cap, K, Ch) ]
+  --[ SessionExpired(S) ]->
+    [ Expired(S) ]
+
+rule ExpireToken0:
+    [ Token0(S, U, T, Scope, E, Cap) ]
+  --[ SessionExpired(S) ]->
+    [ Expired(S) ]
+
+rule ExpireToken1:
+    [ Token1(S, U, T, Scope, E, Cap) ]
+  --[ SessionExpired(S) ]->
+    [ Expired(S) ]
+
+rule ExpireUsed0:
+    [ Used0(S, U, T, E, Cap) ]
+  --[ SessionExpired(S) ]->
+    [ Expired(S) ]
+
+rule ExpireUsed1:
+    [ Used1(S, U, T, E, Cap) ]
+  --[ SessionExpired(S) ]->
+    [ Expired(S) ]
+
+rule ExpireRO:
+    [ LiveRO(S, U, E, Cap) ]
+  --[ SessionExpired(S) ]->
+    [ Expired(S) ]
+
+lemma grant_is_bound_to_start_and_approver:
+  "All S U D N Mode E Cap #g.
+     SessionGranted(S, U, D, N, Mode, E, Cap) @ g
+     ==> (Ex #s. SessionStarted(S, U, N) @ s & #s < #g)
+       & (Mode = 'ro' | Mode = 'rw')"
+
+lemma session_is_granted_at_most_once:
+  "All S U1 U2 D1 D2 N1 N2 M1 M2 E1 E2 C1 C2 #i #j.
+     SessionGranted(S, U1, D1, N1, M1, E1, C1) @ i
+     & SessionGranted(S, U2, D2, N2, M2, E2, C2) @ j
+     ==> #i = #j"
+
+lemma capsule_is_delivered_at_most_once:
+  "All S C1 C2 #i #j.
+     CapsuleDelivered(S, C1) @ i & CapsuleDelivered(S, C2) @ j
+     ==> #i = #j"
+
+lemma token_requires_rw_grant_and_challenge:
+  "All S U T Scope E Cap Ch #i.
+     TokenIssued(S, U, T, Scope, E, Cap, Ch) @ i
+     ==> (Ex D N #g. SessionGranted(S, U, D, N, 'rw', E, Cap) @ g & #g < #i)
+       & (Ex #c. ChallengeIssued(S, Ch) @ c & #c < #i)"
+
+lemma challenge_is_single_use:
+  "All S U1 U2 T1 T2 Sc1 Sc2 E1 E2 C1 C2 Ch #i #j.
+     TokenIssued(S, U1, T1, Sc1, E1, C1, Ch) @ i
+     & TokenIssued(S, U2, T2, Sc2, E2, C2, Ch) @ j
+     ==> #i = #j"
+
+lemma read_only_grant_never_issues_token:
+  "All S U D N E Cap #g.
+     SessionGranted(S, U, D, N, 'ro', E, Cap) @ g
+     ==> not (Ex U2 T Scope E2 Cap2 Ch #i.
+                TokenIssued(S, U2, T, Scope, E2, Cap2, Ch) @ i)"
+
+lemma issued_token_is_web_scoped:
+  "All S U T Scope E Cap Ch #i.
+     TokenIssued(S, U, T, Scope, E, Cap, Ch) @ i ==> Scope = 'web'"
+
+lemma renewal_preserves_scope_epoch_and_cap:
+  "All S U Old New OldScope NewScope OldE NewE OldCap NewCap #i.
+     TokenRenewed(S, U, Old, New, OldScope, NewScope, OldE, NewE, OldCap, NewCap) @ i
+     ==> OldScope = 'web' & NewScope = OldScope
+       & NewE = OldE & NewCap = OldCap"
+
+lemma revocation_prevents_later_use:
+  "All S #r U T Scope E Cap #u.
+     SessionRevoked(S) @ r & TokenUsed(S, U, T, Scope, E, Cap) @ u
+     ==> #u < #r"
+
+lemma expiry_prevents_later_use:
+  "All S #x U T Scope E Cap #u.
+     SessionExpired(S) @ x & TokenUsed(S, U, T, Scope, E, Cap) @ u
+     ==> #u < #x"
+
+lemma permanent_actions_are_device_scoped:
+  "All U D Scope #i. PermanentAction(U, D, Scope) @ i ==> Scope = 'device'"
+
+lemma rw_lifecycle_reachable:
+  exists-trace
+  "Ex S U D N E Cap T Ch #g #i #u.
+     SessionGranted(S, U, D, N, 'rw', E, Cap) @ g
+     & TokenIssued(S, U, T, 'web', E, Cap, Ch) @ i
+     & TokenUsed(S, U, T, 'web', E, Cap) @ u & #g < #i & #i < #u"
+
+lemma ro_capsule_reachable:
+  exists-trace
+  "Ex S U D N E Cap C #g #d.
+     SessionGranted(S, U, D, N, 'ro', E, Cap) @ g
+     & CapsuleDelivered(S, C) @ d & #g < #d"
+
+lemma renewal_reachable:
+  exists-trace
+  "Ex S U Old New E Cap #i.
+     TokenRenewed(S, U, Old, New, 'web', 'web', E, E, Cap, Cap) @ i"
+
+end

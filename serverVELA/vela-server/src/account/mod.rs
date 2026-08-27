@@ -29,7 +29,16 @@ pub struct RegisterRequest {
     pub hybrid_vk: String,
     pub device_name: Option<String>,
     pub device_type: Option<String>,
+    /// M19: only accepted together with a binding signature under the
+    /// presented `hybrid_vk` — an unsigned share key can no longer be
+    /// provisioned at all, so substitution always requires a device's
+    /// private identity key.
+    #[serde(default)]
     pub share_ek: Option<String>,
+    #[serde(default)]
+    pub share_ek_signed_at: Option<String>,
+    #[serde(default)]
+    pub share_ek_signature: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -73,18 +82,49 @@ pub async fn post_register(
 
     let hybrid_ek = decode_b64_exact(&body.hybrid_ek, HYBRID_EK_LEN, "hybrid_ek")?;
     let hybrid_vk = decode_b64_exact(&body.hybrid_vk, HYBRID_VK_LEN, "hybrid_vk")?;
-    let share_ek_b64 = body
-        .share_ek
-        .as_deref()
-        .map(|s| -> Result<String> {
-            decode_b64_exact(s, SHARE_EK_LEN, "share_ek")?;
-            Ok(s.to_string())
-        })
-        .transpose()?;
+    // M19: an initial share key must be signed by the very identity key this
+    // account is being created with. Unsigned provisioning is refused so
+    // every registered share key traces to a device signature.
+    let share_ek_b64 = match body.share_ek.as_deref() {
+        Some(s) => {
+            let ek = decode_b64_exact(s, SHARE_EK_LEN, "share_ek")?;
+            let signed_at = body
+                .share_ek_signed_at
+                .as_deref()
+                .filter(|t| !t.is_empty() && (20..=64).contains(&t.len()))
+                .ok_or_else(|| {
+                    AppError::BadRequest(
+                        "share_ek_signed_at (RFC 3339) is required with share_ek".into(),
+                    )
+                })?;
+            let signature = B64
+                .decode(
+                    body.share_ek_signature
+                        .as_deref()
+                        .ok_or_else(|| {
+                            AppError::BadRequest(
+                                "share_ek_signature is required with share_ek".into(),
+                            )
+                        })?
+                        .as_bytes(),
+                )
+                .map_err(|_| AppError::BadRequest("share_ek_signature is not valid base64".into()))?;
+            let message =
+                vela_crypto::signing::share_ek_binding_message(&ek, signed_at);
+            crate::device::enroll::verify_hybrid_signature(
+                &hybrid_vk,
+                &message,
+                &signature,
+                "share-key binding signature invalid",
+            )?;
+            s.to_string()
+        }
+        None => String::new(),
+    };
 
     let user_id = Uuid::new_v4();
     let device_id = Uuid::new_v4();
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let device_name = body
         .device_name
         .filter(|s| !s.trim().is_empty())
@@ -97,11 +137,18 @@ pub async fn post_register(
     state
         .sqldb
         .execute(
-            "INSERT INTO users (id, created_at, share_ek) VALUES (?, ?, ?)",
+            "INSERT INTO users (id, created_at, share_ek, share_ek_since)
+             VALUES (?, ?, ?, ?)",
             vec![
                 TursoValue::Text(user_id.to_string()),
                 TursoValue::Text(now.clone()),
-                TursoValue::Text(share_ek_b64.as_deref().unwrap_or("").to_string()),
+                TursoValue::Text(share_ek_b64.clone()),
+                TursoValue::Text(
+                    body.share_ek
+                        .as_deref()
+                        .map(|_| now.clone())
+                        .unwrap_or_default(),
+                ),
             ],
         )
         .await

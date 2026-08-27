@@ -63,6 +63,7 @@ const ML_DSA_CTX: &[u8] = b"vela device identity v1";
 const AUTH_MESSAGE_CONTEXT: &[u8] = b"vela auth challenge v1";
 const ENROLLMENT_MESSAGE_CONTEXT: &[u8] = b"vela device enrollment v1";
 const ENROLLMENT_RESULT_CONTEXT: &[u8] = b"vela enrollment result v3";
+pub const SHARE_EK_BINDING_CONTEXT: &[u8] = b"vela share-ek binding v1";
 
 fn append_len_prefixed(message: &mut Vec<u8>, value: &[u8]) {
     message.extend_from_slice(&(value.len() as u64).to_be_bytes());
@@ -80,8 +81,7 @@ pub fn auth_message(device_id: &str, challenge: &[u8]) -> Vec<u8> {
 }
 
 /// Build the domain-separated message authorizing a new device enrollment.
-pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]) -> Vec<u8> {
-    let mut message = Vec::with_capacity(
+pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]) -> Vec<u8> {    let mut message = Vec::with_capacity(
         ENROLLMENT_MESSAGE_CONTEXT.len()
             + hybrid_ek.len()
             + hybrid_vk.len()
@@ -92,6 +92,27 @@ pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]
     append_len_prefixed(&mut message, hybrid_ek);
     append_len_prefixed(&mut message, hybrid_vk);
     append_len_prefixed(&mut message, rms_capsule);
+    message
+}
+
+/// Build the domain-separated message binding a share encapsulation key to a
+/// point in time (M19).
+///
+/// A device signs this under its hybrid identity key whenever it registers or
+/// updates its `share_ek`. The server verifies the signature against that
+/// device's enrolled public key before accepting the registration, so an
+/// attacker with only database write access (or a stolen session token)
+/// cannot silently substitute a victim's sharing key: they would need the
+/// device's private identity key. `signed_at` is an RFC 3339 timestamp the
+/// server compares monotonically against the currently registered binding,
+/// turning replayed old signatures into no-ops.
+pub fn share_ek_binding_message(share_ek: &[u8], signed_at: &str) -> Vec<u8> {
+    let mut message = Vec::with_capacity(
+        SHARE_EK_BINDING_CONTEXT.len() + share_ek.len() + signed_at.len() + 24,
+    );
+    message.extend_from_slice(SHARE_EK_BINDING_CONTEXT);
+    append_len_prefixed(&mut message, share_ek);
+    append_len_prefixed(&mut message, signed_at.as_bytes());
     message
 }
 
