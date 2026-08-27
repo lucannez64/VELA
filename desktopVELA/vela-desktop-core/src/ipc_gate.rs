@@ -68,7 +68,13 @@ const BROWSER_PROCESS_NAMES: &[&str] = &[
     "waterfox",
     // Keep in sync with the browsers registered by
     // extension/native-messaging/register-host.sh and register-firefox-host.sh.
+    // Zen's installer names the real binary `zen-bin` (zen-browser-bin on
+    // Arch-derived packages) even though the desktop file and the registration
+    // scripts say "zen".
     "zen",
+    "zen-bin",
+    "zen-alpha",
+    "zen-alpha-bin",
     "helium",
     "floorp",
     "thunderbird",
@@ -231,6 +237,23 @@ mod tests {
             (100u32, (Some("firefox"), None)),
         ]));
         assert!(authorize_host(&tree, &peer(200, Some(host_exe()))).is_ok());
+    }
+
+    #[test]
+    fn zen_browser_process_names_are_admitted() {
+        // Zen's Linux packages install the browser as `zen-bin` (e.g.
+        // /opt/zen-browser-bin/zen-bin) even though everything else says
+        // "zen". Helium and Zen forks must both pass the spawner check.
+        for name in ["zen", "zen-bin", "zen-alpha", "zen-alpha-bin", "helium"] {
+            let tree = FakeTree(HashMap::from([
+                (200u32, (Some("vela-native-messaging-host") as Option<&'static str>, Some(100u32))),
+                (100u32, (Some(name), None)),
+            ]));
+            assert!(
+                authorize_host(&tree, &peer(200, Some(host_exe()))).is_ok(),
+                "{name} should be accepted as a browser spawner"
+            );
+        }
     }
 
     #[test]
