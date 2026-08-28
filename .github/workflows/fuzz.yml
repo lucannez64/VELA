@@ -66,6 +66,11 @@ jobs:
       # musl's crt-static and the target std may not be installed
       # (rust-fuzz/cargo-fuzz#398, #397). The GNU target is always present
       # (host triple, installed by dtolnay/rust-toolchain).
+      # ctap-hid-fido2 (via vela-desktop-core) pulls in hidapi, whose build
+      # script links the system libudev through pkg-config.
+      - name: Install libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
         working-directory: libVELA/vela-core/fuzz
