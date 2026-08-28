@@ -1598,10 +1598,12 @@ pub mod server {
             assert_eq!(mock.presence_prompts(), 0);
         }
 
-        /// A relying party that demands user *verification* must not be told a
-        /// dialog click was a biometric.
+        /// A relying party that demands user *verification* is satisfied by an
+        /// explicit dialog approval when no biometric is available — otherwise
+        /// sites like eduid.ch could never register a passkey on such a
+        /// machine, and the refusal came silently right after Approve.
         #[tokio::test]
-        async fn user_verification_is_not_satisfied_by_a_dialog_click() {
+        async fn user_verification_is_satisfied_by_an_explicit_dialog_approval() {
             crate::presence::force_platform_presence_unavailable();
             let (_dir, mock) = MockHost::new(true);
             mock.set_presence_answer(Some(true));
@@ -1623,7 +1625,10 @@ pub mod server {
             )
             .await;
 
-            assert_eq!(resp.msg_type, IpcMessageType::Error);
+            assert_eq!(resp.msg_type, IpcMessageType::PasskeyGetResponse, "{:?}", resp.payload);
+            let auth_data = b64url_decode(resp.payload["authenticator_data"].as_str()).unwrap();
+            // The UV flag must be set, since the ceremony was allowed.
+            assert_ne!(auth_data[32] & 0b0100, 0, "UV flag not set in authenticator data");
         }
 
         /// The signature counter moves, so a relying party can still detect a

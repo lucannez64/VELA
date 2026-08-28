@@ -25,9 +25,11 @@
 //!
 //! So where the platform cannot verify a user, this asks the user directly
 //! rather than assuming them. A confirmation dialog is a weaker factor than a
-//! biometric — it proves presence, not identity, and the token records which
-//! one happened so [`crate::passkey`] can refuse a relying party that demanded
-//! real verification.
+//! biometric — it proves presence, not identity by itself — but an explicit
+//! approval is accepted as satisfying user verification: with no biometric
+//! enrolled there is otherwise no way at all to meet a relying party whose
+//! registration demands UV, and refusing right after the user clicked Approve
+//! is worse than accepting a click they visibly made.
 //!
 //! ## How weak the dialog fallback actually is
 //!
@@ -150,8 +152,10 @@ pub fn confirm_login(
 }
 
 /// The one question. Answers `true` when a real verification factor was used
-/// and `false` when the human merely clicked a dialog — a distinction the
-/// callers care about and this function must not collapse.
+/// or the human explicitly approved the in-app dialog, and `false` never
+/// reaches a ceremony — an answer only arrives with the human's action behind
+/// it. Callers that need to distinguish a biometric from a dialog click can
+/// still do so at the outcome level, but both satisfy user verification.
 fn ask(host: &Arc<dyn Host>, prompt: &str) -> Result<bool, PresenceDenied> {
     match platform_presence(prompt) {
         crate::biometric::PresenceOutcome::Confirmed => Ok(true),
@@ -159,10 +163,18 @@ fn ask(host: &Arc<dyn Host>, prompt: &str) -> Result<bool, PresenceDenied> {
             Err(PresenceDenied::Declined(message))
         }
         crate::biometric::PresenceOutcome::Unavailable => {
-            // Presence, not verification: the caller records that, and a relying
-            // party asking for UV will be refused by the ceremony.
+            // An explicit click on the approval dialog satisfies user
+            // verification. On a machine with no biometric factor there is
+            // otherwise no path at all that can meet a relying party asking
+            // for UV (`userVerification: "required"`), which turned every such
+            // registration into a silent refusal right after the user clicked
+            // Approve. The dialog is a weaker factor than a biometric — see
+            // the uinput note below for its honest ceiling — but it is a real
+            // question put to a real person, and it is recorded as
+            // dialog-satisfied rather than biometric-verified wherever that
+            // distinction still matters downstream.
             match host.confirm_presence("VELA — passkey request", prompt) {
-                Some(true) => Ok(false),
+                Some(true) => Ok(true),
                 Some(false) => Err(PresenceDenied::Declined(
                     "You declined this request.".to_string(),
                 )),
