@@ -61,11 +61,17 @@ jobs:
         with:
           tool: cargo-fuzz
 
+      # Pin the GNU host triple explicitly: cargo-fuzz defaults to
+      # x86_64-unknown-linux-musl on Linux, where ASan is incompatible with
+      # musl's crt-static and the target std may not be installed
+      # (rust-fuzz/cargo-fuzz#398, #397). The GNU target is always present
+      # (host triple, installed by dtolnay/rust-toolchain).
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
         working-directory: libVELA/vela-core/fuzz
         run: |
           cargo fuzz run \
+            --target x86_64-unknown-linux-gnu \
             ${{ matrix.target }} \
             -- \
             -max_total_time=${{ inputs.seconds_per_target || '120' }} \
