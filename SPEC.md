@@ -1,8 +1,8 @@
 # VELA Protocol Specification v2.0 (Hardware-Bound & Zero-Knowledge)
 
 **Version:** 2.1
-**Date:** 2026-03-26
-**Status:** Draft (revised after peer review)
+**Date:** 2026-03-26 (status updated 2026-08-28)
+**Status:** Final — implemented. The v2.0 protocol described here is fully implemented and shipping in the 0.1.0 reference clients (desktop, Android, iOS, extension, web vault, server), with machine-checked assurance for the enrollment, recovery, rekeying, web-session, and ORAM access-hiding mechanisms (`security/formal/`). Deviations from this text are recorded in `CHANGELOG.md` and `EPHEMERAL_WEB_ACCESS_DESIGN.md`.
 
 ---
 

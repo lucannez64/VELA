@@ -49,6 +49,9 @@ docs/                            Design docs (SPEC companion pieces) and docs/ve
 Documentation map:
 
 - `SPEC.md` — protocol specification v2 (identity, enrollment, recovery, sharing).
+- `docs/INSTALL.md` — per-platform install & first-run guide (server, desktop, mobile, extension, ephemeral web).
+- `docs/RESEARCH_POTENTIAL.md` — which mechanisms are publishable research, venues, and gaps to close.
+- `CHANGELOG.md` — release history and security remediations.
 - `EPHEMERAL_WEB_ACCESS_DESIGN.md` — the web vault design cited throughout the code.
 - `SECURITY_AUDIT.md` / `SECURITY_REDTEAM.md` — audit findings; `security/exploits/` proves the fixes stay fixed in CI.
 
