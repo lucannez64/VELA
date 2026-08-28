@@ -89,8 +89,8 @@ jobs:
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: |
-            libVELA/vela-core/fuzz/crash-*
-            libVELA/vela-core/fuzz/leak-*
-            libVELA/vela-core/fuzz/oom-*
-            libVELA/vela-core/fuzz/timeout-*
+            libVELA/vela-core/fuzz/artifacts/*/crash-*
+            libVELA/vela-core/fuzz/artifacts/*/leak-*
+            libVELA/vela-core/fuzz/artifacts/*/oom-*
+            libVELA/vela-core/fuzz/artifacts/*/timeout-*
           if-no-files-found: ignore

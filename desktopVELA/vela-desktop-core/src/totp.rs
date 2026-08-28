@@ -150,26 +150,38 @@ pub fn generate_totp(secret: String) -> Result<TotpCode, String> {
 }
 
 pub fn verify_totp(secret: String, code: String) -> Result<bool, String> {
-    let params = parse_otpauth(&secret);
-    params.validate()?;
-    let secret_bytes =
-        base32_decode(&params.secret).ok_or_else(|| "Invalid base32 secret".to_string())?;
-
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "System time error")?
         .as_secs();
+    verify_totp_at(&secret, &code, now)
+}
 
-    let counter = now / params.period;
-    let expected = compute_hotp(&secret_bytes, counter, params.digits);
+/// Verify against a ±1 time-step window, not just the current step.
+///
+/// A code generated in the final second of a window must still verify in the
+/// next window (and vice versa) — otherwise autofill rejects perfectly valid
+/// codes whenever the counter rolls over between generation and verification
+/// (found by fuzzing: the crash reproduced only at exact period boundaries).
+/// `counter + 1` is accepted for callers that pre-computed a code just before
+/// a rollover; matching any window is still constant-time per candidate.
+fn verify_totp_at(secret: &str, code: &str, now: u64) -> Result<bool, String> {
+    let params = parse_otpauth(secret);
+    params.validate()?;
+    let secret_bytes =
+        base32_decode(&params.secret).ok_or_else(|| "Invalid base32 secret".to_string())?;
+
+    let current = now / params.period;
     let code_trimmed = code.trim();
 
     // Constant-time comparison so the code can't be narrowed down byte-by-byte
     // via response timing, matching the capability check in ipc.rs.
     use subtle::ConstantTimeEq;
-    Ok(bool::from(
-        expected.as_bytes().ct_eq(code_trimmed.as_bytes()),
-    ))
+    let matched = [current.wrapping_sub(1), current, current + 1]
+        .into_iter()
+        .map(|counter| compute_hotp(&secret_bytes, counter, params.digits))
+        .any(|expected| bool::from(expected.as_bytes().ct_eq(code_trimmed.as_bytes())));
+    Ok(matched)
 }
 
 #[cfg(test)]
@@ -284,6 +296,29 @@ mod tests {
     fn generate_totp_rejects_invalid_base32() {
         assert!(generate_totp("0189ABCD".to_string()).is_err());
         assert!(generate_totp_code("0189ABCD").is_none());
+    }
+
+    // Fuzzer-found regression: a code from the last second of a window must
+    // still verify after the counter rolls over (±1-step tolerance).
+    #[test]
+    fn verify_totp_tolerates_one_step_rollover() {
+        let now: u64 = 1_800_000_000; // any value; not necessarily a boundary
+        let params = parse_otpauth(RFC_SECRET_B32);
+        params.validate().expect("RFC secret is valid");
+        let secret_bytes = base32_decode(&params.secret).unwrap();
+
+        let code_prev = compute_hotp(&secret_bytes, now / 30 - 1, 6);
+        let code_cur = compute_hotp(&secret_bytes, now / 30, 6);
+        let code_next = compute_hotp(&secret_bytes, now / 30 + 1, 6);
+
+        assert!(verify_totp_at(RFC_SECRET_B32, &code_prev, now).unwrap());
+        assert!(verify_totp_at(RFC_SECRET_B32, &code_cur, now).unwrap());
+        assert!(verify_totp_at(RFC_SECRET_B32, &code_next, now).unwrap());
+
+        // Two steps away must still be rejected.
+        let code_far = compute_hotp(&secret_bytes, now / 30 + 2, 6);
+        assert!(!verify_totp_at(RFC_SECRET_B32, &code_far, now).unwrap());
+        assert!(!verify_totp_at(RFC_SECRET_B32, &code_prev, now - 90).unwrap());
     }
 
     #[test]

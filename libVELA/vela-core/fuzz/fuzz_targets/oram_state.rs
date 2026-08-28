@@ -82,6 +82,11 @@ fuzz_target!(|data: &[u8]| {
         }};
     }
 
+    // Ids must be unique for the *lifetime of the run* — deriving them from
+    // `registered.len()` breaks after an unregister shrinks the list (the
+    // same seed is minted twice; the second `register` overwrites the
+    // position map of a live chunk and the list keeps a stale entry).
+    let mut next_seed: u64 = 0;
     let ops = &data[1..];
     for pair in ops.chunks(2) {
         if pair.len() < 2 {
@@ -94,7 +99,8 @@ fuzz_target!(|data: &[u8]| {
             0 => {
                 // Register + first write.
                 if registered.len() < capacity + 2 {
-                    let id = chunk_id(u64::from(arg) + registered.len() as u64 * 257);
+                    let id = chunk_id(next_seed);
+                    next_seed += 1;
                     oram.register(id);
                     let payload = vec![arg; 16];
                     contents.insert(id, payload.clone());

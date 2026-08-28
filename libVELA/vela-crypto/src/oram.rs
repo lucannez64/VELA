@@ -160,7 +160,16 @@ impl PathOram {
     }
 
     /// Register a new chunk with a random leaf position.
+    ///
+    /// Panics in debug builds if `id` is already registered — re-registering
+    /// would silently re-randomize the leaf of a live chunk, orphaning its
+    /// stored block. Callers mint ids uniquely (found by fuzzing the client
+    /// state machine).
     pub fn register(&mut self, id: ChunkId) -> LeafIdx {
+        debug_assert!(
+            !self.position_map.contains_key(&id),
+            "chunk {id:?} registered twice"
+        );
         let leaf = random_leaf(self.num_leaves);
         self.position_map.insert(id, leaf);
         leaf
