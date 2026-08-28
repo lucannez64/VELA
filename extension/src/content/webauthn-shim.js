@@ -114,25 +114,44 @@
   // relying party reads is indistinguishable in the ways that matter.
   function publicKeyCredential(properties) {
     if (typeof PublicKeyCredential === "undefined") return properties;
-    return Object.assign(Object.create(PublicKeyCredential.prototype), properties);
+    return withOwnProperties(PublicKeyCredential.prototype, properties);
   }
 
   // Same trick for the `response` members, so `response instanceof
   // AuthenticatorAssertionResponse` (or `AuthenticatorAttestationResponse`)
   // also holds — some sites check those too.
+  //
+  // The members live on the prototypes as getter-only WebIDL attributes, so
+  // they must be *defined* as own properties rather than assigned: an
+  // assignment (`Object.assign`, `obj.x = …`) hits the prototype's missing
+  // setter and throws `TypeError: setting getter-only property`, which is
+  // exactly what happened on eduid.ch — the ceremony succeeded on the desktop
+  // and then died silently assembling the credential.
+  function withOwnProperties(proto, properties) {
+    const obj = Object.create(proto);
+    for (const [key, value] of Object.entries(properties)) {
+      Object.defineProperty(obj, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return obj;
+  }
   function assertionResponse(properties) {
     const proto =
       typeof AuthenticatorAssertionResponse !== "undefined"
         ? AuthenticatorAssertionResponse.prototype
         : Object.prototype;
-    return Object.assign(Object.create(proto), properties);
+    return withOwnProperties(proto, properties);
   }
   function attestationResponse(properties) {
     const proto =
       typeof AuthenticatorAttestationResponse !== "undefined"
         ? AuthenticatorAttestationResponse.prototype
         : Object.prototype;
-    return Object.assign(Object.create(proto), properties);
+    return withOwnProperties(proto, properties);
   }
 
   /**

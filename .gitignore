@@ -1,6 +1,7 @@
 
 # Rust build outputs
 **/target/
+/desktopVELA/target
 
 # iOS bridge build outputs
 libVELA/vela-apple-bridge/*.xcframework/

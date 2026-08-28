@@ -19,6 +19,34 @@ globalThis.AuthenticatorAssertionResponse =
   class AuthenticatorAssertionResponse extends globalThis.AuthenticatorResponse {};
 globalThis.AuthenticatorAttestationResponse =
   class AuthenticatorAttestationResponse extends globalThis.AuthenticatorResponse {};
+
+// Model the real browsers: the interface members are getter-only WebIDL
+// attributes on the prototype. A shim that *assigns* them (`Object.assign`,
+// `obj.x = …`) throws `TypeError: setting getter-only property` in a strict
+// page — which is exactly how eduid.ch registration failed while every
+// instanceof check still passed. Registering the getters keeps this harness
+// honest about that failure mode.
+function defineGetterOnly(proto, names) {
+  for (const name of names) {
+    Object.defineProperty(proto, name, {
+      get() {
+        throw new TypeError(`internal slot ${name} has no exposed getter in this stub`);
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+}
+defineGetterOnly(globalThis.PublicKeyCredential.prototype, ["id", "rawId", "response", "type"]);
+defineGetterOnly(globalThis.AuthenticatorAssertionResponse.prototype, [
+  "authenticatorData",
+  "signature",
+  "userHandle",
+]);
+defineGetterOnly(globalThis.AuthenticatorAttestationResponse.prototype, [
+  "clientDataJSON",
+  "attestationObject",
+]);
 const { PublicKeyCredential, AuthenticatorAssertionResponse, AuthenticatorAttestationResponse } =
   globalThis;
 
