@@ -59,14 +59,15 @@ and is deliberately keyed one-to-one to the verified/falsified lemmas:
                                  the engine, so the whole legacy working set is
                                  exposed to the engine.
   Current                    -> the shipped broker (ipc.rs): same-UID peer +
-                                 presence proof with PLAINTEXT_RELEASE_TTL=120s,
-                                 auto-lock on idle. On the no-biometric path
-                                 (presence Unavailable) the release proceeds on
-                                 the peer check + unlocked session, so a
-                                 co-resident process can trigger releases while
-                                 the vault is unlocked (audit D-4). That path is
-                                 modelled here; the biometric path collapses to
-                                 the M3/M6 working-set curve.
+                                 unlocked, non-idle session, auto-lock on
+                                 idle. Plain autofill asks no biometric and
+                                 no approval dialog, so a co-resident process
+                                 can trigger releases while the vault is
+                                 unlocked (audit D-4), bounded per unlock by
+                                 the distinct-domain cap. That path is modelled
+                                 here; it collapses to the M3/M6 working-set
+                                 curve. Passkey and in-core-login ceremonies
+                                 still require a per-ceremony human approval.
 
 User activity is identical across all solutions (Poisson fills, Zipf item
 popularity). The only solution-specific parameter is the attacker's drain rate,

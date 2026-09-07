@@ -123,10 +123,6 @@ pub struct AppState {
     /// avoids persisting a transition key under the retired RMS (which would
     /// defeat rotation). Cleared and zeroized on lock.
     rekey_password: RwLock<Option<zeroize::Zeroizing<String>>>,
-    /// When the user last proved presence for a plaintext credential release
-    /// over IPC, and to which caller (audit D-4). Not persisted: a restart
-    /// should cost a fresh confirmation.
-    plaintext_release: RwLock<Option<(Option<u32>, std::time::Instant)>>,
     /// Distinct domains plaintext has been released for since the last
     /// unlock. Not persisted: the cap is per unlocked session by design.
     released_domains: RwLock<HashSet<String>>,
@@ -153,14 +149,6 @@ pub struct AppState {
     host: RwLock<Option<Arc<dyn host::Host>>>,
 }
 
-/// How long one user-presence confirmation covers further plaintext releases to
-/// the same caller.
-///
-/// A prompt per filled field would train people to approve without reading,
-/// which is worse than no prompt; a window this short still means an idle
-/// machine cannot be drained by something that read the capability file.
-pub const PLAINTEXT_RELEASE_TTL: std::time::Duration = std::time::Duration::from_secs(120);
-
 /// How many *distinct* domains one unlock may release plaintext credentials
 /// for, in total, across all callers (issue #149, option D).
 ///
@@ -174,26 +162,10 @@ pub const PLAINTEXT_RELEASE_TTL: std::time::Duration = std::time::Duration::from
 pub const MAX_RELEASED_DOMAINS_PER_UNLOCK: usize = 25;
 
 impl AppState {
-    /// Whether `pid` already proved presence recently. Tied to the caller, so a
-    /// second process cannot ride on a confirmation the user gave the browser.
-    pub fn plaintext_release_is_fresh(&self, pid: Option<u32>) -> bool {
-        match *self.plaintext_release.read() {
-            Some((granted_to, at)) => {
-                granted_to == pid && pid.is_some() && at.elapsed() < PLAINTEXT_RELEASE_TTL
-            }
-            None => false,
-        }
-    }
-
-    pub fn record_plaintext_release(&self, pid: Option<u32>) {
-        *self.plaintext_release.write() = Some((pid, std::time::Instant::now()));
-    }
-
-    /// Locking the vault must also end any standing release grant.
-    pub fn clear_plaintext_release(&self) {
-        *self.plaintext_release.write() = None;
-        // And reset the per-unlock blast radius with it (issue #149, D):
-        // the cap is "per unlock", so a relock starts a fresh budget.
+    /// Locking the vault resets the per-unlock autofill budget with it
+    /// (issue #149, D): the distinct-domain cap is "per unlock", so a
+    /// relock starts a fresh budget.
+    pub fn clear_release_budget(&self) {
         self.released_domains.write().clear();
     }
 
@@ -278,7 +250,6 @@ impl AppState {
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),
             rekey_password: RwLock::new(None),
-            plaintext_release: RwLock::new(None),
             released_domains: RwLock::new(HashSet::new()),
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),
@@ -524,7 +495,6 @@ impl Default for AppState {
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
             session_generation: AtomicU64::new(0),
             rekey_password: RwLock::new(None),
-            plaintext_release: RwLock::new(None),
             released_domains: RwLock::new(HashSet::new()),
             pending_enrollment: RwLock::new(None),
             pending_invite: RwLock::new(None),

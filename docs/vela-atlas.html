@@ -331,7 +331,7 @@ const NODES = [
 
 { id:"BIO", key:"BM", label:"Biometric gate", group:"vault", gx:3, gy:9, w:2, d:2, h:2.6,
   files:["desktopVELA/vela-desktop-core/src/biometric.rs"],
-  what:["Proof that a person, not just a process, is asking. It stands in front of unlock and in front of every plaintext credential release over IPC.",
+  what:["Proof that a person, not just a process, is asking. It stands in front of unlock and in front of passkey and in-core-login ceremonies. Plain autofill releases on the unlocked session with no per-fill prompt.",
         "The last successful proof is remembered with the caller's pid and a timestamp — and deliberately **not persisted**, so a restart costs a fresh confirmation."],
   built:["Per-platform: Windows Hello, macOS LocalAuthentication, and on Linux the freedesktop portal / polkit path. 1,521 lines of it, nearly all platform glue."],
   cond:["Linux coverage depends on what the desktop session actually provides; there is no single guaranteed prompt across distributions."],
@@ -479,7 +479,7 @@ const NODES = [
 { id:"IPC", key:"IPC", label:"IPC socket server", group:"clients", gx:-1, gy:4, w:2, d:2, h:3.2,
   files:["desktopVELA/vela-desktop-core/src/ipc.rs","desktopVELA/vela-desktop-core/src/ipc_peer.rs"],
   what:["The desktop app's only door for the browser, and the tightest one on the map. **OS-protected transport only** — a Unix socket or a Windows named pipe, never a TCP port.",
-        "Three things must hold before a plaintext credential leaves: the connection came from a browser-spawned VELA host binary (kernel-verified), the user proved presence where the platform can ask, and the per-unlock domain budget is not spent. The release is recorded with the caller's pid, an audit entry names caller and domain, and a toast says so on screen."],
+        "Three things must hold before a plaintext credential leaves: the connection came from a browser-spawned VELA host binary (kernel-verified), the session is unlocked and not idle, and the per-unlock domain budget is not spent. The release is recorded with the caller's pid, an audit entry names caller and domain, and a toast says so on screen."],
   built:["Newline-delimited JSON `IpcMessage { msg_type, payload }`, capped at 1 MiB per message. There is no capability token: authentication is who connected, not what they say. Host matching for autofill hands the full host to `urls_match` so the Public Suffix List decides, rather than truncating labels."],
   cond:["The extension's own trustworthiness is not verifiable from here — only the transport, the process behind it, and the user's confirmation are."],
   inside:[["listen","well-known per-user socket / pipe, 0600"],["gate","same-user + VELA host binary + browser ancestor"],["peer identity","OS-level check on the connecting process"],["urls_match","PSL-aware, full host"],["biometric","presence proof before plaintext"],["audit+toast","every release recorded and surfaced"]] },

@@ -245,9 +245,8 @@ pub fn lock_session(state: &Arc<AppState>) {
 
     biometric::clear_cached_rms();
     state.set_rekey_password(None);
-    // A standing "the user confirmed a fill" grant must not outlive the unlocked
-    // session it was given during (audit D-4).
-    state.clear_plaintext_release();
+    // A relock starts a fresh per-unlock autofill budget (audit D-4).
+    state.clear_release_budget();
     state.bump_session_generation();
 }
 

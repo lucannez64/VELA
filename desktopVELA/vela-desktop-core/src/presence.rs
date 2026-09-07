@@ -8,13 +8,13 @@
 //! the user at every passkey origin. Keeping token minting in one small module
 //! makes "who decided a human was here?" a question with one answer.
 //!
-//! ## Why this is not [`crate::ipc::server::authorize_plaintext_release`]
+//! ## Why this is not the autofill path
 //!
-//! That function releases a plaintext password and, on a machine with no
-//! biometric factor, deliberately proceeds anyway — the reasoning being that
-//! idle auto-lock, not a prompt, is what stops a co-resident process draining a
-//! vault, and that a prompt which cannot name its caller trains people to click
-//! yes. That reasoning does not carry over here:
+//! Plain autofill releases a password on the connection gate plus the
+//! unlocked, non-idle session, with no per-fill prompt — the reasoning being
+//! that idle auto-lock, not a prompt, is what stops a co-resident process
+//! draining a vault, and that a prompt which cannot name its caller trains
+//! people to click yes. That reasoning does not carry over here:
 //!
 //!  * a fill is bounded by the working set and by auto-lock; an assertion
 //!    oracle is not bounded by anything, because assertions are cheap,
@@ -22,6 +22,11 @@
 //!    while it is being drained;
 //!  * there is nothing to steal here, so the failure mode is not "a password
 //!    leaked" but "the attacker is logged in as you, everywhere, silently".
+//!
+//! The same holds for an in-core login: the desktop submits the saved password
+//! to the site itself, which signs the user in elsewhere rather than filling
+//! a field. Both ceremonies ask the human every time, through the single
+//! [`ask`] below.
 //!
 //! So where the platform cannot verify a user, this asks the user directly
 //! rather than assuming them. A confirmation dialog is a weaker factor than a

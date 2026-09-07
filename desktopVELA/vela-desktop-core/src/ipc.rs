@@ -215,66 +215,6 @@ pub mod server {
         Ok(())
     }
 
-    /// May this caller be handed plaintext credentials right now?
-    ///
-    /// Two conditions, and the token is neither of them:
-    ///
-    ///  * the kernel says the peer runs as us, and (since option B) passed
-    ///    the `ipc_gate` checks — a browser-spawned VELA host binary; and
-    ///  * the user proved presence within [PLAINTEXT_RELEASE_TTL], where the
-    ///    platform can ask. One prompt covers a short burst of fills, because a
-    ///    prompt per field would train people to approve without reading, but it
-    ///    does not cover an idle machine.
-    ///
-    /// Where the platform cannot ask, the release proceeds on the peer check
-    /// and the unlocked session: an idle machine auto-locks, and a locked vault
-    /// serves nothing on this path at all (the caller checks that first). See
-    /// the `Unavailable` arm for why that is the trade rather than a refusal.
-    fn authorize_plaintext_release(host: &Arc<dyn Host>, peer: &PeerIdentity) -> Result<(), String> {
-        if !peer.is_same_user() {
-            return Err("This request did not come from your own session.".to_string());
-        }
-
-        let state = host.state();
-        if state.plaintext_release_is_fresh(peer.pid) {
-            return Ok(());
-        }
-
-        match crate::biometric::verify_presence(&format!(
-            "Confirm to let {} fill a saved password",
-            peer.describe()
-        )) {
-            crate::biometric::PresenceOutcome::Confirmed => {
-                state.record_plaintext_release(peer.pid);
-                Ok(())
-            }
-            crate::biometric::PresenceOutcome::Denied(message) => Err(message),
-            crate::biometric::PresenceOutcome::Unavailable => {
-                // Nothing on this machine can ask whether a person is here:
-                // no Windows Hello enrolment, no biometry, no fingerprint
-                // reader. Release on the peer check and the unlocked session.
-                //
-                // This did fail closed for a while, with a polkit prompt on
-                // Linux to keep that from meaning "no filling, ever". Both are
-                // gone. What D-4 actually asks for is that a plaintext release
-                // not rest on a long-lived bearer token, and the session
-                // auto-lock delivers that: the vault relocks on idle, a locked
-                // vault serves nothing here, and every relock clears any
-                // standing grant. A machine sitting idle cannot be drained by
-                // something that is not allowed to connect at all.
-                //
-                // What is given up is narrower than it looks: code running as
-                // the user, on an unlocked vault, in the same session. A prompt
-                // only stops that if it names who is asking — polkit's could
-                // not (fixed message, caller description discarded) and neither
-                // can fprintd's, so malware timed to a fill the user just
-                // requested was approved by the user's own hand. Hello and
-                // Touch ID do name the caller, and still prompt here.
-                Ok(())
-            }
-        }
-    }
-
     async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Vec<u8>> {
         let mut len_bytes = [0u8; 4];
         reader.read_exact(&mut len_bytes).await?;
@@ -842,19 +782,21 @@ pub mod server {
             }
         }
 
-        // Releasing plaintext is the one thing on this socket that a stolen
-        // capability file would be worth stealing for, so it is the one thing
-        // the token alone does not buy (audit D-4). The caller has to be a
-        // process the kernel says is ours, and the user has to have proved
-        // presence recently — the token proves neither.
+        // Plain autofill releases on the connection gate plus the unlocked,
+        // non-idle session — no biometric, password, or approval prompt. The
+        // gate (`ipc_gate`) already admitted only a browser-spawned VELA host
+        // running as this user, and the session check above refused a locked
+        // or idle-expired vault (auto-lock is what bounds this, not a prompt:
+        // a prompt per fill trains reflexive approval, and a prompt that
+        // cannot name its caller gates less than it appears to). What still
+        // bounds a co-resident caller is below: the per-unlock distinct-domain
+        // cap, a mandatory audit entry per release, and a toast naming both
+        // halves. Ceremonies that hand out more than a fill — passkey
+        // signatures and in-core logins, which sign the user in elsewhere —
+        // still ask the human every time through `crate::presence`.
         let vault = state.vault.read();
         let items = vault.search_by_domain(&base_domain);
         if user_initiated {
-            if let Err(reason) = authorize_plaintext_release(host, peer) {
-                warn!("Refused plaintext credential release to {}", peer.describe());
-                drop(vault);
-                return IpcMessage::error(reason);
-            }
             let items: Vec<_> = items.into_iter().cloned().collect();
             if !items.is_empty() {
                 // Blast-radius limits (issue #149, D). No prompt can tell a
@@ -1362,43 +1304,26 @@ pub mod server {
             assert_eq!(resp.payload["message"], "Unknown message type");
         }
 
+        /// Strangers never reach `process_message`: the connection gate
+        /// (`authorize_host`, run once in `handle_connection`) refuses them
+        /// first. Plain autofill performs no per-message peer check — the peer
+        /// it sees already passed the gate at connect time. The gate's own
+        /// decisions are covered by `ipc_gate`'s unit tests and end-to-end by
+        /// `vela-nm-host`'s `e2e` test; this pins the layering from the inside.
         #[tokio::test]
-        async fn plaintext_is_refused_to_a_peer_the_kernel_says_is_someone_else() {
+        async fn a_stranger_is_refused_before_any_message_is_read() {
             let (_dir, mock) = MockHost::new(true);
             let host: Arc<dyn Host> = mock.clone();
             let stranger = PeerIdentity { pid: Some(1), uid: Some(crate::ipc_peer::current_uid() + 1), exe: None };
 
-            let resp = process_message(
-                message(
-                    IpcMessageType::AutofillRequest,
-                    serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
-                    "cap",
-                ),
-                &host,
-                &stranger,
-            )
-            .await;
+            let (client, server) = tokio::io::duplex(64);
+            handle_connection(server, host, stranger).await.unwrap();
 
-            assert_eq!(resp.msg_type, IpcMessageType::Error, "a valid token must not be enough");
-        }
-
-        #[tokio::test]
-        async fn plaintext_is_refused_when_the_peer_cannot_be_identified() {
-            let (_dir, mock) = MockHost::new(true);
-            let host: Arc<dyn Host> = mock.clone();
-
-            let resp = process_message(
-                message(
-                    IpcMessageType::AutofillRequest,
-                    serde_json::json!({ "domain": "https://github.com", "user_initiated": true }),
-                    "cap",
-                ),
-                &host,
-                &PeerIdentity::default(),
-            )
-            .await;
-
-            assert_eq!(resp.msg_type, IpcMessageType::Error, "unknown peer must not read as ours");
+            let mut client = client;
+            assert!(
+                read_frame(&mut client).await.is_err(),
+                "a refused connection must answer nothing"
+            );
         }
 
         /// The wire names are the contract with the native messaging host,
@@ -1511,7 +1436,8 @@ pub mod server {
         }
 
         /// Where nothing can ask a human, the ceremony is refused rather than
-        /// assumed — the deliberate difference from `authorize_plaintext_release`.
+        /// assumed — the deliberate difference from plain autofill, which
+        /// releases on the unlocked session alone.
         #[tokio::test]
         async fn no_assertion_where_there_is_no_way_to_ask() {
             crate::presence::force_platform_presence_unavailable();
@@ -1713,17 +1639,12 @@ pub mod server {
             assert_ne!(resp.msg_type, IpcMessageType::Error);
         }
 
-        /// CI has no Windows Hello and no fingerprint reader, so
-        /// `verify_presence` reports `Unavailable` here — the same machine most
-        /// Linux desktops are.
-        ///
-        /// Filling has to keep working there: the release rests on the peer
-        /// check and the unlocked session, and the auto-lock is what keeps an
-        /// idle machine from being drained. The locked-vault refusal is covered
-        /// by `autofill_locked_vault_requires_biometric`, which is the half
-        /// that actually holds this up.
+        /// Plain autofill asks nobody: with the vault unlocked and the session
+        /// live, the connection gate plus the per-unlock cap, audit entry and
+        /// toast are what bound a release. The locked-vault refusal is covered
+        /// by `autofill_locked_vault_requires_biometric`.
         #[tokio::test]
-        async fn plaintext_is_released_when_nothing_can_confirm_but_the_vault_is_open() {
+        async fn autofill_needs_no_prompt_when_the_vault_is_open() {
             let (_dir, mock) = MockHost::new(true);
             let host: Arc<dyn Host> = mock.clone();
             let us = test_peer();
@@ -1743,24 +1664,9 @@ pub mod server {
             assert_eq!(
                 resp.msg_type,
                 IpcMessageType::AutofillResponse,
-                "a machine with no presence factor must still be able to fill"
+                "an unlocked vault must fill without prompting"
             );
-        }
-
-        #[test]
-        fn a_release_grant_is_tied_to_one_caller_and_expires() {
-            let dir = tempfile::tempdir().unwrap();
-            let state = Arc::new(AppState::for_test(dir.path()));
-
-            assert!(!state.plaintext_release_is_fresh(Some(42)), "nothing granted yet");
-
-            state.record_plaintext_release(Some(42));
-            assert!(state.plaintext_release_is_fresh(Some(42)));
-            assert!(!state.plaintext_release_is_fresh(Some(43)), "another process cannot ride on it");
-            assert!(!state.plaintext_release_is_fresh(None), "an unidentified caller cannot either");
-
-            state.clear_plaintext_release();
-            assert!(!state.plaintext_release_is_fresh(Some(42)), "locking revokes it");
+            assert_eq!(mock.presence_prompts(), 0, "no biometric, no approval dialog");
         }
 
         #[tokio::test]
@@ -1808,13 +1714,9 @@ pub mod server {
             }
             let host: Arc<dyn Host> = mock.clone();
 
-            // user_initiated: full credentials — but only once presence has
-            // been confirmed. Standing in for a confirmation the user just
-            // completed, because CI has no factor to complete one with; the
-            // refusal when there is no factor at all is covered separately by
-            // plaintext_is_refused_when_nothing_can_confirm_a_person_is_here.
+            // user_initiated: full credentials, no prompt — the vault is
+            // unlocked and the session is live.
             let peer = test_peer();
-            mock.state.record_plaintext_release(peer.pid);
 
             let req = message(
                 IpcMessageType::AutofillRequest,
@@ -1869,7 +1771,6 @@ pub mod server {
                 });
             }
             let peer = test_peer();
-            mock.state.record_plaintext_release(peer.pid);
             let host: Arc<dyn Host> = mock.clone();
 
             let req = message(
@@ -1934,7 +1835,6 @@ pub mod server {
                 });
             }
             let peer = test_peer();
-            mock.state.record_plaintext_release(peer.pid);
             let host: Arc<dyn Host> = mock.clone();
 
             let store_dir = mock.state.store.store_path();
@@ -1974,7 +1874,6 @@ pub mod server {
         #[tokio::test]
         async fn a_missed_match_is_not_a_release() {            let (_dir, mock) = MockHost::new(true);
             let peer = test_peer();
-            mock.state.record_plaintext_release(peer.pid);
             let host: Arc<dyn Host> = mock.clone();
 
             let req = message(
@@ -2031,7 +1930,6 @@ pub mod server {
                 }
             }
             let peer = test_peer();
-            mock.state.record_plaintext_release(peer.pid);
             let host: Arc<dyn Host> = mock.clone();
 
             let fill = |i: usize| {
@@ -2066,8 +1964,8 @@ pub mod server {
                 crate::MAX_RELEASED_DOMAINS_PER_UNLOCK + 1
             );
 
-            // Relocking resets the budget along with the standing grant.
-            mock.state.clear_plaintext_release();
+            // Relocking resets the per-unlock budget.
+            mock.state.clear_release_budget();
             let resp = process_message(
                 fill(crate::MAX_RELEASED_DOMAINS_PER_UNLOCK),
                 &host,
@@ -2237,9 +2135,9 @@ pub mod server {
         }
 
         /// A machine with no way to ask refuses rather than proceeding. This is
-        /// the opposite of what `authorize_plaintext_release` does, and
-        /// deliberately: a fill is bounded by the working set, a login that
-        /// signs an attacker in as the user is not.
+        /// the opposite of plain autofill, and deliberately: a fill is bounded
+        /// by the working set, a login that signs an attacker in as the user
+        /// is not.
         #[tokio::test]
         async fn a_machine_that_cannot_ask_refuses_the_login() {
             crate::presence::force_platform_presence_unavailable();
