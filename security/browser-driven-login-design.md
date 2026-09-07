@@ -263,9 +263,29 @@ monkeytype** — the end-to-end success.
   finish a second factor, but the flow is untested end-to-end for it.
 - **Teardown robustness.** The browser is killed via `child.kill()`; on some
   systems orphaned children may linger briefly. A hard deadline is in place.
-- **Platform coverage.** Linux (Chrome/Chromium/Edge) is tested; Windows/macOS
-  browser discovery is untested. Firefox ≥136 is BiDi-only and cannot be driven
-  this way.
+- **Windows disposable-browser support (roadmap).** The GPUI Windows build can
+  autofill through the extension today, but the browser-driven login tier is
+  still Unix-only. Port it without weakening the tier's isolation boundary:
+  - implement Chromium `--remote-debugging-pipe` transport with explicitly
+    inherited Windows handles and no TCP debugging listener;
+  - place the complete disposable Chromium process tree in a kill-on-close Job
+    Object and prove that success, error, cancellation, timeout, and app exit
+    terminate every child and remove the temporary profile;
+  - define and implement the Windows equivalent of the Linux dedicated-UID
+    sandbox (restricted token/AppContainer or another demonstrably separate
+    security principal), with least-privilege profile ACLs and fail-closed
+    startup when isolation was requested but not established;
+  - cover installed Chrome, Chromium, and Edge discovery, including per-user
+    installations; and
+  - add a Windows GPUI + extension end-to-end test proving placeholder fill,
+    network-layer password substitution, session installation into the user's
+    tab, process cleanup, profile cleanup, and isolation-failure refusal.
+    Ordinary extension autofill must continue to work while this tier is
+    unavailable.
+- **macOS platform coverage.** Browser discovery and the disposable-browser
+  path remain untested and need their own isolation design.
+- **Firefox coverage.** Firefox ≥136 is BiDi-only and cannot be driven by the
+  current CDP transport.
 - **M9e model** — write the formal argument.
 - **User-facing docs** — "works on some sites; you may finish a 2FA in the
   window".

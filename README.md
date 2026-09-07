@@ -2,7 +2,8 @@
 
 VELA is a local-first, zero-knowledge password vault with:
 
-- `desktopVELA`: Tauri desktop app, native gpui front end, and browser-extension IPC host.
+- `desktopVELA`: native GPUI desktop app (the Windows/Linux default), Tauri
+  fallback/macOS app, and browser-extension IPC host.
 - `androidVELA`: native Android app.
 - `iosVELA`: native iOS app.
 - `serverVELA`: sync/auth API server.
@@ -33,7 +34,7 @@ Important defaults after the hardening pass:
 ```text
 androidVELA/                     Android application (Kotlin)
 iosVELA/                         iOS application (Swift, XcodeGen)
-desktopVELA/                     Desktop application (Tauri + React; native gpui front end in src-gpui/)
+desktopVELA/                     Desktop application (native GPUI default on Windows/Linux; Tauri + React fallback/macOS)
 extension/                       Browser extension and native messaging host
 webVELA/                         Ephemeral web vault SPA
 libVELA/vela-core/               Shared Rust core (vault, sync, crypto orchestration)
@@ -199,25 +200,36 @@ Do not use `ALLOW_INSECURE_LAN=true` for internet-facing deployments.
 
 ## Desktop App
 
-Run from `desktopVELA`.
+The native GPUI frontend is the default on Windows and Linux. Run it from
+`desktopVELA`:
 
 ```powershell
 cd desktopVELA
-bun install
-bun tauri dev
+cargo run -p vela-desktop-gpui
 ```
 
-Build installers:
+Build the Windows installers:
 
 ```powershell
-bun tauri build
+cargo build --release -p vela-desktop-gpui -p vela-nm-host
+cargo install cargo-packager --version 0.11.8 --locked
+cd src-gpui
+cargo packager --release --formats nsis,wix
 ```
 
 Outputs:
 
 ```text
-desktopVELA/src-tauri/target/release/bundle/msi/
-desktopVELA/src-tauri/target/release/bundle/nsis/
+target/release/*.msi
+target/release/*-setup.exe
+```
+
+The Tauri frontend remains available explicitly for macOS and fallback work:
+
+```powershell
+cd desktopVELA
+bun install
+bun tauri dev
 ```
 
 ### Desktop Dependency Pins
@@ -372,12 +384,17 @@ cd serverVELA
 cargo check
 cargo audit
 
-# Desktop Rust
-cd desktopVELA\src-tauri
-cargo check
+# Desktop Rust (Windows/Linux default)
+cd desktopVELA
+cargo check -p vela-desktop-gpui
 cargo audit
 
-# Desktop frontend and bundle
+# Native GPUI frontend
+cd desktopVELA
+cargo test -p vela-desktop-gpui
+cargo build --release -p vela-desktop-gpui -p vela-nm-host
+
+# Tauri fallback frontend
 cd desktopVELA
 bun audit
 bun run build

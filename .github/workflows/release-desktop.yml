@@ -1,6 +1,6 @@
 name: release-desktop
 
-# Build the desktop app (Tauri) for Windows and Linux, and publish a GitHub
+# Build the native GPUI desktop app for Windows and Linux, and publish a GitHub
 # release carrying the MSI (WiX), the NSIS setup .exe, the .deb and the .rpm.
 # The version is derived from the commit: patch = number of commits on the
 # branch, so it is monotonic and unique, and the short SHA is recorded in the
@@ -11,11 +11,9 @@ name: release-desktop
 # (requires the AUR_SSH_PRIVATE_KEY repository secret; skipped otherwise).
 on:
   workflow_dispatch:
-  # PRs run a dry run: the Linux job builds and packages, but every
-  # publishing step (release upload, AUR push, and the Windows job, which
-  # publishes via tauri-action and has no separable build step) is gated off.
-  # This exists so the cargo-deb/cargo-generate-rpm path cannot make its
-  # first real execution the one that ships to users.
+  # PRs build and package both desktop targets but skip every publishing step.
+  # This keeps the first execution of a packaging path from being the one that
+  # ships to users.
   pull_request:
     branches: [main]
     paths:
@@ -38,9 +36,6 @@ permissions:
 
 jobs:
   build-windows:
-    # tauri-action builds and publishes in a single step, so there is nothing
-    # to usefully dry-run here — skipped on PRs.
-    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,29 +53,21 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
 
-      # Stamp the commit-derived version into the Tauri config so the bundle
-      # filenames (VELA_0.1.<n>_x64_en-US.msi / VELA_0.1.<n>_x64-setup.exe)
-      # reflect the build.
-      - name: Stamp version into tauri.conf.json
+      - name: Stamp version into the GPUI crate
         shell: bash
         run: |
-          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
-            desktopVELA/src-tauri/tauri.conf.json > tmp.json
-          mv tmp.json desktopVELA/src-tauri/tauri.conf.json
-
-      - uses: oven-sh/setup-bun@v2
+          sed -i '0,/^version = ".*"$/s//version = "${{ steps.version.outputs.version }}"/' \
+            desktopVELA/src-gpui/Cargo.toml
+          grep -m1 '^version' desktopVELA/src-gpui/Cargo.toml
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: swatinem/rust-cache@v2
         with:
-          # See the note in the macOS workflow: the workspace root is
-          # desktopVELA, so src-tauri caches the wrong lockfile/target dir.
           workspaces: desktopVELA -> ../target
-
           # The repo-root .cargo/config.toml redirects the target dir to
-          # VELA/target, so point rust-cache at it (cache-dir is relative to
-          # the workspace dir).          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
+          # VELA/target. Cache the vendored gpui-ce artifacts too: rust-cache
+          # treats every
           # crate *inside* the workspace dir as a "workspace crate" and skips
           # caching them by default - vendor/gpui-ce lives under desktopVELA/,
           # so its whole debug + release output was rebuilt on every run.
@@ -89,11 +76,6 @@ jobs:
           # refuses to re-save when the restore key already matched, so the
           # first run after this is cold and every later one is fast.
           prefix-key: v1-rust
-          # Shared with build-windows-dryrun. rust-cache keys on the job id by
-          # default, and these are two jobs — this one runs on main, that one on
-          # PRs — so the cache main fills was under a key no PR ever looked up,
-          # and every PR rebuilt the whole dependency tree from scratch on the
-          # slowest, most expensive runner we have (#135).
           shared-key: desktop-windows
           # A failed or cancelled build otherwise saves nothing, so the next
           # attempt starts cold too — exactly when iterating on a broken build
@@ -101,85 +83,68 @@ jobs:
           # cleans the workspace's own, so a failure cannot poison it.
           cache-on-failure: true
 
-      - name: Install frontend deps
+      - name: Test GPUI frontend
         working-directory: desktopVELA
-        run: bun install
+        run: cargo test -p vela-desktop-gpui
 
-      # tauri-action runs beforeBuildCommand (bun run build), builds the app,
-      # then creates/updates the release and uploads the MSI + NSIS bundles.
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: desktopVELA
-          tagName: ${{ steps.version.outputs.tag }}
-          releaseName: "VELA Desktop v${{ steps.version.outputs.version }}"
-          releaseBody: |
-            Automated desktop build.
-
-            - Commit: ${{ github.sha }} (`${{ steps.version.outputs.sha }}`)
-            - Windows: `.msi` (WiX) and `-setup.exe` (NSIS)
-            - Linux: `.deb` and `.rpm`
-          releaseDraft: false
-          prerelease: false
-          args: --bundles msi nsis
-
-  # PR dry run for Windows. tauri-action only creates a release when `tagName`
-  # is set, so omitting it gives a build-only run of the exact same bundling
-  # path, publishing nothing. Same rationale as the Linux dry run below: the
-  # first execution of a packaging path should never be the one that ships.
-  build-windows-dryrun:
-    if: github.event_name == 'pull_request'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: desktopVELA -> ../target
-          # Cache the vendored gpui-ce artifacts too. rust-cache treats every
-          # crate *inside* the workspace dir as a "workspace crate" and skips
-          # caching them by default - vendor/gpui-ce lives under desktopVELA/,
-          # so its whole debug + release output was rebuilt on every run.
-          cache-workspace-crates: true
-          # New cache contents (gpui-ce now included) need a new key: rust-cache
-          # refuses to re-save when the restore key already matched, so the
-          # first run after this is cold and every later one is fast.
-          prefix-key: v1-rust
-          # Same key as build-windows above, so a PR restores what the last
-          # main build left rather than starting cold (#135).
-          shared-key: desktop-windows
-          cache-on-failure: true
-
-      - name: Install frontend deps
+      - name: Build GPUI app and native-messaging host
         working-directory: desktopVELA
-        run: bun install
+        run: cargo build --release -p vela-desktop-gpui -p vela-nm-host
 
-      - name: Build MSI + NSIS (no release)
-        uses: tauri-apps/tauri-action@v0
+      # cargo-packager is framework-neutral and produces the same two Windows
+      # installer formats without compiling or embedding the Tauri/WebView UI.
+      - name: Install cargo-packager
+        uses: taiki-e/install-action@v2
         with:
-          projectPath: desktopVELA
-          args: --bundles msi nsis
+          tool: cargo-packager@0.11.8
+
+      - name: Build MSI + NSIS from the GPUI binary
+        working-directory: desktopVELA/src-gpui
+        run: cargo packager --release --formats nsis,wix
+
+      - name: Normalise artifact names
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $msi = Get-ChildItem target -Recurse -Filter '*.msi' |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $setup = Get-ChildItem target -Recurse -Filter '*.exe' |
+            Where-Object Name -Like '*setup*' |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $msi -or -not $setup) {
+            throw 'cargo-packager did not produce both Windows installers'
+          }
+          New-Item -ItemType Directory -Force desktopVELA/dist | Out-Null
+          Copy-Item $msi.FullName "desktopVELA/dist/VELA_${version}_x64_en-US.msi"
+          Copy-Item $setup.FullName "desktopVELA/dist/VELA_${version}_x64-setup.exe"
 
       - name: Upload installers as build artifacts
+        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: vela-windows-installers
-          path: |
-            target/release/bundle/msi/*.msi
-            target/release/bundle/nsis/*-setup.exe
+          path: desktopVELA/dist/*
           if-no-files-found: error
 
-  # Linux ships the native gpui-ce build, not the Tauri/WebKit one: it is the
-  # platform where the port is feature-complete (tray, XDG portal global
-  # shortcut, autofill IPC, secret-service all work), and it drops the whole
-  # WebKitGTK runtime. Windows/macOS stay on tauri-action above — the port's
-  # tray/shortcut/IPC layers are Linux-only today.
+      - name: Upload installers to the release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "VELA Desktop v${{ steps.version.outputs.version }}" \
+              --notes "Automated desktop build.
+
+          - Commit: ${{ github.sha }} (\`${{ steps.version.outputs.sha }}\`)
+          - Windows: \`.msi\` (WiX) and \`-setup.exe\` (NSIS), native gpui-ce build
+          - Linux: \`.deb\` and \`.rpm\`, native gpui-ce build"
+          gh release upload "$TAG" desktopVELA/dist/* --clobber
+
+  # Linux also ships the native gpui-ce build, retaining its existing tray,
+  # XDG portal global shortcut, autofill IPC, and secret-service integration.
   #
   # The binary installs as `vela-desktop` so the desktop entry, icon name, WM
   # class, portal app id and AUR package are all unchanged from the Tauri
@@ -345,7 +310,7 @@ jobs:
               --notes "Automated desktop build.
 
           - Commit: ${{ github.sha }} (\`${{ steps.version.outputs.sha }}\`)
-          - Windows: \`.msi\` (WiX) and \`-setup.exe\` (NSIS), Tauri build
+          - Windows: \`.msi\` (WiX) and \`-setup.exe\` (NSIS), native gpui-ce build
           - Linux: \`.deb\` and \`.rpm\`, native gpui-ce build"
           gh release upload "$TAG" desktopVELA/dist/* --clobber
 

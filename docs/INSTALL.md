@@ -77,12 +77,14 @@ bridge, and passkeys.
 
 ```sh
 cd desktopVELA
-bun install
-bun tauri build     # or: bun tauri dev
+cargo run -p vela-desktop-gpui
 ```
 
-A second, Linux-native front end exists (`src-gpui/`, built with
-`cargo build -p vela-desktop-gpui`); both front ends share the same core.
+The native GPUI frontend is the default on Windows and Linux. Windows release
+CI packages it as both MSI and NSIS installers with `cargo-packager`; Linux CI
+packages the same binary as `.deb` and `.rpm`. The Tauri frontend remains the
+macOS default and an explicit fallback (`bun tauri build` / `bun tauri dev`).
+Both frontends share the same core.
 
 ### First run
 

@@ -1,6 +1,14 @@
 //! VELA desktop, native gpui-ce build. See
 //! /home/hirew/.claude/plans/mighty-wibbling-wave.md Step 2.
 
+// Installed Windows builds are GUI applications; keep the console attached in
+// debug builds so `cargo run` still exposes tracing while release installers
+// launch without an extra terminal window.
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 #[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -477,6 +485,7 @@ fn main() {
         .map(|s| ThemeId::from_setting(&s.theme))
         .unwrap_or(ThemeId::Vela);
     let initial_clipboard_clear_seconds = initial_settings.as_ref().map(|s| s.clipboard_clear_seconds);
+    #[cfg(target_os = "linux")]
     let quick_search_shortcut = initial_settings
         .as_ref()
         .map(|s| s.quick_search_shortcut.clone())
@@ -608,26 +617,30 @@ fn main() {
         });
         tracing::info!("Autofill IPC server started");
 
-        if vela_desktop_core::wayland_shortcut::is_wayland_session() {
-            let trigger = vela_desktop_core::wayland_shortcut::to_portal_trigger(&quick_search_shortcut);
-            let shortcut_host: Arc<dyn vela_desktop_core::host::Host> =
-                Arc::new(host::GpuiHost::new(app_state_for_ipc.clone(), host_tx));
-            // `wayland_shortcut` talks to the XDG portal over zbus's
-            // *async-io* backend (the executor this whole workspace
-            // standardized on — see vela-desktop-core/Cargo.toml), so it
-            // must not be driven by the tokio runtime the IPC server uses.
-            // gpui's own foreground executor drives it fine, same as the
-            // ksni tray's `.spawn().await` above.
-            cx.spawn(async move |_cx| {
-                vela_desktop_core::wayland_shortcut::run(shortcut_host, trigger).await;
-            })
-            .detach();
-            tracing::info!("Wayland portal global shortcut registered");
-        } else {
-            tracing::info!(
-                "Not a Wayland session — global quick-search shortcut not registered \
-                 (the X11 plugin path the Tauri build uses isn't ported)"
-            );
+        #[cfg(target_os = "linux")]
+        {
+            if vela_desktop_core::wayland_shortcut::is_wayland_session() {
+                let trigger =
+                    vela_desktop_core::wayland_shortcut::to_portal_trigger(&quick_search_shortcut);
+                let shortcut_host: Arc<dyn vela_desktop_core::host::Host> =
+                    Arc::new(host::GpuiHost::new(app_state_for_ipc.clone(), host_tx));
+                // `wayland_shortcut` talks to the XDG portal over zbus's
+                // *async-io* backend (the executor this whole workspace
+                // standardized on — see vela-desktop-core/Cargo.toml), so it
+                // must not be driven by the tokio runtime the IPC server uses.
+                // gpui's own foreground executor drives it fine, same as the
+                // ksni tray's `.spawn().await` above.
+                cx.spawn(async move |_cx| {
+                    vela_desktop_core::wayland_shortcut::run(shortcut_host, trigger).await;
+                })
+                .detach();
+                tracing::info!("Wayland portal global shortcut registered");
+            } else {
+                tracing::info!(
+                    "Not a Wayland session — global quick-search shortcut not registered \
+                     (the X11 plugin path the Tauri build uses isn't ported)"
+                );
+            }
         }
 
         // Polls for tray + host commands (plain `std::sync::mpsc::Receiver`s,

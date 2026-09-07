@@ -1,6 +1,8 @@
 # VELA Desktop Application
 
-A passwordless, zero-knowledge vault desktop application built with Tauri and React.
+A passwordless, zero-knowledge vault desktop application. Native GPUI is the
+default frontend on Windows and Linux; Tauri + React remains available for
+macOS and as an explicit fallback.
 
 ## Features
 
@@ -49,21 +51,26 @@ renders correctly.
 
 ## Getting Started
 
-### Install dependencies
+### Run the default Windows/Linux frontend
+
+```bash
+cargo run -p vela-desktop-gpui
+```
+
+### Build the default Windows frontend
+
+```bash
+cargo build --release -p vela-desktop-gpui -p vela-nm-host
+cargo install cargo-packager --version 0.11.8 --locked
+cd src-gpui
+cargo packager --release --formats nsis,wix
+```
+
+### Run or build the Tauri fallback
 
 ```bash
 npm install
-```
-
-### Run in development mode
-
-```bash
 npm run tauri dev
-```
-
-### Build for production
-
-```bash
 npm run tauri build
 ```
 

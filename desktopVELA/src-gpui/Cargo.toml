@@ -68,3 +68,25 @@ assets = [
     { source = "../src-tauri/assets/com.vela.vault.desktop", dest = "/usr/share/applications/com.vela.vault.desktop", mode = "644" },
     { source = "../src-tauri/icons/icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/vela-desktop.png", mode = "644" },
 ]
+
+# Framework-neutral Windows packaging for the native GPUI build. The release
+# workflow builds both binaries first, then cargo-packager turns this metadata
+# into the MSI (WiX) and setup.exe (NSIS) that used to be produced by Tauri.
+[package.metadata.packager]
+product-name = "VELA"
+identifier = "com.vela.vault"
+publisher = "VELA"
+category = "Utility"
+icons = ["../src-tauri/icons/icon.ico"]
+license-file = "../../LICENSE"
+binaries = [{ path = "vela-desktop", main = true }]
+resources = [
+    # Keep the established installed-host path used by the Windows native
+    # messaging manifests. Registration remains extension-ID-specific.
+    { src = "../../target/release/vela-native-messaging-host.exe", target = "native-messaging-host/vela-native-messaging-host.exe" },
+]
+
+[package.metadata.packager.nsis]
+# Match the static Chromium native-messaging manifests, whose host path is
+# C:\Program Files\VELA\native-messaging-host\vela-native-messaging-host.exe.
+installMode = "perMachine"
