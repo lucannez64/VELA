@@ -61,13 +61,46 @@ fn read_frame(stream: &mut impl Read) -> Option<Value> {
     serde_json::from_slice(&payload).ok()
 }
 
+#[cfg(unix)]
 fn endpoint_path() -> std::path::PathBuf {
+    // Unix only: the desktop listens on a socket file that can be polled for
+    // existence. Windows uses a named pipe instead (see wait_for_desktop).
     let uid = unsafe { libc::getuid() };
     match std::env::var("XDG_RUNTIME_DIR") {
         Ok(d) if !d.is_empty() => {
             std::path::PathBuf::from(d).join(format!("vela-{uid}")).join("desktop.sock")
         }
         _ => std::env::temp_dir().join(format!("vela-{uid}")).join("desktop.sock"),
+    }
+}
+
+/// Wait until the desktop's well-known endpoint accepts connections.
+/// Unix polls for the socket file; a named pipe has no filesystem entry, so
+/// Windows probes by opening it (the probe connects and disconnects cleanly —
+/// the server reads EOF and drops it).
+fn wait_for_desktop() {
+    #[cfg(unix)]
+    {
+        let endpoint = endpoint_path();
+        let mut waited = 0;
+        while !endpoint.exists() && waited < 100 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            waited += 1;
+        }
+        assert!(endpoint.exists(), "desktop socket never appeared at {}", endpoint.display());
+    }
+    #[cfg(windows)]
+    {
+        let pipe = vela_nm_host::desktop_endpoint();
+        let mut waited = 0;
+        loop {
+            if std::fs::OpenOptions::new().read(true).write(true).open(&pipe).is_ok() {
+                break;
+            }
+            waited += 1;
+            assert!(waited < 100, "desktop pipe never appeared at {pipe}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 }
 
@@ -113,16 +146,14 @@ fn the_real_host_meets_the_real_gate() {
         });
     }
 
-    let endpoint = endpoint_path();
-    let mut waited = 0;
-    while !endpoint.exists() && waited < 100 {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        waited += 1;
-    }
-    assert!(endpoint.exists(), "desktop socket never appeared at {}", endpoint.display());
+    wait_for_desktop();
 
-    let own_name =
-        std::env::current_exe().unwrap().file_name().unwrap().to_string_lossy().to_string();
+    // The gate compares the ancestor's executable basename lower-cased with a
+    // trailing `.exe` stripped, so normalize the escape-hatch entry the same
+    // way (a no-op on Unix, required on Windows where this test binary is
+    // `e2e-<hash>.exe`).
+    let own_name = std::env::current_exe().unwrap().file_name().unwrap().to_string_lossy().to_lowercase();
+    let own_name = own_name.strip_suffix(".exe").unwrap_or(&own_name).to_string();
 
     // ── Phase 1: no browser anywhere in the host's ancestry ─────────────
     // The gate refuses; from the extension's side that reads as "not

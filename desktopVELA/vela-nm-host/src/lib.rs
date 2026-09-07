@@ -111,12 +111,36 @@ pub fn send_to_desktop(mut message: Value, slow: bool) -> Option<Value> {
 
     #[cfg(windows)]
     {
-        let mut stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(desktop_endpoint())
-            .map_err(|e| eprintln!("Desktop IPC error: {e}"))
-            .ok()?;
+        let _ = slow;
+        // The desktop serves one connection per pipe instance and recreates
+        // the instance after each exchange, so a host that opens the pipe in
+        // that gap gets ERROR_PIPE_BUSY (231) even though the desktop is up.
+        // Chrome fires one host process per message and several can overlap
+        // (popup, content script, background ping), so retry briefly instead
+        // of failing the request. Anything else — notably FILE_NOT_FOUND (2),
+        // the desktop is not running — fails fast.
+        const ERROR_PIPE_BUSY: i32 = 231;
+        let start = std::time::Instant::now();
+        let limit = Duration::from_secs(2);
+        let mut stream = loop {
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(desktop_endpoint())
+            {
+                Ok(stream) => break stream,
+                Err(e)
+                    if e.raw_os_error() == Some(ERROR_PIPE_BUSY)
+                        && start.elapsed() < limit =>
+                {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => {
+                    eprintln!("Desktop IPC error: {e}");
+                    return None;
+                }
+            }
+        };
         framed_exchange(&mut stream, &message)
     }
 

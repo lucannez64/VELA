@@ -63,6 +63,9 @@ const BROWSER_PROCESS_NAMES: &[&str] = &[
     "microsoft-edge",
     "opera",
     "vivaldi",
+    // The Windows executable is thorium.exe; keep the -browser spelling too
+    // for packages that install it under that name.
+    "thorium",
     "thorium-browser",
     "librewolf",
     "waterfox",
