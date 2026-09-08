@@ -210,9 +210,27 @@ pub struct BrowserCookie {
     pub http_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub same_site: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // Chromium's cookies API returns expirationDate as a floating-point Unix
+    // timestamp (often with fractional seconds). Accept that wire shape and
+    // truncate it to the whole-second representation used by the core. Without
+    // this adapter, one persistent Chromium cookie rejects the entire jar.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_cookie_expiry"
+    )]
     pub expires_at: Option<i64>,
     pub host_only: bool,
+}
+
+fn deserialize_optional_cookie_expiry<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    Ok(value
+        .filter(|value| value.is_finite())
+        .map(|value| value as i64))
 }
 
 /// One cookie the site issued, with the attributes needed to reinstall it.
@@ -325,7 +343,10 @@ pub enum LoginError {
     NoUrl,
     /// The requested target is not on the item's site, or not on the site the
     /// human approved.
-    TargetMismatch { approved: String, requested: String },
+    TargetMismatch {
+        approved: String,
+        requested: String,
+    },
     /// No password form on the page — a JavaScript login, most likely.
     NoLoginForm,
     /// The site wants a second factor and this item has no TOTP secret saved.
@@ -344,7 +365,9 @@ pub enum LoginError {
     /// client with a Cloudflare interstitial (403) and Hacker News with a 429,
     /// and both were being reported as "this site signs in with JavaScript".
     /// That sends the user to look for a problem that isn't there.
-    SiteRefused { status: u16 },
+    SiteRefused {
+        status: u16,
+    },
     /// A form we found but will not use, e.g. one that submits by GET.
     UnsupportedForm(String),
     /// The site tried to send the credential somewhere else.
@@ -455,7 +478,9 @@ pub async fn perform_login(
             }
         }
         let vault = state.vault.read();
-        let item = vault.get_item(&request.item_id).ok_or(LoginError::NoSuchItem)?;
+        let item = vault
+            .get_item(&request.item_id)
+            .ok_or(LoginError::NoSuchItem)?;
         let VaultItem::Login {
             totp,
             allow_second_factor_downgrade,
@@ -475,7 +500,11 @@ pub async fn perform_login(
     };
 
     let item_url = normalize_url(&item_url).ok_or(LoginError::NoUrl)?;
-    let target = match request.login_url.as_deref().filter(|u| !u.trim().is_empty()) {
+    let target = match request
+        .login_url
+        .as_deref()
+        .filter(|u| !u.trim().is_empty())
+    {
         Some(raw) => normalize_url(raw).ok_or(LoginError::NoUrl)?,
         None => item_url.clone(),
     };
@@ -508,7 +537,9 @@ pub async fn perform_login(
             requested: site_key(&target),
         });
     }
-    if (grant.item_id != request.item_id || grant.site != site_key(&target)) && !browser_tier_available {
+    if (grant.item_id != request.item_id || grant.site != site_key(&target))
+        && !browser_tier_available
+    {
         return Err(LoginError::TargetMismatch {
             approved: grant.site.clone(),
             requested: site_key(&target),
@@ -671,8 +702,7 @@ pub async fn perform_login(
             if same_site(&target, &link) {
                 let alternative = fetch(&client, &jar, Method::Get, &link, None).await?;
                 jar.absorb(&alternative.set_cookie, &link);
-                let alternative =
-                    follow_redirects(&client, &mut jar, &target, alternative).await?;
+                let alternative = follow_redirects(&client, &mut jar, &target, alternative).await?;
                 // Only switch if the alternative really is a code prompt;
                 // otherwise stay where we were and report the gate honestly.
                 if discover_second_factor_form(&alternative.body, &alternative.url).is_some() {
@@ -819,9 +849,15 @@ fn unanswered_second_factor(url: &Url, html: &str) -> Option<String> {
 
     // A security key or passkey. Nothing in a vault can answer this — the whole
     // point of the factor is that it is bound to hardware.
-    if ["webauthn", "security key", "publickey-credentials", "u2f", "passkey"]
-        .iter()
-        .any(|marker| lowered.contains(marker))
+    if [
+        "webauthn",
+        "security key",
+        "publickey-credentials",
+        "u2f",
+        "passkey",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
     {
         return Some("a security key or passkey".to_string());
     }
@@ -838,9 +874,17 @@ fn unanswered_second_factor(url: &Url, html: &str) -> Option<String> {
     // Last resort: the URL says we are mid-challenge and the page is still
     // showing a form. On its own the URL means nothing, hence the conjunction.
     let path = url.path().to_lowercase();
-    let gated = ["two-factor", "two_factor", "２fa", "/2fa", "/mfa", "challenge", "verify"]
-        .iter()
-        .any(|marker| path.contains(marker));
+    let gated = [
+        "two-factor",
+        "two_factor",
+        "２fa",
+        "/2fa",
+        "/mfa",
+        "challenge",
+        "verify",
+    ]
+    .iter()
+    .any(|marker| path.contains(marker));
     if gated && lowered.contains("<form") {
         return Some("another sign-in step".to_string());
     }
@@ -1104,7 +1148,9 @@ impl CookieJar {
         let pairs: Vec<String> = self
             .cookies
             .values()
-            .filter(|c| domain_matches(&host, &c.domain, c.host_only) && path_matches(path, &c.path))
+            .filter(|c| {
+                domain_matches(&host, &c.domain, c.host_only) && path_matches(path, &c.path)
+            })
             .map(|c| format!("{}={}", c.name, c.value))
             .collect();
         if pairs.is_empty() {
@@ -1173,7 +1219,8 @@ impl CookieJar {
 /// scope to a parent domain, but only one that is still a real registrable
 /// domain — `Domain=com` is refused, as is any domain the sending host is not
 /// itself under.
-pub(crate) fn parse_set_cookie(header: &str, host: &str) -> Option<SessionCookie> {    let mut parts = header.split(';');
+pub(crate) fn parse_set_cookie(header: &str, host: &str) -> Option<SessionCookie> {
+    let mut parts = header.split(';');
     let (name, value) = parts.next()?.split_once('=')?;
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -1318,9 +1365,7 @@ fn discover_form(html: &str, base: &Url) -> Result<LoginForm, LoginError> {
     let password_field = form
         .select(&password_selector)
         .find_map(|input| input.value().attr("name"))
-        .ok_or_else(|| {
-            LoginError::UnsupportedForm("its password field has no name".to_string())
-        })?
+        .ok_or_else(|| LoginError::UnsupportedForm("its password field has no name".to_string()))?
         .to_string();
 
     let method = form
@@ -1367,7 +1412,10 @@ fn discover_form(html: &str, base: &Url) -> Result<LoginForm, LoginError> {
                 // common case and honouring the page's own default is the least
                 // surprising thing to do.
                 if element.attr("checked").is_some() {
-                    extras.insert(name.to_string(), if value.is_empty() { "on".into() } else { value });
+                    extras.insert(
+                        name.to_string(),
+                        if value.is_empty() { "on".into() } else { value },
+                    );
                 }
             }
             "text" | "email" | "tel" | "" => {
@@ -1406,7 +1454,11 @@ fn looks_like_username_field(name: &str, id: Option<&str>, autocomplete: Option<
     }) {
         return true;
     }
-    let haystack = format!("{} {}", name.to_lowercase(), id.unwrap_or("").to_lowercase());
+    let haystack = format!(
+        "{} {}",
+        name.to_lowercase(),
+        id.unwrap_or("").to_lowercase()
+    );
     ["user", "email", "login", "account", "ident", "mail"]
         .iter()
         .any(|needle| haystack.contains(needle))
@@ -1468,7 +1520,10 @@ fn discover_second_factor_form(html: &str, base: &Url) -> Option<SecondFactorFor
             let kind = element.attr("type").unwrap_or("text").to_lowercase();
             match kind.as_str() {
                 "hidden" | "submit" => {
-                    extras.insert(name.to_string(), element.attr("value").unwrap_or("").to_string());
+                    extras.insert(
+                        name.to_string(),
+                        element.attr("value").unwrap_or("").to_string(),
+                    );
                 }
                 "text" | "tel" | "number" | "" => {
                     if looks_like_otp_field(
@@ -1509,10 +1564,24 @@ fn looks_like_otp_field(
     if autocomplete.is_some_and(|a| a.to_lowercase().contains("one-time-code")) {
         return true;
     }
-    let haystack = format!("{} {}", name.to_lowercase(), id.unwrap_or("").to_lowercase());
+    let haystack = format!(
+        "{} {}",
+        name.to_lowercase(),
+        id.unwrap_or("").to_lowercase()
+    );
     let named = [
-        "otp", "totp", "2fa", "twofactor", "two_factor", "two-factor", "authenticator",
-        "auth_code", "authcode", "security_code", "verification", "mfa",
+        "otp",
+        "totp",
+        "2fa",
+        "twofactor",
+        "two_factor",
+        "two-factor",
+        "authenticator",
+        "auth_code",
+        "authcode",
+        "security_code",
+        "verification",
+        "mfa",
     ]
     .iter()
     .any(|needle| haystack.contains(needle));
@@ -1528,7 +1597,10 @@ fn looks_like_otp_field(
 fn html_has_password_field(html: &str) -> bool {
     use scraper::{Html, Selector};
     let selector = Selector::parse("input[type=password]").expect("static selector");
-    Html::parse_document(html).select(&selector).next().is_some()
+    Html::parse_document(html)
+        .select(&selector)
+        .next()
+        .is_some()
 }
 
 // ── Site identity ─────────────────────────────────────────────────────────────
@@ -1558,7 +1630,9 @@ pub(crate) fn site_key(url: &Url) -> String {
     if is_ip(&host) {
         return host;
     }
-    psl::domain_str(&host).map(str::to_lowercase).unwrap_or(host)
+    psl::domain_str(&host)
+        .map(str::to_lowercase)
+        .unwrap_or(host)
 }
 
 fn same_site(a: &Url, b: &Url) -> bool {
@@ -1570,8 +1644,7 @@ fn same_site(a: &Url, b: &Url) -> bool {
 }
 
 fn is_ip(host: &str) -> bool {
-    host.parse::<std::net::IpAddr>().is_ok()
-        || (host.starts_with('[') && host.ends_with(']'))
+    host.parse::<std::net::IpAddr>().is_ok() || (host.starts_with('[') && host.ends_with(']'))
 }
 
 /// The site a login for this item would go to, for the presence prompt.

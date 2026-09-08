@@ -701,8 +701,12 @@ async function gatherBrowserCookies(url) {
         path: cookie.path || "/",
         secure: Boolean(cookie.secure),
         http_only: Boolean(cookie.httpOnly),
-        same_site: mapSameSite(cookie.sameSite),
-        expires_at: typeof cookie.expirationDate === "number" ? cookie.expirationDate : null,
+        same_site: mapSameSiteForCore(cookie.sameSite),
+        // Chromium includes fractional seconds. The core stores cookie expiry
+        // at whole-second precision, so normalize it at the IPC boundary too.
+        expires_at: Number.isFinite(cookie.expirationDate)
+          ? Math.trunc(cookie.expirationDate)
+          : null,
         host_only: Boolean(cookie.hostOnly)
       }))
     };
@@ -891,6 +895,23 @@ function mapSameSite(value) {
       return "no_restriction";
     default:
       return "unspecified";
+  }
+}
+
+// browser.cookies calls SameSite=None "no_restriction", while CDP and the
+// core use the wire spelling "none". Keep this direction separate from
+// mapSameSite(), which maps core cookies back into the extension API.
+function mapSameSiteForCore(value) {
+  switch (String(value || "").toLowerCase()) {
+    case "strict":
+      return "strict";
+    case "lax":
+      return "lax";
+    case "none":
+    case "no_restriction":
+      return "none";
+    default:
+      return null;
   }
 }
 

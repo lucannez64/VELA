@@ -10493,6 +10493,7 @@ dependencies = [
  "webauthn-rs",
  "webauthn-rs-proto",
  "windows 0.58.0",
+ "windows-sys 0.59.0",
  "wiremock",
  "wl-clipboard-rs",
  "zeroize",

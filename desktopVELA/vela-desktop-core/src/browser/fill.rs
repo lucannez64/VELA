@@ -49,11 +49,7 @@ const FILL_RETRIES: u32 = 300;
 const FILL_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Fill the username and placeholder password, then submit the login form.
-pub async fn fill_and_submit(
-    cdp: &Cdp,
-    session: &str,
-    username: &str,
-) -> Result<(), FillError> {
+pub async fn fill_and_submit(cdp: &Cdp, session: &str, username: &str) -> Result<(), FillError> {
     let script = fill_script(username);
     for attempt in 0..FILL_RETRIES {
         match run_fill(cdp, session, &script).await? {
@@ -96,6 +92,20 @@ async fn diagnose(cdp: &Cdp, session: &str) -> String {
             title: document.title,
             hasForm: deepAll('form').length > 0,
             hasPassword: deepAll('input[type=password]').length > 0,
+            dialogs: deepAll('[role=dialog], dialog')
+              .map((node) => (node.innerText || '').slice(0, 500))
+              .filter(Boolean),
+            frames: deepAll('iframe')
+              .map((frame) => {
+                try {
+                  const url = new URL(frame.src);
+                  return url.origin + url.pathname;
+                } catch (_) {
+                  return 'unparseable iframe URL';
+                }
+              })
+              .filter(Boolean)
+              .slice(0, 10),
             bodySnippet: (document.body ? document.body.innerHTML : '').slice(0, 240),
           };
         })()
@@ -159,7 +169,9 @@ async fn run_fill(cdp: &Cdp, session: &str, script: &str) -> Result<FillOutcome,
         // misses plain forms). The VELA window stays open; the user clicks the
         // site's own sign-in button, and the interception loop substitutes the
         // real password when the request fires.
-        tracing::info!("browser login: credentials filled — waiting for the human to click sign-in");
+        tracing::info!(
+            "browser login: credentials filled — waiting for the human to click sign-in"
+        );
         Ok(FillOutcome::Ok)
     } else {
         Ok(FillOutcome::NoField)

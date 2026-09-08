@@ -80,7 +80,11 @@ pub async fn login(
             .await
             .map_err(|e| LoginError::Http(e.to_string()))?
     };
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let cdp = cdp::Cdp::connect_pipe(pipe.command, pipe.message)
+        .await
+        .map_err(|e| LoginError::Http(e.to_string()))?;
+    #[cfg(not(any(unix, windows)))]
     let cdp = {
         return Err(LoginError::Http(
             "the browser-driven login tier is unix-only".to_string(),
@@ -90,6 +94,12 @@ pub async fn login(
     let (session, target_id) = cdp::create_page_session(&cdp)
         .await
         .map_err(|e| LoginError::Http(e.to_string()))?;
+
+    // Observe only failures while this disposable page is alive. This is
+    // intentionally armed before navigation so a rejected login bundle or
+    // challenge request does not look like an unexplained spinner. URLs are
+    // reduced to origin + path before logging; query tokens never enter logs.
+    start_page_failure_diagnostics(&cdp, &session).await;
 
     // Seed the tab's pre-session cookies before the page loads, so a session-
     // bound login page renders the way it does for the user.
@@ -264,9 +274,7 @@ pub async fn login(
     })
 }
 
-fn acquire_single_flight(
-    state: &AppState,
-) -> Result<tokio::sync::OwnedMutexGuard<()>, LoginError> {
+fn acquire_single_flight(state: &AppState) -> Result<tokio::sync::OwnedMutexGuard<()>, LoginError> {
     state
         .browser_login_mutex
         .clone()
@@ -281,6 +289,8 @@ async fn seed_browser_cookies(
     session: &str,
     cookies: &[crate::login::BrowserCookie],
 ) -> Result<(), String> {
+    let mut seeded = 0usize;
+    let mut rejected = 0usize;
     for cookie in cookies {
         let mut params = serde_json::json!({
             "name": cookie.name,
@@ -303,17 +313,162 @@ async fn seed_browser_cookies(
             params["expires"] = serde_json::json!(expires);
         }
         if let Some(same_site) = &cookie.same_site {
-            let mapped = match same_site.as_str() {
-                "strict" => "Strict",
-                "lax" => "Lax",
-                "none" => "None",
-                _ => continue,
-            };
-            params["sameSite"] = serde_json::json!(mapped);
+            if let Some(mapped) = cdp_same_site(same_site) {
+                params["sameSite"] = serde_json::json!(mapped);
+            }
         }
-        let _ = cdp.call_scoped("Network.setCookie", params, session).await;
+        match cdp.call_scoped("Network.setCookie", params, session).await {
+            Ok(result)
+                if result.get("success").and_then(serde_json::Value::as_bool) == Some(false) =>
+            {
+                rejected += 1;
+            }
+            Ok(_) => seeded += 1,
+            Err(_) => rejected += 1,
+        }
     }
+    tracing::info!(
+        received = cookies.len(),
+        seeded,
+        rejected,
+        has_datadome_cookie = cookies
+            .iter()
+            .any(|cookie| cookie.name.eq_ignore_ascii_case("datadome")),
+        "browser login: seeded the disposable browser cookie jar"
+    );
     Ok(())
+}
+
+fn cdp_same_site(value: &str) -> Option<&'static str> {
+    match value.to_ascii_lowercase().as_str() {
+        "strict" => Some("Strict"),
+        "lax" => Some("Lax"),
+        "none" | "no_restriction" => Some("None"),
+        // Chromium calls a cookie without an explicit SameSite attribute
+        // "unspecified". Omit the CDP field, but keep the cookie itself.
+        _ => None,
+    }
+}
+
+async fn start_page_failure_diagnostics(cdp: &Cdp, session: &str) {
+    let mut events = cdp.subscribe();
+    let _ = cdp
+        .call(
+            "Target.setDiscoverTargets",
+            serde_json::json!({ "discover": true }),
+        )
+        .await;
+    let _ = cdp
+        .call_scoped("Network.enable", serde_json::json!({}), session)
+        .await;
+    let _ = cdp
+        .call_scoped("Runtime.enable", serde_json::json!({}), session)
+        .await;
+    let wanted_session = session.to_string();
+    tokio::spawn(async move {
+        let mut requests = std::collections::HashMap::<String, String>::new();
+        loop {
+            let event = match events.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if matches!(
+                event.method.as_str(),
+                "Target.targetCreated" | "Target.targetInfoChanged"
+            ) {
+                let target = event.params.get("targetInfo");
+                let kind = target
+                    .and_then(|target| target.get("type"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let raw_url = target
+                    .and_then(|target| target.get("url"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if kind == "page" && raw_url.starts_with("http") {
+                    let url = diagnostic_url(raw_url);
+                    tracing::info!(%url, "browser login: page target navigated");
+                }
+            }
+            if event.session_id.as_deref() != Some(wanted_session.as_str()) {
+                continue;
+            }
+            match event.method.as_str() {
+                "Network.requestWillBeSent" => {
+                    if let (Some(id), Some(url)) = (
+                        event
+                            .params
+                            .get("requestId")
+                            .and_then(serde_json::Value::as_str),
+                        event
+                            .params
+                            .get("request")
+                            .and_then(|request| request.get("url"))
+                            .and_then(serde_json::Value::as_str),
+                    ) {
+                        requests.insert(id.to_string(), diagnostic_url(url));
+                    }
+                }
+                "Network.responseReceived" => {
+                    let response = event.params.get("response");
+                    let status = response
+                        .and_then(|response| response.get("status"))
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or_default();
+                    if status >= 400.0 {
+                        let url = response
+                            .and_then(|response| response.get("url"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(diagnostic_url)
+                            .unwrap_or_else(|| "unknown URL".to_string());
+                        tracing::warn!(status, %url, "browser login: page request was rejected");
+                    }
+                }
+                "Network.loadingFailed" => {
+                    let id = event
+                        .params
+                        .get("requestId")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    let url = requests
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| "unknown URL".to_string());
+                    let reason = event
+                        .params
+                        .get("blockedReason")
+                        .or_else(|| event.params.get("errorText"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown reason");
+                    tracing::warn!(%url, %reason, "browser login: page request failed");
+                }
+                "Runtime.exceptionThrown" => {
+                    let details = event.params.get("exceptionDetails");
+                    let description = details
+                        .and_then(|details| details.get("text"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("uncaught exception");
+                    let url = details
+                        .and_then(|details| details.get("url"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(diagnostic_url)
+                        .unwrap_or_else(|| "unknown URL".to_string());
+                    tracing::warn!(%url, %description, "browser login: page JavaScript failed");
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
+fn diagnostic_url(raw: &str) -> String {
+    let Ok(mut url) = Url::parse(raw) else {
+        return "unparseable URL".to_string();
+    };
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
 }
 
 /// Hold the window open until the login flow completes, then take the session.
@@ -379,13 +534,15 @@ async fn wait_for_cookies(
             // A lost CDP connection here must not fail the whole login: the
             // page already said the flow moved on. Return what we have and let
             // the caller decide.
-            let mut cookies = harvest::harvest(cdp, session, start_url.as_str()).await.unwrap_or_else(|e| {
-                tracing::warn!(
-                    "browser login: could not harvest the session ({e}); the page moved off \
+            let mut cookies = harvest::harvest(cdp, session, start_url.as_str())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "browser login: could not harvest the session ({e}); the page moved off \
                      the login page, so the login likely succeeded in the window"
-                );
-                Vec::new()
-            });
+                    );
+                    Vec::new()
+                });
             if !current.is_empty() {
                 if let Ok(on_current) = harvest::harvest(cdp, session, &current).await {
                     cookies.extend(on_current);
@@ -436,7 +593,10 @@ async fn page_login_form_state(cdp: &Cdp, session: &str) -> (bool, bool) {
         .and_then(|x| x.get("value"))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    let password_gone = value.get("hasPassword").and_then(serde_json::Value::as_bool) == Some(false);
+    let password_gone = value
+        .get("hasPassword")
+        .and_then(serde_json::Value::as_bool)
+        == Some(false);
     let has_otp = value.get("hasOtp").and_then(serde_json::Value::as_bool) == Some(true);
     (password_gone, has_otp)
 }

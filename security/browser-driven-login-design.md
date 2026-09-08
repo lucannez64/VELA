@@ -261,22 +261,24 @@ monkeytype** — the end-to-end success.
 
 - **2FA pass-through is untested.** The window stays open for the human to
   finish a second factor, but the flow is untested end-to-end for it.
-- **Teardown robustness.** The browser is killed via `child.kill()`; on some
-  systems orphaned children may linger briefly. A hard deadline is in place.
-- **Windows disposable-browser support (roadmap).** The GPUI Windows build can
-  autofill through the extension today, but the browser-driven login tier is
-  still Unix-only. Port it without weakening the tier's isolation boundary:
-  - implement Chromium `--remote-debugging-pipe` transport with explicitly
-    inherited Windows handles and no TCP debugging listener;
-  - place the complete disposable Chromium process tree in a kill-on-close Job
-    Object and prove that success, error, cancellation, timeout, and app exit
-    terminate every child and remove the temporary profile;
+- **Unix teardown robustness.** The browser is killed via `child.kill()`; on
+  some systems orphaned children may linger briefly. A hard deadline is in
+  place. Windows uses the Job Object containment described below.
+- **Windows disposable-browser support.** The GPUI Windows build supports the
+  browser-driven fallback using Chromium's pipe transport: the two anonymous
+  pipe handles are explicitly allowlisted with
+  `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, no TCP debugging listener is opened,
+  and Chrome is created suspended and placed in a kill-on-close Job Object
+  before its first thread runs. Closing the owner terminates the complete
+  Chromium process tree, after which profile deletion is retried to tolerate
+  short-lived Windows file locks. Installed and per-user Chrome, Chromium,
+  Edge, Brave, Vivaldi, Thorium, Helium and Opera locations are searched.
+  Chromium's own sandbox stays enabled. Remaining Windows hardening work:
   - define and implement the Windows equivalent of the Linux dedicated-UID
     sandbox (restricted token/AppContainer or another demonstrably separate
     security principal), with least-privilege profile ACLs and fail-closed
-    startup when isolation was requested but not established;
-  - cover installed Chrome, Chromium, and Edge discovery, including per-user
-    installations; and
+    startup when isolation was requested but not established (currently an
+    explicit `VELA_BROWSER_SANDBOX` request fails closed on Windows); and
   - add a Windows GPUI + extension end-to-end test proving placeholder fill,
     network-layer password substitution, session installation into the user's
     tab, process cleanup, profile cleanup, and isolation-failure refusal.

@@ -102,6 +102,13 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 arboard = "3"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 windows = { version = "0.58", features = [
     # Windows Hello: UserConsentVerifier plus the Win32 interop that a desktop
     # (non-packaged) app needs to parent the prompt to its own window.

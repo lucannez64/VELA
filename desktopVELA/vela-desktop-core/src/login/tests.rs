@@ -15,6 +15,24 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PASSWORD: &str = "correct-horse-battery-staple-9137";
 
+#[test]
+fn chromium_fractional_cookie_expiry_does_not_discard_the_cookie() {
+    let cookie: BrowserCookie = serde_json::from_value(serde_json::json!({
+        "name": "challenge",
+        "value": "opaque",
+        "domain": ".example.com",
+        "path": "/",
+        "secure": true,
+        "http_only": false,
+        "same_site": "no_restriction",
+        "expires_at": 1_800_000_000.875,
+        "host_only": false
+    }))
+    .expect("Chromium cookie timestamps may contain fractional seconds");
+
+    assert_eq!(cookie.expires_at, Some(1_800_000_000));
+}
+
 fn test_state(dir: &std::path::Path) -> Arc<AppState> {
     let state = Arc::new(AppState::for_test(dir));
     state.unlock_for_test(&Crypto::generate_rms());
@@ -97,7 +115,10 @@ async fn the_password_never_appears_in_what_leaves_the_core() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let outcome = perform_login(
         &state,
@@ -149,7 +170,10 @@ async fn the_site_receives_the_credential_and_the_csrf_token() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let outcome = perform_login(
         &state,
@@ -199,7 +223,10 @@ async fn a_grant_for_another_site_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let elsewhere = LoginGrant::mint("i1".to_string(), "example.com".to_string(), true);
     let error = perform_login(
@@ -214,7 +241,10 @@ async fn a_grant_for_another_site_is_refused() {
     .await
     .unwrap_err();
 
-    assert!(matches!(error, LoginError::TargetMismatch { .. }), "{error:?}");
+    assert!(
+        matches!(error, LoginError::TargetMismatch { .. }),
+        "{error:?}"
+    );
     assert!(
         server.received_requests().await.unwrap().is_empty(),
         "a refused login still talked to the site"
@@ -228,7 +258,10 @@ async fn a_grant_for_another_item_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let wrong_item = grant_for(&server, "some-other-item").await;
     let error = perform_login(
@@ -243,7 +276,10 @@ async fn a_grant_for_another_item_is_refused() {
     .await
     .unwrap_err();
 
-    assert!(matches!(error, LoginError::TargetMismatch { .. }), "{error:?}");
+    assert!(
+        matches!(error, LoginError::TargetMismatch { .. }),
+        "{error:?}"
+    );
 }
 
 /// Target redefinition: the caller asks for a login URL that is not the item's
@@ -276,7 +312,10 @@ async fn a_login_url_off_the_items_site_is_refused() {
     .unwrap_err();
 
     match error {
-        LoginError::TargetMismatch { approved, requested } => {
+        LoginError::TargetMismatch {
+            approved,
+            requested,
+        } => {
             assert_eq!(approved, "bank.example");
             assert_eq!(requested, "phish.example");
         }
@@ -319,7 +358,9 @@ async fn an_unmarked_site_reports_the_pessimistic_residual() {
     let (outcome, _dir) = successful_login(false).await;
     assert_eq!(outcome.site_mode, SiteMode::SelfServe);
     assert!(
-        outcome.residual_note.contains("change the account password"),
+        outcome
+            .residual_note
+            .contains("change the account password"),
         "{}",
         outcome.residual_note
     );
@@ -384,13 +425,19 @@ async fn successful_login(hardened: bool) -> (LoginOutcome, tempfile::TempDir) {
 #[test]
 fn an_http_target_is_not_same_site_as_an_https_page() {
     let https = Url::parse("https://bank.example/login").unwrap();
-    assert!(!same_site(&https, &Url::parse("http://bank.example/login").unwrap()));
+    assert!(!same_site(
+        &https,
+        &Url::parse("http://bank.example/login").unwrap()
+    ));
     assert!(!same_site(
         &Url::parse("http://bank.example/login").unwrap(),
         &https
     ));
     // Same scheme is still same site.
-    assert!(same_site(&https, &Url::parse("https://bank.example/session").unwrap()));
+    assert!(same_site(
+        &https,
+        &Url::parse("https://bank.example/session").unwrap()
+    ));
 }
 
 /// plenty of sites set the real session cookie on the hop after the POST.
@@ -424,7 +471,10 @@ async fn a_same_site_redirect_is_followed_and_its_cookies_kept() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let outcome = perform_login(
         &state,
@@ -467,7 +517,10 @@ async fn a_redirect_off_the_site_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let error = perform_login(
         &state,
@@ -610,7 +663,10 @@ async fn neither_the_totp_secret_nor_the_code_leaves_the_core() {
     assert!(!serialized.contains(TOTP_SECRET), "{serialized}");
     assert!(!serialized.contains(PASSWORD), "{serialized}");
     let code = crate::totp::generate_totp_code(TOTP_SECRET).unwrap();
-    assert!(!serialized.contains(&code), "the code was returned: {serialized}");
+    assert!(
+        !serialized.contains(&code),
+        "the code was returned: {serialized}"
+    );
 }
 
 /// The password was accepted; the item just has no secret saved. Saying so is
@@ -621,7 +677,10 @@ async fn a_two_factor_site_without_a_saved_secret_says_which_half_worked() {
     // Same site, but an item with no TOTP.
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let error = perform_login(
         &state,
@@ -708,23 +767,45 @@ fn only_code_shaped_fields_count_as_a_second_factor() {
 
     // The spec's own signal.
     assert!(discover_second_factor_form(
-        &form(r#"<input type="text" name="q" autocomplete="one-time-code">"#), &base).is_some());
+        &form(r#"<input type="text" name="q" autocomplete="one-time-code">"#),
+        &base
+    )
+    .is_some());
     // Named unambiguously.
-    for name in ["otp", "app_otp", "totp", "two_factor_code", "mfa_code", "authenticator"] {
+    for name in [
+        "otp",
+        "app_otp",
+        "totp",
+        "two_factor_code",
+        "mfa_code",
+        "authenticator",
+    ] {
         assert!(
-            discover_second_factor_form(&form(&format!(r#"<input type="text" name="{name}">"#)), &base)
-                .is_some(),
+            discover_second_factor_form(
+                &form(&format!(r#"<input type="text" name="{name}">"#)),
+                &base
+            )
+            .is_some(),
             "{name} should be recognised"
         );
     }
     // "code" alone is a promo box until the markup says it takes digits.
     assert!(discover_second_factor_form(
-        &form(r#"<input type="text" name="discount_code">"#), &base).is_none());
+        &form(r#"<input type="text" name="discount_code">"#),
+        &base
+    )
+    .is_none());
     assert!(discover_second_factor_form(
-        &form(r#"<input type="text" name="discount_code" inputmode="numeric">"#), &base).is_some());
+        &form(r#"<input type="text" name="discount_code" inputmode="numeric">"#),
+        &base
+    )
+    .is_some());
     // A GET form is not submitted here either.
     assert!(discover_second_factor_form(
-        r#"<form method="GET" action="/x"><input type="text" name="otp"></form>"#, &base).is_none());
+        r#"<form method="GET" action="/x"><input type="text" name="otp"></form>"#,
+        &base
+    )
+    .is_none());
 }
 
 /// The second factor gets the same origin rule as the first.
@@ -795,7 +876,10 @@ async fn one_grant_covers_both_steps_of_a_two_step_login() {
     assert!(outcome.used_second_factor);
     let posted = server.received_requests().await.unwrap();
     assert_eq!(
-        posted.iter().filter(|r| r.method.as_str() == "POST").count(),
+        posted
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count(),
         2,
         "both steps should have been posted under the one grant"
     );
@@ -895,7 +979,11 @@ async fn answering_the_code_is_not_undone_by_the_url_it_lands_on() {
     .await
     .unwrap();
 
-    assert!(outcome.landing_url.contains("two-factor"), "{}", outcome.landing_url);
+    assert!(
+        outcome.landing_url.contains("two-factor"),
+        "{}",
+        outcome.landing_url
+    );
     assert_eq!(outcome.awaiting_second_factor, None);
     assert!(outcome.looks_authenticated);
 }
@@ -1106,7 +1194,10 @@ async fn a_login_page_that_redirects_is_still_a_login_page() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let outcome = perform_login(
         &state,
@@ -1194,8 +1285,14 @@ async fn a_login_page_that_merely_offers_passkeys_is_not_a_security_key_gate() {
         outcome.awaiting_second_factor, None,
         "a page offering passkeys was read as demanding one"
     );
-    assert!(!outcome.looks_authenticated, "a rejected password is not a login");
-    assert!(!outcome.used_second_factor, "no TOTP code should have been spent");
+    assert!(
+        !outcome.looks_authenticated,
+        "a rejected password is not a login"
+    );
+    assert!(
+        !outcome.used_second_factor,
+        "no TOTP code should have been spent"
+    );
 }
 
 // ── When the site will not talk to us ─────────────────────────────────────────
@@ -1227,7 +1324,10 @@ async fn a_site_that_refuses_the_login_page_is_not_called_a_javascript_login() {
         let dir = tempfile::tempdir().unwrap();
         let state = test_state(dir.path());
         let login_url = format!("{}/login", server.uri());
-        state.vault.write().add_item(login_item("i1", &login_url, false));
+        state
+            .vault
+            .write()
+            .add_item(login_item("i1", &login_url, false));
 
         let error = perform_login(
             &state,
@@ -1274,7 +1374,10 @@ async fn an_error_status_on_the_post_is_not_a_successful_login() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let outcome = perform_login(
         &state,
@@ -1317,7 +1420,10 @@ async fn the_site_is_told_who_is_asking() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let _ = perform_login(
         &state,
@@ -1355,7 +1461,10 @@ fn a_form_is_read_for_its_action_fields_and_hidden_inputs() {
     assert_eq!(form.action.as_str(), "https://site.example/session");
     assert_eq!(form.password_field, "pw");
     assert_eq!(form.username_field.as_deref(), Some("user_email"));
-    assert_eq!(form.extras.get("csrf").map(String::as_str), Some("tok-abc123"));
+    assert_eq!(
+        form.extras.get("csrf").map(String::as_str),
+        Some("tok-abc123")
+    );
 }
 
 #[test]
@@ -1384,7 +1493,10 @@ fn a_get_form_is_refused() {
 fn a_page_with_no_password_form_is_refused() {
     let base = Url::parse("https://site.example/login").unwrap();
     let html = r#"<html><body><div id="app">loading…</div></body></html>"#;
-    assert_eq!(discover_form(html, &base).unwrap_err(), LoginError::NoLoginForm);
+    assert_eq!(
+        discover_form(html, &base).unwrap_err(),
+        LoginError::NoLoginForm
+    );
 }
 
 /// A page can have several forms — search, newsletter, language picker. The one
@@ -1435,7 +1547,10 @@ fn a_cookie_with_no_domain_is_host_only() {
     assert_eq!(cookie.domain, "app.site.example");
     assert_eq!(cookie.path, "/");
     assert!(!cookie.http_only);
-    assert!(cookie.expires_at.is_none(), "a session cookie has no expiry");
+    assert!(
+        cookie.expires_at.is_none(),
+        "a session cookie has no expiry"
+    );
 }
 
 /// Widening to the registrable domain is legitimate; widening past it, or to a
@@ -1489,7 +1604,10 @@ fn the_jar_sends_a_cookie_only_where_it_belongs() {
     let here = jar.header_for(&url).unwrap();
     assert!(here.contains("host=1"), "{here}");
     assert!(here.contains("wide=2"), "{here}");
-    assert!(!here.contains("scoped=3"), "a /admin cookie leaked to /dash");
+    assert!(
+        !here.contains("scoped=3"),
+        "a /admin cookie leaked to /dash"
+    );
 
     // A host-only cookie does not follow to a sibling host; the widened one does.
     let sibling = Url::parse("https://other.site.example/").unwrap();
@@ -1549,7 +1667,10 @@ async fn a_rejected_password_is_not_reported_as_a_login() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let outcome = perform_login(
         &state,
@@ -1601,7 +1722,9 @@ async fn real_site_login() {
     };
     let username = std::env::var("VELA_LOGIN_USER").unwrap_or_default();
     let password = std::env::var("VELA_LOGIN_PASSWORD").unwrap_or_default();
-    let totp = std::env::var("VELA_LOGIN_TOTP").ok().filter(|s| !s.is_empty());
+    let totp = std::env::var("VELA_LOGIN_TOTP")
+        .ok()
+        .filter(|s| !s.is_empty());
     // Opt in to answering a stronger factor with a TOTP code, the same way a
     // vault item does. Spelled out here rather than defaulted on, because the
     // whole point of the setting is that the downgrade is a decision.
@@ -1717,14 +1840,17 @@ async fn real_site_login() {
             // The claim, checked against the artifact rather than asserted.
             let serialized = serde_json::to_string(&outcome).unwrap();
             for (label, secret) in [
-                ("password", std::env::var("VELA_LOGIN_PASSWORD").unwrap_or_default()),
-                ("totp secret", std::env::var("VELA_LOGIN_TOTP").unwrap_or_default()),
+                (
+                    "password",
+                    std::env::var("VELA_LOGIN_PASSWORD").unwrap_or_default(),
+                ),
+                (
+                    "totp secret",
+                    std::env::var("VELA_LOGIN_TOTP").unwrap_or_default(),
+                ),
             ] {
                 if !secret.is_empty() {
-                    println!(
-                        "{label:<19} in response = {}",
-                        serialized.contains(&secret)
-                    );
+                    println!("{label:<19} in response = {}", serialized.contains(&secret));
                 }
             }
         }
@@ -1754,7 +1880,10 @@ async fn real_login_pages_are_read_correctly_or_refused_clearly() {
         ("GitHub", "https://github.com/login"),
         ("Hacker News", "https://news.ycombinator.com/login"),
         ("GitLab", "https://gitlab.com/users/sign_in"),
-        ("Wikipedia", "https://en.wikipedia.org/w/index.php?title=Special:UserLogin"),
+        (
+            "Wikipedia",
+            "https://en.wikipedia.org/w/index.php?title=Special:UserLogin",
+        ),
         ("Fastmail", "https://app.fastmail.com/login/"),
         ("Reddit", "https://www.reddit.com/login/"),
     ];
@@ -1848,7 +1977,10 @@ async fn a_javascript_only_login_completes_through_the_runtime() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let outcome = perform_login(
         &state,
@@ -1903,7 +2035,10 @@ async fn a_script_that_posts_off_site_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path());
     let login_url = format!("{}/login", server.uri());
-    state.vault.write().add_item(login_item("i1", &login_url, false));
+    state
+        .vault
+        .write()
+        .add_item(login_item("i1", &login_url, false));
 
     let error = perform_login(
         &state,

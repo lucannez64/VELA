@@ -63,10 +63,7 @@ impl Cdp {
     /// `command` is where we write commands (the parent's write end of the
     /// child's fd 3); `message` is where we read responses/events (the
     /// parent's read end of the child's fd 4). Both are length-prefixed JSON.
-    pub async fn connect_pipe<C, M>(
-        command: C,
-        message: M,
-    ) -> Result<Self, String>
+    pub async fn connect_pipe<C, M>(command: C, message: M) -> Result<Self, String>
     where
         C: AsyncWrite + Unpin + Send + 'static,
         M: AsyncRead + Unpin + Send + 'static,
@@ -228,7 +225,11 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> Option<Result<Value, Str
     loop {
         match r.read(&mut byte).await {
             Ok(0) => {
-                return if buf.is_empty() { None } else { Some(Err("the browser closed the CDP pipe mid-frame".into())) };
+                return if buf.is_empty() {
+                    None
+                } else {
+                    Some(Err("the browser closed the CDP pipe mid-frame".into()))
+                };
             }
             Ok(_) => {
                 if byte[0] == 0 {
@@ -259,20 +260,66 @@ pub async fn navigate_and_wait(
     url: &str,
     timeout: std::time::Duration,
 ) -> Result<(), String> {
+    navigate_and_wait_with_poll(
+        cdp,
+        session,
+        url,
+        timeout,
+        std::time::Duration::from_secs(5),
+    )
+    .await
+}
+
+async fn navigate_and_wait_with_poll(
+    cdp: &Cdp,
+    session: &str,
+    url: &str,
+    timeout: std::time::Duration,
+    quiet_poll: std::time::Duration,
+) -> Result<(), String> {
     cdp.call_scoped("Page.enable", json!({}), session).await?;
     let mut events = cdp.subscribe();
-    cdp.call_scoped("Page.navigate", json!({ "url": url }), session).await?;
+    cdp.call_scoped("Page.navigate", json!({ "url": url }), session)
+        .await?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if std::time::Instant::now() > deadline {
-            return Err(format!("the page did not finish loading within {timeout:?}"));
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return Err(format!(
+                "the page did not finish loading within {timeout:?}"
+            ));
         }
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
-            .await
-            .map_err(|_| "timed out waiting for the page".to_string())?
-            .map_err(|_| "the browser connection closed".to_string())?;
-        if event.session_id.as_deref() == Some(session) && event.method == "Page.loadEventFired" {
-            return Ok(());
+        match tokio::time::timeout(quiet_poll.min(deadline - now), events.recv()).await {
+            Ok(Ok(event)) => {
+                if event.session_id.as_deref() == Some(session)
+                    && matches!(
+                        event.method.as_str(),
+                        "Page.loadEventFired" | "Page.domContentEventFired"
+                    )
+                {
+                    return Ok(());
+                }
+            }
+            Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(broadcast::error::RecvError::Closed)) => {
+                return Err("the browser connection closed".to_string());
+            }
+            Err(_) => {
+                // Quiet is normal on a slow Windows launch and on pages whose
+                // service worker keeps the load event from arriving. It is
+                // not the 90-second navigation deadline. Ask the document
+                // whether it is usable and otherwise keep waiting.
+                let state = evaluate(cdp, session, "document.readyState").await?;
+                if matches!(
+                    state
+                        .get("result")
+                        .and_then(|result| result.get("value"))
+                        .and_then(Value::as_str),
+                    Some("interactive" | "complete")
+                ) {
+                    return Ok(());
+                }
+            }
         }
     }
 }
@@ -321,7 +368,9 @@ pub async fn create_page_session(cdp: &Cdp) -> Result<(String, String), String> 
 
 /// Close a page target.
 pub async fn close_page_session(cdp: &Cdp, target_id: &str) {
-    let _ = cdp.call("Target.closeTarget", json!({ "targetId": target_id })).await;
+    let _ = cdp
+        .call("Target.closeTarget", json!({ "targetId": target_id }))
+        .await;
 }
 
 #[cfg(test)]
@@ -351,7 +400,10 @@ mod tests {
                 .await
                 .expect("a request frame")
                 .expect("request parse");
-            assert_eq!(request.get("method").and_then(Value::as_str), Some("Test.probe"));
+            assert_eq!(
+                request.get("method").and_then(Value::as_str),
+                Some("Test.probe")
+            );
             let id = request.get("id").and_then(Value::as_u64).unwrap();
             let response = json!({ "id": id, "result": response_expected });
             write_frame(&mut bm, &serde_json::to_vec(&response).unwrap())
@@ -359,8 +411,55 @@ mod tests {
                 .unwrap();
         });
 
-        let got = cdp.call("Test.probe", json!({ "x": 1 })).await.expect("call");
+        let got = cdp
+            .call("Test.probe", json!({ "x": 1 }))
+            .await
+            .expect("call");
         assert_eq!(got, expected);
+        browser.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn quiet_navigation_checks_document_readiness_instead_of_failing() {
+        let (parent_cmd, browser_cmd) = tokio::io::duplex(4096);
+        let (browser_msg, parent_msg) = tokio::io::duplex(4096);
+        let cdp = Cdp::connect_pipe(parent_cmd, parent_msg)
+            .await
+            .expect("connect_pipe");
+
+        let browser = tokio::spawn(async move {
+            let mut commands = browser_cmd;
+            let mut messages = browser_msg;
+            for expected_method in ["Page.enable", "Page.navigate", "Runtime.evaluate"] {
+                let request = read_frame(&mut commands)
+                    .await
+                    .expect("request")
+                    .expect("valid request");
+                assert_eq!(request["method"], expected_method);
+                let id = request["id"].as_u64().unwrap();
+                let result = if expected_method == "Runtime.evaluate" {
+                    json!({ "result": { "value": "interactive" } })
+                } else {
+                    json!({})
+                };
+                write_frame(
+                    &mut messages,
+                    &serde_json::to_vec(&json!({ "id": id, "result": result })).unwrap(),
+                )
+                .await
+                .unwrap();
+            }
+        });
+
+        navigate_and_wait_with_poll(
+            &cdp,
+            "session",
+            "https://example.com/login",
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .expect("an interactive document is ready even without a load event");
         browser.await.unwrap();
     }
 

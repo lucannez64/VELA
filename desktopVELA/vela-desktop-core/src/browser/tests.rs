@@ -14,6 +14,21 @@ use super::intercept::{core_send_credential, handle_paused_request, InterceptErr
 use super::*;
 use crate::js_login::{CapturedRequest, PLACEHOLDER_PASSWORD};
 
+#[test]
+fn unspecified_same_site_does_not_mean_discard_the_cookie() {
+    assert_eq!(cdp_same_site("unspecified"), None);
+    assert_eq!(cdp_same_site("no_restriction"), Some("None"));
+    assert_eq!(cdp_same_site("lax"), Some("Lax"));
+}
+
+#[test]
+fn diagnostic_urls_never_log_queries_or_fragments() {
+    assert_eq!(
+        diagnostic_url("https://auth.example/login?token=secret#credential"),
+        "https://auth.example/login"
+    );
+}
+
 const PASSWORD: &str = "correct-horse-battery-staple-9137";
 
 fn site(url: &str) -> Url {
@@ -109,7 +124,10 @@ fn a_request_carrying_the_placeholder_gets_the_real_password() {
     let PausedAction::ContinueWith { request, body, .. } = action else {
         panic!("expected substitution");
     };
-    assert!(body.contains("pw=correct-horse-battery-staple-9137"), "{body}");
+    assert!(
+        body.contains("pw=correct-horse-battery-staple-9137"),
+        "{body}"
+    );
     assert!(!body.contains(PLACEHOLDER_PASSWORD), "{body}");
     // The page's other fields survive untouched.
     assert!(body.contains("csrf=tok"), "{body}");
@@ -117,7 +135,9 @@ fn a_request_carrying_the_placeholder_gets_the_real_password() {
     // The substituted request payload is what the Tier-3 core-perform path
     // would send over the core's own TLS (never into the browser).
     assert_eq!(request.url, "https://bank.example/session");
-    assert!(request.body.contains("pw=correct-horse-battery-staple-9137"));
+    assert!(request
+        .body
+        .contains("pw=correct-horse-battery-staple-9137"));
     assert!(!request.body.contains(PLACEHOLDER_PASSWORD));
 }
 
@@ -134,7 +154,10 @@ fn a_json_login_body_is_substituted_too() {
     let PausedAction::ContinueWith { body, .. } = action else {
         panic!("expected substitution");
     };
-    assert!(body.contains(&format!("\"password\":\"{PASSWORD}\"")), "{body}");
+    assert!(
+        body.contains(&format!("\"password\":\"{PASSWORD}\"")),
+        "{body}"
+    );
     assert!(!body.contains(PLACEHOLDER_PASSWORD), "{body}");
 }
 
@@ -215,7 +238,10 @@ fn a_page_that_transformed_the_password_cannot_be_substituted() {
 #[test]
 fn tier3_core_perform_is_default_on_and_opt_out_only() {
     std::env::remove_var("VELA_BROWSER_CORE_PERFORM");
-    assert!(super::intercept::core_perform_enabled(), "default must be core-perform");
+    assert!(
+        super::intercept::core_perform_enabled(),
+        "default must be core-perform"
+    );
     std::env::set_var("VELA_BROWSER_CORE_PERFORM", "1");
     assert!(super::intercept::core_perform_enabled());
     std::env::set_var("VELA_BROWSER_CORE_PERFORM", "0");
@@ -236,7 +262,9 @@ async fn tier3_sends_a_firebase_auth_credential_from_the_core() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/accounts:signInWithPassword"))
-        .and(body_string_contains("\"password\":\"correct-horse-battery-staple-9137\""))
+        .and(body_string_contains(
+            "\"password\":\"correct-horse-battery-staple-9137\"",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_string(
             r#"{"idToken":"tok","refreshToken":"rt","localId":"ml","email":"ada"}"#,
         ))
@@ -255,9 +283,7 @@ async fn tier3_sends_a_firebase_auth_credential_from_the_core() {
             "content-type".to_string(),
             "application/json".to_string(),
         )]),
-        body: format!(
-            r#"{{"email":"ada","password":"{PASSWORD}","returnSecureToken":true}}"#
-        ),
+        body: format!(r#"{{"email":"ada","password":"{PASSWORD}","returnSecureToken":true}}"#),
     };
 
     let login = core_send_credential(&request, &request.body)
@@ -319,7 +345,10 @@ async fn tier3_sends_the_credential_over_the_cores_own_tls() {
     // The mock actually received the real password — proof the core carried it.
     let got = server.received_requests().await.unwrap();
     let body = String::from_utf8_lossy(&got[0].body);
-    assert!(body.contains("pw=correct-horse-battery-staple-9137"), "{body}");
+    assert!(
+        body.contains("pw=correct-horse-battery-staple-9137"),
+        "{body}"
+    );
 }
 
 /// Tier-3 must *refuse* when the site will not accept the core's client (a
@@ -421,26 +450,29 @@ async fn a_bot_wall_falls_back_to_the_browser_tier() {
     state.unlock_for_test(&crate::crypto::Crypto::generate_rms());
     let login_url = format!("{}/login", server.uri());
     let now = chrono::Utc::now();
-    state.vault.write().add_item(crate::vault::VaultItem::Login {
-        meta: crate::vault::VaultMeta {
-            id: "i1".to_string(),
-            name: "Bot-walled".to_string(),
-            notes: None,
-            created_at: now,
-            updated_at: now,
-            last_modified_device: None,
-            favorite: false,
-            shared: false,
-            share_recipient: None,
-        },
-        url: login_url.clone(),
-        username: "ada".to_string(),
-        pass: PASSWORD.to_string(),
-        totp: None,
-        app_ids: Vec::new(),
-        credential_change_needs_reauth: None,
-        allow_second_factor_downgrade: None,
-    });
+    state
+        .vault
+        .write()
+        .add_item(crate::vault::VaultItem::Login {
+            meta: crate::vault::VaultMeta {
+                id: "i1".to_string(),
+                name: "Bot-walled".to_string(),
+                notes: None,
+                created_at: now,
+                updated_at: now,
+                last_modified_device: None,
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
+            url: login_url.clone(),
+            username: "ada".to_string(),
+            pass: PASSWORD.to_string(),
+            totp: None,
+            app_ids: Vec::new(),
+            credential_change_needs_reauth: None,
+            allow_second_factor_downgrade: None,
+        });
 
     let error = crate::login::perform_login(
         &state,
@@ -533,6 +565,9 @@ async fn a_real_browser_logs_in_without_the_page_seeing_the_password() {
         .find(|r| r.url.path() == "/session")
         .expect("the login form should have been submitted");
     let body = String::from_utf8_lossy(&session.body);
-    assert!(body.contains("pw=correct-horse-battery-staple-9137"), "{body}");
+    assert!(
+        body.contains("pw=correct-horse-battery-staple-9137"),
+        "{body}"
+    );
     assert!(!body.contains(PLACEHOLDER_PASSWORD), "{body}");
 }
