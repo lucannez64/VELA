@@ -9,10 +9,10 @@ license = "MIT"
 description = "Passwordless, zero-knowledge password vault."
 
 [dependencies]
-gpui = { package = "gpui", git = "https://github.com/gpui-ce/gpui-ce" }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce" }
-gpui_tokio = { git = "https://github.com/gpui-ce/gpui-ce" }
-gpui_elements = { git = "https://github.com/gpui-ce/gpui-ce" }
+gpui = { path = "../vendor/gpui-ce/crates/gpui" }
+gpui_platform = { path = "../vendor/gpui-ce/crates/gpui_platform" }
+gpui_tokio = { path = "../vendor/gpui-ce/crates/gpui_tokio" }
+gpui_elements = { path = "../vendor/gpui-ce/crates/gpui_elements" }
 vela-desktop-core = { path = "../vela-desktop-core", features = ["browser-login", "http3"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread"] }
