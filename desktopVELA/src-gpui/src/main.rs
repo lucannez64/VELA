@@ -25,6 +25,11 @@ mod clipboard;
 mod favicon_ui;
 mod fonts;
 mod host;
+// Windows global shortcut (RegisterHotKey via `global-hotkey`, see the
+// module doc); Linux binds through the Wayland portal client in
+// `vela_desktop_core::wayland_shortcut` instead.
+#[cfg(target_os = "windows")]
+mod hotkey;
 mod icon;
 mod keyboard;
 mod qr;
@@ -485,7 +490,7 @@ fn main() {
         .map(|s| ThemeId::from_setting(&s.theme))
         .unwrap_or(ThemeId::Vela);
     let initial_clipboard_clear_seconds = initial_settings.as_ref().map(|s| s.clipboard_clear_seconds);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let quick_search_shortcut = initial_settings
         .as_ref()
         .map(|s| s.quick_search_shortcut.clone())
@@ -590,9 +595,9 @@ fn main() {
         })
         .detach();
 
-        // Autofill IPC bridge (browser extension) + Wayland portal global
-        // shortcut. Both are written against `vela_desktop_core::host::Host`
-        // and run on their own threads, so they reach the UI through the same
+        // Autofill IPC bridge (browser extension) + global shortcut clients.
+        // Both are written against `vela_desktop_core::host::Host` and run on
+        // their own threads, so they reach the UI through the same
         // channel-plus-poll-loop hop the tray uses — see `host.rs`.
         let (host_tx, host_rx) = std::sync::mpsc::channel::<host::HostCommand>();
         let ipc_host: Arc<dyn vela_desktop_core::host::Host> =
@@ -641,6 +646,13 @@ fn main() {
                      (the X11 plugin path the Tauri build uses isn't ported)"
                 );
             }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let shortcut_host: Arc<dyn vela_desktop_core::host::Host> =
+                Arc::new(host::GpuiHost::new(app_state_for_ipc.clone(), host_tx));
+            hotkey::spawn(shortcut_host, quick_search_shortcut);
         }
 
         // Polls for tray + host commands (plain `std::sync::mpsc::Receiver`s,

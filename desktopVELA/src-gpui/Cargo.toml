@@ -32,6 +32,17 @@ ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = { version = "0.7.0", features = ["background_threads"] }
 
+# Windows global shortcut for quick search (src/hotkey.rs): the same
+# RegisterHotKey engine tauri-plugin-global-shortcut uses, so behavior matches
+# the Tauri build's "plugin" backend. `windows-sys` drives the message loop
+# the crate requires on the registering thread.
+[target.'cfg(target_os = "windows")'.dependencies]
+global-hotkey = "0.8"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 # Installed as `vela-desktop`, NOT `vela-desktop-gpui`: the shipped
 # `com.vela.vault.desktop` entry has `Exec=vela-desktop` /
 # `StartupWMClass=vela-desktop` / `Icon=vela-desktop`, and the XDG portal

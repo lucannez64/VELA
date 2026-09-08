@@ -10506,6 +10506,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
+ "global-hotkey",
  "gpui",
  "gpui_elements",
  "gpui_platform",
@@ -10521,6 +10522,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vela-desktop-core",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

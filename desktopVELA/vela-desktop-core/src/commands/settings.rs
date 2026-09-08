@@ -72,9 +72,9 @@ pub fn set_auto_lock_minutes(state: &Arc<AppState>, minutes: u32) -> Result<(), 
 /// the keybind and the app cannot show it as "pressed here") or `"plugin"`
 /// (an X11/Windows/macOS key grab the app registers itself).
 ///
-/// The gpui build only implements the portal path, so this also tells its
-/// Settings screen when to say the shortcut is unavailable rather than
-/// offering an editor for a binding nothing will ever deliver.
+/// The Tauri build implements the plugin path on every platform; the gpui
+/// build implements portal (Linux/Wayland) and plugin (Windows, its
+/// `src/hotkey.rs`) today.
 pub fn shortcut_backend() -> &'static str {
     #[cfg(target_os = "linux")]
     {
