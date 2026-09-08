@@ -921,6 +921,39 @@ impl PlatformWindow for WindowsWindow {
         unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE).ok().log_err() };
     }
 
+    fn start_window_move(&self) {
+        if !self.is_movable || self.state.is_fullscreen() {
+            return;
+        }
+
+        // Unlike the Linux and macOS backends, the Windows backend used to
+        // inherit PlatformWindow's no-op default for this method.  Custom
+        // titlebars therefore received their mouse-down event, but could
+        // never hand the drag off to Windows.
+        //
+        // WM_SYSCOMMAND avoids synthesizing another WM_NCLBUTTONDOWN, which
+        // would be dispatched back through GPUI and recursively invoke the
+        // titlebar's mouse-down handler.  Releasing capture first lets the
+        // native move loop take ownership of the pointer until mouse-up.
+        //
+        // The message must be POSTED, not sent: SendMessageW enters the
+        // modal move loop while this mouse-down handler is still on the
+        // stack, so the nested message pump can run GPUI's async tasks
+        // (e.g. repaint tickers) while AppCell is still borrowed, panicking
+        // with "RefCell already borrowed".  Posting defers the move loop
+        // until after the input handler returns and the borrow is released.
+        unsafe {
+            ReleaseCapture().log_err();
+            PostMessageW(
+                Some(self.0.hwnd),
+                WM_SYSCOMMAND,
+                WPARAM((SC_MOVE | HTCAPTION) as usize),
+                LPARAM(0),
+            )
+            .log_err();
+        }
+    }
+
     fn zoom(&self) {
         let is_visible = unsafe { IsWindowVisible(self.0.hwnd).as_bool() };
         if !is_visible {
