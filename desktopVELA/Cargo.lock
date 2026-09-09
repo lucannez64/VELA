@@ -10490,6 +10490,7 @@ dependencies = [
  "vela-client-recovery-policy",
  "vela-crypto",
  "vela-sync-policy",
+ "vela-win-passkey",
  "webauthn-rs",
  "webauthn-rs-proto",
  "windows 0.58.0",
@@ -10560,6 +10561,27 @@ name = "vela-sync-policy"
 version = "0.1.0"
 dependencies = [
  "hax-lib",
+]
+
+[[package]]
+name = "vela-win-passkey"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing-subscriber",
+ "uuid",
+ "vela-desktop-core",
+ "vela-nm-host",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+ "windows-implement 0.58.0",
+ "windows-interface 0.58.0",
 ]
 
 [[package]]

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
@@ -113,6 +114,7 @@ fun ItemDetailScreen(
                     is VaultItem.Login -> Icons.Filled.Key
                     is VaultItem.CreditCard -> Icons.Filled.CreditCard
                     is VaultItem.SecureNote -> Icons.Filled.Description
+                    is VaultItem.Passkey -> Icons.Filled.Fingerprint
                     else -> Icons.Filled.Description
                 }
                 if (item is VaultItem.Login && item.url.isNotBlank()) {
@@ -160,6 +162,7 @@ fun ItemDetailScreen(
                 is VaultItem.Login -> LoginFields(item, context, scope)
                 is VaultItem.CreditCard -> CardFields(item, context, scope)
                 is VaultItem.SecureNote -> NoteFields(item)
+                is VaultItem.Passkey -> PasskeyFields(item, context, scope)
                 else -> {}
             }
 
@@ -218,6 +221,27 @@ private fun NoteFields(item: VaultItem.SecureNote) {
             color = VelaColors.TextPrimary,
             fontSize = 15.sp,
             lineHeight = 22.sp
+        )
+    }
+}
+
+/**
+ * Read-only metadata for a passkey synced from another device. Android has
+ * no WebAuthn ceremony support yet — and the private key is not in the sync
+ * payload — so this shows where the credential is scoped and for whom, with
+ * a note saying it must be used from a desktop device or the extension.
+ */
+@Composable
+private fun PasskeyFields(item: VaultItem.Passkey, context: android.content.Context, scope: CoroutineScope) {
+    VelaCard {
+        DetailField("Username", item.userName.ifBlank { null }, context, scope)
+        DetailField("Website", item.rpId.ifBlank { null }, context, scope)
+        DetailField("Credential ID", item.credentialId.ifBlank { null }, context, scope, isMono = true)
+        Text(
+            "Passkeys are managed on a desktop device or in the browser extension.",
+            color = VelaColors.TextMuted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 8.dp)
         )
     }
 }
@@ -331,6 +355,8 @@ private val VaultItem.typeLabel: String
         is VaultItem.CreditCard -> "card"
         is VaultItem.SecureNote -> "note"
         is VaultItem.FileBlob -> "file"
+        is VaultItem.BreachMonitor -> "breach"
+        is VaultItem.Passkey -> "passkey"
         else -> "item"
     }
 

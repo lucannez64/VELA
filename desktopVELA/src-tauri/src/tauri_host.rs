@@ -34,6 +34,9 @@ impl Host for TauriHost {
 
     fn notify_vault_items_changed(&self) {
         commands::vault::emit_vault_items_changed(&self.0);
+        // Keep the Windows OS autofill cache in step with the vault
+        // (debounced inside core; a no-op off Windows).
+        vela_desktop_core::commands::provider::schedule_autofill_sync(self.state());
     }
 
     /// A non-blocking toast in the app's own window: the React side listens

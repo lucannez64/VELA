@@ -1,0 +1,48 @@
+[package]
+name = "vela-win-passkey"
+version = "0.1.0"
+edition = "2021"
+description = "VELA as a Windows system-wide passkey provider (WebAuthn plugin authenticator)"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "vela-passkey-provider"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+# Shared transport to the desktop (framing + ERROR_PIPE_BUSY retry).
+vela-nm-host = { path = "../vela-nm-host" }
+# Same generation as vela-desktop-core's, so the two never disagree about
+# Win32/FFI shapes on one machine.
+windows = { version = "0.58", features = [
+    "implement",
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Threading",
+    "Win32_Security_Cryptography",
+] }
+# Direct deps so the `#[interface]`/`#[implement]` macros' generated code can
+# name `windows_core` / `windows_implement` from within this crate.
+windows-core = "0.58"
+windows-implement = "0.58"
+windows-interface = "0.58"
+
+[dev-dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "time"] }
+tracing-subscriber = "0.3"
+uuid = { version = "1", features = ["v4"] }
+# Dev-dep cycle (core depends on this crate normally) is fine: the e2e test
+# boots a real desktop IPC server to answer the provider's pipe calls.
+vela-desktop-core = { path = "../vela-desktop-core" }

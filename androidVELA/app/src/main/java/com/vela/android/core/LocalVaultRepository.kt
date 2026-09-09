@@ -124,6 +124,9 @@ class LocalVaultRepository(
                             breach.title.lowercase(Locale.US).contains(normalized) ||
                                 breach.domain.lowercase(Locale.US).contains(normalized)
                         }
+                    is VaultItem.Passkey -> item.rpId.lowercase(Locale.US).contains(normalized) ||
+                        item.rpName.lowercase(Locale.US).contains(normalized) ||
+                        item.userName.lowercase(Locale.US).contains(normalized)
                 }
         }
     }

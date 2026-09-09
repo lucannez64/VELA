@@ -6,6 +6,7 @@
 pub mod devices;
 pub mod enrollment_v3;
 pub mod rekey;
+pub mod provider;
 pub mod session;
 pub mod settings;
 pub mod vault;

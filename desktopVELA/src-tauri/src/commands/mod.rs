@@ -3,6 +3,7 @@ pub mod biometric;
 pub mod clipboard;
 pub mod devices;
 pub mod ipc;
+pub mod passkey_provider;
 pub mod recovery;
 pub mod rekey;
 pub mod session;

@@ -16,6 +16,59 @@ export default function SettingsScreen() {
   const [editingShortcut, setEditingShortcut] = useState(false);
   const [shortcutDraft, setShortcutDraft] = useState('');
   const [shortcutBackend, setShortcutBackend] = useState<'plugin' | 'portal' | null>(null);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyStatus, setPasskeyStatus] = useState<string | null>(null);
+
+  // Windows system-wide passkey provider. Same integration path as the
+  // password managers that ship MSIX builds; the user still flips the final
+  // toggle in Settings > Accounts > Passkeys > Advanced options.
+  const passkeyAction = async (action: 'enable' | 'sync' | 'disable') => {
+    if (passkeyBusy) return;
+    setPasskeyBusy(true);
+    setPasskeyStatus(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      if (action === 'enable') {
+        const summary = await invoke<{ com_registered: boolean; os_registered: boolean; enabled: boolean }>('passkey_provider_register');
+        if (!summary.os_registered) {
+          showToast('VELA was registered, but the OS passkey system did not accept it', 'error');
+          return;
+        }
+        const synced = await invoke<number>('passkey_provider_sync');
+        setPasskeyStatus(`Registered; ${synced} passkey(s) in the OS autofill cache.`);
+        showToast('Registered. Enable VELA under Settings > Accounts > Passkeys > Advanced options', 'success');
+      } else if (action === 'sync') {
+        const synced = await invoke<number>('passkey_provider_sync');
+        setPasskeyStatus(`${synced} passkey(s) in the OS autofill cache.`);
+        showToast(`Synced ${synced} passkey(s) to the OS autofill cache`, 'success');
+      } else {
+        await invoke('passkey_provider_unregister');
+        setPasskeyStatus('Disabled; OS autofill cache cleared.');
+        showToast('System passkey provider disabled', 'success');
+      }
+    } catch (e) {
+      showToast('Passkey provider: ' + String(e), 'error');
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    // Best-effort current state, so the section reflects reality on mount.
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const summary = await invoke<{ com_registered: boolean; os_registered: boolean; enabled: boolean } | null>('passkey_provider_status');
+        if (summary?.os_registered) {
+          setPasskeyStatus(summary.enabled ? 'Registered and enabled in Windows.' : 'Registered; enable in Settings > Accounts > Passkeys > Advanced options.');
+        } else {
+          setPasskeyStatus('Not registered.');
+        }
+      } catch {
+        setPasskeyStatus(null);
+      }
+    })();
+  }, []);
 
   const handleSyncNow = async () => {
     if (syncing) return;
@@ -480,6 +533,45 @@ export default function SettingsScreen() {
               <button className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors">
                 Manage extension
               </button>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">System passkeys</h2>
+          <div className="bg-surface-container rounded-xl p-6 space-y-4">
+            <p className="text-sm text-on-surface-variant">
+              Use VELA for passkeys in every browser and app on this device
+              (Windows 11 24H2+). Windows still asks you to pick VELA under
+              Settings &gt; Accounts &gt; Passkeys &gt; Advanced options.
+            </p>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-sm text-on-surface-variant">
+                {passkeyStatus ?? (passkeyBusy ? 'Working...' : '')}
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  disabled={passkeyBusy}
+                  onClick={() => passkeyAction('enable')}
+                  className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors disabled:opacity-50"
+                >
+                  Enable
+                </button>
+                <button
+                  disabled={passkeyBusy}
+                  onClick={() => passkeyAction('sync')}
+                  className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors disabled:opacity-50"
+                >
+                  Sync passkeys
+                </button>
+                <button
+                  disabled={passkeyBusy}
+                  onClick={() => passkeyAction('disable')}
+                  className="px-4 py-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                >
+                  Disable
+                </button>
+              </div>
             </div>
           </div>
         </section>

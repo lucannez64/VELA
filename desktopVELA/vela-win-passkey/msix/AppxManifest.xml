@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  VELA's *identity* package (sparse package / "packaging with external
+  location"). Windows requires package identity before it will accept a
+  WebAuthnPluginAddAuthenticator call (0x80073D54 otherwise), but VELA is
+  installed unpackaged (NSIS/WiX). This manifest grants identity without
+  repackaging the app: the installer (or register-dev.ps1) registers this
+  package pointing at the app's install directory as the external location.
+
+  The `msix` element in `vela-passkey-provider.exe.manifest` must match the
+  Identity + Application Id here exactly — see
+  https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/grant-identity-to-nonpackaged-apps
+-->
+<Package IgnorableNamespaces="uap uap10 com rescap"
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
+
+  <Identity Name="VELA.PasskeyProvider" Publisher="CN=VELA" Version="1.0.0.0" ProcessorArchitecture="neutral" />
+
+  <Properties>
+    <DisplayName>VELA</DisplayName>
+    <PublisherDisplayName>VELA</PublisherDisplayName>
+    <Logo>Assets\storelogo.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.26100.0" MaxVersionTested="10.0.26200.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="VELA.PasskeyProvider" Executable="vela-passkey-provider.exe"
+      uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App">
+      <uap:VisualElements AppListEntry="none" DisplayName="VELA" Description="VELA passkey provider"
+        BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- Packaged COM activation: Windows starts the provider through
+             this ExeServer instead of (or in addition to) the HKCU
+             LocalServer32 key the provider's own registration writes. -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="vela-passkey-provider.exe" Arguments="-Embedding"
+              DisplayName="VELA Passkey Provider">
+              <com:Class Id="f9b594a7-0e49-4c9e-8338-f6d30bce33c4" DisplayName="VELA Passkey Provider" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

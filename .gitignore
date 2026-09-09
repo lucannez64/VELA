@@ -36,6 +36,10 @@ desktopVELA/dist/
 **/*~
 **/.vscode/
 
+# Passkey provider: machine-local dev signing cert (PRIVATE KEY) and built
+# msix artifacts. Regenerate with msix/register-dev.ps1.
+desktopVELA/vela-win-passkey/msix/build/
+
 # OS files
 **/.DS_Store
 **/Thumbs.db

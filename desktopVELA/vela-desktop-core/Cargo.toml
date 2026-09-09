@@ -129,6 +129,10 @@ windows = { version = "0.58", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
 ] }
+# The Windows system-wide passkey provider adapter (WebAuthn plugin
+# authenticator registration + autofill metadata). Windows-only; the
+# `commands::provider` module below it has a no-op fallback elsewhere.
+vela-win-passkey = { path = "../vela-win-passkey" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # `wayland-data-control` is not a default feature, and without it arboard has

@@ -1513,6 +1513,9 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
                     let _ = state.store.save_vault(&vault_snapshot, crypto);
                 }
             }
+            // The merge may have added, changed or tombstoned passkeys; keep
+            // the OS autofill cache in step (debounced, Windows-only).
+            crate::commands::provider::schedule_autofill_sync(state);
         }
         ServerVault::Unreadable(why) => {
             // Authentication failure is not a repair authorization. An
@@ -1696,6 +1699,8 @@ pub async fn resolve_conflict(
             if let Some(crypto) = crypto_guard.as_ref() {
                 let _ = state.store.save_vault(&state.vault.read(), crypto);
             }
+            // The resolved item may be a passkey; keep the OS autofill cache in step.
+            crate::commands::provider::schedule_autofill_sync(state);
         }
         tracing::info!(
             "Conflict resolved for item {}: keeping local version",
@@ -1716,6 +1721,8 @@ pub async fn resolve_conflict(
         if let Some(crypto) = crypto_guard.as_ref() {
             let _ = state.store.save_vault(&state.vault.read(), crypto);
         }
+        // The resolved item may be a passkey; keep the OS autofill cache in step.
+        crate::commands::provider::schedule_autofill_sync(state);
         tracing::info!(
             "Conflict resolved for item {}: using server version",
             item_id
@@ -1763,6 +1770,8 @@ pub async fn resolve_conflict(
                 let _ = state.store.save_vault(&state.vault.read(), crypto);
             }
             drop(crypto_guard);
+            // The resolved item may be a passkey; keep the OS autofill cache in step.
+            crate::commands::provider::schedule_autofill_sync(state);
         }
 
         tracing::info!(

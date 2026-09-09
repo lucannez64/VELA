@@ -135,9 +135,15 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
       case 'login': return 'key';
       case 'creditCard': return 'credit_card';
       case 'secureNote': return 'note';
+      case 'passkey': return 'passkey';
       default: return 'shield';
     }
   };
+
+  // Passkeys are ceremony-created credentials whose private key never
+  // crosses the IPC boundary, so the generic editor (which round-trips
+  // fields) has nothing to edit and sharing one would need its own flow.
+  const isPasskey = item.item_type === 'passkey';
 
   const isReceivedShare = item.shared && !item.share_recipient;
 
@@ -174,14 +180,14 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
             <button onClick={handleToggleFavorite} className={`w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors ${favorite ? 'text-amber-400' : ''}`}>
               <span className="material-symbols-outlined text-xl text-amber-400" style={favorite ? { fontVariationSettings: "'FILL' 1" } : undefined}>star</span>
             </button>
-            {!isReceivedShare && (
+            {!isReceivedShare && !isPasskey && (
               <button
                 onClick={onEdit}
                 className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
                 <span className="material-symbols-outlined text-xl">edit</span>
               </button>
             )}
-            {!isReceivedShare && (
+            {!isReceivedShare && !isPasskey && (
               <button
                 onClick={handleShare}
                 className="px-5 h-10 rounded-full flex items-center gap-2 bg-primary text-on-primary font-bold text-sm glow-button transition-all"
@@ -267,17 +273,34 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
             <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
               <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Website</label>
               <div className="flex items-center justify-between gap-3 min-w-0">
-                <a 
-                  href={item.url} 
-                  target="_blank" 
+                <a
+                  href={item.url}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-on-surface hover:text-primary transition-colors text-sm flex items-center gap-2 underline decoration-outline-variant underline-offset-4 min-w-0 break-all"
                 >
                   {item.url}
                   <span className="material-symbols-outlined text-xs shrink-0">open_in_new</span>
                 </a>
-                <button 
+                <button
                   onClick={() => copyToClipboard(item.url!, 'URL')}
+                  className="p-2 shrink-0 hover:bg-surface-container-highest rounded-lg transition-colors text-outline"
+                >
+                  <span className="material-symbols-outlined text-xl">content_copy</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {item.item_type === 'passkey' && item.rp_id && (
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Website</label>
+              <div className="flex items-center justify-between gap-3 min-w-0">
+                <span className="text-on-surface text-sm flex items-center gap-2 min-w-0 break-all">
+                  {item.rp_id}
+                </span>
+                <button
+                  onClick={() => copyToClipboard(item.rp_id!, 'Website')}
                   className="p-2 shrink-0 hover:bg-surface-container-highest rounded-lg transition-colors text-outline"
                 >
                   <span className="material-symbols-outlined text-xl">content_copy</span>

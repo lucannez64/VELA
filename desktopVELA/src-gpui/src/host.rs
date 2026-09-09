@@ -114,6 +114,9 @@ impl Host for GpuiHost {
 
     fn notify_vault_items_changed(&self) {
         let _ = self.tx.send(HostCommand::VaultItemsChanged);
+        // Keep the Windows OS autofill cache in step with the vault
+        // (debounced inside core; a no-op off Windows).
+        vela_desktop_core::commands::provider::schedule_autofill_sync(self.state());
     }
 
     fn show_toast(&self, message: &str) {

@@ -39,6 +39,17 @@ use crate::ipc_peer::PeerIdentity;
 /// The only non-VELA executable allowed on the other end of the socket.
 pub const NM_HOST_BINARY_NAME: &str = "vela-native-messaging-host";
 
+/// The Windows system-wide passkey provider. Unlike the native messaging
+/// host it is not spawned by a browser: COM launches it from the service
+/// control manager whenever a WebAuthn client routes a ceremony to VELA, so
+/// there is no browser ancestry to check. What bounds it instead: same-user
+/// (checked below), the exe-name check against a *second* VELA binary, and
+/// the fact that every ceremony it relays still passes through
+/// `crate::presence` — the prompt names it as the requester, so a same-user
+/// impostor running a copy of this binary can knock, but cannot sign
+/// anything without the human approving it by name.
+pub const PROVIDER_BINARY_NAME: &str = "vela-passkey-provider";
+
 /// How many ancestors of a connecting process we walk looking for a browser.
 ///
 /// Deep enough to see through a wrapper script between browser and host;
@@ -139,6 +150,16 @@ fn is_host_binary(exe: &std::path::Path) -> bool {
     exe_basename(exe) == NM_HOST_BINARY_NAME
 }
 
+fn is_provider_binary(exe: &std::path::Path) -> bool {
+    exe_basename(exe) == PROVIDER_BINARY_NAME
+}
+
+/// `pub` for the per-message re-check in `ipc.rs`: only the provider may ask
+/// for the vault-wide credential metadata dump.
+pub fn is_provider(exe: &std::path::Path) -> bool {
+    is_provider_binary(exe)
+}
+
 fn is_browser_process(exe: &std::path::Path) -> bool {
     let name = exe_basename(exe);
     if name.is_empty() {
@@ -164,6 +185,16 @@ pub fn authorize_host(table: &dyn ProcessTable, peer: &PeerIdentity) -> Result<(
 
     // Check 2 needs no table walk — the kernel handed us the exe with the
     // identity. If it did not, refuse: an unidentified peer is not ours.
+    if let Some(exe) = &peer.exe {
+        // The passkey provider has no spawner to verify (COM launches it),
+        // and the ceremonies it carries are the most heavily gated in the
+        // tree — every one stops at the presence prompt, which names the
+        // provider as requester. Admit on exe identity alone.
+        if is_provider_binary(exe) {
+            return Ok(());
+        }
+    }
+
     let peer_exe = match &peer.exe {
         Some(exe) if is_host_binary(exe) => exe.clone(),
         Some(other) => {
@@ -281,6 +312,41 @@ mod tests {
         ]));
         let err = authorize_host(&tree, &peer(400, Some(host_exe()))).unwrap_err();
         assert!(err.contains("not started by a recognized browser"), "{err}");
+    }
+
+    #[test]
+    fn provider_exe_is_admitted_without_browser_ancestry() {
+        // COM launches vela-passkey-provider.exe from the service control
+        // manager — no browser anywhere in the tree. Identity + same-user is
+        // the gate; ceremonies still stop at the presence prompt.
+        let tree = FakeTree(HashMap::from([
+            (900u32, (Some("vela-passkey-provider") as Option<&'static str>, Some(1u32))),
+            (1u32, (Some("services"), None)),
+        ]));
+        let provider_exe = PathBuf::from("/Program Files/VELA/vela-passkey-provider.exe");
+        assert!(authorize_host(&tree, &peer(900, Some(provider_exe))).is_ok());
+    }
+
+    #[test]
+    fn copy_of_the_provider_run_from_a_terminal_is_also_admitted() {
+        // Stated residual, pinned as a test so it is a documented property,
+        // not a forgotten hole: exe identity alone admits a renamed copy.
+        // The presence prompt is what bounds such a caller — it cannot sign
+        // without the human approving its name. If this test ever *should*
+        // fail, that is a design change, not a bug fix.
+        let tree = FakeTree(HashMap::from([
+            (910u32, (Some("vela-passkey-provider"), Some(500u32))),
+            (500u32, (Some("zsh"), Some(1u32))),
+            (1u32, (Some("systemd"), None)),
+        ]));
+        assert!(authorize_host(&tree, &peer(910, Some(host_exe()))).is_err(), "host binary still needs a browser");
+        let tree = FakeTree(HashMap::from([
+            (910u32, (Some("vela-passkey-provider"), Some(500u32))),
+            (500u32, (Some("zsh"), Some(1u32))),
+            (1u32, (Some("systemd"), None)),
+        ]));
+        let provider_exe = PathBuf::from("/tmp/vela-passkey-provider");
+        assert!(authorize_host(&tree, &peer(910, Some(provider_exe))).is_ok());
     }
 
     #[test]

@@ -416,6 +416,10 @@ pub async fn unlock_session(state: &Arc<AppState>) -> Result<SessionStatus, Stri
         "biometric unlock",
     );
 
+    // The vault may have changed while locked; bring the OS autofill cache
+    // back in step (debounced, Windows-only, silent on failure).
+    crate::commands::provider::schedule_autofill_sync(state);
+
     Ok(SessionStatus {
         active: true,
         session_time_remaining_secs: duration_secs,
@@ -514,6 +518,9 @@ pub async fn unlock_session_with_password(
     );
 
     tracing::info!("Session unlocked successfully");
+    // The vault may have changed while locked; bring the OS autofill cache
+    // back in step (debounced, Windows-only, silent on failure).
+    crate::commands::provider::schedule_autofill_sync(state);
     Ok(SessionStatus {
         active: true,
         session_time_remaining_secs: duration_secs,
@@ -1045,3 +1052,5 @@ mod tests {
         assert!(state.rekey_password().is_none());
     }
 }
+
+

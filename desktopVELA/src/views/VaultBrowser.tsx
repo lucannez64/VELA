@@ -19,13 +19,14 @@ interface VaultHealth {
   status: string;
 }
 
-type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote';
+type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote' | 'passkey';
 
 function getIcon(type: string) {
   switch (type) {
     case 'login': return 'key';
     case 'creditCard': return 'credit_card';
     case 'secureNote': return 'note';
+    case 'passkey': return 'passkey';
     default: return 'shield';
   }
 }
@@ -207,13 +208,14 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     }
   }, [copyToClipboard, showToast]);
 
-  // Four full vault scans per render (previously inline, so every re-render —
+  // One full vault scan per render (previously inline, so every re-render —
   // including the auto-lock countdown's context churn — re-scanned all items).
   const typeCounts = useMemo(() => ({
     all: propItems.length,
     login: propItems.filter(i => i.item_type === 'login').length,
     creditCard: propItems.filter(i => i.item_type === 'creditCard').length,
     secureNote: propItems.filter(i => i.item_type === 'secureNote').length,
+    passkey: propItems.filter(i => i.item_type === 'passkey').length,
   }), [propItems]);
 
   return (
@@ -239,7 +241,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
       </div>
 
       <div className="flex items-center gap-4 sm:gap-8 mb-8 overflow-x-auto pb-2">
-        {(['all', 'login', 'creditCard', 'secureNote'] as FilterType[]).map(type => (
+        {(['all', 'login', 'creditCard', 'secureNote', 'passkey'] as FilterType[]).map(type => (
           <button
             key={type}
             onClick={() => setFilter(type)}
@@ -249,7 +251,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                 : 'text-on-surface-variant hover:text-on-surface border-transparent'
             }`}
           >
-            {type === 'all' ? 'All' : type === 'creditCard' ? 'Cards' : type === 'secureNote' ? 'Secure Notes' : 'Logins'}
+            {type === 'all' ? 'All' : type === 'creditCard' ? 'Cards' : type === 'secureNote' ? 'Secure Notes' : type === 'passkey' ? 'Passkeys' : 'Logins'}
             <span className={`px-2 py-0.5 rounded text-[10px] ${filter === type ? 'bg-primary/10' : 'bg-surface-container-highest'}`}>
               {typeCounts[type]}
             </span>

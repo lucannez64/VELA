@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Fusion (side-by-side) manifest for vela-passkey-provider.exe. The `msix`
+  element is what gives the process package identity at runtime; its three
+  attributes must match msix/AppxManifest.xml exactly (Identity.Name /
+  Publisher, Application Id). Copy it next to the built exe.
+-->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="0.1.0.0" name="VELA.PasskeyProvider"/>
+  <msix xmlns="urn:schemas-microsoft-com:msix.v1"
+        publisher="CN=VELA"
+        packageName="VELA.PasskeyProvider"
+        applicationId="VELA.PasskeyProvider"
+        />
+</assembly>

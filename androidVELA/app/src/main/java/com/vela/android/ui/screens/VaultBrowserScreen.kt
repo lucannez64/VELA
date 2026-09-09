@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SearchOff
@@ -124,7 +126,8 @@ fun VaultBrowserScreen(
                 null to "All",
                 "login" to "Logins",
                 "card" to "Cards",
-                "note" to "Notes"
+                "note" to "Notes",
+                "passkey" to "Passkeys"
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 types.forEach { (type, label) ->
@@ -214,6 +217,7 @@ fun VaultItemRow(item: VaultItem, onClick: () -> Unit) {
         is VaultItem.CreditCard -> Icons.Filled.CreditCard
         is VaultItem.SecureNote -> Icons.Filled.Description
         is VaultItem.BreachMonitor -> Icons.Filled.Description
+        is VaultItem.Passkey -> Icons.Filled.Fingerprint
         else -> Icons.Filled.Description
     }
 
@@ -300,6 +304,7 @@ private val VaultItem.typeLabel: String
         is VaultItem.SecureNote -> "note"
         is VaultItem.FileBlob -> "file"
         is VaultItem.BreachMonitor -> "breach"
+        is VaultItem.Passkey -> "passkey"
         else -> "item"
     }
 

@@ -63,6 +63,10 @@ pub async fn add_item(state: &Arc<AppState>, item: VaultItem) -> Result<VaultIte
 
     tracing::info!("Item added: id={}", new_item.id());
 
+    if new_item.item_type() == crate::vault::ItemType::Passkey {
+        crate::commands::provider::schedule_autofill_sync(state);
+    }
+
     Ok(new_item)
 }
 
@@ -83,6 +87,33 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
             None => item,
         }
     };
+
+    // A passkey's round-trip through the UI carries metadata only — the
+    // private key is deliberately never sent to a front end. So an incoming
+    // passkey update never trusts its own crypto fields: take the stored
+    // credential back wholesale and keep only what the user actually edited
+    // (name/notes/favorite, via `meta`).
+    let item = {
+        let vault = state.vault.read();
+        let item_id = item.id().to_string();
+        let incoming_meta = match &item {
+            VaultItem::Passkey { meta, .. } => Some(meta.clone()),
+            _ => None,
+        };
+        match incoming_meta {
+            Some(meta) => match vault.get_item(&item_id) {
+                Some(existing @ VaultItem::Passkey { .. }) => {
+                    let mut restored = existing.clone();
+                    if let VaultItem::Passkey { meta: existing_meta, .. } = &mut restored {
+                        *existing_meta = meta;
+                    }
+                    restored
+                }
+                _ => item,
+            },
+            None => item,
+        }
+    };
     let (updated, item_type) = {
         let mut vault = state.vault.write();
         let updated = item.with_updated_at(Utc::now());
@@ -95,6 +126,10 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
     let _ = crate::sharing::push_sent_share_update_inner(state, &updated).await;
 
     record_audit_event(state, AuditAction::ItemUpdated { item_type });
+
+    if updated.item_type() == crate::vault::ItemType::Passkey {
+        crate::commands::provider::schedule_autofill_sync(state);
+    }
 
     Ok(updated)
 }
@@ -127,7 +162,13 @@ pub async fn delete_item(state: &Arc<AppState>, id: &str) -> Result<(), String> 
 
     save_vault(state)?;
 
-    record_audit_event(state, AuditAction::ItemDeleted { item_type });
+    record_audit_event(state, AuditAction::ItemDeleted { item_type: item_type.clone() });
+
+    if item_type == "passkey" {
+        // The OS autofill cache is add-only from the provider's side, so a
+        // deleted passkey must trigger the full clear-and-re-add refresh.
+        crate::commands::provider::schedule_autofill_sync(state);
+    }
 
     Ok(())
 }
@@ -160,6 +201,7 @@ pub fn get_items_by_type(state: &Arc<AppState>, item_type: &str) -> Result<Vec<V
         "securenote" | "note" => ItemType::SecureNote,
         "identity" => ItemType::Identity,
         "file" | "fileblob" => ItemType::FileBlob,
+        "passkey" => ItemType::Passkey,
         _ => return Ok(vault.items.clone()),
     };
     Ok(vault.by_type(&itype).into_iter().cloned().collect())
@@ -860,6 +902,89 @@ mod tests {
         let vault = state.vault.read();
         assert_eq!(vault.tombstones.len(), 1);
         assert_eq!(vault.tombstones[0].deleted_by.as_deref(), Some("test-device"));
+    }
+
+    #[tokio::test]
+    async fn passkey_update_preserves_the_stored_credential() {
+        // The UI round-trips passkey metadata only — the private key never
+        // crosses IPC (there is no getter for it). An incoming update that
+        // carries an empty key must therefore merge against the stored
+        // credential, not overwrite it.
+        let (_dir, state) = unlocked_state();
+
+        let now = Utc::now();
+        let stored_key = "c2VjcmV0LXNjYWxhcg";
+        let added = add_item(&state, VaultItem::Passkey {
+            meta: VaultMeta {
+                id: Uuid::new_v4().to_string(),
+                name: "github.com".into(),
+                notes: None,
+                created_at: now,
+                updated_at: now,
+                last_modified_device: None,
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            },
+            rp_id: "github.com".into(),
+            rp_name: "GitHub".into(),
+            credential_id: "Y3JlZC1pZA".into(),
+            user_handle: "aGFuZGxl".into(),
+            user_name: "alice".into(),
+            user_display_name: "Alice".into(),
+            private_key: stored_key.into(),
+            sign_count: 7,
+        })
+        .await
+        .unwrap();
+
+        // What the UI sends back: same id, no key, edited favorite.
+        let incoming = {
+            let vault = state.vault.read();
+            let item = vault.get_item(added.id()).cloned().unwrap();
+            let meta = match &item {
+                VaultItem::Passkey { meta, .. } => {
+                    let mut meta = meta.clone();
+                    meta.favorite = true;
+                    meta
+                }
+                _ => panic!("seeded item must be a passkey"),
+            };
+            match &item {
+                VaultItem::Passkey {
+                    rp_id,
+                    rp_name,
+                    credential_id,
+                    user_handle,
+                    user_name,
+                    user_display_name,
+                    sign_count,
+                    ..
+                } => VaultItem::Passkey {
+                    meta,
+                    rp_id: rp_id.clone(),
+                    rp_name: rp_name.clone(),
+                    credential_id: credential_id.clone(),
+                    user_handle: user_handle.clone(),
+                    user_name: user_name.clone(),
+                    user_display_name: user_display_name.clone(),
+                    private_key: String::new(), // the UI has no key
+                    sign_count: *sign_count,
+                },
+                _ => unreachable!(),
+            }
+        };
+
+        let updated = update_item(&state, incoming).await.unwrap();
+        match &updated {
+            VaultItem::Passkey { meta, private_key, sign_count, rp_id, .. } => {
+                assert!(meta.favorite, "the edit the user made is kept");
+                assert_eq!(private_key, stored_key, "the stored key survives the update");
+                assert_eq!(*sign_count, 7);
+                assert_eq!(rp_id, "github.com");
+            }
+            _ => panic!("update must not change the item type"),
+        }
     }
 
     #[tokio::test]

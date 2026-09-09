@@ -67,6 +67,21 @@ pub enum IpcMessageType {
     #[serde(alias = "InCoreLoginCandidatesResponse")]
     #[serde(alias = "inCoreLoginCandidatesResponse")]
     InCoreLoginCandidatesResponse,
+    // Windows system-wide passkey provider (vela-win-passkey). The COM
+    // server asks the first one to answer GetLockStatus; the second returns
+    // the vault's passkey metadata for the OS autofill cache.
+    #[serde(alias = "ProviderStatus")]
+    #[serde(alias = "providerStatus")]
+    ProviderStatus,
+    #[serde(alias = "ProviderStatusResponse")]
+    #[serde(alias = "providerStatusResponse")]
+    ProviderStatusResponse,
+    #[serde(alias = "ProviderSyncCredentials")]
+    #[serde(alias = "providerSyncCredentials")]
+    ProviderSyncCredentials,
+    #[serde(alias = "ProviderSyncCredentialsResponse")]
+    #[serde(alias = "providerSyncCredentialsResponse")]
+    ProviderSyncCredentialsResponse,
     SessionStatus,
     SyncStatus,
     OpenVault,
@@ -257,6 +272,10 @@ pub mod server {
             IpcMessageType::PasskeyCreate => handle_passkey_create(&message, host, peer).await,
             IpcMessageType::PasskeyGet => handle_passkey_get(&message, host, peer).await,
             IpcMessageType::PasskeyList => handle_passkey_list(&message, host, peer),
+            IpcMessageType::ProviderStatus => handle_provider_status(host, peer),
+            IpcMessageType::ProviderSyncCredentials => {
+                handle_provider_sync_credentials(host, peer)
+            }
             IpcMessageType::InCoreLogin => handle_in_core_login(&message, host, peer).await,
             IpcMessageType::InCoreLoginCandidates => {
                 handle_in_core_login_candidates(&message, host, peer)
@@ -385,6 +404,17 @@ pub mod server {
             kind: crate::presence::CeremonyKind::Register,
         };
 
+        // Kept out of the `move` closure that consumes `request`: the
+        // Windows autofill push below needs the same entity fields after
+        // the ceremony completes.
+        let autofill_source = (
+            request.rp_id.clone(),
+            request.rp_name.clone(),
+            request.user_handle.clone(),
+            request.user_name.clone(),
+            request.user_display_name.clone(),
+        );
+
         let outcome = with_presence(host, presence, move |host, token| {
             crate::passkey::make_credential(host.state(), &request, token)
                 .map_err(|e| e.to_string())
@@ -394,6 +424,26 @@ pub mod server {
         match outcome {
             Ok(response) => {
                 host.notify_vault_items_changed();
+                // Keep the Windows autofill cache current for passkeys created
+                // through the extension path too. Metadata only, best effort:
+                // a cache miss degrades autofill, never the ceremony.
+                #[cfg(windows)]
+                {
+                    let (rp_id, rp_name, user_handle, user_name, user_display_name) =
+                        autofill_source;
+                    let metadata = vela_win_passkey::CredentialMetadata {
+                        credential_id: b64url_decode(Some(response.credential_id.as_str()))
+                            .unwrap_or_default(),
+                        rp_id,
+                        rp_name,
+                        user_handle,
+                        user_name,
+                        user_display_name,
+                    };
+                    if let Err(e) = vela_win_passkey::push_credential_metadata(&[metadata]) {
+                        warn!("Could not update OS autofill cache: {}", e);
+                    }
+                }
                 IpcMessage {
                     msg_type: IpcMessageType::PasskeyCreateResponse,
                     payload: serde_json::json!({
@@ -535,6 +585,102 @@ pub mod server {
 
         IpcMessage {
             msg_type: IpcMessageType::PasskeyListResponse,
+            payload: serde_json::json!({ "credentials": credentials, "locked": false }),
+            capability: None,
+        }
+    }
+
+    // ── Windows passkey provider (vela-win-passkey) ─────────────────────────
+    //
+    // The COM server needs exactly two things from the desktop: whether the
+    // vault is unlocked (GetLockStatus, answered on every Settings page and
+    // before every autofill render) and the vault's passkey metadata (the OS
+    // keeps its own autofill cache). Both are public metadata — nothing
+    // secret crosses this boundary, matching `handle_passkey_list` above.
+
+    /// Only the provider process may ask for the full credential metadata
+    /// dump. The connection gate already admitted it by exe identity; this
+    /// re-check means a browser-spawned native messaging host — which passes
+    /// the same gate — cannot harvest every RP's passkey list in one call.
+    fn provider_peer_is_ours(peer: &PeerIdentity) -> Result<(), String> {
+        if !peer.is_same_user() {
+            return Err("This request did not come from your own session.".to_string());
+        }
+        let is_provider = peer
+            .exe
+            .as_deref()
+            .map(crate::ipc_gate::is_provider)
+            .unwrap_or(false);
+        if !is_provider {
+            return Err("This endpoint serves only the VELA passkey provider.".to_string());
+        }
+        Ok(())
+    }
+
+    fn handle_provider_status(host: &Arc<dyn Host>, peer: &PeerIdentity) -> IpcMessage {
+        if let Err(reason) = provider_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+        let state = host.state();
+        let locked = {
+            let session = state.session.read();
+            !session.active || session.is_expired()
+        };
+        IpcMessage {
+            msg_type: IpcMessageType::ProviderStatusResponse,
+            payload: serde_json::json!({ "locked": locked }),
+            capability: None,
+        }
+    }
+
+    fn handle_provider_sync_credentials(host: &Arc<dyn Host>, peer: &PeerIdentity) -> IpcMessage {
+        if let Err(reason) = provider_peer_is_ours(peer) {
+            return IpcMessage::error(reason);
+        }
+        let state = host.state();
+        {
+            let session = state.session.read();
+            if !session.active || session.is_expired() {
+                return IpcMessage {
+                    msg_type: IpcMessageType::ProviderSyncCredentialsResponse,
+                    payload: serde_json::json!({ "credentials": [], "locked": true }),
+                    capability: None,
+                };
+            }
+        }
+        let vault = state.vault.read();
+        let credentials: Vec<_> = vault
+            .by_type(&crate::vault::ItemType::Passkey)
+            .into_iter()
+            .filter_map(|item| {
+                let crate::vault::VaultItem::Passkey {
+                    meta,
+                    rp_id,
+                    rp_name,
+                    credential_id,
+                    user_handle,
+                    user_name,
+                    user_display_name,
+                    ..
+                } = item
+                else {
+                    return None;
+                };
+                Some(serde_json::json!({
+                    // Metadata only: the private key stays sealed in the vault.
+                    "id": meta.id,
+                    "credential_id": credential_id,
+                    "rp_id": rp_id,
+                    "rp_name": rp_name,
+                    "user_handle": user_handle,
+                    "user_name": user_name,
+                    "user_display_name": user_display_name,
+                }))
+            })
+            .collect();
+
+        IpcMessage {
+            msg_type: IpcMessageType::ProviderSyncCredentialsResponse,
             payload: serde_json::json!({ "credentials": credentials, "locked": false }),
             capability: None,
         }
@@ -1351,6 +1497,78 @@ pub mod server {
                 let parsed: IpcMessageType = serde_json::from_str(alias).unwrap();
                 assert_eq!(parsed, IpcMessageType::PasskeyGet, "alias {alias}");
             }
+        }
+
+        /// The provider's wire names are the contract with
+        /// `vela-win-passkey`'s `desktop.rs`, which sends
+        /// `provider_status` / `provider_sync_credentials` and matches the
+        /// `<name>_response` replies. Pin them the same way.
+        #[test]
+        fn provider_message_types_have_the_wire_names_the_provider_expects() {
+            let name = |t: IpcMessageType| serde_json::to_string(&t).unwrap();
+
+            assert_eq!(name(IpcMessageType::ProviderStatus), "\"provider_status\"");
+            assert_eq!(
+                name(IpcMessageType::ProviderStatusResponse),
+                "\"provider_status_response\""
+            );
+            assert_eq!(
+                name(IpcMessageType::ProviderSyncCredentials),
+                "\"provider_sync_credentials\""
+            );
+            assert_eq!(
+                name(IpcMessageType::ProviderSyncCredentialsResponse),
+                "\"provider_sync_credentials_response\""
+            );
+
+            for alias in ["\"providerStatus\"", "\"ProviderStatus\""] {
+                let parsed: IpcMessageType = serde_json::from_str(alias).unwrap();
+                assert_eq!(parsed, IpcMessageType::ProviderStatus, "alias {alias}");
+            }
+        }
+
+        /// A browser-spawned host may never pull the vault-wide passkey
+        /// metadata dump: that endpoint is provider-only. The gate admits
+        /// both VELA binaries; this check is the second lock on the wider
+        /// of the two surfaces.
+        #[tokio::test]
+        async fn provider_sync_credentials_refuses_a_browser_host() {
+            let (_dir, host) = MockHost::new(true);
+            let host: Arc<dyn Host> = host;
+            let response = process_message(
+                message(IpcMessageType::ProviderSyncCredentials, serde_json::json!({}), ""),
+                &host,
+                &test_peer(), // test_peer's exe is this test binary, not the provider
+            )
+            .await;
+            assert_eq!(response.msg_type, IpcMessageType::Error);
+            assert!(response.payload["message"]
+                .as_str()
+                .unwrap()
+                .contains("passkey provider"));
+        }
+
+        #[tokio::test]
+        async fn provider_status_reports_lock_state() {
+            let (dir, unlocked) = MockHost::new(true);
+            let host: Arc<dyn Host> = unlocked;
+            let provider_peer = PeerIdentity {
+                pid: Some(std::process::id()),
+                uid: Some(crate::ipc_peer::current_uid()),
+                exe: Some(std::env::current_exe().unwrap().with_file_name("vela-passkey-provider.exe")),
+            };
+            let response =
+                process_message(message(IpcMessageType::ProviderStatus, serde_json::json!({}), ""), &host, &provider_peer).await;
+            assert_eq!(response.msg_type, IpcMessageType::ProviderStatusResponse);
+            assert_eq!(response.payload["locked"], false);
+
+            let (dir2, locked_mock) = MockHost::new(false);
+            drop(dir);
+            let host: Arc<dyn Host> = locked_mock;
+            let response =
+                process_message(message(IpcMessageType::ProviderStatus, serde_json::json!({}), ""), &host, &provider_peer).await;
+            assert_eq!(response.payload["locked"], true);
+            drop(dir2);
         }
 
         // ── M7: the passkey tier ─────────────────────────────────────────────

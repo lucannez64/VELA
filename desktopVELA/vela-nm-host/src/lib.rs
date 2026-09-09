@@ -96,13 +96,33 @@ pub fn desktop_endpoint() -> String {
 /// per-connection gate runs on connect, so keeping exchanges stateless keeps
 /// its job simple.
 pub fn send_to_desktop(mut message: Value, slow: bool) -> Option<Value> {
+    send_to_desktop_inner(message, slow, true)
+}
+
+/// Same exchange, but connection failures stay silent. For best-effort
+/// callers (the passkey provider's `--json` mode, background resync) whose
+/// stderr is either machine-readable protocol output or simply noise the
+/// user cannot act on — a missing pipe is the normal "desktop closed" case.
+pub fn send_to_desktop_quiet(message: Value, slow: bool) -> Option<Value> {
+    send_to_desktop_inner(message, slow, false)
+}
+
+fn send_to_desktop_inner(mut message: Value, slow: bool, log_errors: bool) -> Option<Value> {
     message["capability"] = Value::Null;
 
     #[cfg(unix)]
     {
         use std::os::unix::net::UnixStream;
-        let mut stream =
-            UnixStream::connect(desktop_endpoint()).map_err(|e| eprintln!("Desktop IPC error: {e}")).ok()?;
+        let connect = UnixStream::connect(desktop_endpoint());
+        let mut stream = match connect {
+            Ok(stream) => stream,
+            Err(e) => {
+                if log_errors {
+                    eprintln!("Desktop IPC error: {e}");
+                }
+                return None;
+            }
+        };
         let timeout = Duration::from_secs(if slow { SLOW_TIMEOUT_SECONDS } else { DEFAULT_TIMEOUT_SECONDS });
         let _ = stream.set_read_timeout(Some(timeout));
         let _ = stream.set_write_timeout(Some(timeout));
@@ -136,7 +156,9 @@ pub fn send_to_desktop(mut message: Value, slow: bool) -> Option<Value> {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(e) => {
-                    eprintln!("Desktop IPC error: {e}");
+                    if log_errors {
+                        eprintln!("Desktop IPC error: {e}");
+                    }
                     return None;
                 }
             }
@@ -146,7 +168,7 @@ pub fn send_to_desktop(mut message: Value, slow: bool) -> Option<Value> {
 
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (message, slow);
+        let _ = (message, slow, log_errors);
         None
     }
 }

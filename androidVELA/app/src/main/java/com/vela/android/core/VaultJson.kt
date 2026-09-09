@@ -78,6 +78,19 @@ object VaultJson {
                 .put("breaches", JSONArray().also { array ->
                     breaches.forEach { array.put(it.toJson()) }
                 })
+
+            // Metadata only, on purpose: Android never holds a passkey's
+            // private key, and re-uploading a passkey without it must not be
+            // possible from here.
+            is VaultItem.Passkey -> json
+                .put("item_type", "passkey")
+                .put("rp_id", rpId)
+                .put("rp_name", rpName)
+                .put("credential_id", credentialId)
+                .put("user_handle", userHandle)
+                .put("user_name", userName)
+                .put("user_display_name", userDisplayName)
+                .put("sign_count", signCount)
         }
 
         return json
@@ -180,6 +193,17 @@ object VaultJson {
                         }
                     }
                 }.orEmpty(),
+            )
+
+            "passkey" -> VaultItem.Passkey(
+                meta = meta,
+                rpId = json.optString("rp_id", json.optString("rpId")),
+                rpName = json.optString("rp_name", json.optString("rpName")),
+                credentialId = json.optString("credential_id", json.optString("credentialId")),
+                userHandle = json.optString("user_handle", json.optString("userHandle")),
+                userName = json.optString("user_name", json.optString("userName")),
+                userDisplayName = json.optString("user_display_name", json.optString("userDisplayName")),
+                signCount = json.optLong("sign_count", json.optLong("signCount", 0)),
             )
 
             else -> null

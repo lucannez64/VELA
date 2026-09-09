@@ -152,13 +152,13 @@ pub enum VaultItem {
         /// The relying party ID this credential is scoped to, e.g.
         /// `example.com`. An assertion is only ever produced for a request
         /// whose RP ID matches this exactly.
-        #[serde(alias = "rpId")]
+        #[serde(default, alias = "rpId")]
         rp_id: String,
         #[serde(default, alias = "rpName")]
         rp_name: String,
         /// Opaque credential ID, base64url. The relying party stores this and
         /// echoes it back in `allowCredentials`.
-        #[serde(alias = "credentialId")]
+        #[serde(default, alias = "credentialId")]
         credential_id: String,
         /// The user handle the relying party knows this credential by,
         /// base64url.
@@ -169,7 +169,12 @@ pub enum VaultItem {
         #[serde(default, alias = "userDisplayName")]
         user_display_name: String,
         /// The ES256 private scalar, base64url. **The secret.**
-        #[serde(alias = "privateKey")]
+        ///
+        /// Defaults to empty so a metadata-only passkey (the UI's
+        /// favorite/name edit round-trip) deserializes; `update_item` then
+        /// restores the stored key from the existing item — the key is
+        /// never carried through the front end and never overwritten.
+        #[serde(default, alias = "privateKey")]
         private_key: String,
         /// WebAuthn signature counter. Incremented on every assertion so a
         /// relying party can spot a cloned authenticator.

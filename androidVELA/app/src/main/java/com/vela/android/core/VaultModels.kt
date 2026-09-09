@@ -7,6 +7,7 @@ enum class VaultItemType {
     Login,
     CreditCard,
     SecureNote,
+    Passkey,
     FileBlob,
     BreachMonitor
 }
@@ -90,6 +91,26 @@ sealed interface VaultItem {
     ) : VaultItem {
         override val type: VaultItemType = VaultItemType.BreachMonitor
     }
+
+    /**
+     * A passkey synced from another VELA device. Android can view the
+     * credential's metadata but cannot use it: there is no WebAuthn ceremony
+     * support on Android yet, and the private key is not present anyway —
+     * like the desktop UI, the sync payloads hold metadata for display only.
+     */
+    data class Passkey(
+        override val meta: VaultMeta,
+        val rpId: String = "",
+        val rpName: String = "",
+        val credentialId: String = "",
+        val userHandle: String = "",
+        val userName: String = "",
+        val userDisplayName: String = "",
+        /** WebAuthn signature counter, informational only here. */
+        val signCount: Long = 0,
+    ) : VaultItem {
+        override val type: VaultItemType = VaultItemType.Passkey
+    }
 }
 
 fun VaultItem.withMeta(transform: (VaultMeta) -> VaultMeta): VaultItem = when (this) {
@@ -98,6 +119,7 @@ fun VaultItem.withMeta(transform: (VaultMeta) -> VaultMeta): VaultItem = when (t
     is VaultItem.SecureNote -> copy(meta = transform(meta))
     is VaultItem.FileBlob -> copy(meta = transform(meta))
     is VaultItem.BreachMonitor -> copy(meta = transform(meta))
+    is VaultItem.Passkey -> copy(meta = transform(meta))
 }
 
 fun VaultItem.withId(newId: String) = withMeta { it.copy(id = newId) }
@@ -114,6 +136,7 @@ val VaultItem.url: String? get() = when (this) {
 
 val VaultItem.username: String? get() = when (this) {
     is VaultItem.Login -> username
+    is VaultItem.Passkey -> userName.ifEmpty { userDisplayName.ifEmpty { null } }
     else -> null
 }
 
@@ -128,6 +151,7 @@ val VaultItem.displayValue: String get() = when (this) {
     is VaultItem.SecureNote -> "Secure Note"
     is VaultItem.FileBlob -> fileName
     is VaultItem.BreachMonitor -> email
+    is VaultItem.Passkey -> rpId
 }
 
 val VaultItem.maskedValue: String get() = when (this) {
@@ -140,6 +164,7 @@ val VaultItem.maskedValue: String get() = when (this) {
     is VaultItem.SecureNote -> "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
     is VaultItem.FileBlob -> fileName
     is VaultItem.BreachMonitor -> email
+    is VaultItem.Passkey -> rpId
 }
 
 data class BreachEntry(

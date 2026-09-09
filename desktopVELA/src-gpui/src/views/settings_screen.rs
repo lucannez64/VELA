@@ -81,6 +81,10 @@ pub struct SettingsScreen {
     show_security_key_modal: bool,
     security_key_pin_state: gpui::Entity<EditableTextState>,
     registering_security_key: bool,
+    /// System-wide passkey provider (Windows): last action result shown under
+    /// the section, plus whether an action is in flight.
+    passkey_message: Option<SharedString>,
+    passkey_busy: bool,
     security_key_error: Option<SharedString>,
     show_cloud_backup_modal: bool,
     cloud_remotes: Option<Vec<SharedString>>,
@@ -163,6 +167,8 @@ impl SettingsScreen {
             exporting: false,
             importing: false,
             export_import_status: None,
+    passkey_message: None,
+    passkey_busy: false,
             recovery_status: None,
             show_security_key_modal: false,
             security_key_pin_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
@@ -914,6 +920,7 @@ impl Render for SettingsScreen {
                     .child(sync_section(&palette, &settings, self, window, cx))
                     .child(import_export_section(&palette, self, window, cx))
                     .child(extension_section(&palette, &settings, window, cx))
+                    .child(passkey_section(&palette, self, window, cx))
                     .child(account_section(&palette, &settings, window, cx)),
             )
                     .when_some(self.error.clone(), |el, error| {
@@ -1972,6 +1979,137 @@ fn import_export_section(
                     el.child(div().text_sm().text_color(palette.on_surface_variant).child(status))
                 }),
         )
+}
+
+/// System-wide passkey provider (Windows). Registering makes VELA answer
+/// WebAuthn for every browser and app on the machine — Settings → Accounts →
+/// Passkeys → Advanced options still gates the final toggle, exactly like
+/// 1Password/Bitwarden. Everywhere else this shows an honest "Windows only"
+/// note rather than buttons that cannot work.
+fn passkey_section(
+    palette: &Palette,
+    this: &SettingsScreen,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+) -> impl IntoElement {
+    #[cfg(not(windows))]
+    {
+        let _ = (this, window, cx);
+        div()
+            .child(section_label(palette, "System passkeys"))
+            .child(
+                card(palette).child(field_label(
+                    palette,
+                    "System-wide passkeys require the Windows desktop build.",
+                    "",
+                )),
+            )
+    }
+
+    #[cfg(windows)]
+    {
+        let status = this.passkey_message.clone();
+        let busy = this.passkey_busy;
+        let mut row = card(palette).flex_row().items_center().justify_between().child(
+            div().flex().items_center().gap_3().child(field_label(
+                palette,
+                "Use VELA for passkeys system-wide (all browsers and apps)",
+                "",
+            )),
+        );
+        let buttons = div()
+            .flex()
+            .gap_2()
+            .child(
+                action_button(palette, "passkey-provider-enable", "Enable", window, cx)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.passkey_provider_action(ProviderAction::Enable, cx)
+                    })),
+            )
+            .child(
+                action_button(palette, "passkey-provider-sync", "Sync passkeys", window, cx)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.passkey_provider_action(ProviderAction::Sync, cx)
+                    })),
+            )
+            .child(
+                action_button(palette, "passkey-provider-disable", "Disable", window, cx)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.passkey_provider_action(ProviderAction::Disable, cx)
+                    })),
+            );
+        row = row.child(buttons);
+        div()
+            .child(section_label(palette, "System passkeys"))
+            .child(row)
+            .children(status.map(|message| {
+                card(palette).child(
+                    div()
+                        .font_family(fonts::BODY)
+                        .text_xs()
+                        .text_color(palette.on_surface_variant)
+                        .child(if busy {
+                            SharedString::from("Working...")
+                        } else {
+                            message
+                        }),
+                )
+            }))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProviderAction {
+    Enable,
+    Sync,
+    Disable,
+}
+
+impl SettingsScreen {
+    #[cfg(windows)]
+    fn passkey_provider_action(&mut self, action: ProviderAction, cx: &mut Context<Self>) {
+        if self.passkey_busy {
+            return;
+        }
+        self.passkey_busy = true;
+        self.passkey_message = None;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_spawn_guarded(
+                    "passkey provider",
+                    async move {
+                        match action {
+                            ProviderAction::Enable => vela_desktop_core::commands::provider::register().and_then(|_| {
+                                vela_desktop_core::commands::provider::sync_credentials(&app_state)
+                                    .map(|n| format!("Registered; synced {n} passkey(s). Enable VELA under Settings -> Accounts -> Passkeys -> Advanced options."))
+                            }),
+                            ProviderAction::Sync => {
+                                vela_desktop_core::commands::provider::sync_credentials(&app_state)
+                                    .map(|n| format!("Synced {n} passkey(s) to the OS autofill cache."))
+                            }
+                            ProviderAction::Disable => {
+                                vela_desktop_core::commands::provider::unregister()
+                                    .map(|_| "Unregistered; OS autofill cache cleared.".to_string())
+                            }
+                        }
+                    },
+                )
+                .await
+                .unwrap_or_else(|| Err("Passkey provider action did not complete".to_string()));
+            this.update(cx, |this, cx| {
+                this.passkey_busy = false;
+                this.passkey_message = Some(match outcome {
+                    Ok(message) => message.into(),
+                    Err(e) => e.into(),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
 }
 
 fn extension_section(palette: &Palette, settings: &Settings, window: &mut Window, cx: &mut Context<SettingsScreen>) -> impl IntoElement {

@@ -46,10 +46,17 @@ enum Filter {
     Login,
     CreditCard,
     SecureNote,
+    Passkey,
 }
 
 impl Filter {
-    const ALL: [Filter; 4] = [Filter::All, Filter::Login, Filter::CreditCard, Filter::SecureNote];
+    const ALL: [Filter; 5] = [
+        Filter::All,
+        Filter::Login,
+        Filter::CreditCard,
+        Filter::SecureNote,
+        Filter::Passkey,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -57,6 +64,7 @@ impl Filter {
             Filter::Login => "Logins",
             Filter::CreditCard => "Cards",
             Filter::SecureNote => "Secure Notes",
+            Filter::Passkey => "Passkeys",
         }
     }
 
@@ -66,6 +74,7 @@ impl Filter {
             Filter::Login => item_type == ItemType::Login,
             Filter::CreditCard => item_type == ItemType::CreditCard,
             Filter::SecureNote => item_type == ItemType::SecureNote,
+            Filter::Passkey => item_type == ItemType::Passkey,
         }
     }
 }
@@ -76,6 +85,7 @@ fn type_icon_name(item_type: ItemType) -> &'static str {
         ItemType::Login => "key",
         ItemType::CreditCard => "credit_card",
         ItemType::SecureNote => "note",
+        ItemType::Passkey => "passkey",
         _ => "shield",
     }
 }
@@ -164,7 +174,7 @@ pub struct VaultBrowser {
     cached_rows: Arc<Vec<Row>>,
     /// Per-`Filter::ALL` item counts for the filter chips, derived in the same
     /// pass as `cached_rows` (was four independent scans per render).
-    cached_type_counts: [usize; 4],
+    cached_type_counts: [usize; 5],
     favicon_cache: FaviconCache,
 }
 
@@ -197,7 +207,7 @@ impl VaultBrowser {
             list_state: ListState::new(0, ListAlignment::Top, px(400.)),
             rows_key: None,
             cached_rows: Arc::new(Vec::new()),
-            cached_type_counts: [0; 4],
+            cached_type_counts: [0; 5],
             favicon_cache: favicon_ui::new_cache(),
         }
     }
@@ -366,7 +376,7 @@ impl VaultBrowser {
         }
 
         // All four filter-chip counts in one pass over the vault.
-        let mut counts = [0usize; 4];
+        let mut counts = [0usize; 5];
         for item in self.items.iter() {
             for (i, f) in Filter::ALL.iter().enumerate() {
                 if f.matches(item.item_type()) {
@@ -647,6 +657,9 @@ fn item_row(
         VaultItem::CreditCard { number, .. } => {
             format!("Ending in •••• {}", &number[number.len().saturating_sub(4)..]).into()
         }
+        VaultItem::Passkey { rp_id, user_name, .. } => {
+            format!("{user_name} · {rp_id}").into()
+        }
         _ => item
             .username()
             .or(item.url())
@@ -656,6 +669,7 @@ fn item_row(
     };
     let trailing: SharedString = match item {
         VaultItem::CreditCard { exp, .. } => format!("EXP: {exp}").into(),
+        VaultItem::Passkey { .. } => "passkey".into(),
         _ => "••••••••••••".into(),
     };
     let name: SharedString = item.name().to_string().into();
@@ -687,13 +701,29 @@ fn item_row(
 
     // Matches the original's `FaviconIcon`: only Login items with a
     // non-empty URL ever attempt a real favicon; everything else always
-    // shows the type-icon fallback.
+    // shows the type-icon fallback. Passkeys join the favicon path via
+    // their RP ID — a bare registrable domain, which the fetcher
+    // normalizes to https:// just like a login URL.
     let icon_box = match item {
         VaultItem::Login { url, .. } if !url.is_empty() => {
             let weak_view = weak_view.clone();
             favicon_ui::favicon_or_fallback(
                 palette,
                 url,
+                icon_name,
+                px(48.),
+                favicon_cache,
+                app,
+                move |cx| {
+                    weak_view.update(cx, |_, cx| cx.notify()).ok();
+                },
+            )
+        }
+        VaultItem::Passkey { rp_id, .. } if !rp_id.is_empty() => {
+            let weak_view = weak_view.clone();
+            favicon_ui::favicon_or_fallback(
+                palette,
+                rp_id,
                 icon_name,
                 px(48.),
                 favicon_cache,
@@ -1056,3 +1086,5 @@ fn stat_tile(
                 .child(value.into()),
         )
 }
+
+

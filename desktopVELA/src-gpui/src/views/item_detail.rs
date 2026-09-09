@@ -29,6 +29,7 @@ fn type_icon_name(item_type: ItemType) -> &'static str {
         ItemType::Login => "key",
         ItemType::CreditCard => "credit_card",
         ItemType::SecureNote => "note",
+        ItemType::Passkey => "passkey",
         _ => "shield",
     }
 }
@@ -41,6 +42,7 @@ fn type_label(item_type: ItemType) -> &'static str {
         ItemType::Login => "LOGIN",
         ItemType::CreditCard => "CREDITCARD",
         ItemType::SecureNote => "SECURENOTE",
+        ItemType::Passkey => "PASSKEY",
         _ => "ITEM",
     }
 }
@@ -548,6 +550,24 @@ impl Render for ItemDetail {
                                                     },
                                                 )
                                             }
+                                            // A passkey's RP ID is a bare
+                                            // registrable domain; the
+                                            // fetcher normalizes it to
+                                            // https:// like a login URL.
+                                            VaultItem::Passkey { rp_id, .. } if !rp_id.is_empty() => {
+                                                let weak_view = cx.weak_entity();
+                                                favicon_ui::favicon_or_fallback(
+                                                    &palette,
+                                                    rp_id,
+                                                    icon_name,
+                                                    px(80.),
+                                                    &self.favicon_cache,
+                                                    cx,
+                                                    move |cx| {
+                                                        weak_view.update(cx, |_, cx| cx.notify()).ok();
+                                                    },
+                                                )
+                                            }
                                             _ => favicon_ui::fallback_icon_box(&palette, icon_name, px(80.))
                                                 .into_any_element(),
                                         }
@@ -639,7 +659,11 @@ impl Render for ItemDetail {
                                         this.toggle_favorite(cx);
                                     })),
                             )
-                            .when(!is_received_share, |el| {
+                            // Passkeys are ceremony-created credentials whose
+                            // private key never crosses IPC; the generic
+                            // editor has nothing to edit and sharing one
+                            // would need its own flow.
+                            .when(!is_received_share && !matches!(item, VaultItem::Passkey { .. }), |el| {
                                 el.child(
                                     div()
                                         .id("edit-item")

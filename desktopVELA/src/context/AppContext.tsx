@@ -11,12 +11,27 @@ export interface SessionStatus {
 export interface VaultItem {
   id: string;
   name: string;
-  item_type: 'login' | 'creditCard' | 'secureNote' | 'identity' | 'file' | 'breachMonitor';
+  item_type:
+    | 'login'
+    | 'creditCard'
+    | 'secureNote'
+    | 'identity'
+    | 'file'
+    | 'breachMonitor'
+    | 'passkey';
   username?: string;
   password?: string;
   url?: string;
   totp?: string;
   notes?: string;
+  // Passkey metadata. The private key never leaves the vault — the backend
+  // deliberately does not expose it over IPC (VaultItem::Passkey has no
+  // Serialize exposure of the key), so none of these are secrets.
+  rp_id?: string;
+  rp_name?: string;
+  credential_id?: string;
+  user_handle?: string;
+  sign_count?: number;
   /// Does this site make you re-prove the old password before changing it?
   /// Decides what an in-core login session is worth if it leaks.
   credential_change_needs_reauth?: boolean;
@@ -70,6 +85,10 @@ export function isSecureNoteItem(item: VaultItem): item is VaultItem & { item_ty
 
 export function isBreachMonitorItem(item: VaultItem): item is VaultItem & { item_type: 'breachMonitor' } {
   return item.item_type === 'breachMonitor';
+}
+
+export function isPasskeyItem(item: VaultItem): item is VaultItem & { item_type: 'passkey' } {
+  return item.item_type === 'passkey';
 }
 
 export function toBackendItem(item: VaultItem): object {
@@ -133,6 +152,20 @@ export function toBackendItem(item: VaultItem): object {
         breach_count: item.breach_count || 0,
         breaches: item.breaches || [],
       };
+    case 'passkey':
+      // Read-only round-trip: the UI never holds the private key, and
+      // `update_item` restores the stored credential server-side (well,
+      // desktop-side) from the vault. Send what we have.
+      return {
+        ...base,
+        item_type: 'passkey',
+        rp_id: item.rp_id || '',
+        rp_name: item.rp_name || '',
+        credential_id: item.credential_id || '',
+        user_handle: item.user_handle || '',
+        user_name: item.username || '',
+        user_display_name: item.username || '',
+      };
     default:
       return { ...base, item_type: item.item_type };
   }
@@ -189,6 +222,18 @@ export function fromBackendItem(item: any): VaultItem {
         checked_at: item.checked_at,
         breach_count: item.breach_count || 0,
         breaches: item.breaches || [],
+      };
+    case 'passkey':
+      return {
+        ...base,
+        item_type: 'passkey',
+        rp_id: item.rp_id,
+        rp_name: item.rp_name,
+        credential_id: item.credential_id,
+        user_handle: item.user_handle,
+        // The username the passkey authenticates as — rendered by the same
+        // field the logins use.
+        username: item.user_name,
       };
     default:
       return { ...base, item_type: item.item_type };

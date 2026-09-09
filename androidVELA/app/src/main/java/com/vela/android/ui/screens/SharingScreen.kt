@@ -295,6 +295,7 @@ private fun ItemPickerDialog(
                                     is VaultItem.Login -> "Login"
                                     is VaultItem.CreditCard -> "Card"
                                     is VaultItem.SecureNote -> "Note"
+                                    is VaultItem.Passkey -> "Passkey"
                                     else -> "Item"
                                 }
                                 Text(

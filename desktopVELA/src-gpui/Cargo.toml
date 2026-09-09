@@ -95,6 +95,17 @@ resources = [
     # Keep the established installed-host path used by the Windows native
     # messaging manifests. Registration remains extension-ID-specific.
     { src = "../../target/release/vela-native-messaging-host.exe", target = "native-messaging-host/vela-native-messaging-host.exe" },
+    # The Windows system-wide passkey provider: the exe (which carries the
+    # embedded identity manifest) plus the sparse identity package it
+    # bootstraps from (`--register` registers the .msix against this
+    # directory as the external location, then re-execs with identity).
+    # The .msix must be signed by a certificate the target machines trust;
+    # the release workflow builds it next to the other binaries.
+    { src = "../../target/release/vela-passkey-provider.exe", target = "passkey-provider/vela-passkey-provider.exe" },
+    { src = "../../target/release/passkey-provider-msix/VELA.PasskeyProvider.msix", target = "passkey-provider/VELA.PasskeyProvider.msix" },
+    { src = "../vela-win-passkey/msix/Assets/storelogo.png", target = "passkey-provider/Assets/storelogo.png" },
+    { src = "../vela-win-passkey/msix/Assets/Square44x44Logo.png", target = "passkey-provider/Assets/Square44x44Logo.png" },
+    { src = "../vela-win-passkey/msix/Assets/Square150x150Logo.png", target = "passkey-provider/Assets/Square150x150Logo.png" },
 ]
 
 [package.metadata.packager.nsis]

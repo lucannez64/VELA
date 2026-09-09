@@ -89,7 +89,24 @@ jobs:
 
       - name: Build GPUI app and native-messaging host
         working-directory: desktopVELA
-        run: cargo build --release -p vela-desktop-gpui -p vela-nm-host
+        run: cargo build --release -p vela-desktop-gpui -p vela-nm-host -p vela-win-passkey
+
+      # The sparse identity package for the system-wide passkey provider.
+      # Shipped unsigned; the release pipeline signs it alongside the
+      # installers — Windows refuses Add-AppxPackage for an untrusted
+      # package (CERT_E_UNTRUSTEDROOT), so production releases must sign
+      # with VELA's code-signing certificate.
+      - name: Build passkey provider identity package
+        shell: pwsh
+        working-directory: desktopVELA
+        run: |
+          $makeappx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter MakeAppx.exe |
+            Where-Object { $_.Directory.Name -eq 'x64' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $makeappx) { throw 'MakeAppx.exe not found (Windows SDK)' }
+          New-Item -ItemType Directory -Force target/release/passkey-provider-msix | Out-Null
+          & $makeappx.FullName pack /o /d vela-win-passkey/msix /nv /p target/release/passkey-provider-msix/VELA.PasskeyProvider.msix
+          if ($LASTEXITCODE -ne 0) { throw 'MakeAppx failed' }
 
       # cargo-packager is framework-neutral and produces the same two Windows
       # installer formats without compiling or embedding the Tauri/WebView UI.

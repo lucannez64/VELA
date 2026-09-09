@@ -117,6 +117,7 @@ export default function QuickSearchWindow() {
       case 'login': return 'key';
       case 'creditCard': return 'credit_card';
       case 'secureNote': return 'note';
+      case 'passkey': return 'passkey';
       default: return 'shield';
     }
   };
