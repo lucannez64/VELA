@@ -597,9 +597,13 @@ pub fn validate_export_path(store_path: &Path, raw: &str) -> Result<PathBuf, Str
     if path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err("Export path must not contain parent-directory components".to_string());
     }
-    let is_json = path.extension().map(|e| e.eq_ignore_ascii_case("json")).unwrap_or(false);
-    if !is_json {
-        return Err("Export path must have a .json extension".to_string());
+    let allowed = ["json", "csv", "vela"];
+    let ext_ok = path
+        .extension()
+        .map(|e| allowed.iter().any(|a| e.eq_ignore_ascii_case(a)))
+        .unwrap_or(false);
+    if !ext_ok {
+        return Err("Export path must have a .json, .csv or .vela extension".to_string());
     }
 
     let parent = match path.parent() {
@@ -845,6 +849,199 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
         duplicates: duplicates_count,
         total: total_count,
     })
+}
+
+// ── Export: encrypted archive (.vela) and CSV ────────────────────────────────
+//
+// Three export shapes, three purposes:
+// - `.vela` — a full backup of every item (logins, notes, cards, passkeys,
+//   …) encrypted under a passphrase chosen at export time. Self-contained:
+//   it restores without the master key, on this device or a fresh one.
+// - CSV — the migration-OUT format. Bitwarden's CSV schema is written
+//   because every other manager imports it.
+// - JSON (see [`export_vault_bitwarden_json`]) — the pre-existing plaintext
+//   login export.
+//
+// People do not commit to a vault they cannot leave: the plaintext exports
+// are deliberate, and the archive keeps passkey material and TOTP seeds —
+// the things CSV cannot represent — out of plaintext.
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VelaArchive {
+    kind: String,
+    version: u32,
+    items: Vec<VaultItem>,
+}
+
+const ARCHIVE_KIND: &str = "vela-archive";
+const ARCHIVE_VERSION: u32 = 1;
+const ARCHIVE_MIN_PASSPHRASE_LEN: usize = 8;
+
+/// Serialize every vault item and seal it under `passphrase` (Argon2id +
+/// AEAD, per-blob salt — the same machinery the vault file itself uses).
+///
+/// The archive is deliberately independent of the master key: a backup that
+/// needed the RMS would be useless after "lost device, new install".
+pub fn export_vault_encrypted(state: &Arc<AppState>, passphrase: &str) -> Result<Vec<u8>, String> {
+    require_unlocked(state)?;
+
+    // Deliberately not trimmed: spaces may be intentional parts of a
+    // passphrase, and silent normalization would lock out anyone who typed
+    // leading/trailing whitespace.
+    if passphrase.chars().count() < ARCHIVE_MIN_PASSPHRASE_LEN {
+        return Err(format!(
+            "Passphrase must be at least {ARCHIVE_MIN_PASSPHRASE_LEN} characters"
+        ));
+    }
+
+    let items = state.vault.read().items.clone();
+    let payload = VelaArchive {
+        kind: ARCHIVE_KIND.to_string(),
+        version: ARCHIVE_VERSION,
+        items,
+    };
+    let plaintext =
+        serde_json::to_vec(&payload).map_err(|e| format!("Failed to serialize export: {e}"))?;
+
+    vela_crypto::password_kdf::seal_with_password(passphrase.as_bytes(), &plaintext)
+        .map_err(|e| format!("Failed to encrypt export: {e}"))
+}
+
+/// Open a `.vela` archive and return its items without touching the vault —
+/// separated from [`import_vela_archive`] so the UI can validate the
+/// passphrase before choosing what to do with the contents.
+pub fn open_vela_archive(data: &[u8], passphrase: &str) -> Result<Vec<VaultItem>, String> {
+    let plaintext = zeroize::Zeroizing::new(
+        vela_crypto::password_kdf::open_with_password(passphrase.as_bytes(), data)
+            .map_err(|_| "Wrong passphrase, or not a VELA archive".to_string())?,
+    );
+    let archive: VelaArchive = serde_json::from_slice(&plaintext)
+        .map_err(|_| "This file is not a VELA archive".to_string())?;
+    if archive.kind != ARCHIVE_KIND || archive.version != ARCHIVE_VERSION {
+        return Err(format!(
+            "Unsupported archive (kind {}, version {})",
+            archive.kind, archive.version
+        ));
+    }
+    Ok(archive.items)
+}
+
+/// Restore a `.vela` archive. Dedup is by item id: the archive is the same
+/// vault's own backup, so a present id means the item is already here —
+/// restoring into an existing vault is idempotent, and importing over a
+/// fresh vault lands every item with its original metadata intact.
+pub fn import_vela_archive(
+    state: &Arc<AppState>,
+    data: &[u8],
+    passphrase: &str,
+) -> Result<ImportResult, String> {
+    let items = open_vela_archive(data, passphrase)?;
+    require_unlocked(state)?;
+
+    let total_count = items.len() as u32;
+    let mut added_count = 0u32;
+    let mut duplicates_count = 0u32;
+    {
+        let mut vault = state.vault.write();
+        for item in items {
+            if vault.get_item(item.id()).is_some() {
+                duplicates_count += 1;
+                continue;
+            }
+            vault.add_item(item);
+            added_count += 1;
+        }
+    }
+
+    save_vault(state)?;
+
+    Ok(ImportResult {
+        added: added_count,
+        skipped: 0,
+        duplicates: duplicates_count,
+        total: total_count,
+    })
+}
+
+/// Serialize all Login items as Bitwarden-schema CSV — the format every
+/// other manager imports, so this is the door OUT of VELA.
+///
+/// Cells that spreadsheet apps would execute as formulas (`=`, `+`, `-`,
+/// `@`, tab leads) are prefixed with a single quote, the standard mitigation
+/// (Bitwarden does the same): site-controlled names otherwise become live
+/// formulas the moment the user opens the file in Excel.
+pub fn export_vault_csv(state: &Arc<AppState>) -> Result<String, String> {
+    require_unlocked(state)?;
+    let vault = state.vault.read();
+
+    let mut out = Vec::new();
+    {
+        let mut writer = csv::WriterBuilder::new().from_writer(&mut out);
+        writer
+            .write_record([
+                "folder",
+                "favorite",
+                "type",
+                "name",
+                "notes",
+                "fields",
+                "reprompt",
+                "login_uri",
+                "login_username",
+                "login_password",
+                "login_totp",
+            ])
+            .map_err(|e| format!("Failed to write export: {e}"))?;
+
+        for item in vault.items.iter() {
+            let VaultItem::Login {
+                meta,
+                url,
+                username,
+                pass,
+                totp,
+                ..
+            } = item
+            else {
+                continue;
+            };
+            let notes = meta.notes.as_deref().unwrap_or("");
+            writer
+                .write_record([
+                    csv_export_safe(""),
+                    csv_export_safe(if meta.favorite { "true" } else { "" }),
+                    csv_export_safe("login"),
+                    csv_export_safe(&meta.name),
+                    csv_export_safe(notes),
+                    csv_export_safe(""),
+                    csv_export_safe(""),
+                    csv_export_safe(url),
+                    csv_export_safe(username),
+                    csv_export_safe(pass),
+                    csv_export_safe(totp.as_deref().unwrap_or("")),
+                ])
+                .map_err(|e| format!("Failed to write export: {e}"))?;
+        }
+        writer.flush().map_err(|e| format!("Failed to write export: {e}"))?;
+    }
+
+    String::from_utf8(out).map_err(|_| "Export produced invalid UTF-8".to_string())
+}
+
+fn csv_export_safe(cell: &str) -> String {
+    if cell.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{cell}")
+    } else {
+        cell.to_string()
+    }
+}
+
+/// Write raw export bytes to a validated path (for the binary `.vela`
+/// archive; text exports keep flowing through [`save_vault_export_file`]).
+pub fn save_vault_export_bytes(state: &Arc<AppState>, path: &str, data: &[u8]) -> Result<(), String> {
+    require_unlocked(state)?;
+    let validated = validate_export_path(state.store.store_path(), path)?;
+    std::fs::write(validated, data).map_err(|e| format!("Failed to write export file: {e}"))
 }
 
 #[cfg(test)]
@@ -1285,6 +1482,134 @@ mod tests {
         let csv = "name,url,username,password\nA,a.com,u,p";
         let err = import_vault_file(&state, csv).unwrap_err();
         assert!(err.contains("locked"), "{err}");
+    }
+
+    #[test]
+    fn encrypted_archive_roundtrips_every_item_type() {
+        let (_dir, state) = unlocked_state();
+        {
+            let mut vault = state.vault.write();
+            vault.add_item(login("GH", "https://github.com", "alice", "s3cret"));
+            let now = Utc::now();
+            vault.add_item(VaultItem::SecureNote {
+                meta: VaultMeta {
+                    id: "note-1".into(),
+                    name: "Recovery codes".into(),
+                    notes: None,
+                    created_at: now,
+                    updated_at: now,
+                    last_modified_device: None,
+                    favorite: false,
+                    shared: false,
+                    share_recipient: None,
+                },
+                title: "Recovery codes".into(),
+                content: "abc-def-123".into(),
+            });
+            vault.add_item(VaultItem::Passkey {
+                meta: VaultMeta {
+                    id: "pk-1".into(),
+                    name: "github".into(),
+                    notes: None,
+                    created_at: now,
+                    updated_at: now,
+                    last_modified_device: None,
+                    favorite: false,
+                    shared: false,
+                    share_recipient: None,
+                },
+                rp_id: "github.com".into(),
+                rp_name: "GitHub".into(),
+                credential_id: "Y3JlZC1pZA".into(),
+                user_handle: "aGFuZGxl".into(),
+                user_name: "alice".into(),
+                user_display_name: "Alice".into(),
+                private_key: "c2VjcmV0LXNjYWxhcg".into(),
+                sign_count: 7,
+            });
+        }
+
+        let blob = export_vault_encrypted(&state, "correct horse battery").unwrap();
+
+        // The archive must not contain plaintext secrets.
+        let blob_str = String::from_utf8_lossy(&blob);
+        assert!(!blob_str.contains("s3cret"), "password visible in archive");
+        assert!(!blob_str.contains("abc-def-123"), "note visible in archive");
+
+        // Wrong passphrase is refused without a confusing message.
+        let err = open_vela_archive(&blob, "wrong passphrase").unwrap_err();
+        assert!(err.contains("Wrong passphrase"), "{err}");
+
+        // The right passphrase restores every item, metadata intact.
+        let restored = open_vela_archive(&blob, "correct horse battery").unwrap();
+        assert_eq!(restored.len(), 3);
+        let passkey = restored
+            .iter()
+            .find(|i| matches!(i, VaultItem::Passkey { .. }))
+            .expect("passkey material must survive the backup");
+
+        // Restoring into this same vault is idempotent.
+        let result = import_vela_archive(&state, &blob, "correct horse battery").unwrap();
+        assert_eq!((result.added, result.duplicates), (0, 3), "{result:?}");
+        assert_eq!(state.vault.read().items.len(), 3);
+
+        // Restoring into a fresh vault lands everything, keys included.
+        let (dir_b, state_b) = unlocked_state();
+        let result = import_vela_archive(&state_b, &blob, "correct horse battery").unwrap();
+        assert_eq!((result.added, result.duplicates), (3, 0), "{result:?}");
+        drop(dir_b);
+        let vault_b = state_b.vault.read();
+        let pk = vault_b.get_item("pk-1").unwrap();
+        assert_eq!(pk.credential_id(), Some("Y3JlZC1pZA"));
+        let _ = passkey;
+    }
+
+    #[test]
+    fn archive_passphrase_is_enforced() {
+        let (_dir, state) = unlocked_state();
+        let err = export_vault_encrypted(&state, "short").unwrap_err();
+        assert!(err.contains("at least 8"), "{err}");
+    }
+
+    #[test]
+    fn csv_export_is_bitwarden_schema_and_formula_safe() {
+        let (_dir, state) = unlocked_state();
+        {
+            let mut vault = state.vault.write();
+            vault.add_item(login("GH", "https://github.com", "alice", "hunter2"));
+            // A site name that Excel would execute as a formula.
+            vault.add_item(login("=HYPERLINK(evil)", "https://evil.example", "bob", "+1234"));
+            vault.add_item(VaultItem::SecureNote {
+                meta: VaultMeta {
+                    id: "note-1".into(),
+                    name: "note".into(),
+                    notes: None,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                    last_modified_device: None,
+                    favorite: false,
+                    shared: false,
+                    share_recipient: None,
+                },
+                title: "note".into(),
+                content: "c".into(),
+            });
+        }
+
+        let csv_data = export_vault_csv(&state).unwrap();
+        // Non-login items are excluded; two logins = header + 2 rows.
+        let rows: Vec<&str> = csv_data.lines().collect();
+        assert_eq!(rows.len(), 3, "{csv_data}");
+        assert!(rows[0].starts_with("folder,favorite,type,name,notes,"));
+        assert!(rows[1].contains("alice"));
+        assert!(rows[1].contains("hunter2"));
+        // Formula-leading cells are neutralized with a leading quote.
+        assert!(rows[2].contains("'=HYPERLINK(evil)"), "{csv_data}");
+        assert!(rows[2].contains("'+1234"), "{csv_data}");
+        // The CSV must round-trip through our own importer (2 rows, no dups).
+        let (_dir2, state2) = unlocked_state();
+        let result = import_vault_file(&state2, &csv_data).unwrap();
+        assert_eq!((result.added, result.duplicates), (2, 0), "{result:?}");
     }
 
     #[test]

@@ -100,7 +100,22 @@ pub struct SettingsScreen {
     acknowledging_trusted_contact: bool,
     trusted_contact_error: Option<SharedString>,
     finalizing_recovery: bool,
+    show_archive_modal: bool,
+    /// What the open passphrase modal is for: creating a `.vela` backup, or
+    /// restoring one whose bytes were already picked.
+    archive_pending: Option<ArchivePending>,
+    archive_passphrase_state: gpui::Entity<EditableTextState>,
+    archive_confirm_state: gpui::Entity<EditableTextState>,
+    archive_busy: bool,
+    archive_error: Option<SharedString>,
     _pulse_task: Task<()>,
+}
+
+/// What the open passphrase modal is for: creating a `.vela` backup, or
+/// restoring one whose bytes were already picked.
+enum ArchivePending {
+    Export,
+    Import { data: Vec<u8>, file_name: String },
 }
 
 /// Port of `ConflictResolution.tsx`'s local carousel-index state.
@@ -187,6 +202,12 @@ impl SettingsScreen {
             acknowledging_trusted_contact: false,
             trusted_contact_error: None,
             finalizing_recovery: false,
+            show_archive_modal: false,
+            archive_pending: None,
+            archive_passphrase_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            archive_confirm_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            archive_busy: false,
+            archive_error: None,
             _pulse_task: animation::spawn_pulse_ticker(cx),
         }
     }
@@ -633,12 +654,55 @@ impl SettingsScreen {
         .detach();
     }
 
+    /// CSV export (the migration-out format) — same shape as the React
+    /// handler: generate in the background, native save dialog, write.
+    fn export_vault_csv(&mut self, cx: &mut Context<Self>) {
+        self.exporting = true;
+        self.export_import_status = None;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result: Result<Option<()>, String> = async {
+                let csv = cx
+                    .background_spawn_guarded("export vault csv", {
+                        let app_state = app_state.clone();
+                        async move { vela_desktop_core::commands::vault::export_vault_csv(&app_state) }
+                    })
+                    .await
+                    .unwrap_or_else(|| Err("Export failed unexpectedly".to_string()))?;
+
+                let default_name = format!("vela-export-{}.csv", chrono::Local::now().format("%Y-%m-%d"));
+                let file = rfd::AsyncFileDialog::new()
+                    .set_file_name(&default_name)
+                    .add_filter("CSV", &["csv"])
+                    .save_file()
+                    .await;
+                let Some(file) = file else { return Ok(None) };
+                file.write(csv.as_bytes()).await.map_err(|e| format!("Failed to write export file: {e}"))?;
+                Ok(Some(()))
+            }
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.exporting = false;
+                this.export_import_status = match result {
+                    Ok(Some(())) => Some("CSV exported".into()),
+                    Ok(None) => None, // user cancelled the save dialog
+                    Err(e) => Some(format!("Export failed: {e}").into()),
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Port of `SettingsScreen.tsx`'s export handler: `@tauri-apps/plugin-
     /// dialog`'s native save picker + `save_vault_export_file` become one
     /// native `rfd` save dialog (no separate renderer process, so no IPC
     /// round-trip needed to hand the path back).
-    fn export_vault(&mut self, cx: &mut Context<Self>) {
-        self.exporting = true;
+    fn export_vault(&mut self, cx: &mut Context<Self>) {        self.exporting = true;
         self.export_import_status = None;
         cx.notify();
 
@@ -724,6 +788,150 @@ impl SettingsScreen {
                     }
                     Ok(None) => None, // user cancelled the open dialog
                     Err(e) => Some(format!("Import failed: {e}").into()),
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ── Encrypted backup (.vela) ─────────────────────────────────────────────
+
+    fn open_archive_export(&mut self, cx: &mut Context<Self>) {
+        self.archive_pending = Some(ArchivePending::Export);
+        self.show_archive_modal = true;
+        self.archive_error = None;
+        self.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
+        self.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+        cx.notify();
+    }
+
+    fn open_archive_import(&mut self, cx: &mut Context<Self>) {
+        self.archive_error = None;
+        cx.spawn(async move |this, cx| {
+            // The dialog runs on the main thread; the read is quick.
+            let picked = rfd::AsyncFileDialog::new()
+                .add_filter("VELA encrypted backup", &["vela"])
+                .pick_file()
+                .await;
+            let Some(file) = picked else { return };
+            let data = file.read().await;
+            let file_name = file.file_name();
+            this.update(cx, |this, cx| {
+                this.archive_pending = Some(ArchivePending::Import { data, file_name });
+                this.show_archive_modal = true;
+                this.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
+                this.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn close_archive_modal(&mut self, cx: &mut Context<Self>) {
+        self.show_archive_modal = false;
+        self.archive_pending = None;
+        self.archive_error = None;
+        // Don't leave a passphrase sitting in the input after the modal
+        // closes.
+        self.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
+        self.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+        cx.notify();
+    }
+
+    fn confirm_archive_modal(&mut self, cx: &mut Context<Self>) {
+        if self.archive_busy {
+            return;
+        }
+        let Some(pending) = self.archive_pending.take() else { return };
+
+        let passphrase = self.archive_passphrase_state.read(cx).as_str().to_string();
+        let confirm = self.archive_confirm_state.read(cx).as_str().to_string();
+
+        if matches!(pending, ArchivePending::Export) && passphrase.chars().count() < 8 {
+            self.archive_pending = Some(pending);
+            self.archive_error = Some("Passphrase must be at least 8 characters.".into());
+            cx.notify();
+            return;
+        }
+        if passphrase != confirm {
+            self.archive_pending = Some(pending);
+            self.archive_error = Some("Passphrases do not match.".into());
+            cx.notify();
+            return;
+        }
+
+        self.archive_busy = true;
+        self.archive_error = None;
+        cx.notify();
+
+        let app_state = self.app_state.clone();
+        cx.spawn(async move |this, cx| {
+            let result: Result<Option<String>, String> = async {
+                match pending {
+                    ArchivePending::Export => {
+                        let blob = cx
+                            .background_spawn_guarded("encrypt vault backup", {
+                                let app_state = app_state.clone();
+                                let passphrase = passphrase.clone();
+                                async move {
+                                    vela_desktop_core::commands::vault::export_vault_encrypted(
+                                        &app_state, &passphrase,
+                                    )
+                                }
+                            })
+                            .await
+                            .unwrap_or_else(|| Err("Export failed unexpectedly".to_string()))?;
+
+                        let default_name =
+                            format!("vela-backup-{}.vela", chrono::Local::now().format("%Y-%m-%d"));
+                        let file = rfd::AsyncFileDialog::new()
+                            .set_file_name(&default_name)
+                            .add_filter("VELA encrypted backup", &["vela"])
+                            .save_file()
+                            .await;
+                        let Some(file) = file else { return Ok(None) };
+                        file.write(&blob)
+                            .await
+                            .map_err(|e| format!("Failed to write backup: {e}"))?;
+                        Ok(Some("Encrypted backup saved".to_string()))
+                    }
+                    ArchivePending::Import { data, file_name } => {
+                        let result = cx
+                            .background_spawn_guarded("restore vault backup", {
+                                let app_state = app_state.clone();
+                                let passphrase = passphrase.clone();
+                                async move {
+                                    vela_desktop_core::commands::vault::import_vela_archive(
+                                        &app_state, &data, &passphrase,
+                                    )
+                                }
+                            })
+                            .await
+                            .unwrap_or_else(|| Err("Restore failed unexpectedly".to_string()))?;
+                        let mut status = format!("Restored {} of {} items", result.added, result.total);
+                        if result.duplicates > 0 {
+                            status.push_str(&format!(", {} already present", result.duplicates));
+                        }
+                        let _ = file_name;
+                        Ok(Some(status))
+                    }
+                }
+            }
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.archive_busy = false;
+                this.show_archive_modal = false;
+                this.archive_pending = None;
+                this.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
+                this.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+                this.export_import_status = match result {
+                    Ok(Some(status)) => Some(status.into()),
+                    Ok(None) => Some("Backup cancelled".into()), // path dialog cancelled
+                    Err(e) => Some(format!("Backup failed: {e}").into()),
                 };
                 cx.notify();
             })
@@ -946,6 +1154,7 @@ impl Render for SettingsScreen {
             .when(self.show_trusted_contact_modal, |el| {
                 el.child(trusted_contact_modal(&palette, self, window, cx))
             })
+            .when(self.show_archive_modal, |el| el.child(archive_passphrase_modal(&palette, self, window, cx)))
             .into_any_element()
     }
 }
@@ -1957,6 +2166,7 @@ fn import_export_section(
 ) -> impl IntoElement {
     let exporting = screen.exporting;
     let importing = screen.importing;
+    let archive_busy = screen.archive_busy;
     let status = screen.export_import_status.clone();
 
     div()
@@ -1981,10 +2191,50 @@ fn import_export_section(
                         .items_center()
                         .justify_between()
                         .gap_4()
+                        .child(field_label(palette, "Export CSV", "Logins as Bitwarden-schema CSV — imports into every other manager"))
+                        .child(
+                            action_button(palette, "export-vault-csv", "Export", window, cx)
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.export_vault_csv(cx))),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .child(field_label(
+                            palette,
+                            "Encrypted backup (.vela)",
+                            "Every item, encrypted under a passphrase you choose — restores without your master key",
+                        ))
+                        .child(
+                            action_button(palette, "export-vault-encrypted", if archive_busy { "Working…" } else { "Backup" }, window, cx)
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.open_archive_export(cx))),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
                         .child(field_label(palette, "Import vault", "Bitwarden, 1Password, KeePass, Chrome/Edge/Safari, Proton Pass — detected automatically"))
                         .child(
                             action_button(palette, "import-vault", if importing { "Importing…" } else { "Import" }, window, cx)
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.import_vault(cx))),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .child(field_label(palette, "Restore backup (.vela)", "Restores an encrypted backup created by VELA — idempotent, by item id"))
+                        .child(
+                            action_button(palette, "import-vault-archive", "Restore", window, cx)
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.open_archive_import(cx))),
                         ),
                 )
                 .when_some(status, |el, status| {
@@ -3012,4 +3262,185 @@ fn trusted_contact_modal(
                 |this, cx| this.acknowledge_trusted_contact(cx),
             )),
     )
+}
+
+/// Passphrase prompt for the encrypted `.vela` backup — export (create,
+/// passphrase + confirmation) and import (restore, passphrase + repeat).
+/// Styled after `security_key_modal`; the passphrase never outlives the
+/// modal (inputs are cleared on open and on close).
+fn archive_passphrase_modal(
+    palette: &Palette,
+    screen: &SettingsScreen,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+) -> impl IntoElement {
+    let is_export = matches!(screen.archive_pending, Some(ArchivePending::Export));
+    let busy = screen.archive_busy;
+
+    let cancel_hover = animation::hover_transition("archive-cancel", window, cx);
+    let cancel_t = *cancel_hover.evaluate(window, cx);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
+
+    let confirm_hover = animation::hover_transition("archive-confirm", window, cx);
+    let confirm_t = *confirm_hover.evaluate(window, cx);
+    let confirm_bg = animation::lerp_hsla(
+        palette.primary,
+        gpui::Hsla { a: 0.9, ..palette.primary },
+        confirm_t,
+    );
+
+    div()
+        .id("archive-modal-backdrop")
+        .absolute()
+        .inset_0()
+        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .flex()
+        .items_center()
+        .justify_center()
+        .p_4()
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_archive_modal(cx)))
+        .child(
+            div()
+                .id("archive-modal-body")
+                .map(|el| crate::keyboard::trap_tab(el, "archive-modal-trap", window, cx))
+                .w(px(420.))
+                .p_8()
+                .rounded_2xl()
+                .bg(palette.surface_container)
+                .border_1()
+                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .flex()
+                .flex_col()
+                .gap_4()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
+                    this.confirm_archive_modal(cx);
+                }))
+                .child(
+                    div()
+                        .font_family(fonts::HEADLINE)
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_xl()
+                        .text_color(palette.on_surface)
+                        .child(if is_export { "Encrypted backup" } else { "Restore backup" }),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child(if is_export {
+                            "Every item — passkeys and TOTP seeds included — is encrypted under this \
+                             passphrase. It is independent of your master password and there is no \
+                             recovery for it, so keep it somewhere safe."
+                        } else {
+                            "Enter the passphrase this backup was encrypted with."
+                        }),
+                )
+                .child(fonts::tracked_text(if is_export { "NEW PASSPHRASE" } else { "PASSPHRASE" }, px(10.), 0.15)
+                    .text_xs()
+                    .text_color(palette.outline))
+                .child(
+                    text_input("archive-passphrase-input")
+                        .state(screen.archive_passphrase_state.downgrade())
+                        .placeholder("Passphrase")
+                        .caret_blink_interval_500ms()
+                        .mask_char(Some('*'))
+                        .font_family(fonts::MONO)
+                        .bg(palette.surface_container_highest)
+                        .text_color(palette.on_surface)
+                        .caret_color(palette.on_surface)
+                        .rounded_lg()
+                        .p_3()
+                        .w_full()
+                        .min_h_auto()
+                        .whitespace_nowrap()
+                        .overflow_x_scroll(),
+                )
+                .child(fonts::tracked_text(if is_export { "REPEAT" } else { "PASSPHRASE (CONFIRM)" }, px(10.), 0.15)
+                    .text_xs()
+                    .text_color(palette.outline))
+                .child(
+                    text_input("archive-confirm-input")
+                        .state(screen.archive_confirm_state.downgrade())
+                        .placeholder(if is_export { "Repeat passphrase" } else { "Passphrase again" })
+                        .caret_blink_interval_500ms()
+                        .mask_char(Some('*'))
+                        .font_family(fonts::MONO)
+                        .bg(palette.surface_container_highest)
+                        .text_color(palette.on_surface)
+                        .caret_color(palette.on_surface)
+                        .rounded_lg()
+                        .p_3()
+                        .w_full()
+                        .min_h_auto()
+                        .whitespace_nowrap()
+                        .overflow_x_scroll(),
+                )
+                .when_some(screen.archive_error.clone(), |el, error| {
+                    el.child(div().text_sm().text_color(palette.error).child(error))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .gap_4()
+                        .child(
+                            div()
+                                .id("archive-cancel")
+                                .flex_1()
+                                .py_3()
+                                .rounded_xl()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(cancel_bg)
+                                .text_color(palette.on_surface)
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .cursor_pointer()
+                                .child("Cancel")
+                                .on_hover(move |is_hovered, _, cx| {
+                                    cancel_hover.update(cx, |v, cx| {
+                                        *v = *is_hovered as u8 as f32;
+                                        cx.notify();
+                                    });
+                                })
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                    this.close_archive_modal(cx);
+                                })),
+                        )
+                        .child(
+                            div()
+                                .id("archive-confirm")
+                                .flex_1()
+                                .py_3()
+                                .rounded_xl()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(confirm_bg)
+                                .text_color(palette.on_surface)
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .cursor_pointer()
+                                .child(if busy {
+                                    "Working…".to_string()
+                                } else if is_export {
+                                    "Create backup".to_string()
+                                } else {
+                                    "Restore".to_string()
+                                })
+                                .on_hover(move |is_hovered, _, cx| {
+                                    confirm_hover.update(cx, |v, cx| {
+                                        *v = *is_hovered as u8 as f32;
+                                        cx.notify();
+                                    });
+                                })
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                    this.confirm_archive_modal(cx);
+                                })),
+                        ),
+                ),
+        )
 }

@@ -166,6 +166,38 @@ pub async fn import_vault_file(
     Ok(result)
 }
 
+#[command]
+pub async fn export_vault_csv(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    vela_desktop_core::commands::vault::export_vault_csv(&state)
+}
+
+/// Writes the passphrase-encrypted `.vela` archive straight to the
+/// user-chosen path: the blob never crosses IPC as a string.
+#[command]
+pub async fn export_vault_encrypted_file(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    passphrase: String,
+) -> Result<(), String> {
+    let blob = vela_desktop_core::commands::vault::export_vault_encrypted(&state, &passphrase)?;
+    vela_desktop_core::commands::vault::save_vault_export_bytes(&state, &path, &blob)
+}
+
+/// Restore a `.vela` encrypted archive (full backup: logins, notes, cards,
+/// passkeys). Dedup is id-based, so restoring into the same vault is a no-op.
+#[command]
+pub async fn import_vela_archive(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    data: Vec<u8>,
+    passphrase: String,
+) -> Result<ImportResult, String> {
+    let result =
+        vela_desktop_core::commands::vault::import_vela_archive(&state, &data, &passphrase)?;
+    emit_vault_items_changed(&app);
+    Ok(result)
+}
+
 // ── favicon ──────────────────────────────────────────────────────────────
 
 #[command]

@@ -19,6 +19,70 @@ export default function SettingsScreen() {
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyStatus, setPasskeyStatus] = useState<string | null>(null);
 
+  // Encrypted backup (.vela): a passphrase chosen at export time protects
+  // the archive, so it restores without the master key — on this device or a
+  // fresh one. Shared by export (path is picked after the passphrase) and
+  // import (the picked archive's bytes wait here for its passphrase).
+  const [archiveModal, setArchiveModal] = useState<
+    | { mode: 'export' }
+    | { mode: 'import'; data: Uint8Array; fileName: string }
+    | null
+  >(null);
+  const [archivePassphrase, setArchivePassphrase] = useState('');
+  const [archivePassphraseConfirm, setArchivePassphraseConfirm] = useState('');
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+
+  const closeArchiveModal = () => {
+    setArchiveModal(null);
+    setArchivePassphrase('');
+    setArchivePassphraseConfirm('');
+    setArchiveError(null);
+  };
+
+  const confirmArchive = async () => {
+    const modal = archiveModal;
+    if (!modal || archiveBusy) return;
+    if (archivePassphrase.length < 8) {
+      setArchiveError('Passphrase must be at least 8 characters.');
+      return;
+    }
+    if (archivePassphrase !== archivePassphraseConfirm) {
+      setArchiveError('Passphrases do not match.');
+      return;
+    }
+    setArchiveBusy(true);
+    setArchiveError(null);
+    try {
+      if (modal.mode === 'export') {
+        const path = await save({
+          title: 'Export encrypted backup',
+          defaultPath: `vela-backup-${new Date().toISOString().slice(0, 10)}.vela`,
+          filters: [{ name: 'VELA encrypted backup', extensions: ['vela'] }],
+        });
+        if (!path) return;
+        await invoke('export_vault_encrypted_file', { path, passphrase: archivePassphrase });
+        showToast('Encrypted backup saved', 'success');
+        closeArchiveModal();
+      } else {
+        const result = await invoke<{ added: number; skipped: number; duplicates: number; total: number }>(
+          'import_vela_archive',
+          { data: Array.from(modal.data), passphrase: archivePassphrase },
+        );
+        showToast(
+          `Restored ${result.added} of ${result.total} items${result.duplicates > 0 ? `, ${result.duplicates} already present` : ''}`,
+          'success',
+        );
+        closeArchiveModal();
+      }
+    } catch (err) {
+      setArchiveError(String(err));
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
+
   // Windows system-wide passkey provider. Same integration path as the
   // password managers that ship MSIX builds; the user still flips the final
   // toggle in Settings > Accounts > Passkeys > Advanced options.
@@ -484,25 +548,70 @@ export default function SettingsScreen() {
             </div>
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
+                <label className="font-body font-medium text-on-surface">Export CSV</label>
+                <p className="text-sm text-on-surface-variant">Logins as Bitwarden-schema CSV — imports into every other manager</p>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    const csv = await invoke<string>('export_vault_csv');
+                    const path = await save({
+                      title: 'Export vault as CSV',
+                      defaultPath: `vela-export-${new Date().toISOString().slice(0, 10)}.csv`,
+                      filters: [{ name: 'CSV', extensions: ['csv'] }],
+                    });
+                    if (!path) return;
+                    await invoke('save_vault_export_file', { path, data: csv });
+                    showToast('CSV exported', 'success');
+                  } catch (e) {
+                    showToast('Export failed: ' + String(e), 'error');
+                  }
+                }}
+                className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors"
+              >
+                Export
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <label className="font-body font-medium text-on-surface">Encrypted backup (.vela)</label>
+                <p className="text-sm text-on-surface-variant">
+                  Every item — passkeys and TOTP seeds included — encrypted under a passphrase you choose. Restores without your master key.
+                </p>
+              </div>
+              <button
+                onClick={() => setArchiveModal({ mode: 'export' })}
+                className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors"
+              >
+                Backup
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
                 <label className="font-body font-medium text-on-surface">Import vault</label>
                 <p className="text-sm text-on-surface-variant">
-                  From Bitwarden, 1Password, KeePass/KeePassXC, Chrome/Edge/Safari, or Proton Pass — format is detected automatically. Duplicates are skipped, never overwritten.
+                  From Bitwarden, 1Password, KeePass/KeePassXC, Chrome/Edge/Safari, or Proton Pass — format is detected automatically. A .vela archive restores a full encrypted backup. Duplicates are skipped, never overwritten.
                 </p>
               </div>
               <input
                 type="file"
-                accept=".json,.csv,.1pif"
+                accept=".json,.csv,.1pif,.vela"
                 id="import-file-input"
                 className="hidden"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
                   try {
-                    const text = await file.text();
-                    const result = await invoke<{ added: number; skipped: number; duplicates: number; total: number }>('import_vault_file', { data: text });
-                    const skippedNote = result.skipped > 0 ? `, ${result.skipped} unsupported items skipped` : '';
-                    const dupNote = result.duplicates > 0 ? `, ${result.duplicates} already in vault` : '';
-                    showToast(`Imported ${result.added} of ${result.total} items${dupNote}${skippedNote}`, 'success');
+                    if (file.name.toLowerCase().endsWith('.vela')) {
+                      const data = new Uint8Array(await file.arrayBuffer());
+                      setArchiveModal({ mode: 'import', data, fileName: file.name });
+                    } else {
+                      const text = await file.text();
+                      const result = await invoke<{ added: number; skipped: number; duplicates: number; total: number }>('import_vault_file', { data: text });
+                      const skippedNote = result.skipped > 0 ? `, ${result.skipped} unsupported items skipped` : '';
+                      const dupNote = result.duplicates > 0 ? `, ${result.duplicates} already in vault` : '';
+                      showToast(`Imported ${result.added} of ${result.total} items${dupNote}${skippedNote}`, 'success');
+                    }
                   } catch (err) {
                     showToast('Import failed: ' + String(err), 'error');
                   }
@@ -518,6 +627,59 @@ export default function SettingsScreen() {
             </div>
           </div>
         </section>
+
+        {archiveModal && (
+          <div
+            className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
+            onClick={closeArchiveModal}
+          >
+            <div
+              className="bg-surface-container rounded-xl p-6 w-full max-w-md space-y-4 border border-outline-variant"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-label text-xs uppercase tracking-widest text-outline">
+                {archiveModal.mode === 'export' ? 'Encrypted backup passphrase' : `Restore ${archiveModal.fileName}`}
+              </h3>
+              <p className="text-sm text-on-surface-variant">
+                {archiveModal.mode === 'export'
+                  ? 'The archive is encrypted under this passphrase — there is no recovery for it, so keep it somewhere safe. It is independent of your master password.'
+                  : 'Enter the passphrase this backup was encrypted with.'}
+              </p>
+              <input
+                type="password"
+                value={archivePassphrase}
+                onChange={(e) => setArchivePassphrase(e.target.value)}
+                placeholder="Passphrase"
+                autoComplete="new-password"
+                className="w-full px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <input
+                type="password"
+                value={archivePassphraseConfirm}
+                onChange={(e) => setArchivePassphraseConfirm(e.target.value)}
+                placeholder={archiveModal.mode === 'export' ? 'Repeat passphrase' : 'Passphrase (repeat to confirm)'}
+                autoComplete="new-password"
+                className="w-full px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              {archiveError && <p className="text-sm text-error">{archiveError}</p>}
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={closeArchiveModal}
+                  className="px-4 py-2 bg-surface-container-highest rounded-lg text-on-surface hover:bg-surface-bright transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmArchive}
+                  disabled={archiveBusy}
+                  className="px-4 py-2 bg-primary rounded-lg text-on-primary font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  {archiveBusy ? 'Working…' : archiveModal.mode === 'export' ? 'Create backup' : 'Restore'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <section>
           <h2 className="font-label text-xs uppercase tracking-widest text-outline mb-4">Browser Extension</h2>
