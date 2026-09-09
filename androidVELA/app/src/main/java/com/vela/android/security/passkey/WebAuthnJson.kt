@@ -133,10 +133,19 @@ object WebAuthnJson {
 
     // ── Response envelopes ───────────────────────────────────────────────────
 
-    /** The `PublicKeyCredential` JSON a registration ceremony returns. */
+    /** The `PublicKeyCredential` JSON a registration ceremony returns.
+     *
+     * Chromium-shaped verifiers (browsers routing through Credential Manager)
+     * parse more than the spec minimum and cross-check consistency:
+     * `authenticatorData` must equal the bytes inside the attestation,
+     * `publicKeyAlgorithm` the algorithm parsed from it, and `publicKey` the
+     * SubjectPublicKeyInfo DER of the attested key.
+     */
     fun registrationResponse(
         credentialIdB64: String,
         attestationObject: ByteArray,
+        authenticatorData: ByteArray,
+        publicKeySpkiDerB64: String,
         clientDataJson: String,
     ): String = JSONObject()
         .put("id", credentialIdB64)
@@ -146,8 +155,14 @@ object WebAuthnJson {
             "response",
             JSONObject()
                 .put("attestationObject", b64urlEncode(attestationObject))
-                .put("clientDataJSON", b64urlEncode(clientDataJson.toByteArray(Charsets.UTF_8))),
+                .put("authenticatorData", b64urlEncode(authenticatorData))
+                .put("publicKeyAlgorithm", -7)
+                .put("publicKey", publicKeySpkiDerB64)
+                .put("clientDataJSON", b64urlEncode(clientDataJson.toByteArray(Charsets.UTF_8)))
+                .put("transports", JSONArray().put("internal")),
         )
+        // Required by the relying party's parser even when empty.
+        .put("clientExtensionResults", JSONObject())
         .toString()
 
     /** The `PublicKeyCredential` JSON an assertion ceremony returns. */
@@ -157,19 +172,23 @@ object WebAuthnJson {
         signatureDer: ByteArray,
         userHandle: ByteArray,
         clientDataJson: String,
-    ): String = JSONObject()
-        .put("id", credentialIdB64)
-        .put("rawId", credentialIdB64)
-        .put("type", "public-key")
-        .put(
-            "response",
-            JSONObject()
-                .put("authenticatorData", b64urlEncode(authenticatorData))
-                .put("signature", b64urlEncode(signatureDer))
-                .put("userHandle", if (userHandle.isEmpty()) JSONObject.NULL else b64urlEncode(userHandle))
-                .put("clientDataJSON", b64urlEncode(clientDataJson.toByteArray(Charsets.UTF_8))),
-        )
-        .toString()
+    ): String {
+        val response = JSONObject()
+            .put("authenticatorData", b64urlEncode(authenticatorData))
+            .put("signature", b64urlEncode(signatureDer))
+            .put("clientDataJSON", b64urlEncode(clientDataJson.toByteArray(Charsets.UTF_8)))
+        if (userHandle.isNotEmpty()) {
+            response.put("userHandle", b64urlEncode(userHandle))
+        }
+        return JSONObject()
+            .put("id", credentialIdB64)
+            .put("rawId", credentialIdB64)
+            .put("type", "public-key")
+            .put("response", response)
+            // Required by the relying party's parser even when empty.
+            .put("clientExtensionResults", JSONObject())
+            .toString()
+    }
 
     // ── Credential selection ─────────────────────────────────────────────────
 

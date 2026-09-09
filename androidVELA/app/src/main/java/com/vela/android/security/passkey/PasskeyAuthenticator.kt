@@ -95,6 +95,8 @@ object PasskeyAuthenticator {
         ) ?: throw CeremonyException.Malformed("the native bridge is unavailable")
         val attestationObject = NativeVelaCore.passkeyAttestationObject(authenticatorDataB64)
             ?: throw CeremonyException.Malformed("the native bridge is unavailable")
+        val authenticatorData = WebAuthnJson.b64urlDecode(authenticatorDataB64)
+            ?: throw CeremonyException.Malformed("authenticator data is not base64url")
 
         val item = VaultItem.Passkey(
             meta = VaultMeta(
@@ -116,6 +118,8 @@ object PasskeyAuthenticator {
             responseJson = WebAuthnJson.registrationResponse(
                 key.credentialIdB64,
                 attestationObject,
+                authenticatorData,
+                key.spkiDerB64,
                 // Empty when the relying party built its own clientDataJSON
                 // and handed us the hash to sign over.
                 clientDataJson ?: "",

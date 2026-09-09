@@ -72,6 +72,11 @@ pub struct KeygenResponse {
     /// back — every later use goes through [`sign`].
     pub scalar_b64: String,
     pub cose_public_key_b64: String,
+    /// The public key as SubjectPublicKeyInfo DER, base64url. Chromium-shaped
+    /// relying-party responses want this alongside the COSE key (and verify it
+    /// against the key inside the attestation), so it is derived here, where
+    /// the key lives, in the same canonical form.
+    pub public_key_spki_der_b64: String,
 }
 
 /// Generate a fresh credential keypair and its opaque credential ID.
@@ -89,12 +94,20 @@ pub fn keygen(request: &KeygenRequest) -> Result<KeygenResponse, String> {
     getrandom::getrandom(&mut credential_id)
         .map_err(|e| format!("OS random source unavailable: {e}"))?;
 
-    let cose = cose_key_es256(&signing);
+    let verifying: &VerifyingKey = signing.as_ref();
+    let point = verifying.as_affine().to_encoded_point(false);
+    let x = point.x().expect("P-256 point always has an X coordinate");
+    let y = point.y().expect("uncompressed P-256 point always has a Y coordinate");
+    let (x, y) = (x.as_slice(), y.as_slice());
+
+    let cose = cose_key_es256(x, y);
+    let spki_der = spki_der_p256(x, y);
 
     Ok(KeygenResponse {
         credential_id_b64: B64URL.encode(credential_id),
         scalar_b64: B64URL.encode(scalar),
         cose_public_key_b64: B64URL.encode(cose),
+        public_key_spki_der_b64: B64URL.encode(spki_der),
     })
 }
 
@@ -257,14 +270,7 @@ impl CredentialKey {
 /// The credential's public key, CBOR-encoded as a COSE_Key in CTAP2 canonical
 /// form — the fixed five-entry layout (`1, 3, -1, -2, -3`) the desktop writes,
 /// pinned by the tests below.
-fn cose_key_es256(signing: &SigningKey) -> Vec<u8> {
-    let verifying: &VerifyingKey = signing.as_ref();
-    let point = verifying.as_affine().to_encoded_point(false);
-    let x = point.x().expect("P-256 point always has an X coordinate");
-    let y = point
-        .y()
-        .expect("uncompressed P-256 point always has a Y coordinate");
-
+fn cose_key_es256(x: &[u8], y: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(77);
     out.push(0xA5); // map(5)
 
@@ -280,12 +286,35 @@ fn cose_key_es256(signing: &SigningKey) -> Vec<u8> {
     out.push(0x21); // key -2 (x)
     out.push(0x58); //   bytes, 1-byte length follows
     out.push(x.len() as u8);
-    out.extend_from_slice(x.as_slice());
+    out.extend_from_slice(x);
 
     out.push(0x22); // key -3 (y)
     out.push(0x58); //   bytes, 1-byte length follows
     out.push(y.len() as u8);
-    out.extend_from_slice(y.as_slice());
+    out.extend_from_slice(y);
+
+    out
+}
+
+/// Hand-encode the public key as SubjectPublicKeyInfo DER.
+///
+/// The layout is fixed for P-256 with a named curve (`id-ecPublicKey` +
+/// `prime256v1`, then the uncompressed point as a BIT STRING), so — like the
+/// COSE key above — it is easier to guarantee by construction than to pull in
+/// a DER encoder for one deterministic shape. Chromium-shaped relying-party
+/// responses carry exactly this, and verify it against the COSE key.
+fn spki_der_p256(x: &[u8], y: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(91);
+    out.extend_from_slice(&[0x30, 0x59]); // SEQUENCE, 89 bytes
+
+    out.extend_from_slice(&[0x30, 0x13]); // SEQUENCE (AlgorithmIdentifier), 19 bytes
+    out.extend_from_slice(&[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]); // OID id-ecPublicKey
+    out.extend_from_slice(&[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]); // OID prime256v1
+
+    out.extend_from_slice(&[0x03, 0x42, 0x00]); // BIT STRING, 66 bytes, 0 unused
+    out.push(0x04); // uncompressed point
+    out.extend_from_slice(x);
+    out.extend_from_slice(y);
 
     out
 }
@@ -313,6 +342,34 @@ mod tests {
         let message = b"authenticatorData || clientDataHash";
         let sig = key.sign_der(message);
         assert!(verify_es256(&cose, message, &sig));
+    }
+
+    #[test]
+    fn the_spki_der_matches_the_cose_key_point() {
+        // Both encodings are derived from the same key in one call, so they
+        // must carry the same point — Chromium-shaped verifiers cross-check
+        // exactly this.
+        let generated = keygen(&KeygenRequest { algorithms: vec![] }).unwrap();
+        let cose = B64URL.decode(&generated.cose_public_key_b64).unwrap();
+        let spki = B64URL.decode(&generated.public_key_spki_der_b64).unwrap();
+
+        // COSE: x at [10..42], y at [45..77]. SPKI: 26 bytes of headers +
+        // the 0x04 uncompressed-point marker, then x ‖ y.
+        assert_eq!(&cose[10..42], &spki[27..59]);
+        assert_eq!(&cose[45..77], &spki[59..91]);
+    }
+
+    #[test]
+    fn spki_der_layout_is_canonical() {
+        let spki = spki_der_p256(&[0xAA; 32], &[0xBB; 32]);
+
+        assert_eq!(spki.len(), 91);
+        assert_eq!(&spki[..2], &[0x30, 0x59]); // SEQUENCE, 89 bytes
+        assert_eq!(&spki[2..4], &[0x30, 0x13]); // AlgorithmIdentifier
+        assert_eq!(&spki[4..13], &[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]);
+        assert_eq!(&spki[13..23], &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]);
+        assert_eq!(&spki[23..26], &[0x03, 0x42, 0x00]); // BIT STRING
+        assert_eq!(spki[26], 0x04); // uncompressed point
     }
 
     #[test]

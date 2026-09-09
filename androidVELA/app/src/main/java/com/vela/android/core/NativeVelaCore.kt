@@ -444,6 +444,7 @@ object NativeVelaCore {
         val credentialIdB64: String,
         val scalarB64: String,
         val cosePublicKeyB64: String,
+        val spkiDerB64: String,
     )
 
     fun passkeyKeygen(acceptedAlgorithms: List<Int>): PasskeyKey? {
@@ -457,6 +458,7 @@ object NativeVelaCore {
                 credentialIdB64 = response.getString("credential_id_b64"),
                 scalarB64 = response.getString("scalar_b64"),
                 cosePublicKeyB64 = response.getString("cose_public_key_b64"),
+                spkiDerB64 = response.getString("public_key_spki_der_b64"),
             )
         }
     }

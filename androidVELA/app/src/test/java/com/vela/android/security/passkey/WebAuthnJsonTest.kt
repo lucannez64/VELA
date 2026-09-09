@@ -149,20 +149,23 @@ class WebAuthnJsonTest {
     // ── Response envelopes ───────────────────────────────────────────────────
 
     @Test
-    fun `the registration response carries attestationObject and clientDataJSON`() {
+    fun `the registration response carries the extended relying-party shape`() {
         val response = org.json.JSONObject(
             WebAuthnJson.registrationResponse(
-                "AQ", "attestation".toByteArray(), "{}"
+                "AQ", "attestation".toByteArray(), "authData".toByteArray(),
+                "spki", "{}"
             )
         )
         assertEquals("public-key", response.getString("type"))
         assertEquals("AQ", response.getString("id"))
+        assertEquals(-7, response.getJSONObject("response").getInt("publicKeyAlgorithm"))
+        assertEquals("spki", response.getJSONObject("response").getString("publicKey"))
         assertEquals(
-            "attestation",
-            String(
-                WebAuthnJson.b64urlDecode(response.getJSONObject("response").getString("attestationObject"))!!
-            ),
+            "authData",
+            String(WebAuthnJson.b64urlDecode(response.getJSONObject("response").getString("authenticatorData"))!!),
         )
+        assertEquals("internal", response.getJSONObject("response").getJSONArray("transports").getString(0))
+        assertEquals(0, response.getJSONObject("clientExtensionResults").length())
         assertEquals("{}", String(
             WebAuthnJson.b64urlDecode(response.getJSONObject("response").getString("clientDataJSON"))!!
         ))
@@ -181,5 +184,18 @@ class WebAuthnJsonTest {
         assertEquals("sig", String(WebAuthnJson.b64urlDecode(inner.getString("signature"))!!))
         assertEquals("handle", String(WebAuthnJson.b64urlDecode(inner.getString("userHandle"))!!))
         assertEquals("{}", String(WebAuthnJson.b64urlDecode(inner.getString("clientDataJSON"))!!))
+        assertEquals(0, response.getJSONObject("clientExtensionResults").length())
+    }
+
+    @Test
+    fun `an empty user handle is omitted rather than nulled`() {
+        val response = org.json.JSONObject(
+            WebAuthnJson.assertionResponse(
+                "AQ", "authData".toByteArray(), "sig".toByteArray(),
+                ByteArray(0), "{}"
+            )
+        )
+        assertEquals(false, response.getJSONObject("response").has("userHandle"))
+        assertEquals(0, response.getJSONObject("clientExtensionResults").length())
     }
 }
