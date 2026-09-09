@@ -1,10 +1,11 @@
 # ADR — Android passkey provider
 
-**Status:** Implemented — the provider service, ceremony, vault storage and
-sync plumbing are in (`androidVELA/app/.../security/passkey/`, the bridge's
-`passkey.rs`). Device-visible validation still needs a real device: set VELA
-as the passkey / "preferred authenticator" provider and run one create + one
-get ceremony.
+**Status:** Implemented and validated on device — the provider service,
+ceremony, vault storage and sync plumbing are in
+(`androidVELA/app/.../security/passkey/`, the bridge's `passkey.rs`).
+Create and get ceremonies verified live against real relying parties
+(webauthn.io, a strict local RP, a native app via Clerk, IronFox) and
+desktop ↔ phone sync confirmed both directions; see Consequences.
 **Date:** 2026-08-20
 **Applies to:** `androidVELA/`, `libVELA/vela-android-bridge/`
 **Related:** `security/m7_oneshot_assertion.spthy`,
@@ -135,11 +136,47 @@ is what makes adding the variant safe).
   (Credential Manager provider); the ceremony security invariants are preserved.
 - **Accepted.** Requires the APK built by CI (verify-android / release-android)
   and a real device to become the passkey provider and to validate a
-  create/get ceremony — this box has no Android SDK, so CI is the build and a
-  device is the test bed.
+  create/get ceremony. The SDK now exists locally for builds and tests, but
+  CI remains the only release path: release APKs are signed from the CI
+  secret, so the same signature upgrades over any prior install without
+  ever wiping the vault.
 - **Guard.** A unit test proves the Kotlin ceremony reproduces the desktop's
   `authenticatorData`/`attestationObject`/signature shape (fixed test vectors),
   so the two transports stay behaviorally identical.
+- **Discovered during validation: browsers parsing Credential-Manager
+  responses demand the extended WebAuthn L3 JSON**, not the spec minimum —
+  Chromium's converter cross-checks `publicKeyAlgorithm` against the
+  attestation, requires `authenticatorData` byte-identical to the
+  attestation's, and requires the SubjectPublicKeyInfo DER `publicKey` for
+  ES256. The bridge derives the SPKI DER next to the COSE key (hand-encoded,
+  test-pinned to carry the same point), and both response builders emit the
+  full shape.
+- **Discovered during validation: the passkey provider must honor the same
+  privileged-browsers union as autofill.** Chromium-family browsers and
+  Mozilla's official builds are on Google's list; forks like IronFox are only
+  in the community list, so origin assertions from them failed until
+  `resolveOrigin` merged all three shipped lists. A browser on none of them
+  is still refused, not downgraded.
+
+### Validated end-to-end
+
+- Vanadium (Chromium via Credential Manager): webauthn.io registration and
+  authentication, both ceremonies.
+- A strict local relying party (verification independent of the browser):
+  challenge bytes, origin, RP ID hash, ES256 signature, and sign count
+  verified offline against the registered public key.
+- T3 Code (native app via Credential Manager/Clerk): the
+  `android:apk-key-hash:<calling-app cert>` origin is accepted by the
+  relying party's asset-links policy.
+- IronFox (Firefox-family): works once the allowlist union is honored —
+  Firefox-family browsers route through Credential Manager and declare the
+  site origin themselves.
+- Desktop ↔ phone sync: phone-minted passkeys arrive on the desktop with
+  their keys; desktop passkeys arrive on the phone and authenticate.
+- **Not reachable by any Credential-Manager provider, by upstream browser
+  policy: Cromite** (strips the CredMan WebAuthn routing) and any browser
+  speaking only the legacy GMS FIDO2 API. `chrome://flags/#web-authentication-cred-man`
+  in Cromite is an unsupported workaround, not a supported configuration.
 
 ## Open items
 - Where the sync payload is type-keyed, confirm server-side handling for the
@@ -161,3 +198,9 @@ is what makes adding the variant safe).
   exist locally it pulls and merges first, and the merge rule itself
   backfills a key from either side (`mergeVaultStores`) — a timestamp race
   can decide names, never whether a credential keeps its key.
+  — *Verified live: a pre-provider desktop passkey backfilled its key via
+  sync and authenticates from the phone.*
+- Browser support matrix. — *Closed: Chromium-family and Mozilla-family
+  browsers work (IronFox validated after the allowlist union); Cromite and
+  legacy GMS-FIDO2-only browsers are unreachable by upstream policy — see
+  Consequences.*
