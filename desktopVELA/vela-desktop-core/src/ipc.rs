@@ -1019,13 +1019,23 @@ pub mod server {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        // Kept raw: on the update path an absent/empty name means "keep the
+        // existing", and only the create path below defaults it to the domain.
         let name = payload
             .get("name")
             .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        // An `item_id` turns the save into an update: the browser's
+        // "password changed — update item?" prompt sends the id of the login
+        // whose password was replaced. Absent, this stays a plain create.
+        let item_id = payload
+            .get("item_id")
+            .and_then(|v| v.as_str())
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| extract_base_domain(&url));
+            .map(|s| s.to_string());
 
         if password.is_empty() {
             return save_response(false, None, Some("Password is required".to_string()));
@@ -1049,11 +1059,29 @@ pub mod server {
             return save_response(false, None, Some("Vault is locked".to_string()));
         }
 
+        if let Some(id) = item_id {
+            return update_login_credentials(
+                &state,
+                host.as_ref(),
+                device_id.as_deref(),
+                &id,
+                name,
+                username,
+                password,
+                url,
+            )
+            .await;
+        }
+
         let now = chrono::Utc::now();
         let new_item = VaultItem::Login {
             meta: crate::vault::VaultMeta {
                 id: uuid::Uuid::new_v4().to_string(),
-                name,
+                name: if name.is_empty() {
+                    extract_base_domain(&url)
+                } else {
+                    name
+                },
                 notes: None,
                 created_at: now,
                 updated_at: now,
@@ -1092,6 +1120,83 @@ pub mod server {
         host.notify_vault_items_changed();
 
         save_response(true, Some(new_item.id().to_string()), None)
+    }
+
+    /// Replace a login's password from the browser's "password changed"
+    /// prompt. Deliberately narrow: only username, password, url and (if the
+    /// caller supplied one) name move; TOTP, notes, app ids, favorite and
+    /// share state are kept — a browser capture never sees them, and wiping
+    /// them because the prompt did not send them would be data loss.
+    async fn update_login_credentials(
+        state: &Arc<crate::AppState>,
+        host: &dyn Host,
+        device_id: Option<&str>,
+        item_id: &str,
+        name: String,
+        username: String,
+        password: String,
+        url: String,
+    ) -> IpcMessage {
+        let now = chrono::Utc::now();
+        let mut vault = state.vault.write();
+
+        // Guard on a shared borrow first: type and share state, plus the name
+        // to keep if the prompt sent an empty one.
+        let existing_name = match vault.get_item(item_id) {
+            None => {
+                return save_response(false, None, Some("Item not found".to_string()));
+            }
+            Some(item) if !matches!(item, VaultItem::Login { .. }) => {
+                return save_response(false, None, Some("Item is not a login".to_string()));
+            }
+            Some(item) if item.is_received_share() => {
+                return save_response(
+                    false,
+                    None,
+                    Some("Cannot modify a received shared item".to_string()),
+                );
+            }
+            Some(item) => item.meta().name.clone(),
+        };
+        let effective_name = if name.is_empty() { existing_name } else { name };
+
+        // In-place edit: `VaultItem` implements `Drop` (secret zeroisation),
+        // so the item cannot be taken apart and rebuilt. `get_item_mut` bumps
+        // the vault generation, which is what sync watches.
+        let Some(VaultItem::Login {
+            meta,
+            url: item_url,
+            username: item_username,
+            pass: item_pass,
+            ..
+        }) = vault.get_item_mut(item_id)
+        else {
+            return save_response(false, None, Some("Item not found".to_string()));
+        };
+
+        *item_pass = password;
+        *item_username = username;
+        *item_url = url;
+        meta.name = effective_name;
+        meta.updated_at = now;
+        meta.last_modified_device = device_id.map(|s| s.to_string());
+        drop(vault);
+
+        if let Err(e) = state.persist_current_vault() {
+            error!("Failed to persist vault after update: {}", e);
+            return save_response(false, None, Some("Failed to save vault".to_string()));
+        }
+
+        crate::audit::record_audit_event(
+            state,
+            crate::audit::AuditAction::ItemUpdated {
+                item_type: "login".to_string(),
+            },
+        );
+
+        host.notify_vault_items_changed();
+
+        save_response(true, Some(item_id.to_string()), None)
     }
 
     fn save_response(success: bool, id: Option<String>, error: Option<String>) -> IpcMessage {
@@ -2240,6 +2345,149 @@ pub mod server {
             assert_eq!(resp.payload["success"], false);
             assert_eq!(resp.payload["error"], "Vault is locked");
             assert_eq!(mock.focuses(), 1);
+        }
+
+        /// The browser's "password changed — update item?" prompt sends the id
+        /// of the login whose password was replaced. That must edit the item in
+        /// place — same id, no duplicate — and must not lose anything the
+        /// browser prompt never saw: TOTP, notes, favorite, the M9a flags, the
+        /// created timestamp.
+        #[tokio::test]
+        async fn save_credentials_with_item_id_updates_the_login() {
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let now = chrono::Utc::now();
+            {
+                let mut vault = mock.state.vault.write();
+                vault.add_item(VaultItem::Login {
+                    meta: VaultMeta {
+                        id: "login-1".into(),
+                        name: "GitHub".into(),
+                        notes: Some("personal".into()),
+                        created_at: now,
+                        updated_at: now,
+                        last_modified_device: None,
+                        favorite: true,
+                        shared: false,
+                        share_recipient: None,
+                    },
+                    url: "https://github.com/login".into(),
+                    username: "alice".into(),
+                    pass: "old-pw".into(),
+                    totp: Some("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP".into()),
+                    app_ids: vec!["androidapp://com.example".into()],
+                    credential_change_needs_reauth: Some(true),
+                    allow_second_factor_downgrade: Some(false),
+                });
+            }
+
+            let req = message(
+                IpcMessageType::SaveCredentials,
+                serde_json::json!({
+                    "item_id": "login-1",
+                    "name": "",
+                    "username": "alice@new.example",
+                    "password": "new-pw",
+                    "url": "https://github.com/login"
+                }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &test_peer()).await;
+            assert_eq!(resp.payload["success"], true, "{resp:?}");
+            assert_eq!(resp.payload["id"], "login-1");
+
+            let vault = mock.state.vault.read();
+            assert_eq!(vault.items.len(), 1, "update, not a duplicate");
+            let item = &vault.items[0];
+            assert_eq!(item.password(), Some("new-pw"));
+            assert_eq!(item.username(), Some("alice@new.example"));
+            // Everything the browser prompt never saw is preserved. An empty
+            // name means "keep the existing", not "blank it".
+            assert_eq!(item.name(), "GitHub");
+            assert_eq!(item.notes(), Some("personal"));
+            assert!(item.favorite());
+            assert!(item.credential_change_needs_reauth());
+            assert!(matches!(item, VaultItem::Login { totp: Some(_), .. }));
+            assert_eq!(item.created_at(), now);
+            assert!(item.updated_at() > now, "updated_at bumped");
+            assert_eq!(mock.notifies(), 1);
+        }
+
+        /// An update naming an id that is not in the vault must not quietly
+        /// fall back to creating an item — the prompt said *update*, and a
+        /// fallback would double every login it raced.
+        #[tokio::test]
+        async fn save_credentials_update_of_missing_item_is_refused() {
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let req = message(
+                IpcMessageType::SaveCredentials,
+                serde_json::json!({
+                    "item_id": "does-not-exist",
+                    "username": "alice",
+                    "password": "pw",
+                    "url": "https://github.com"
+                }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &test_peer()).await;
+            assert_eq!(resp.payload["success"], false);
+            assert_eq!(resp.payload["error"], "Item not found");
+
+            let vault = mock.state.vault.read();
+            assert!(vault.items.is_empty(), "nothing created by a failed update");
+        }
+
+        /// A login received through sharing is read-only on this device, the
+        /// same rule the desktop UI's edit path enforces.
+        #[tokio::test]
+        async fn save_credentials_update_refuses_received_share() {
+            let (_dir, mock) = MockHost::new(true);
+            let host: Arc<dyn Host> = mock.clone();
+
+            let now = chrono::Utc::now();
+            {
+                let mut vault = mock.state.vault.write();
+                vault.add_item(VaultItem::Login {
+                    meta: VaultMeta {
+                        id: "shared-1".into(),
+                        name: "Shared".into(),
+                        notes: None,
+                        created_at: now,
+                        updated_at: now,
+                        last_modified_device: None,
+                        favorite: false,
+                        shared: true,
+                        share_recipient: None,
+                    },
+                    url: "https://shared.example".into(),
+                    username: "bob".into(),
+                    pass: "shared-pw".into(),
+                    totp: None,
+                    app_ids: Vec::new(),
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
+                });
+            }
+
+            let req = message(
+                IpcMessageType::SaveCredentials,
+                serde_json::json!({
+                    "item_id": "shared-1",
+                    "username": "bob",
+                    "password": "new-pw",
+                    "url": "https://shared.example"
+                }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &test_peer()).await;
+            assert_eq!(resp.payload["success"], false);
+            assert_eq!(resp.payload["error"], "Cannot modify a received shared item");
+
+            let vault = mock.state.vault.read();
+            assert_eq!(vault.items[0].password(), Some("shared-pw"), "untouched");
         }
 
         // ── M9a: the in-core login tier ──────────────────────────────────────

@@ -298,6 +298,9 @@ pub fn handle_save_credentials(message: &Value) -> Value {
                 "username": message.get("username").cloned().unwrap_or(Value::Null),
                 "password": message.get("password").cloned().unwrap_or(Value::Null),
                 "url": message.get("url").cloned().unwrap_or(Value::Null),
+                // Present only for the browser's "password changed" prompt:
+                // turns the save into an update of this vault item.
+                "item_id": message.get("item_id").cloned().unwrap_or(Value::Null),
             },
         }),
         false,

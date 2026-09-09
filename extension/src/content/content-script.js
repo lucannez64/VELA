@@ -88,9 +88,16 @@
   let velaCapturedCredentials = null;
   let velaGenModal = null;
   let velaSaveModal = null;
+  let velaGenIconEl = null;
   let velaGenOptions = { length: 20, uppercase: true, lowercase: true, numbers: true, symbols: true };
   let velaSelectedIndex = -1;
   let velaHoveredField = null;
+  // Credentials typed into password fields but not yet offered to the user.
+  // Lets us still capture SPA logins that never fire a `submit` event.
+  let velaPendingCreds = null;
+  // Key of the credentials the capture bar is (or was just) showing, so the
+  // submit path and the SPA heuristics do not prompt twice for one login.
+  let velaPromptedCredsKey = "";
 
   function getBrowserAPI() {
     if (typeof browser !== "undefined" && browser.runtime) return browser;
@@ -881,6 +888,14 @@
     document.addEventListener("click", velaOnDocClick, true);
     window.addEventListener("scroll", velaRepositionDropdown, { passive: true, capture: true });
     window.addEventListener("resize", velaRepositionDropdown, { passive: true });
+
+    // Capture support beyond a plain form submit (item 7): SPA logins and
+    // flows where the site never fires `submit` at all.
+    document.addEventListener("input", velaOnPasswordInput, true);
+    document.addEventListener("click", velaOnPossibleSubmitClick, true);
+    window.addEventListener("pagehide", velaStashPendingCapture);
+    document.addEventListener("visibilitychange", velaOnVisibilityChange);
+    velaConsumeStashedCapture();
   }
 
   function velaIsAutofillable(el) {
@@ -1087,12 +1102,44 @@
 
     document.documentElement.appendChild(icon);
     velaFieldIconEl = icon;
+
+    // One-click inline generator on registration/change-password fields: the
+    // dropdown's "generate" action is two clicks deep, and a new password is
+    // exactly where a generator earns its keep.
+    if (velaIsNewPasswordField(field)) {
+      const gen = document.createElement("button");
+      gen.setAttribute("data-vela-ui", "true");
+      gen.setAttribute("type", "button");
+      gen.setAttribute("tabindex", "-1");
+      gen.setAttribute("title", "VELA – generate strong password");
+      gen.className = "vela-field-icon vela-field-icon--gen";
+      gen.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4L7 17M18.4 5.6L17 7"/><circle cx="12" cy="12" r="4"/></svg>`;
+
+      gen.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        velaHideDropdown();
+        velaActiveField = field;
+        velaShowPasswordGenerator(field);
+      });
+
+      gen.style.position = "absolute";
+      gen.style.top = icon.style.top;
+      gen.style.left = (rect.right + scrollX - 30 - 28) + "px";
+      gen.style.zIndex = "2147483646";
+
+      document.documentElement.appendChild(gen);
+      velaGenIconEl = gen;
+    }
   }
 
   function velaRemoveFieldIcon() {
     if (velaFieldIconEl) {
       velaFieldIconEl.remove();
       velaFieldIconEl = null;
+    }
+    if (velaGenIconEl) {
+      velaGenIconEl.remove();
+      velaGenIconEl = null;
     }
   }
 
@@ -1347,11 +1394,30 @@
     const form = e.target;
     if (!elementIsFormElement(form)) return;
 
+    const creds = velaCaptureFormCredentials(form);
+    if (!creds) return;
+
+    // Keep the trail alive: a classic full-page form POST navigates away
+    // before this page's prompt can be seen, and the landing page picks the
+    // credentials up from the pagehide stash.
+    velaPendingCreds = { ...creds, at: Date.now() };
+    velaOfferCapture(creds);
+  }
+
+  /**
+   * Read username/password credentials out of a form element.
+   *
+   * Registration means "the user is creating or replacing a password": two
+   * password fields (the confirm box) or an explicit `autocomplete=
+   * "new-password"` — the hint modern registration and change-password forms
+   * carry.
+   */
+  function velaCaptureFormCredentials(form) {
     const pwFields = Array.from(form.querySelectorAll("input[type='password']")).filter((f) => !f.hasAttribute("data-vela-ui"));
-    if (!pwFields.length) return;
+    if (!pwFields.length) return null;
 
     const pwValue = pwFields[0].value;
-    if (!pwValue) return;
+    if (!pwValue) return null;
 
     const allInputs = Array.from(form.querySelectorAll("input:not([type='password']):not([type='hidden']):not([data-vela-ui])"));
     let userValue = "";
@@ -1361,20 +1427,186 @@
       if (inp.value) { userValue = inp.value; break; }
     }
 
-    const isRegistration = pwFields.length >= 2;
-    const creds = { username: userValue, password: pwValue, isRegistration };
+    const isRegistration =
+      pwFields.length >= 2 ||
+      pwFields.some((f) => (f.autocomplete || "").toLowerCase() === "new-password");
+
+    return { username: userValue, password: pwValue, isRegistration };
+  }
+
+  // =========================================================
+  // CAPTURE ENGINE (save-on-submit + SPA + update prompts)
+  // =========================================================
+  //
+  // Three paths lead to the same prompt, deduplicated by credentials key:
+  //
+  // 1. `submit` — the classic case, handled above.
+  // 2. Submit-button click in a password form whose fields clear or vanish
+  //    shortly after (SPA logins that submit over fetch/XHR).
+  // 3. Page navigation with typed-but-unsent credentials (sites that build
+  //    their own login without a form), stashed in sessionStorage and offered
+  //    on the page the navigation landed on.
+  //
+  // The prompt itself is shared: "Save login" for a new username, "Password
+  // changed — update item?" when the username matches a saved login but the
+  // password differs. A matching username AND password prompts nothing.
+
+  function velaCredsKey(creds) {
+    return `${creds.username || ""}\u0000${creds.password || ""}`;
+  }
+
+  /**
+   * Offer save or update for `creds`, unless this site is on the never-save
+   * list, the identical credentials were already prompted, or they were
+   * already saved with the same password.
+   *
+   * The dedupe key is recorded synchronously so the three capture paths
+   * (submit, SPA click, navigation stash) cannot double-prompt while the
+   * vault lookup is in flight.
+   */
+  function velaOfferCapture(creds) {
+    const key = velaCredsKey(creds);
+    if (key === velaPromptedCredsKey) return;
+    if (!creds.password) return;
+    velaPromptedCredsKey = key;
 
     const domain = velaExtractDomain(location.href);
     Promise.all([
       getLoginsForPage(location.href),
       velaIsNeverSave(domain)
     ]).then(([logins, neverSave]) => {
-      if (neverSave) return;
-      const alreadySaved = logins.some((l) => l.username === creds.username);
-      if (!alreadySaved) {
-        setTimeout(() => velaShowSaveBar(creds.username, creds.password, creds.isRegistration), 100);
+      if (neverSave) {
+        velaClearPendingCapture();
+        return;
       }
+
+      const match = logins.find((l) => l.username === creds.username);
+      if (match) {
+        if (!match.password || match.password === creds.password) {
+          // Same credentials as the vault: nothing to capture.
+          velaClearPendingCapture();
+          return;
+        }
+        setTimeout(() => velaShowUpdateBar(match, creds), 100);
+        return;
+      }
+
+      setTimeout(() => velaShowSaveBar(creds.username, creds.password, creds.isRegistration), 100);
     });
+  }
+
+  /**
+   * Drop the typed-credentials trail: the capture prompt was seen (saved,
+   * dismissed or expired), so it must not resurface on the next page.
+   */
+  function velaClearPendingCapture() {
+    velaPendingCreds = null;
+    try {
+      sendExtensionMessage("clearPendingCapture", {});
+    } catch (_) {}
+  }
+
+  /**
+   * Remember what the user is typing into password fields so the SPA and
+   * navigation paths have something to offer even if `submit` never fires.
+   * Only trusted (human) input counts — VELA's own autofill dispatches
+   * synthetic events, and we must not offer to save what we just filled.
+   */
+  function velaOnPasswordInput(e) {
+    if (!e.isTrusted) return;
+    const el = e.target;
+    if (!el || el.tagName.toLowerCase() !== "input") return;
+    if ((el.type || "").toLowerCase() !== "password") return;
+    if (el.hasAttribute("data-vela-ui") || el.hasAttribute("data-bwignore")) return;
+    if (!el.value) return;
+
+    const form = el.form || el.closest("form");
+    const creds = velaCaptureFormCredentials(form || el.closest("div,section,main,body") || document.body);
+    if (creds && creds.password) {
+      velaPendingCreds = { ...creds, at: Date.now() };
+    }
+  }
+
+  /**
+   * A click on a submit-shaped control inside a form with password fields:
+   * snapshot the form, then check shortly after whether the login went
+   * through (password field emptied or removed — the usual SPA success
+   * behavior). If it did, offer capture even though no `submit` fired.
+   */
+  function velaOnPossibleSubmitClick(e) {
+    if (!e.isTrusted) return;
+    const target = e.target;
+    if (!target || target.closest("[data-vela-ui]")) return;
+    if (target.tagName.toLowerCase() !== "button" && !((target.type || "").toLowerCase() === "submit" && target.tagName.toLowerCase() === "input")) return;
+
+    const form = target.form || target.closest("form");
+    if (!form) return;
+    const pwFields = Array.from(form.querySelectorAll("input[type='password']")).filter((f) => !f.hasAttribute("data-vela-ui"));
+    if (!pwFields.length) return;
+
+    const creds = velaCaptureFormCredentials(form);
+    if (!creds) return;
+
+    // The snapshot to compare against: which password fields hold the typed
+    // value right now.
+    const snapshot = pwFields.map((f) => f.value);
+    const hrefAtClick = location.href;
+    velaPendingCreds = { ...creds, at: Date.now() };
+
+    setTimeout(() => {
+      if (!velaPendingCreds || velaCredsKey(velaPendingCreds) !== velaCredsKey(creds)) return;
+      if (location.href !== hrefAtClick) return; // already navigating; the stash path owns it
+      const stillThere = pwFields.some((f, i) => f.isConnected && f.value === snapshot[i] && snapshot[i]);
+      if (stillThere) return; // form is still sitting there; nothing submitted
+      velaOfferCapture(creds);
+      velaClearPendingCapture();
+    }, 900);
+  }
+
+  /**
+   * The tab is going away (real navigation or tab close). Park any typed
+   * credentials with the background so the page the navigation lands on can
+   * still offer to save them.
+   *
+   * The stash deliberately does NOT live in the page's sessionStorage: DOM
+   * storage is shared with the page's own JavaScript, so a hostile page could
+   * read a typed password straight out of it. `storage.session` in the
+   * background is extension-private.
+   */
+  function velaStashPendingCapture() {
+    if (!velaPendingCreds || !velaPendingCreds.password) return;
+    try {
+      sendExtensionMessage("stashPendingCapture", {
+        url: location.href,
+        at: Date.now(),
+        creds: {
+          username: velaPendingCreds.username,
+          password: velaPendingCreds.password,
+          isRegistration: velaPendingCreds.isRegistration
+        }
+      });
+    } catch (_) {}
+  }
+
+  function velaOnVisibilityChange() {
+    if (document.visibilityState === "hidden") {
+      velaStashPendingCapture();
+    }
+  }
+
+  /**
+   * A new page just loaded in a tab whose previous page had typed credentials
+   * it never submitted through a form. Ask the background for the tab's stash
+   * and offer it here — same origin, so it is the login the user just
+   * attempted (or abandoned; dismissible either way).
+   */
+  async function velaConsumeStashedCapture() {
+    try {
+      const response = await sendExtensionMessage("getPendingCapture", { url: location.href });
+      if (response && response.success && response.creds && response.creds.password) {
+        setTimeout(() => velaOfferCapture(response.creds), 600);
+      }
+    } catch (_) {}
   }
 
   // --- Save Bar ---
@@ -1418,18 +1650,67 @@
     setTimeout(velaHideSaveBar, 20000);
   }
 
+  // --- Update Bar ("password changed — update item?") ---
+
+  /**
+   * The submitted credentials match a saved login's username but not its
+   * password — the user changed (or typo'd) it. Ask before overwriting: the
+   * update replaces the stored password and never creates a duplicate.
+   */
+  function velaShowUpdateBar(login, creds) {
+    velaHideSaveBar();
+    const name = login.name || login.username || velaExtractDomain(location.href);
+    const bar = document.createElement("div");
+    bar.setAttribute("data-vela-ui", "true");
+    bar.className = "vela-save-bar vela-autofill-animate-slide-up";
+    bar.innerHTML = `
+      <div class="vela-save-bar-inner">
+        <span class="vela-save-bar-logo">${velaShieldSvg(18)}</span>
+        <span class="vela-save-bar-text">
+          Password changed for <strong>${velaEscapeHtml(name)}</strong> — update item?
+        </span>
+        <div class="vela-save-bar-actions">
+          <button class="vela-save-bar-btn vela-save-bar-dismiss" data-vela-action="dismiss">Not now</button>
+          <button class="vela-save-bar-btn vela-save-bar-save" data-vela-action="update">Update</button>
+        </div>
+        <button class="vela-save-bar-close" data-vela-action="close" title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>`;
+
+    document.documentElement.appendChild(bar);
+    velaSaveBarEl = bar;
+
+    bar.querySelector("[data-vela-action='update']").addEventListener("click", () => {
+      velaHideSaveBar();
+      velaShowSaveDialog(creds.username, creds.password, login);
+    });
+    bar.querySelector("[data-vela-action='dismiss']").addEventListener("click", velaHideSaveBar);
+    bar.querySelector("[data-vela-action='close']").addEventListener("click", velaHideSaveBar);
+
+    setTimeout(velaHideSaveBar, 20000);
+  }
+
   function velaHideSaveBar() {
     if (velaSaveBarEl) {
       velaSaveBarEl.remove();
       velaSaveBarEl = null;
     }
+    // Whatever the prompt's fate (saved, dismissed, expired), the credentials
+    // were offered once; do not let them resurface on the next page.
+    velaClearPendingCapture();
   }
 
   // --- Save to Vault Dialog ---
 
-  function velaShowSaveDialog(username, password) {
+  /**
+   * `updateLogin` (optional) switches the dialog into update mode: the
+   * credentials replace the given vault item instead of creating a new one.
+   */
+  function velaShowSaveDialog(username, password, updateLogin) {
     velaRemoveModal("vela-save-modal");
     const domain = velaExtractDomain(location.href);
+    const isUpdate = Boolean(updateLogin && updateLogin.id);
     const overlay = document.createElement("div");
     overlay.setAttribute("data-vela-ui", "true");
     overlay.id = "vela-save-modal";
@@ -1438,23 +1719,28 @@
       <div class="vela-modal vela-autofill-animate-slide-up">
         <div class="vela-modal-header">
           <div class="vela-modal-logo">${velaShieldSvg(20)}</div>
-          <h2 class="vela-modal-title">Save to VELA</h2>
+          <h2 class="vela-modal-title">${isUpdate ? "Update in VELA" : "Save to VELA"}</h2>
           <button class="vela-modal-close" data-vela-action="close" title="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
+        ${isUpdate ? `
+        <div class="vela-modal-site-badge">
+          <span class="vela-modal-site-icon">${velaEscapeHtml((updateLogin.name || domain).charAt(0).toUpperCase())}</span>
+          <span class="vela-modal-site-name">Updating ${velaEscapeHtml(updateLogin.name || domain)}</span>
+        </div>` : `
         <div class="vela-modal-site-badge">
           <span class="vela-modal-site-icon">${domain.charAt(0).toUpperCase()}</span>
           <span class="vela-modal-site-name">${velaEscapeHtml(domain)}</span>
-        </div>
+        </div>`}
         <div class="vela-save-fields">
           <div class="vela-save-field">
             <label class="vela-save-label">Name</label>
-            <input class="vela-save-input" id="vela-save-name" data-vela-ui="true" type="text" value="${velaEscapeHtml(domain)}" placeholder="Login name"/>
+            <input class="vela-save-input" id="vela-save-name" data-vela-ui="true" type="text" value="${velaEscapeHtml(updateLogin ? (updateLogin.name || domain) : domain)}" placeholder="Login name"/>
           </div>
           <div class="vela-save-field">
             <label class="vela-save-label">Username / Email</label>
-            <input class="vela-save-input" id="vela-save-username" data-vela-ui="true" type="text" value="${velaEscapeHtml(username || "")}" placeholder="Enter username"/>
+            <input class="vela-save-input" id="vela-save-username" data-vela-ui="true" type="text" value="${velaEscapeHtml(username || (updateLogin ? updateLogin.username : "") || "")}" placeholder="Enter username"/>
           </div>
           <div class="vela-save-field">
             <label class="vela-save-label">Password</label>
@@ -1471,7 +1757,7 @@
         </div>
         <div class="vela-modal-actions">
           <button class="vela-btn vela-btn-ghost" data-vela-action="close">Cancel</button>
-          <button class="vela-btn vela-btn-primary" data-vela-action="save">Save to Vault</button>
+          <button class="vela-btn vela-btn-primary" data-vela-action="save">${isUpdate ? "Update Password" : "Save to Vault"}</button>
         </div>
       </div>`;
 
@@ -1504,29 +1790,35 @@
         overlay.querySelector("#vela-save-password").classList.add("vela-input-error");
         return;
       }
+      const idleLabel = isUpdate ? "Update Password" : "Save to Vault";
       const saveBtn = overlay.querySelector("[data-vela-action='save']");
       saveBtn.disabled = true;
-      saveBtn.textContent = "Saving…";
+      saveBtn.textContent = isUpdate ? "Updating…" : "Saving…";
       try {
-        const response = await sendExtensionMessage("saveCredentials", {
+        const payload = {
           name: name || velaExtractDomain(location.href),
           username: user,
           password: pw,
           url: location.href
-        });
+        };
+        if (isUpdate) {
+          payload.item_id = updateLogin.id;
+        }
+        const response = await sendExtensionMessage("saveCredentials", payload);
         if (response && response.success) {
           close();
-          velaShowToast("Saved to VELA vault ✓");
+          velaClearPendingCapture();
+          velaShowToast(isUpdate ? "Password updated in VELA ✓" : "Saved to VELA vault ✓");
         } else {
           saveBtn.disabled = false;
-          saveBtn.textContent = "Save to Vault";
+          saveBtn.textContent = idleLabel;
           const reason = response && response.error ? response.error : "is VELA Desktop running?";
-          velaShowToast(`Failed to save – ${reason}`, true);
+          velaShowToast(`Failed to ${isUpdate ? "update" : "save"} – ${reason}`, true);
         }
       } catch (_) {
         saveBtn.disabled = false;
-        saveBtn.textContent = "Save to Vault";
-        velaShowToast("Failed to save – is VELA Desktop running?", true);
+        saveBtn.textContent = idleLabel;
+        velaShowToast(`Failed to ${isUpdate ? "update" : "save"} – is VELA Desktop running?`, true);
       }
     });
   }

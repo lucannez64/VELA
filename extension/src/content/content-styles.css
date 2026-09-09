@@ -56,6 +56,18 @@
   outline-offset: 2px;
 }
 
+/* Generator twin of the field icon: sits to the left of the shield on
+   new-password fields and opens the generator in one click. */
+.vela-field-icon--gen {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.vela-field-icon--gen:hover {
+  background: rgba(251, 191, 36, 0.22);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.25);
+}
+
 /* ── Inline Dropdown ── */
 .vela-inline-dropdown {
   all: initial;

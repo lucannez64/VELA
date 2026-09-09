@@ -8,6 +8,7 @@ A secure password manager browser extension with zero-knowledge architecture. Wo
 - **Biometric Authentication**: Unlock with Windows Hello, Touch ID, or Face ID
 - **Native Desktop Integration**: Communicates securely with the VELA desktop application
 - **Smart Autofill**: Automatically fills login credentials on websites
+- **Capture Prompts**: Offers to save logins (including SPA logins without a form submit), prompts "Password changed — update item?" instead of creating duplicates, and puts a one-click password generator on registration fields
 - **Cross-Platform**: Works on Chrome, Edge, Brave, Thorium, Helium, Firefox, Zen, Waterfox, and more
 
 ## Architecture

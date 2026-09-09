@@ -136,6 +136,11 @@ function setupConnectionListeners() {
       setupAutofillPortListeners(port);
     }
   });
+
+  // A parked capture belongs to one tab; when the tab dies, the stash dies.
+  tabs.onRemoved.addListener((tabId) => {
+    clearPendingCapture(tabId);
+  });
 }
 
 function setupAutofillPortListeners(port) {
@@ -225,6 +230,15 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "saveCredentials":
       handleSaveCredentials(data, sender, sendResponse);
       break;
+    case "stashPendingCapture":
+      handleStashPendingCapture(data, sender, sendResponse);
+      return true;
+    case "getPendingCapture":
+      handleGetPendingCapture(data, sender, sendResponse);
+      return true;
+    case "clearPendingCapture":
+      handleClearPendingCapture(sender, sendResponse);
+      return true;
     case "passkeyList":
       handlePasskeyList(data, sender, sendResponse);
       return true;
@@ -1062,8 +1076,129 @@ async function handleSaveCredentials(data, sender, sendResponse) {
   }
 }
 
-function checkDesktopConnection(sendResponse) {
-  // Trust a recent successful ping for a few seconds (avoids a native
+// ── Pending capture (save-on-submit that survives navigation) ────────────────
+//
+// When a page with typed credentials goes away before VELA could ask about
+// them, the content script parks them here so the page the navigation lands
+// on can still offer to save. The stash lives in `storage.session`, keyed by
+// tab: extension-private — the page's own JavaScript can never read it, unlike
+// the page's sessionStorage — and it dies with the tab or the browser session,
+// never touching disk.
+
+const PENDING_CAPTURE_PREFIX = "velaPendingCapture:";
+const PENDING_CAPTURE_MAX_AGE_MS = 120000;
+const pendingCaptureFallback = new Map();
+
+function pendingCaptureKey(tabId) {
+  return `${PENDING_CAPTURE_PREFIX}${tabId}`;
+}
+
+async function savePendingCapture(tabId, pending) {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.set({ [pendingCaptureKey(tabId)]: pending });
+      return;
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, parking capture in memory:", error.message);
+    }
+  }
+  pendingCaptureFallback.set(tabId, pending);
+}
+
+async function loadPendingCapture(tabId) {
+  if (browser.storage?.session) {
+    try {
+      const saved = await browser.storage.session.get(pendingCaptureKey(tabId));
+      if (saved[pendingCaptureKey(tabId)]) {
+        return saved[pendingCaptureKey(tabId)];
+      }
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, reading capture from memory:", error.message);
+    }
+  }
+  return pendingCaptureFallback.get(tabId);
+}
+
+async function clearPendingCapture(tabId) {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.remove(pendingCaptureKey(tabId));
+    } catch (error) {
+      // The in-memory fallback is cleared below either way.
+    }
+  }
+  pendingCaptureFallback.delete(tabId);
+}
+
+async function handleStashPendingCapture(data, sender, sendResponse) {
+  try {
+    if (!sender?.tab || !data?.creds?.password) {
+      sendResponse({ success: false });
+      return;
+    }
+    await savePendingCapture(sender.tab.id, {
+      url: data.url,
+      at: data.at || Date.now(),
+      creds: data.creds
+    });
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleGetPendingCapture(data, sender, sendResponse) {
+  try {
+    if (!sender?.tab) {
+      sendResponse({ success: false });
+      return;
+    }
+    const pending = await loadPendingCapture(sender.tab.id);
+    await clearPendingCapture(sender.tab.id);
+    if (!pending?.creds?.password) {
+      sendResponse({ success: false });
+      return;
+    }
+    // Only a recent capture from the origin the tab is on now. Anything else
+    // is stale context, not this page's login attempt.
+    const storedOrigin = safeUrlOrigin(pending.url);
+    const currentOrigin = safeUrlOrigin(sender.url || data?.url || "");
+    if (!storedOrigin || !currentOrigin || storedOrigin !== currentOrigin) {
+      sendResponse({ success: false });
+      return;
+    }
+    if (Date.now() - (pending.at || 0) > PENDING_CAPTURE_MAX_AGE_MS) {
+      sendResponse({ success: false });
+      return;
+    }
+    sendResponse({ success: true, creds: pending.creds });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleClearPendingCapture(sender, sendResponse) {
+  try {
+    if (sender?.tab) {
+      await clearPendingCapture(sender.tab.id);
+    }
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+function safeUrlOrigin(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.origin;
+  } catch (_) {
+    return null;
+  }
+}
+
+function checkDesktopConnection(sendResponse) {  // Trust a recent successful ping for a few seconds (avoids a native
   // round-trip on rapid successive calls), but never cache "connected"
   // indefinitely — the desktop may have been closed since the last check.
   if (
