@@ -9,6 +9,7 @@ A secure password manager browser extension with zero-knowledge architecture. Wo
 - **Native Desktop Integration**: Communicates securely with the VELA desktop application
 - **Smart Autofill**: Automatically fills login credentials on websites
 - **Capture Prompts**: Offers to save logins (including SPA logins without a form submit), prompts "Password changed — update item?" instead of creating duplicates, and puts a one-click password generator on registration fields
+- **Email Aliases**: The generator can mint a fresh email alias with addy.io, SimpleLogin, or Firefox Relay — register with a throwaway address and never hand a site your real one
 - **Cross-Platform**: Works on Chrome, Edge, Brave, Thorium, Helium, Firefox, Zen, Waterfox, and more
 
 ## Architecture
@@ -178,7 +179,8 @@ echo '{"action":"ping"}' | \
 - All credentials are encrypted by the desktop app before being sent to the extension
 - The extension never sees your master password or encryption keys
 - Native messaging uses process isolation to prevent injection attacks
-- No data is stored in the extension itself; all vault data stays in the desktop app
+- No vault data is stored in the extension itself; all vault data stays in the desktop app
+- Email alias provider tokens are kept in the browser's own extension storage, sent only to the provider you connect, and reach no provider origin until you grant that one permission from the popup
 
 ## Browser Compatibility
 

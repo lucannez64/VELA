@@ -239,6 +239,16 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "clearPendingCapture":
       handleClearPendingCapture(sender, sendResponse);
       return true;
+    case "getAliasProvider":
+      handleGetAliasProvider(sendResponse);
+      return true;
+    case "createEmailAlias":
+      handleCreateEmailAlias(data, sender, sendResponse);
+      return true;
+    case "openPopup":
+      openPopup();
+      sendResponse({ success: true });
+      return true;
     case "passkeyList":
       handlePasskeyList(data, sender, sendResponse);
       return true;
@@ -1195,6 +1205,240 @@ function safeUrlOrigin(url) {
     return parsed.origin;
   } catch (_) {
     return null;
+  }
+}
+
+// ── Email aliases (addy.io, SimpleLogin, Firefox Relay) ─────────────────────
+//
+// Proton-style capture aid: the generator can mint a fresh alias alongside a
+// generated password, so the user never hands a site their real address.
+//
+// The API tokens live in `storage.local` — browser-local, never in the vault,
+// never sent anywhere but the provider the user chose. The network calls run
+// here, in the background, under an optional per-provider host permission the
+// popup requests at connect time: the extension holds no provider origin
+// access until the user turns the feature on, and can revoke it with the
+// provider.
+
+const ALIAS_CONFIG_KEY = "velaAliasConfig";
+const ALIAS_FETCH_TIMEOUT_MS = 15000;
+
+const ALIAS_PROVIDERS = {
+  addyio: {
+    label: "addy.io",
+    defaultBase: "https://app.addy.io",
+    keyLabel: "API token",
+    keyHint: "Settings → API → create a token on app.addy.io"
+  },
+  simplelogin: {
+    label: "SimpleLogin",
+    defaultBase: "https://app.simplelogin.io",
+    keyLabel: "API key",
+    keyHint: "Settings → API keys on app.simplelogin.io"
+  },
+  relay: {
+    label: "Firefox Relay",
+    defaultBase: "https://relay.firefox.com",
+    keyLabel: "API token",
+    keyHint: "relay.firefox.com → Settings → generate API token"
+  }
+};
+
+function normalizeAliasBase(baseUrl, providerKey) {
+  const fallback = ALIAS_PROVIDERS[providerKey]?.defaultBase;
+  const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!raw) return fallback;
+  try {
+    const parsed = new URL(raw);
+    // A non-https alias server would carry the API key — and every alias it
+    // mints — in plaintext, and let a network attacker mint/destroy at will.
+    if (parsed.protocol !== "https:") return null;
+    return parsed.origin;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function getAliasConfig() {
+  try {
+    const data = await browser.storage.local.get(ALIAS_CONFIG_KEY);
+    const config = data[ALIAS_CONFIG_KEY];
+    if (config && ALIAS_PROVIDERS[config.provider] && config.apiKey) {
+      return {
+        provider: config.provider,
+        apiKey: config.apiKey,
+        baseUrl: normalizeAliasBase(config.baseUrl, config.provider)
+      };
+    }
+  } catch (error) {
+    console.warn("VELA: could not read the alias provider config:", error.message);
+  }
+  return null;
+}
+
+function aliasOriginFor(baseUrl) {
+  try {
+    return new URL(baseUrl).origin + "/*";
+  } catch (_) {
+    return null;
+  }
+}
+
+function handleGetAliasProvider(sendResponse) {
+  getAliasConfig().then((config) => {
+    if (!config) {
+      sendResponse({ configured: false });
+      return;
+    }
+    sendResponse({
+      configured: true,
+      provider: config.provider,
+      label: ALIAS_PROVIDERS[config.provider].label,
+      baseUrl: config.baseUrl
+    });
+  });
+  return true;
+}
+
+async function handleCreateEmailAlias(data, sender, sendResponse) {
+  try {
+    // Two callers: the generator on a web page (content script — a page may
+    // only mint aliases for itself, and only while the user is looking at
+    // it) and the popup/extension UI (user-driven, no origin check). The
+    // alias itself is harmless, but each one consumes the user's provider
+    // quota, so an unsandboxed or background-tab page must not be able to
+    // spam creation.
+    if (sender && sender.tab) {
+      const auth = await authorizeCredentialRequest(
+        { url: data?.url || sender.url || "" },
+        sender
+      );
+      if (!auth.ok) {
+        sendResponse({ success: false, error: auth.error });
+        return;
+      }
+    } else {
+      const extensionOrigin = runtime.getURL("");
+      if (!sender?.url?.startsWith(extensionOrigin)) {
+        sendResponse({ success: false, error: "Alias creation requires the popup or a page" });
+        return;
+      }
+    }
+
+    const config = await getAliasConfig();
+    if (!config) {
+      sendResponse({ success: false, error: "No alias provider is connected" });
+      return;
+    }
+
+    const origin = aliasOriginFor(config.baseUrl);
+    let granted = false;
+    try {
+      granted = await browser.permissions.contains({ origins: [origin] });
+    } catch (_) {}
+    if (!granted) {
+      sendResponse({ success: false, needsPermission: true, origin, error: "VELA needs permission to reach this alias provider" });
+      return;
+    }
+
+    const alias = await createAliasWithProvider(config, data);
+    sendResponse({ success: true, alias });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function createAliasWithProvider(config, data) {
+  const hostname = safeUrlOrigin(data?.url || "")
+    ? (new URL(data.url)).hostname.replace(/^www\./, "")
+    : "";
+  // The site the alias is minted for, kept as the provider-side label/description
+  // so the user can tell the aliases apart in the provider's dashboard.
+  const label = hostname || "VELA";
+
+  const base = config.baseUrl;
+  let url;
+  let init;
+  const jsonHeaders = { "Accept": "application/json", "Content-Type": "application/json" };
+
+  switch (config.provider) {
+    case "addyio":
+      url = `${base}/api/v1/aliases`;
+      init = {
+        method: "POST",
+        headers: {
+          ...jsonHeaders,
+          "Authorization": `Bearer ${config.apiKey}`,
+          // addy.io's API examples require this header; without it some
+          // deployments answer with a redirect page instead of JSON.
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        body: JSON.stringify({ description: label, format: "random_characters" })
+      };
+      break;
+    case "simplelogin":
+      url = `${base}/api/v3/alias/random/new?hostname=${encodeURIComponent(hostname || "extension")}`;
+      init = {
+        method: "POST",
+        headers: {
+          ...jsonHeaders,
+          // SimpleLogin's header is spelled "Authentication", not "Authorization".
+          "Authentication": config.apiKey
+        },
+        body: JSON.stringify({ note: label })
+      };
+      break;
+    case "relay":
+      url = `${base}/api/v1/relayaddresses/`;
+      init = {
+        method: "POST",
+        headers: {
+          ...jsonHeaders,
+          "Authorization": `Token ${config.apiKey}`
+        },
+        body: JSON.stringify({ label: label.slice(0, 50) })
+      };
+      break;
+    default:
+      throw new Error("Unknown alias provider");
+  }
+
+  const response = await fetchAlias(url, init);
+  const bodyText = await response.text();
+  let body = null;
+  try { body = bodyText ? JSON.parse(bodyText) : null; } catch (_) {}
+
+  if (!response.ok) {
+    const detail =
+      body?.message || body?.error?.message || body?.detail ||
+      (Array.isArray(body?.errors) ? body.errors.join(", ") : null) ||
+      `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+
+  const alias =
+    body?.data?.email ||   // addy.io
+    body?.alias ||         // SimpleLogin
+    body?.full_relay_address || // Firefox Relay
+    null;
+  if (!alias || typeof alias !== "string") {
+    throw new Error("The provider answered, but without an alias address");
+  }
+  return alias;
+}
+
+async function fetchAlias(url, init) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ALIAS_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("The alias provider did not answer in time");
+    }
+    throw new Error(`Could not reach the alias provider: ${error.message}`);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

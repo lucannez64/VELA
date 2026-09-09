@@ -635,6 +635,69 @@
   margin-bottom: 4px;
 }
 
+/* ── Generator: email alias row ── */
+.vela-gen-divider {
+  height: 1px;
+  background: var(--vela-border);
+  margin: 14px 0 12px;
+}
+
+.vela-gen-alias-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vela-gen-alias-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vela-gen-alias-hint {
+  font-size: 12px;
+  color: var(--vela-text-faint);
+  line-height: 1.35;
+}
+
+.vela-gen-alias-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.vela-gen-alias-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--vela-border);
+  border-radius: 8px;
+  background: var(--vela-surface-high);
+}
+
+/* `hidden` must win over the display rule above. */
+.vela-gen-alias-result[hidden] {
+  display: none;
+}
+
+.vela-gen-alias-value {
+  flex: 1;
+  font-family: var(--vela-font-mono);
+  font-size: 13px;
+  color: var(--vela-primary);
+  word-break: break-all;
+}
+
+.vela-gen-alias-error {
+  font-size: 12px;
+  color: #ffb4ab;
+  line-height: 1.4;
+}
+
 .vela-gen-option-row {
   display: flex;
   gap: 16px;

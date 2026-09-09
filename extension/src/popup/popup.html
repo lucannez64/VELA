@@ -283,6 +283,151 @@
       line-height: 1.5;
     }
 
+    /* ── Email alias settings ── */
+    .alias-section {
+      border: 1px solid var(--outline-var);
+      border-radius: 10px;
+      background: var(--surface-low);
+      overflow: hidden;
+    }
+
+    .alias-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--on-surface);
+      user-select: none;
+    }
+
+    .alias-header:hover {
+      background: var(--surface-high);
+    }
+
+    .alias-header-chevron {
+      margin-left: auto;
+      transition: transform 0.15s;
+      color: var(--on-surface-var);
+    }
+
+    .alias-section.open .alias-header-chevron {
+      transform: rotate(180deg);
+    }
+
+    .alias-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--surface-highest);
+      color: var(--on-surface-var);
+    }
+
+    .alias-badge.connected {
+      background: rgba(115, 219, 154, 0.15);
+      color: var(--primary);
+    }
+
+    .alias-body {
+      padding: 4px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* `hidden` must win over the display rule above. */
+    .alias-body[hidden] {
+      display: none;
+    }
+
+    .alias-hint {
+      font-size: 11px;
+      color: var(--on-surface-var);
+      line-height: 1.45;
+    }
+
+    .alias-field-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--on-surface-var);
+    }
+
+    .alias-input,
+    .alias-select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--outline-var);
+      border-radius: 8px;
+      background: var(--surface-container);
+      color: var(--on-surface);
+      font-family: var(--font-body);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .alias-input:focus,
+    .alias-select:focus {
+      border-color: var(--primary);
+    }
+
+    .alias-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .alias-actions[hidden] {
+      display: none;
+    }
+
+    .alias-btn {
+      flex: 1;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s, opacity 0.12s;
+    }
+
+    .alias-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .alias-btn-primary {
+      background: var(--primary);
+      color: var(--primary-on);
+    }
+
+    .alias-btn-primary:hover:not(:disabled) {
+      background: var(--primary-dim);
+    }
+
+    .alias-btn-ghost {
+      background: var(--surface-high);
+      color: var(--on-surface-var);
+    }
+
+    .alias-btn-ghost:hover:not(:disabled) {
+      background: var(--surface-highest);
+    }
+
+    .alias-status {
+      font-size: 11px;
+      line-height: 1.45;
+      min-height: 15px;
+    }
+
+    .alias-status.ok { color: var(--primary); }
+    .alias-status.err { color: var(--error); }
+
     /* ── Footer ── */
     .footer {
       padding: 12px 16px;
@@ -352,6 +497,43 @@
   <div class="main-content" id="mainContent">
     <div class="loading-spinner" id="loadingSpinner">
       <div class="spinner"></div>
+    </div>
+  </div>
+
+  <!-- Email alias providers -->
+  <div class="alias-section" id="aliasSection">
+    <div class="alias-header" id="aliasToggle">
+      <span>Email aliases</span>
+      <span class="alias-badge" id="aliasBadge">Off</span>
+      <svg class="alias-header-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="alias-body" id="aliasBody" hidden>
+      <div class="alias-hint">
+        Mint a throwaway address with the password generator, so sites never
+        see your real email. Your token stays in this browser and is sent only
+        to the provider you pick.
+      </div>
+      <div>
+        <div class="alias-field-label">Provider</div>
+        <select class="alias-select" id="aliasProvider">
+          <option value="">None</option>
+          <option value="addyio">addy.io</option>
+          <option value="simplelogin">SimpleLogin</option>
+          <option value="relay">Firefox Relay</option>
+        </select>
+      </div>
+      <div id="aliasConfigRows" hidden>
+        <div class="alias-field-label" id="aliasKeyLabel">API token</div>
+        <input class="alias-input" id="aliasKey" type="password" placeholder="" autocomplete="off"/>
+        <div class="alias-field-label" style="margin-top:8px">Server (optional, for self-hosted)</div>
+        <input class="alias-input" id="aliasBase" type="url" placeholder="Official server" autocomplete="off"/>
+        <div class="alias-hint" id="aliasKeyHint" style="margin-top:4px"></div>
+      </div>
+      <div class="alias-actions" id="aliasActions" hidden>
+        <button class="alias-btn alias-btn-primary" id="aliasSave">Connect</button>
+        <button class="alias-btn alias-btn-ghost" id="aliasDisconnect">Disconnect</button>
+      </div>
+      <div class="alias-status" id="aliasStatus"></div>
     </div>
   </div>
 

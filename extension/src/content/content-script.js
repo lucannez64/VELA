@@ -1901,6 +1901,18 @@
             </div>
           </div>
 
+          <div class="vela-gen-alias">
+            <div class="vela-gen-divider"></div>
+            <div class="vela-gen-alias-row">
+              <div class="vela-gen-alias-info">
+                <label class="vela-gen-option-label">Email alias</label>
+                <span class="vela-gen-alias-hint" id="vela-gen-alias-hint">Hide your real address</span>
+              </div>
+              <button class="vela-btn vela-btn-ghost vela-gen-alias-btn" id="vela-gen-alias-btn">…</button>
+            </div>
+            <div class="vela-gen-alias-result" id="vela-gen-alias-result" hidden></div>
+          </div>
+
           <div class="vela-modal-actions">
             <button class="vela-btn vela-btn-ghost" data-vela-action="close">Cancel</button>
             <button class="vela-btn vela-btn-primary" data-vela-action="use">Use this password</button>
@@ -1943,6 +1955,8 @@
         });
       });
 
+      velaWireAliasRow(overlay, targetField);
+
       overlay.querySelector("[data-vela-action='use']").addEventListener("click", () => {
         velaGenOptions = Object.assign({}, opts);
         close();
@@ -1970,6 +1984,149 @@
     renderModal();
     document.documentElement.appendChild(overlay);
     velaGenModal = overlay;
+  }
+
+  // --- Generator: Email Alias Row (addy.io / SimpleLogin / Firefox Relay) ---
+
+  /**
+   * Populate and drive the generator's alias row.
+   *
+   * The provider never hears about the page: the background mints the alias
+   * against the user's account, the site only ever sees the address string.
+   * A click here must be human — a hostile page that could synthesize it
+   * could drain the user's alias quota without a single visible prompt.
+   */
+  function velaWireAliasRow(overlay, targetField) {
+    const hint = overlay.querySelector("#vela-gen-alias-hint");
+    const btn = overlay.querySelector("#vela-gen-alias-btn");
+    const result = overlay.querySelector("#vela-gen-alias-result");
+    if (!hint || !btn || !result) return;
+
+    const alive = () => overlay.isConnected && velaGenModal === overlay;
+
+    // One listener, dispatched by mode — re-adding listeners per state
+    // transition would stack handlers and mint two aliases on one click.
+    let mode = "loading";
+    let providerLabel = "";
+
+    const setRow = (hintText, btnText, enabled) => {
+      if (!alive()) return;
+      hint.textContent = hintText;
+      btn.textContent = btnText;
+      btn.disabled = !enabled;
+    };
+
+    const showResult = (html) => {
+      if (!alive()) return;
+      result.hidden = !html;
+      result.innerHTML = html || "";
+    };
+
+    const showAlias = (alias) => {
+      showResult(`
+        <span class="vela-gen-alias-value">${velaEscapeHtml(alias)}</span>
+        <button class="vela-gen-icon-btn" data-vela-alias-copy title="Copy alias">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>`);
+      const copy = result.querySelector("[data-vela-alias-copy]");
+      if (copy) {
+        copy.addEventListener("click", () => {
+          navigator.clipboard.writeText(alias).catch(() => {});
+          velaShowToast("Alias copied!");
+        });
+      }
+    };
+
+    btn.addEventListener("click", async (e) => {
+      if (!e.isTrusted) return;
+      if (!alive() || btn.disabled) return;
+
+      if (mode === "connect") {
+        await sendExtensionMessage("openPopup");
+        return;
+      }
+
+      if (mode !== "create") return;
+      mode = "working";
+      btn.disabled = true;
+      btn.textContent = "Creating…";
+      showResult("");
+      const resp = await sendExtensionMessage("createEmailAlias", { url: location.href });
+      if (!alive()) return;
+
+      if (resp && resp.success && resp.alias) {
+        showAlias(resp.alias);
+        velaApplyAliasToPage(resp.alias, targetField);
+        mode = "create";
+        setRow(`Hide your real address with ${velaEscapeHtml(providerLabel)}`, "New alias", true);
+      } else if (resp && resp.needsPermission) {
+        mode = "connect";
+        setRow(`VELA lost permission to reach ${velaEscapeHtml(providerLabel)} — reconnect it in the popup`, "Open popup", true);
+      } else {
+        showResult(`<span class="vela-gen-alias-error">${velaEscapeHtml(resp?.error || "Alias creation failed")}</span>`);
+        mode = "create";
+        setRow(`Hide your real address with ${velaEscapeHtml(providerLabel)}`, "Try again", true);
+      }
+    });
+
+    sendExtensionMessage("getAliasProvider").then((provider) => {
+      if (!alive()) return;
+      if (!provider || !provider.configured) {
+        mode = "connect";
+        providerLabel = "";
+        setRow("Connect addy.io, SimpleLogin or Firefox Relay in VELA's popup", "Connect", true);
+        return;
+      }
+      mode = "create";
+      providerLabel = provider.label;
+      setRow(`Hide your real address with ${velaEscapeHtml(providerLabel)}`, `Create with ${providerLabel}`, true);
+    }).catch(() => {
+      mode = "create";
+      providerLabel = "";
+      setRow("Hide your real address", "Create", true);
+    });
+  }
+
+  /**
+   * Put the fresh alias where the user needs it: the username field of the
+   * form being filled (so the capture prompt saves the alias as the login's
+   * username), or the open save dialog when the generator was launched from
+   * there.
+   */
+  function velaApplyAliasToPage(alias, targetField) {
+    let filled = false;
+    const form = targetField?.form || targetField?.closest("form");
+    if (form) {
+      const inputs = Array.from(form.querySelectorAll("input:not([type='password']):not([type='hidden']):not([data-vela-ui])"));
+      const usable = (inp) => ["text", "email", "tel", "url"].includes((inp.type || "text").toLowerCase());
+      // First pass: a field VELA would treat as the username. Second pass:
+      // any empty text-ish input — bare `<input type="email">` with no name
+      // or placeholder fails the heuristic but is still obviously it.
+      for (const inp of inputs) {
+        if (usable(inp) && velaIsAutofillable(inp)) {
+          fillElement(inp, alias);
+          filled = true;
+          break;
+        }
+      }
+      if (!filled) {
+        for (const inp of inputs) {
+          if (usable(inp) && !inp.value) {
+            fillElement(inp, alias);
+            filled = true;
+            break;
+          }
+        }
+      }
+    }
+    if (velaSaveModal) {
+      const saveUser = velaSaveModal.querySelector("#vela-save-username");
+      if (saveUser) {
+        saveUser.value = alias;
+        filled = true;
+      }
+    }
+    if (filled) velaShowToast("Alias placed in the username field");
   }
 
   function velaGeneratePassword(opts) {

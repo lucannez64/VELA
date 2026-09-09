@@ -7,6 +7,21 @@ const loadingSpinner = document.getElementById("loadingSpinner");
 const openVaultBtn = document.getElementById("openVaultBtn");
 const settingsBtn = document.getElementById("settingsBtn");
 
+const aliasSection = document.getElementById("aliasSection");
+const aliasToggle = document.getElementById("aliasToggle");
+const aliasBadge = document.getElementById("aliasBadge");
+const aliasBody = document.getElementById("aliasBody");
+const aliasProvider = document.getElementById("aliasProvider");
+const aliasConfigRows = document.getElementById("aliasConfigRows");
+const aliasActions = document.getElementById("aliasActions");
+const aliasKeyLabel = document.getElementById("aliasKeyLabel");
+const aliasKey = document.getElementById("aliasKey");
+const aliasKeyHint = document.getElementById("aliasKeyHint");
+const aliasBase = document.getElementById("aliasBase");
+const aliasSave = document.getElementById("aliasSave");
+const aliasDisconnect = document.getElementById("aliasDisconnect");
+const aliasStatus = document.getElementById("aliasStatus");
+
 let currentTabUrl = null;
 let availableLogins = [];
 let inCoreLoginCandidates = [];
@@ -27,6 +42,131 @@ function setupEventListeners() {
   settingsBtn.addEventListener("click", () => {
     sendMessage({ command: "openSettings" });
   });
+
+  setupAliasSettings();
+}
+
+// ── Email alias settings ────────────────────────────────────────────────────
+//
+// Tokens live in `storage.local` and the per-provider host permission is
+// requested here, from the popup, while the connect click is still a user
+// gesture — the background cannot ask on its own (service workers have no
+// user gesture), and the generator on a web page must never be the place an
+// API token is typed: the page's own JavaScript can read anything in the
+// page DOM, including VELA's injected overlays.
+
+const ALIAS_PROVIDER_META = {
+  addyio: { label: "addy.io", defaultBase: "https://app.addy.io", keyLabel: "API token", keyHint: "addy.io → Settings → API → create a token" },
+  simplelogin: { label: "SimpleLogin", defaultBase: "https://app.simplelogin.io", keyLabel: "API key", keyHint: "SimpleLogin → Settings → API keys" },
+  relay: { label: "Firefox Relay", defaultBase: "https://relay.firefox.com", keyLabel: "API token", keyHint: "relay.firefox.com → Settings → generate an API token" }
+};
+const ALIAS_CONFIG_KEY = "velaAliasConfig";
+
+function setupAliasSettings() {
+  aliasToggle.addEventListener("click", () => {
+    const open = aliasBody.hidden;
+    aliasBody.hidden = !open;
+    aliasSection.classList.toggle("open", open);
+  });
+
+  aliasProvider.addEventListener("change", () => {
+    const meta = ALIAS_PROVIDER_META[aliasProvider.value];
+    aliasConfigRows.hidden = !meta;
+    aliasActions.hidden = !meta;
+    if (meta) {
+      aliasKeyLabel.textContent = meta.keyLabel;
+      aliasKey.placeholder = meta.keyLabel;
+      aliasKeyHint.textContent = meta.keyHint;
+      aliasBase.placeholder = `Official server (${meta.defaultBase})`;
+    }
+    setAliasStatus("");
+  });
+
+  aliasSave.addEventListener("click", saveAliasProvider);
+  aliasDisconnect.addEventListener("click", clearAliasProvider);
+
+  loadAliasConfig();
+}
+
+async function loadAliasConfig() {
+  try {
+    const data = await browser.storage.local.get(ALIAS_CONFIG_KEY);
+    const config = data[ALIAS_CONFIG_KEY];
+    if (config && config.provider) {
+      aliasProvider.value = config.provider;
+      aliasProvider.dispatchEvent(new Event("change"));
+      aliasSave.textContent = "Save";
+      setAliasStatus(`Connected to ${ALIAS_PROVIDER_META[config.provider].label}`, "ok");
+      aliasBadge.textContent = ALIAS_PROVIDER_META[config.provider].label;
+      aliasBadge.classList.add("connected");
+    }
+  } catch (e) {
+    console.log("[VELA Popup] alias config load failed:", e.message);
+  }
+}
+
+async function saveAliasProvider() {
+  const provider = aliasProvider.value;
+  const meta = ALIAS_PROVIDER_META[provider];
+  const apiKey = aliasKey.value.trim();
+  if (!meta || !apiKey) {
+    setAliasStatus("Enter your API token first.", "err");
+    return;
+  }
+
+  const baseUrl = (aliasBase.value.trim().replace(/\/+$/, "")) || meta.defaultBase;
+  let origin;
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "https:") throw new Error("not https");
+    origin = parsed.origin;
+  } catch (_) {
+    setAliasStatus("The server URL must be a valid https:// address.", "err");
+    return;
+  }
+
+  aliasSave.disabled = true;
+  try {
+    // Hold the provider origin only, only once, and only because the user
+    // just asked for it. Reversible in this popup or in the browser's own
+    // permissions UI.
+    const granted = await browser.permissions.request({ origins: [`${origin}/*`] });
+    if (!granted) {
+      setAliasStatus("Permission to reach the provider was refused.", "err");
+      return;
+    }
+    await browser.storage.local.set({
+      [ALIAS_CONFIG_KEY]: { provider, apiKey, baseUrl: origin }
+    });
+    aliasKey.value = "";
+    aliasSave.textContent = "Save";
+    setAliasStatus(`Connected to ${meta.label}. Create aliases from the password generator.`, "ok");
+    aliasBadge.textContent = meta.label;
+    aliasBadge.classList.add("connected");
+  } catch (e) {
+    setAliasStatus(`Could not connect: ${e.message}`, "err");
+  } finally {
+    aliasSave.disabled = false;
+  }
+}
+
+async function clearAliasProvider() {
+  try {
+    await browser.storage.local.remove(ALIAS_CONFIG_KEY);
+    aliasProvider.value = "";
+    aliasProvider.dispatchEvent(new Event("change"));
+    aliasSave.textContent = "Connect";
+    aliasBadge.textContent = "Off";
+    aliasBadge.classList.remove("connected");
+    setAliasStatus("Provider disconnected.", "ok");
+  } catch (e) {
+    setAliasStatus(`Could not disconnect: ${e.message}`, "err");
+  }
+}
+
+function setAliasStatus(message, kind = "") {
+  aliasStatus.textContent = message;
+  aliasStatus.className = `alias-status${kind ? ` ${kind}` : ""}`;
 }
 
 async function checkDesktopConnection() {
