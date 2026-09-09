@@ -1,8 +1,8 @@
 # VELA Protocol Specification v2.0 (Hardware-Bound & Zero-Knowledge)
 
 **Version:** 2.1
-**Date:** 2026-03-26 (status updated 2026-08-28)
-**Status:** Final — implemented. The v2.0 protocol described here is fully implemented and shipping in the 0.1.0 reference clients (desktop, Android, iOS, extension, web vault, server), with machine-checked assurance for the enrollment, recovery, rekeying, web-session, and ORAM access-hiding mechanisms (`security/formal/`). Deviations from this text are recorded in `CHANGELOG.md` and `EPHEMERAL_WEB_ACCESS_DESIGN.md`.
+**Date:** 2026-03-26 (status updated 2026-09-09)
+**Status:** Final — implemented. The v2.0 protocol described here is fully implemented and shipping in the 0.1.0 reference clients (desktop, Android, iOS, extension, web vault, server), with machine-checked assurance for the enrollment, recovery, rekeying, share-channel, web-session, and ORAM access-hiding mechanisms (`security/formal/`). Deviations from this text are recorded in `CHANGELOG.md` and `EPHEMERAL_WEB_ACCESS_DESIGN.md`.
 
 ---
 
@@ -14,7 +14,7 @@
    3.1. [BLAKE3 Context String Registry](#31-blake3-context-string-registry)
 4. [Identity, Device Management & Recovery](#4-identity-device-management--recovery)
 5. [Vault Architecture & Flexible Data Types](#5-vault-architecture--flexible-data-types)
-6. [Zero-Knowledge Authentication Protocol](#6-zero-knowledge-authentication-protocol)
+6. [Hybrid Signature Authentication Protocol](#6-hybrid-signature-authentication-protocol)
 7. [Client-Specific Implementations](#7-client-specific-implementations)
 8. [API Reference (Abridged)](#8-api-reference-abridged)
 9. [Security & Threat Model](#9-security--threat-model)
@@ -173,17 +173,39 @@ audit_key = blake3::derive_key("vela audit log v1", RMS)
 To prevent the server from knowing metadata (e.g., you have 50 passwords and 2 credit cards), the vault uses a **Chunked Blob Architecture** with Path ORAM to additionally hide access patterns.
 
 ### 5.1 The Local Vault Tree
-Locally, the vault is a Bincode-serialized tree of arbitrary items.
+Locally, the vault is a JSON-serialized tree of arbitrary items.
 
 ```rust
 enum VaultItem {
-    Login { url: String, user: String, pass: String, totp: Option<String> },
-    CreditCard { number: String, exp: String, cvv: String, pin: Option<String> },
+    Login {
+        url: String, username: String, pass: String, totp: Option<String>,
+        /// Android apps linked to this login, as `androidapp://<package>` (audit A-2).
+        app_ids: Vec<String>,
+        /// Site re-proves the old password on change; drives in-core login UX.
+        credential_change_needs_reauth: Option<bool>,
+        /// May this item's TOTP answer a second-factor prompt the site asked
+        /// to be stronger (a security key)? Set by in-core login.
+        allow_second_factor_downgrade: Option<bool>,
+    },
+    CreditCard { number: String, exp: String, cvv: String, pin: Option<String>, cardholder_name: Option<String> },
     SecureNote { title: String, content: String },
     Identity { first_name: String, last_name: String, ssn: String },
     FileBlob { filename: String, mime: String, chunks: Vec<Uuid> }, // large files split across data chunks
+    BreachMonitor { email: String, checked_at: Option<DateTime<Utc>>, breach_count: u32, breaches: Vec<BreachEntry> }, // §5.5
+    Passkey {                                                                        // §7.4
+        rp_id: String, rp_name: String,
+        credential_id: String, user_handle: String, user_name: String, user_display_name: String,
+        private_key: String,   // ES256 scalar; **the secret** — used only where it is stored
+        sign_count: u32,       // WebAuthn assertion counter, detects cloned authenticators
+    },
 }
 ```
+
+Every item carries a common `VaultMeta { id, name, notes, created_at, updated_at, last_modified_device, favorite, shared, share_recipient }`. The `shared` / `share_recipient` pair tracks cross-user item shares (§5.4): `shared=true` with a `share_recipient` marks the sender's original; `shared=true` without one marks a received copy, which clients keep edit-locked.
+
+Serialization is tagged JSON (`item_type` discriminant). Every field added after v2.0 uses `#[serde(default)]` plus an alias, so a client that predates a field round-trips another client's items without silently deleting them for every device (audit A-2). Item secrets are redacted from `Debug` output and zeroized on `Drop`; there is no formatting of a `VaultItem` that reveals a password, card number, or SSN.
+
+`Passkey` items deliberately break the "secrets are released to requesters" model used by every other type: the ES256 private key never leaves the core — not to the browser, not to the page, not over IPC. Only individual assertion signatures leave, one at a time, for a relying party whose RP ID matches exactly (`security/formal/m7_oneshot_assertion.spthy`, property `credential_never_leaks`).
 
 For `FileBlob` items: the file data is split into 1MB data chunks. Each data chunk is stored as an independent `VaultChunk` on the server. The `FileBlob` entry in the vault tree holds only the ordered list of chunk UUIDs. Reassembly is performed client-side after downloading all referenced chunks.
 
@@ -227,6 +249,30 @@ Each device independently increments a per-chunk `lamport_clock` on every local 
 **Conflict copy lifecycle:** Conflict copies are retained for 30 days (configurable) after which they are automatically pruned from the vault. The client marks the original and conflict-copy chunks with a `conflict_refs` metadata field pointing to the common ancestor chunk_id. When a user resolves a conflict by choosing a winner or merging manually, the losing copy is deleted immediately and the `conflict_refs` link is cleared. Auto-pruning only removes unresolved conflict copies older than 30 days. This prevents unbounded vault inflation while allowing users time for manual resolution.
 
 Uploads use an `If-Match: <version>` header for optimistic concurrency; the server rejects a PUT if the stored version has advanced since the client's last fetch, forcing a re-sync.
+
+### 5.4 Cross-User Item Sharing (M19)
+
+A user may share one vault item with another VELA identity without granting any access to the rest of the vault. The channel is WebAuthn-free and server-blind: the server relays and retains opaque capsules but cannot open any of them. Admission decisions (key registration, send, linked-item mutation) live in the `vela-share-policy` crate as pure functions, hax-extracted to F* (`security/formal/share-channel-tamarin-results.md`).
+
+**Share keys.** Each identity owns a dedicated share keypair (`share_ek` / `share_dk`), separate from the device-auth hybrid keys, so sharing never depends on and cannot disturb enrollment material. The public half is registered and updated with `PUT /share/my-ek`: the binding is signed by an enrolled, active device owned by the caller, and carries an RFC 3339 `signed_at` that must be strictly fresher than the currently registered binding (M25) — bytewise RFC 3339 comparison makes lexicographic order coincide with chronological order, so update sequences cannot cycle and replaying the current timestamp always loses. Identities created before sharing existed backfill a share keypair without touching their device-auth keys. Any authenticated user may read another identity's `share_ek` via `GET /share/recipient/{user_id}/ek` — the public key alone, never a secret.
+
+**Send.** The sender fetches the recipient's `share_ek`, seals the full item (JSON, secrets included) with the hybrid KEM (`kem::seal_share`: ML-KEM-1024 + X25519 encapsulation, XChaCha20-Poly1305 AEAD, no associated data), and delivers the base64 capsule with `POST /share/send`. The server accepts only if the `vela-share-policy` facts hold: sender authenticated, recipient share key registered, capsule ≤ 1 MB, inbox capacity available. Flood control is layered: ≤ 500 pending items per recipient inbox, ≤ 8 MB pending per (sender → recipient) pair, ≤ 32 MB total pending per inbox; pending inbox items expire after 30 days. "No such user" and "user cannot receive shares" are one indistinguishable error so share links cannot be used to probe which user IDs exist (RT-3). Quota checks and the two-row insert (`shared_items` + `share_inbox`, same id) run in one transaction so a crash cannot orphan either.
+
+**Receive.** The recipient lists pending capsules with `GET /share/inbox`. Accepting opens the capsule with the recipient's `share_dk`, adds the item to the vault under a fresh UUID marked `shared=true` (so even a self-share is a distinct item), and removes the inbox row (`DELETE /share/inbox/{id}`); declining just removes the row without touching the vault. A received copy is edit-locked on the client: the recipient's updates travel back through the sender.
+
+**Linked shares and freshness (C-2).** After acceptance the server retains the capsule as a *linked share* (`GET /share/linked`). When the sender edits the item, every current recipient's capsule is re-sealed to that recipient's `share_ek` and pushed with `PUT /share/linked/{id}`; recipients pick up new capsules on their next `GET /share/linked` and apply them only when the decrypted item's `updated_at` is strictly newer than the copy they already hold. `updated_at` travels *inside* the sealed payload, so the freshness decision is authenticated — a server replaying a stale capsule cannot revert a newer edit. (The AEAD layer carries no AAD and cannot itself distinguish a current capsule from a replayed one; the protection lives in this post-decryption comparison, guarded by test `a_replayed_share_capsule_cannot_revert_a_newer_item`.)
+
+**Revocation.** The sender revokes with `DELETE /share/linked/{id}`. The linked row becomes an immutable tombstone (`not_already_revoked` in the policy facts; nothing un-revokes it), the sender's item is unmarked, and the sender's own client drops its received copy. Revocation stops future pulls; a recipient who accepted earlier holds their copy like any other vault item — sharing one item is not remote deletion of a recipient's vault.
+
+**Audit.** `ShareSent` and `ShareReceived` events (recipient/sender user ID, timestamp) are appended to the end-to-end encrypted device audit log (§4.4); the server never sees them.
+
+### 5.5 Client-Side Breach Monitoring & Vault Health
+
+Breach monitoring is a client feature and part of the protocol surface only through the `BreachMonitor` vault item (§5.1): results are ordinary vault items, so they sync end-to-end encrypted through the same ORAM channel as everything else and the server cannot distinguish a breach report from any other chunk.
+
+- **Email breach checks** query the HaveIBeenPwned API v3 (`/breachedaccount/{email}`, full response) and convert results into `BreachEntry { name, title, domain, breach_date, description, data_classes, is_verified, is_fabricated, is_sensitive, is_retired, is_spam_list }`. An optional `HIBP_API_KEY` raises the rate limit; without it the free anonymous tier is used, rate-limited client-side to match it. The checked email address is necessarily revealed to HIBP — a third party — and never to the VELA server.
+- **Password checks** use the Pwned Passwords range API with k-anonymity: the client computes the SHA-1 of the password locally and sends only the 5-hex-character prefix; HIBP returns every suffix/count pair with that prefix, and the client matches the suffix locally. Neither the password nor its full hash ever leaves the device, and the VELA server sees nothing. Single-password and vault-wide (per distinct login password, rate-limited to the free tier) variants exist.
+- **Vault health** is computed locally from the vault: counts of weak passwords (strength estimate below threshold) and reused passwords (same password on multiple items), combined into a single health score. The desktop UI surfaces weak/reused counts in the vault browser and a dedicated breach-monitor screen explains what leaves the device (only the hash prefix; the email address, only to HIBP).
 
 ---
 
@@ -314,7 +360,14 @@ The server uses embedded sled TTL counters for rate limits, challenge nonces, to
 | `/recovery/initiate-proof` | POST | None | M18: starts an RMS-possession recovery attempt for an account with a stored share and possession commitment; returns a fresh single-attempt challenge. Releases nothing. |
 | `/recovery/recover/proof` | POST | RMS-possession proof | M18: verifies the challenge-bound proof of possessing any two shares and issues a single-use `recovery_grant` — without releasing Share 2 and without WebAuthn. |
 | `/recovery/enroll-device` | POST | `recovery_grant` (from `/recovery/recover` or `/recovery/recover/proof`) | Registers a new device's hybrid identity key against an existing account once the RMS has been reconstructed client-side. Consumes the grant; no enrolling-device signature required. |
-| `/share/send` | POST | PASETO v4 | Encapsulate a specific vault item for another user using Hybrid KEM; delivers encrypted capsule to recipient's inbox. |
+| `/share/send` | POST | PASETO v4 | Encapsulate a specific vault item for another user using Hybrid KEM; delivers encrypted capsule to recipient's inbox. Server gates on `vela-share-policy` facts (sender authenticated, recipient share key registered, capsule ≤ 1 MB, inbox capacity) and applies flood-control quotas (§5.4). |
+| `/share/my-ek` | PUT | PASETO v4 | Register or update this identity's share encapsulation key. The binding is signed by an enrolled, active, caller-owned device with a strictly fresher RFC 3339 `signed_at` (M25). |
+| `/share/recipient/{user_id}/ek` | GET | PASETO v4 | Fetch another identity's public share key for sealing a capsule. Public key only. |
+| `/share/inbox` | GET | PASETO v4 | List pending share capsules delivered to this identity. |
+| `/share/inbox/{id}` | DELETE | PASETO v4 | Remove a pending inbox item (accept consumes it after decryption; decline removes it untouched). |
+| `/share/linked` | GET | PASETO v4 | List linked shares (capsules retained after acceptance) where the caller is sender or recipient. |
+| `/share/linked/{id}` | PUT | PASETO v4 | Sender re-seals an updated item for every current recipient; the recipient applies only strictly newer capsules (C-2). Sender-only. |
+| `/share/linked/{id}` | DELETE | PASETO v4 | Sender revokes a share; the linked row becomes an immutable tombstone (§5.4). Sender-only. |
 
 ---
 
@@ -350,6 +403,9 @@ The server uses embedded sled TTL counters for rate limits, challenge nonces, to
 | Session token theft | Short 15-minute TTL; JTI revocation on logout/device revocation; PASETO v4 is tamper-evident. |
 | Authentication forgery | Both ML-DSA-87 and Ed25519 signatures must verify; rate limiting further reduces attack surface. |
 | Metadata inference by server | Fixed-size blobs; Path ORAM; server cannot distinguish vault size, item count, or item type. |
+| Malicious-server share rollback (M19) | Share capsules are KEM-sealed with no AAD, so the AEAD layer cannot detect replay; the post-decryption freshness rule (apply only strictly newer `updated_at`, authenticated inside the capsule) makes a replayed capsule unable to revert a newer edit (C-2). |
+| Share-channel abuse: recipient enumeration, inbox flooding | "Recipient cannot receive shares" is one indistinguishable error for unknown user and no-key user (RT-3); per-recipient, per-pair, and per-inbox byte/item quotas with a 30-day inbox TTL; send/update/revoke admission is pure policy, hax-extracted to F*. |
+| Share-key substitution | `share_ek` bindings are device-signed by an enrolled, active, caller-owned device and accepted only with a strictly fresher RFC 3339 `signed_at` (M25); forged, replayed, foreign-device, and revoked-device bindings are proven unregistrable. |
 
 ### Out of Scope (v2.0)
 - Client-side malware / keyloggers (trusted execution environment is a prerequisite).

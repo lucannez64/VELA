@@ -282,11 +282,11 @@ const NODES = [
 /* ---- the vault ---- */
 { id:"VLT", key:"V", label:"Vault store", group:"vault", gx:16, gy:4, w:4, d:3, h:1.1,
   files:["libVELA/vela-core/src/vault.rs","desktopVELA/vela-desktop-core/src/vault.rs"],
-  what:["The decrypted items, in memory, for as long as the session is unlocked. Six item types: login, credit card, secure note, identity, file blob, breach monitor.",
+  what:["The decrypted items, in memory, for as long as the session is unlocked. Seven item types: login, credit card, secure note, identity, file blob, breach monitor, passkey. A passkey item's ES256 key is used only where it is stored - not to the browser, not to the page, not over IPC; only one assertion signature leaves at a time, for an exactly-matching RP ID.",
         "It also owns **URL matching** — deciding whether a stored login belongs to the page asking for it. That check uses the Public Suffix List rather than a last-two-labels shortcut, which used to collapse `victim.co.uk` to a public suffix that matched nothing."],
   built:["Serde-tagged enum over a shared `VaultMeta` (id, name, timestamps, last-modified device, favourite, shared). Deletions are `Tombstone` records, not removals, so a delete can propagate to other devices instead of being resurrected by the next merge."],
   cond:["Item plaintext lives in process memory while unlocked; the protection there is the session lock and zeroization, not the OS."],
-  inside:[["items","Vec<VaultItem>, tagged by item_type"],["tombstones","deletions retained for propagation"],["urls_match","PSL-aware host comparison"],["linked apps","androidapp://<package> entries"],["breach fields","hibp state carried on the item"]] },
+  inside:[["items","Vec<VaultItem>, tagged by item_type"],["tombstones","deletions retained for propagation"],["urls_match","PSL-aware host comparison"],["linked apps","androidapp://<package> entries"],["breach fields","hibp state carried on the item"],["passkey","ES256 key scoped to one RP ID, used only where stored"]] },
 
 { id:"STO", key:"S", label:"Encrypted local store", group:"vault", gx:16, gy:9, w:3, d:3, h:0.65,
   files:["desktopVELA/vela-desktop-core/src/store.rs"],
@@ -464,7 +464,8 @@ const NODES = [
 { id:"EXT", key:"Z", label:"Browser extension", group:"clients", gx:-5, gy:-3, w:3, d:2, h:1.3,
   files:["extension/src/content/content-script.js","extension/src/background/background.js","extension/src/shared/autofill-utils.js","extension/src/popup/popup.js"],
   what:["Finds the login form on the page, asks for a credential, and offers to save a new one. 1,710 lines of the content script are field detection, which is where the real difficulty of autofill lives.",
-        "It has **no vault access of its own**. It cannot reach the desktop app over localhost HTTP either — that path was removed."],
+        "It has **no vault access of its own**. It cannot reach the desktop app over localhost HTTP either - that path was removed.",
+        "It also **shims WebAuthn**: `webauthn-shim.js` intercepts `navigator.credentials.create/get` and relays the ceremony over native messaging. The page sees a standard authenticator; only a signature ever comes back."],
   built:["Manifest v3 with separate Chromium and Firefox manifests. The background service worker is the only part that speaks to the native messaging host."],
   cond:["Any page it runs on is hostile by assumption; nothing it sends is trusted by the desktop side — the gate verifies the process, and presence plus blast-radius limits bound what a verified caller gets."],
   inside:[["detect","find username/password fields on the page"],["request","ask background for a credential for this host"],["fill","write into the fields, never into the DOM as text"],["offer save","new credential → SaveCredentials"]] },
@@ -502,10 +503,22 @@ const NODES = [
 { id:"AND", key:"AN", label:"Android + JNI", group:"clients", gx:-5, gy:14, w:3, d:3, h:1.9,
   files:["androidVELA/app/src/main/java/com/vela/android/","libVELA/vela-android-bridge/src/lib.rs"],
   what:["A native Android app that does its crypto in the same Rust, through a JNI bridge, and fills credentials into other apps through the platform autofill service.",
-        "Logins can be linked to apps by package (`androidapp://<package>`), which is how a vault entry for a website also fills its mobile app."],
+        "Logins can be linked to apps by package (`androidapp://<package>`), which is how a vault entry for a website also fills its mobile app.",
+        "It is also a **system-wide passkey provider** (Android 14+, Credential Manager): any browser or app's WebAuthn ceremony can be answered with a VELA-stored passkey."],
   built:["Kotlin + Compose (13.9k lines) over `vela-android-bridge` (1,478 lines of JNI). Cleartext networking is blocked globally except for scoped local development hosts listed in `network_security_config.xml`."],
   cond:["Device-identity private halves stay behind an opaque native handle. Kotlin does hold short-lived RMS byte arrays for vault operations and clears its copies after adoption or derivation.","Android requires the manifest epoch to match the locally adopted epoch, binds epoch ‖ chunk id ‖ Lamport clock into chunk AEAD after epoch 1, rejects legacy ciphertext there, and sends `X-Vela-Epoch` on uploads and deletes. It can enroll/recover into a rotated account, but existing Android devices still block a later rotation because mobile rekey-capsule adoption is not shipped."],
-  inside:[["NativeVelaCore","JNI entry points"],["VaultSyncManager","the sync loop, Android side"],["VelaAutofillService","platform autofill"],["LinkedApps","androidapp://<package> matching"]] },
+  inside:[["NativeVelaCore","JNI entry points"],["VaultSyncManager","the sync loop, Android side"],["VelaAutofillService","platform autofill"],["VelaCredentialProviderService","system passkey provider"],["LinkedApps","androidapp://<package> matching"]] },
+
+{ id:"PKY", key:"PK", label:"Passkey provider", group:"clients", gx:-5, gy:19, w:3, d:2.6, h:2.2,
+  files:["desktopVELA/vela-desktop-core/src/passkey.rs","extension/src/content/webauthn-shim.js","androidVELA/app/src/main/java/com/vela/android/security/passkey/VelaCredentialProviderService.kt"],
+  what:["WebAuthn credentials are vault items - the seventh item type - whose ES256 private key is used only where it is stored: not to the browser, not to the page, not over IPC. One assertion signature leaves at a time, and the model's `credential_never_leaks` holds even for the credential in active use, because no code path emits a key.",
+        "The same two ceremonies (`make_credential`, `get_assertion`) are driven from two transports: the desktop/browser shim over native messaging, and Android's system Credential Manager provider (Android 14+) - validated live against webauthn.io, a strict local relying party, a native app via Clerk, and IronFox."],
+  built:["Desktop: `passkey.rs` (450 lines) + `credential_key.rs`; shim: `webauthn-shim.js` (321) + `passkey-bridge.js` (85); Android: `VelaCredentialProviderService` (177) + `PasskeyAuthenticator` (202) + `PasskeyPromptActivity` (453). A unit test pins the Kotlin ceremony to the desktop's exact `authenticatorData`/`attestationObject`/signature shape, so the transports stay behaviorally identical."],
+  cond:["`UV` is claimed only when VELA itself verified the user - a real biometric/PIN step inside VELA's own prompt screen - never because the RP requested it. `UP` marks the human approval; one ceremony per PresenceToken.",
+        "The AAGUID is all-zero on purpose: an attestation model id would tell every RP a user registers with that the credential lives in VELA - a cross-site correlation handle nobody asked for. `none` attestation needs none.",
+        "A locked vault answers Credential Manager with an 'Unlock VELA' action, not entries: entries cannot honestly be listed from a sealed vault.",
+        "Keyless (pre-provider) passkey snapshots never overwrite keyed server copies - Android pulls and merges first; a timestamp race can decide names, never whether a credential keeps its key."],
+  inside:[["PresenceToken","minted by the biometric gate, not Clone, taken by value - one token buys one assertion"],["rp_id","exact-match lookup; its hash is signed inside authenticatorData, so a signature verifies nowhere else"],["sign_count","persisted after every assertion; the cloned-authenticator tripwire"],["privileged allowlists","resolveOrigin unions the shipped + community browser lists; a browser on none is refused, not downgraded"],["sync","passkey keys ride sealed chunks both ways; the phone pulls before pushing (key backfill)"]] },
 
 { id:"IOS", key:"IS", label:"iOS + Apple bridge", group:"clients", gx:-1, gy:14, w:3, d:3, h:1.9,
   files:["iosVELA/Sources/","iosVELA/AutoFill/","libVELA/vela-apple-bridge/src/lib.rs"],
@@ -1013,6 +1026,32 @@ suffix  "1E4C9B93F3F0682250B6CF8331B7EE68FD8"`,
 
 parse_pwned_range(body, suffix) → Some(3_861_493)`,
     note:"The comparison happens here, on a list of suffixes. Nothing that identifies the password ever leaves the machine." }},
+]},
+
+{ id:"passkey", name:"Sign in with a passkey", short:"PASSKEY", hops:[
+  { a:"EXT", b:"NMH", bend:"x", p:{ t:"The page runs a WebAuthn ceremony", kind:"navigator.credentials", src:"extension/src/content/webauthn-shim.js",
+    body:`navigator.credentials.get({ publicKey: { challenge, rpId, ... } })
+  -> intercepted by the shim
+  -> relayed over native messaging`,
+    note:"The shim exposes a standard authenticator to the page. The page never learns which manager answered - and the all-zero AAGUID keeps it that way at the protocol layer too." }},
+  { a:"NMH", b:"PKY", bend:"y", p:{ t:"Into the core, one ceremony at a time", kind:"native messaging -> ipc", src:"desktopVELA/vela-desktop-core/src/passkey.rs",
+    body:`request -> presence check -> PresenceToken (taken by value)
+one token buys exactly one make_credential / get_assertion`,
+    note:"PresenceToken is neither Clone nor Copy - the compile-time form of `assertions_bounded_by_presence`. Without it the assertion path is a free oracle a co-resident process can call at will, which is exactly the defect the first version of the model had." }},
+  { a:"VLT", b:"PKY", bend:"y", p:{ t:"Unlock, match, sign in place", kind:"es256", src:"vela-desktop-core/src/passkey.rs",
+    body:`credential = exact rp_id match
+authenticatorData = sha256(rp_id) || flags(UP, UV?, AT?) || signCount
+signature = ES256(private_key, authenticatorData || sha256(clientDataJSON))`,
+    note:"The RP ID hash is signed as part of authenticatorData, so a signature minted for one origin verifies nowhere else (`assertion_is_origin_bound`). The key itself never leaves." }},
+  { a:"PKY", b:"VLT", bend:"d", p:{ t:"The credential is a vault item", kind:"vault item", src:"libVELA/vela-core/src/vault.rs",
+    body:`Passkey { rp_id, credential_id, user_handle, private_key, sign_count }
+sealed, chunked, and synced like every other item`,
+    note:"Sync carries the private key in both directions, so a passkey created on the desktop answers on the phone and vice-versa. The phone pulls before pushing when its copies predate the provider (key backfill)." }},
+  { a:"PKY", b:"AND", bend:"d", p:{ t:"The phone answers too", kind:"credential manager", src:"androidVELA/app/src/main/java/com/vela/android/security/passkey/VelaCredentialProviderService.kt",
+    body:`onBeginGetCredentialRequest -> VELA prompt screen
+      -> real biometric/PIN step when the RP requires it
+      -> PasskeyAuthenticator signs with the same invariants`,
+    note:"A system-wide provider (Android 14+): any browser or app can be served a VELA-stored passkey. A locked vault answers with 'Unlock VELA', never with entries. Cromite and legacy GMS-FIDO2-only browsers are unreachable by upstream policy." }},
 ]},
 ];
 
