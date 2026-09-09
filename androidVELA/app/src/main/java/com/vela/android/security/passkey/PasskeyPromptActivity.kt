@@ -376,9 +376,11 @@ class PasskeyPromptActivity : FragmentActivity() {
     private fun resolveOrigin(info: CallingAppInfo?): String? {
         if (info == null) return null
         if (info.isOriginPopulated()) {
-            val allowlist = runCatching {
-                assets.open(PRIVILEGED_ALLOWLIST_ASSET).bufferedReader().use { it.readText() }
-            }.getOrNull() ?: return null
+            val allowlist = PrivilegedAllowlists.merge(
+                PRIVILEGED_ALLOWLIST_ASSETS.map { asset ->
+                    runCatching { assets.open(asset).bufferedReader().use { it.readText() } }.getOrNull()
+                }.filterNotNull(),
+            ) ?: return null
             return runCatching { info.getOrigin(allowlist) }.getOrNull()
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
@@ -390,8 +392,20 @@ class PasskeyPromptActivity : FragmentActivity() {
     }
 
     private companion object {
-        /** Same list Android itself uses for passkey origin assertions. */
-        const val PRIVILEGED_ALLOWLIST_ASSET = "privileged_browsers_google.json"
+        /** Sources of "may speak for an origin", merged for
+         * [CallingAppInfo.getOrigin] by [PrivilegedAllowlists.merge]: Google's
+         * published list verbatim, the community forks (IronFox, Cromite,
+         * Iceraven, …) Google does not carry, and the browsers verified by
+         * hand — the same union the autofill side trusts; see
+         * [com.vela.android.autofill.BrowserAllowlist] for the curation
+         * policy. A browser declaring an origin but missing from all three is
+         * refused, not downgraded.
+         */
+        val PRIVILEGED_ALLOWLIST_ASSETS = listOf(
+            "privileged_browsers_google.json",
+            "privileged_browsers_community.json",
+            "privileged_browsers_vela.json",
+        )
     }
 }
 
