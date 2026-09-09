@@ -339,6 +339,7 @@ fn main() {
             commands::vault::export_vault_bitwarden_json,
             commands::vault::save_vault_export_file,
             commands::vault::import_vault_bitwarden_json,
+            commands::vault::import_vault_file,
             commands::vault::check_email_breach,
             commands::vault::check_all_vault_emails,
             commands::vault::check_password_breach,

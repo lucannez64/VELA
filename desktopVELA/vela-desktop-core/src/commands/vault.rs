@@ -563,7 +563,14 @@ fn normalize_import_url(url: Option<&str>) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportResult {
     pub added: u32,
+    /// Rows recognized but deliberately not imported (cards, identities —
+    /// item types this import does not create).
+    #[serde(default)]
     pub skipped: u32,
+    /// Rows that matched an item already in the vault (or earlier in the same
+    /// file) by site + username, and were left alone.
+    #[serde(default)]
+    pub duplicates: u32,
     pub total: u32,
 }
 
@@ -675,7 +682,169 @@ pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<
 
     tracing::info!("Imported {} items, {} total", added_count, total_count);
 
-    Ok(ImportResult { added: added_count, skipped: skipped_count, total: total_count })
+    Ok(ImportResult {
+        added: added_count,
+        skipped: skipped_count,
+        duplicates: 0,
+        total: total_count,
+    })
+}
+
+/// The dedup key for a login: site + username. The host is stripped of
+/// scheme/path/www so `https://www.GitHub.com/login` and `github.com` land on
+/// the same key; a login without a URL falls back to its name so entries from
+/// the same "site" still collide with each other rather than all importing.
+fn login_dedup_key(url: &str, name: &str, username: &str) -> (String, String) {
+    let host = if url.trim().is_empty() {
+        name.trim().to_lowercase()
+    } else {
+        let rest = url.trim();
+        let rest = rest.split_once("://").map(|(_, r)| r).unwrap_or(rest);
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let host = authority
+            .rsplit_once('@')
+            .map(|(_, h)| h)
+            .unwrap_or(authority);
+        let host = host.trim().to_lowercase();
+        host.strip_prefix("www.")
+            .map(str::to_string)
+            .unwrap_or(host)
+    };
+    (host, username.trim().to_lowercase())
+}
+
+/// Import from any supported source (Bitwarden, 1Password, KeePass/KeePassXC,
+/// Chrome/Edge/Safari, Proton Pass, or a VELA export) with automatic format
+/// detection, field mapping, and deduplication.
+///
+/// Duplicates — same site + username as an item already in the vault, or as
+/// an earlier row of this same file — are counted and skipped, not merged:
+/// import must never silently overwrite an existing password. Running the
+/// same import twice therefore reports the second run as all-duplicates
+/// rather than doubling the vault.
+pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResult, String> {
+    let parsed = crate::import::parse_import(data)?;
+
+    require_unlocked(state)?;
+
+    let now = Utc::now();
+    let total_count = parsed.entries.len() as u32 + parsed.skipped_unsupported;
+    let mut added_count = 0u32;
+    let mut duplicates_count = 0u32;
+
+    {
+        let mut vault = state.vault.write();
+
+        let mut seen: std::collections::HashSet<(String, String)> = vault
+            .items
+            .iter()
+            .filter(|item| matches!(item, VaultItem::Login { .. }))
+            .map(|item| {
+                login_dedup_key(
+                    item.url().unwrap_or(""),
+                    item.name(),
+                    item.username().unwrap_or(""),
+                )
+            })
+            .collect();
+
+        for entry in parsed.entries {
+            let name = if !entry.name.is_empty() {
+                entry.name.clone()
+            } else if !entry.url.is_empty() {
+                entry.url.clone()
+            } else if !entry.username.is_empty() {
+                entry.username.clone()
+            } else {
+                "Imported login".to_string()
+            };
+
+            match entry.kind {
+                crate::import::EntryKind::Login => {
+                    let key = login_dedup_key(&entry.url, &name, &entry.username);
+                    if !seen.insert(key) {
+                        duplicates_count += 1;
+                        continue;
+                    }
+
+                    let notes = if entry.notes.is_empty() {
+                        None
+                    } else {
+                        Some(entry.notes)
+                    };
+                    let url = if entry.url.is_empty() {
+                        None
+                    } else {
+                        Some(entry.url.as_str())
+                    };
+                    let totp = if entry.totp.is_empty() {
+                        None
+                    } else {
+                        Some(entry.totp)
+                    };
+                    let item = VaultItem::Login {
+                        meta: crate::vault::VaultMeta {
+                            id: Uuid::new_v4().to_string(),
+                            name,
+                            notes,
+                            created_at: now,
+                            updated_at: now,
+                            last_modified_device: None,
+                            favorite: false,
+                            shared: false,
+                            share_recipient: None,
+                        },
+                        url: normalize_import_url(url),
+                        username: entry.username,
+                        pass: entry.password,
+                        totp,
+                        app_ids: Vec::new(),
+                        credential_change_needs_reauth: None,
+                        allow_second_factor_downgrade: None,
+                    };
+                    vault.add_item(item);
+                    added_count += 1;
+                }
+                crate::import::EntryKind::Note => {
+                    // Notes have no natural identity key; importing the same
+                    // note twice yields two notes rather than a lost one.
+                    let item = VaultItem::SecureNote {
+                        meta: crate::vault::VaultMeta {
+                            id: Uuid::new_v4().to_string(),
+                            name,
+                            notes: None,
+                            created_at: now,
+                            updated_at: now,
+                            last_modified_device: None,
+                            favorite: false,
+                            shared: false,
+                            share_recipient: None,
+                        },
+                        title: entry.name.clone(),
+                        content: entry.notes.clone(),
+                    };
+                    vault.add_item(item);
+                    added_count += 1;
+                }
+            }
+        }
+
+        tracing::info!(
+            "Import: {} added, {} duplicates, {} total",
+            added_count,
+            duplicates_count,
+            total_count
+        );
+    }
+
+    save_vault(state)?;
+
+    Ok(ImportResult {
+        added: added_count,
+        skipped: parsed.skipped_unsupported,
+        duplicates: duplicates_count,
+        total: total_count,
+    })
 }
 
 #[cfg(test)]
@@ -1055,6 +1224,67 @@ mod tests {
         let bob = items.iter().find(|i| i.username() == Some("bob")).unwrap();
         assert_eq!(bob.name(), "bob");
         assert_eq!(bob.url(), Some(""));
+    }
+
+    #[test]
+    fn import_vault_file_dedups_against_vault_and_within_file() {
+        let (_dir, state) = unlocked_state();
+        {
+            let mut vault = state.vault.write();
+            vault.add_item(login("GH", "https://github.com", "alice", "s3cret"));
+        }
+
+        // Row 1: same site+user as the vault item, case-insensitively, with a
+        // different password → duplicate (import must not overwrite).
+        // Row 2: matches row 1's key within this file → duplicate.
+        // Row 3: different site, same user → added.
+        // Row 4: different user, same site → added.
+        let csv = "name,url,username,password\n\
+                   GitHub,https://github.com/settings,ALICE,newpw\n\
+                   GitHub,https://github.com,alice,other\n\
+                   GitLab,gitlab.com,alice,pw3\n\
+                   GitHub,https://github.com,octo,pw4";
+        let result = import_vault_file(&state, csv).unwrap();
+        assert_eq!((result.added, result.duplicates, result.skipped), (2, 2, 0), "{result:?}");
+
+        let items = get_items(&state).unwrap();
+        assert_eq!(items.len(), 3, "vault item + 2 new, no duplicates imported");
+        // The pre-existing password must not have been touched.
+        let gh = items.iter().find(|i| i.name() == "GH").unwrap();
+        assert_eq!(gh.password(), Some("s3cret"));
+
+        // Re-importing the same file reports duplicates instead of doubling
+        // the vault.
+        let again = import_vault_file(&state, csv).unwrap();
+        assert_eq!((again.added, again.duplicates), (0, 4), "{again:?}");
+        assert_eq!(get_items(&state).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn import_vault_file_creates_secure_notes_and_reports_skipped_types() {
+        let (_dir, state) = unlocked_state();
+        let csv = "folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n\
+                   ,,login,GitHub,,\"\",0,github.com,octo,hunter2,\n\
+                   ,,note,Codes,abc123,,0,,,\n\
+                   ,,card,Visa,,,,,,,";
+        let result = import_vault_file(&state, csv).unwrap();
+        assert_eq!((result.added, result.duplicates, result.skipped), (2, 0, 1), "{result:?}");
+
+        let items = get_items(&state).unwrap();
+        let gh = items.iter().find(|i| i.username() == Some("octo")).unwrap();
+        assert_eq!(gh.password(), Some("hunter2"));
+        let note = items.iter().find(|i| i.name() == "Codes").unwrap();
+        assert!(matches!(note, VaultItem::SecureNote { .. }));
+        assert!(matches!(note, VaultItem::SecureNote { content, .. } if content == "abc123"));
+    }
+
+    #[test]
+    fn import_vault_file_requires_unlocked_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(AppState::for_test(dir.path()));
+        let csv = "name,url,username,password\nA,a.com,u,p";
+        let err = import_vault_file(&state, csv).unwrap_err();
+        assert!(err.contains("locked"), "{err}");
     }
 
     #[test]

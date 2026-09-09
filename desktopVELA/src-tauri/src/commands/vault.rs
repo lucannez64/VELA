@@ -152,6 +152,20 @@ pub async fn import_vault_bitwarden_json(
     Ok(result)
 }
 
+/// Import from any supported password manager (Bitwarden, 1Password,
+/// KeePass/KeePassXC, Chrome/Edge/Safari, Proton Pass) or a VELA export.
+/// The format is detected from the file's content, not its name.
+#[command]
+pub async fn import_vault_file(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    data: String,
+) -> Result<ImportResult, String> {
+    let result = vela_desktop_core::commands::vault::import_vault_file(&state, &data)?;
+    emit_vault_items_changed(&app);
+    Ok(result)
+}
+
 // ── favicon ──────────────────────────────────────────────────────────────
 
 #[command]

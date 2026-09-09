@@ -14,6 +14,7 @@ pub mod crypto;
 pub mod device;
 pub mod favicon;
 pub mod host;
+pub mod import;
 pub mod ipc;
 pub mod ipc_gate;
 pub mod ipc_peer;

@@ -690,7 +690,10 @@ impl SettingsScreen {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             let result: Result<Option<vela_desktop_core::commands::vault::ImportResult>, String> = async {
-                let file = rfd::AsyncFileDialog::new().add_filter("JSON", &["json"]).pick_file().await;
+                let file = rfd::AsyncFileDialog::new()
+                    .add_filter("Password exports", &["json", "csv", "1pif"])
+                    .pick_file()
+                    .await;
                 let Some(file) = file else { return Ok(None) };
                 let data = file.read().await;
                 let text = String::from_utf8(data).map_err(|e| format!("Import file is not valid UTF-8: {e}"))?;
@@ -698,7 +701,7 @@ impl SettingsScreen {
                 let imported = cx
                     .background_spawn_guarded("import vault", {
                         let app_state = app_state.clone();
-                        async move { vela_desktop_core::commands::vault::import_vault_bitwarden_json(&app_state, &text) }
+                        async move { vela_desktop_core::commands::vault::import_vault_file(&app_state, &text) }
                     })
                     .await
                     .unwrap_or_else(|| Err("Import failed unexpectedly".to_string()))?;
@@ -709,7 +712,16 @@ impl SettingsScreen {
             this.update(cx, |this, cx| {
                 this.importing = false;
                 this.export_import_status = match result {
-                    Ok(Some(r)) => Some(format!("Imported {} of {} items", r.added, r.total).into()),
+                    Ok(Some(r)) => {
+                        let mut status = format!("Imported {} of {} items", r.added, r.total);
+                        if r.duplicates > 0 {
+                            status.push_str(&format!(", {} already in vault", r.duplicates));
+                        }
+                        if r.skipped > 0 {
+                            status.push_str(&format!(", {} unsupported skipped", r.skipped));
+                        }
+                        Some(status.into())
+                    }
                     Ok(None) => None, // user cancelled the open dialog
                     Err(e) => Some(format!("Import failed: {e}").into()),
                 };
@@ -1969,7 +1981,7 @@ fn import_export_section(
                         .items_center()
                         .justify_between()
                         .gap_4()
-                        .child(field_label(palette, "Import vault", "Import from Bitwarden-compatible JSON"))
+                        .child(field_label(palette, "Import vault", "Bitwarden, 1Password, KeePass, Chrome/Edge/Safari, Proton Pass — detected automatically"))
                         .child(
                             action_button(palette, "import-vault", if importing { "Importing…" } else { "Import" }, window, cx)
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.import_vault(cx))),

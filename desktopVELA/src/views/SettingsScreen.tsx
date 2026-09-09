@@ -485,11 +485,13 @@ export default function SettingsScreen() {
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <label className="font-body font-medium text-on-surface">Import vault</label>
-                <p className="text-sm text-on-surface-variant">Import from Bitwarden-compatible JSON</p>
+                <p className="text-sm text-on-surface-variant">
+                  From Bitwarden, 1Password, KeePass/KeePassXC, Chrome/Edge/Safari, or Proton Pass — format is detected automatically. Duplicates are skipped, never overwritten.
+                </p>
               </div>
               <input
                 type="file"
-                accept=".json"
+                accept=".json,.csv,.1pif"
                 id="import-file-input"
                 className="hidden"
                 onChange={async (e) => {
@@ -497,8 +499,10 @@ export default function SettingsScreen() {
                   if (!file) return;
                   try {
                     const text = await file.text();
-                    const result = await invoke<{ added: number; skipped: number; total: number }>('import_vault_bitwarden_json', { data: text });
-                    showToast(`Imported ${result.added} of ${result.total} items`, 'success');
+                    const result = await invoke<{ added: number; skipped: number; duplicates: number; total: number }>('import_vault_file', { data: text });
+                    const skippedNote = result.skipped > 0 ? `, ${result.skipped} unsupported items skipped` : '';
+                    const dupNote = result.duplicates > 0 ? `, ${result.duplicates} already in vault` : '';
+                    showToast(`Imported ${result.added} of ${result.total} items${dupNote}${skippedNote}`, 'success');
                   } catch (err) {
                     showToast('Import failed: ' + String(err), 'error');
                   }
