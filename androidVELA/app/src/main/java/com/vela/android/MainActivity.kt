@@ -147,13 +147,27 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                     onOpenPasskeyProviderSettings = {
-                        // The Credential Manager provider picker (API 34+);
-                        // Settings.ACTION_CREDENTIAL_PROVIDER has no string
-                        // constant on older compile SDKs, so name it directly.
-                        val primary = Intent("android.settings.CREDENTIAL_PROVIDER")
-                        if (primary.resolveActivity(packageManager) != null) {
-                            startActivity(primary)
+                        // The Credential Manager provider picker. The androidx
+                        // settings intent is the one that works across OEMs:
+                        // a hand-rolled "android.settings.CREDENTIAL_PROVIDER"
+                        // does not resolve through resolveActivity under the
+                        // package-visibility rules, which is what used to drop
+                        // the user on the base Settings screen.
+                        val opened = if (Build.VERSION.SDK_INT >= 34) {
+                            runCatching {
+                                startIntentSenderForResult(
+                                    androidx.credentials.CredentialManager.create(this)
+                                        .createSettingsPendingIntent()
+                                        .intentSender,
+                                    /* requestCode = */ 101,
+                                    null, 0, 0, 0,
+                                )
+                                true
+                            }.getOrDefault(false)
                         } else {
+                            false
+                        }
+                        if (!opened) {
                             startActivity(Intent(Settings.ACTION_SETTINGS))
                         }
                     },
