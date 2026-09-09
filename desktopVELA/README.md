@@ -15,6 +15,39 @@ macOS and as an explicit fallback.
 - **Secure Sharing**: Share vault items with other VELA users
 - **Audit Log**: Encrypted activity tracking
 - **Browser Extension Integration**: Native IPC for autofill
+- **CLI + SSH Agent**: `vela` command line for scripts, and an SSH agent that signs with vault-held keys
+
+## CLI & SSH Agent
+
+The `vela` binary (`desktopVELA/vela-cli`) unlocks the local vault with the
+master password — the same Argon2id blob the desktop app verifies against —
+so scripts get the vault without a second credential system:
+
+```bash
+cargo build --release -p vela-cli
+vela unlock                     # prints the session key (this IS the vault key)
+export VELA_SESSION=<key>       # from `vela unlock`
+vela list items [--json]
+vela get password github.com    # item | password | username | url | notes | totp
+vela get totp github.com
+vela generate --length 24
+```
+
+The SSH agent keeps ed25519 keys in the vault: add a **secure note** whose
+content is an unencrypted OpenSSH private key (`ssh-keygen -t ed25519`
+default format), then run the agent and point your SSH client at it:
+
+```bash
+vela ssh list                   # fingerprints the agent-visible keys
+vela ssh-agent &                # Unix: $XDG_RUNTIME_DIR/vela-ssh-agent.sock
+                                # Windows: \\.\pipe\vela-ssh-agent
+export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/vela-ssh-agent.sock
+```
+
+On Windows, `--pipe \\.\pipe\openssh-ssh-agent` takes the standard OpenSSH
+pipe name (disable the built-in "OpenSSH Authentication Agent" service
+first). Passphrase-protected and non-ed25519 keys are refused with the fix
+named — the vault is the encryption layer.
 
 ## Design
 
