@@ -668,6 +668,32 @@ class VaultSyncManager(
             return markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
         }
 
+        // Passkey keys backfill (security/passkey-android-provider-adr.md):
+        // before this app could hold passkey keys, synced passkeys were stored
+        // metadata-only — and uploading that snapshot would push keyless items
+        // over the server's keyed copies. So when keyless passkeys exist
+        // locally, always pull and merge first: the merge's key backfill
+        // restores the keys from the server copy before anything is uploaded.
+        // If the server copy is keyless too, the upload is harmless.
+        val hasKeylessPasskeys =
+            localSnapshot.items.any { it is VaultItem.Passkey && it.privateKey.isEmpty() }
+        if (hasKeylessPasskeys && downloadChunkIds.isNotEmpty() &&
+            remote != null && remote.version <= settings.localVersion
+        ) {
+            val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
+            token = remoteResult.token
+            vault.replaceAll(mergeVaultStores(localSnapshot, remoteResult.vault))
+            val nextLamport = maxOf(settings.lamportClock, remoteResult.lamportClock) + 1
+            val uploaded = uploadVaultChunks(
+                client = client,
+                startToken = token,
+                rms = rms,
+                manifest = manifest,
+                baseLamport = nextLamport
+            )
+            return markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
+        }
+
         val nextLamport = maxOf(settings.lamportClock, remote?.lamportClock ?: 0) + 1
         val uploaded = uploadVaultChunks(
             client = client,
@@ -1037,7 +1063,9 @@ private fun splitUtf8Chunks(value: String): List<String> {
 
 private const val VAULT_CHUNK_PLAINTEXT_SIZE = 1024 * 1024 - 4096
 
-private fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore {
+/** Kept pure and internal so the merge rules (including the passkey key
+ *  backfill) are testable off-device, like [BrowserAllowlist.parse]. */
+internal fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore {
     val tombstones = mergeTombstones(local.tombstones + remote.tombstones)
     val tombstoneById = tombstones.associateBy { it.id }
     val mergedItems = linkedMapOf<String, VaultItem>()
@@ -1057,6 +1085,27 @@ private fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore 
 
     local.items.forEach(::applyItem)
     remote.items.forEach(::applyItem)
+
+    // A passkey's private key must never be lost in a merge, whatever the
+    // timestamp race above decided. Before the Android provider existed, this
+    // app uploaded passkeys as metadata-only, so either side can hold a
+    // keyless copy of a credential the other has in full — and a keyless
+    // remote copy must not strip a key the local copy already had (same
+    // timestamps, remote wins ties above). Fill the key back in from either
+    // store; the item's own newer fields are kept.
+    val localKeys = local.items.filterIsInstance<VaultItem.Passkey>()
+        .filter { it.privateKey.isNotEmpty() }
+        .associateBy { it.id }
+    val remoteKeys = remote.items.filterIsInstance<VaultItem.Passkey>()
+        .filter { it.privateKey.isNotEmpty() }
+        .associateBy { it.id }
+    if (localKeys.isNotEmpty() || remoteKeys.isNotEmpty()) {
+        for ((id, item) in mergedItems) {
+            if (item !is VaultItem.Passkey || item.privateKey.isNotEmpty()) continue
+            val key = remoteKeys[id]?.privateKey ?: localKeys[id]?.privateKey ?: continue
+            mergedItems[id] = item.copy(privateKey = key)
+        }
+    }
 
     return VaultStore(
         items = mergedItems.values.sortedBy { it.name.lowercase() },

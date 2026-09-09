@@ -16,7 +16,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   screen (unlock, confirm, real biometric/PIN step when the site requires
   verification), and `UV` is set only when that verification actually
   happened. Passkeys now carry their key through sync in both directions, so
-  desktop-created passkeys work on Android and vice-versa.
+  desktop-created passkeys work on Android and vice-versa; the merge never
+  strips a key a device already holds, and the phone pulls before pushing
+  when its passkey copies predate the provider (key backfill).
   Design: `security/passkey-android-provider-adr.md`.
 - Ephemeral web access: QR-linked, time-boxed, revocable browser sessions in
   **Read-Only** (one-shot sealed vault snapshot, RMS never enters the browser)

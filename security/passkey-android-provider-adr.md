@@ -155,3 +155,9 @@ is what makes adding the variant safe).
   answers with an "Unlock VELA" authentication action rather than entries.
   Entries cannot honestly be listed from a sealed vault; a locked device will
   not be suggested until it has been unlocked once this session.
+- Pre-provider passkeys (synced before the key existed on Android) are
+  metadata-only until the first sync after upgrade. Android never uploads a
+  keyless snapshot over the server's keyed copies: when keyless passkeys
+  exist locally it pulls and merges first, and the merge rule itself
+  backfills a key from either side (`mergeVaultStores`) — a timestamp race
+  can decide names, never whether a credential keeps its key.
