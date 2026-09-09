@@ -77,22 +77,23 @@ object PasskeyAuthenticator {
         val clientDataJson = clientDataHash?.let { null } ?: buildClientDataJson(
             WebAuthnJson.TYPE_CREATE, options.challenge, origin
         )
-        val clientDataHashUsed = clientDataHash
-            ?: WebAuthnJson.sha256(clientDataJson!!.toByteArray(Charsets.UTF_8))
+        // Registration does not sign: the relying party verifies the fresh
+        // public key inside the attested credential data. The clientDataHash
+        // (when the browser supplied one) only matters for assertions.
 
         val key = NativeVelaCore.passkeyKeygen(options.algorithms)
             ?: throw CeremonyException.Malformed("the native bridge is unavailable")
 
         // A freshly minted credential starts its counter at 1 for its own
         // registration, matching what the first assertion is compared against.
-        val authenticatorData = NativeVelaCore.passkeyAuthenticatorData(
+        val authenticatorDataB64 = NativeVelaCore.passkeyAuthenticatorData(
             rpId = options.rpId,
             flags = FLAG_UP or FLAG_AT or (if (verified) FLAG_UV else 0),
             signCount = 1,
             credentialIdB64 = key.credentialIdB64,
             cosePublicKeyB64 = key.cosePublicKeyB64,
         ) ?: throw CeremonyException.Malformed("the native bridge is unavailable")
-        val attestationObject = NativeVelaCore.passkeyAttestationObject(authenticatorData)
+        val attestationObject = NativeVelaCore.passkeyAttestationObject(authenticatorDataB64)
             ?: throw CeremonyException.Malformed("the native bridge is unavailable")
 
         val item = VaultItem.Passkey(
@@ -159,11 +160,13 @@ object PasskeyAuthenticator {
         // WebAuthn §6.3.3: the signature covers authenticatorData ‖
         // clientDataHash. The RP ID hash is inside authenticatorData, which is
         // what binds this signature to this origin.
-        val authenticatorData = NativeVelaCore.passkeyAuthenticatorData(
+        val authenticatorDataB64 = NativeVelaCore.passkeyAuthenticatorData(
             rpId = options.rpId,
             flags = FLAG_UP or (if (verified) FLAG_UV else 0),
             signCount = (item.signCount + 1).coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),
         ) ?: throw CeremonyException.Malformed("the native bridge is unavailable")
+        val authenticatorData = WebAuthnJson.b64urlDecode(authenticatorDataB64)
+            ?: throw CeremonyException.Malformed("authenticator data is not base64url")
 
         val message = authenticatorData + clientDataHashUsed
         val signature = NativeVelaCore.passkeySign(item.privateKey, message)

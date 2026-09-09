@@ -467,7 +467,7 @@ object NativeVelaCore {
         signCount: Int,
         credentialIdB64: String? = null,
         cosePublicKeyB64: String? = null,
-    ): ByteArray? {
+    ): String? {
         return callNative {
             val request = JSONObject()
                 .put("rp_id", rpId)
@@ -478,18 +478,20 @@ object NativeVelaCore {
                 .toString()
             val response = JSONObject(nativePasskeyAuthDataJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            Base64.getDecoder().decode(response.getString("authenticator_data_b64"))
+            // Already base64url from the bridge — handed through untouched, so
+            // it can be fed straight back into the attestation request.
+            response.getString("authenticator_data_b64")
         }
     }
 
-    fun passkeyAttestationObject(authenticatorData: ByteArray): ByteArray? {
+    fun passkeyAttestationObject(authenticatorDataB64: String): ByteArray? {
         return callNative {
             val request = JSONObject()
-                .put("authenticator_data_b64", Base64.getEncoder().encodeToString(authenticatorData))
+                .put("authenticator_data_b64", authenticatorDataB64)
                 .toString()
             val response = JSONObject(nativePasskeyAttestationObjectJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            Base64.getDecoder().decode(response.getString("attestation_object_b64"))
+            Base64.getUrlDecoder().decode(response.getString("attestation_object_b64"))
         }
     }
 
@@ -497,11 +499,13 @@ object NativeVelaCore {
         return callNative {
             val request = JSONObject()
                 .put("scalar_b64", scalarB64)
-                .put("message_b64", Base64.getEncoder().encodeToString(message))
+                // Base64url, unpadded: the bridge decodes with the URL-safe
+                // alphabet and rejects standard-alphabet/padded input.
+                .put("message_b64", Base64.getUrlEncoder().withoutPadding().encodeToString(message))
                 .toString()
             val response = JSONObject(nativePasskeySignJson(request))
             response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            Base64.getDecoder().decode(response.getString("signature_der_b64"))
+            Base64.getUrlDecoder().decode(response.getString("signature_der_b64"))
         }
     }
 
