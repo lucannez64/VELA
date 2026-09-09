@@ -432,6 +432,79 @@ object NativeVelaCore {
         }
     }
 
+    // ── Passkey provider primitives (security/passkey-android-provider-adr.md)
+    //
+    // Stateless WebAuthn primitives the Kotlin ceremony composes against keys
+    // stored in the sealed vault. The byte layouts mirror the desktop core's
+    // passkey.rs; the scalar crosses here as one call's input and is used and
+    // dropped natively — nothing caches it.
+
+    /** Fresh credential keypair + opaque credential ID, for a new registration. */
+    data class PasskeyKey(
+        val credentialIdB64: String,
+        val scalarB64: String,
+        val cosePublicKeyB64: String,
+    )
+
+    fun passkeyKeygen(acceptedAlgorithms: List<Int>): PasskeyKey? {
+        return callNative {
+            val request = JSONObject()
+                .put("algorithms", org.json.JSONArray(acceptedAlgorithms))
+                .toString()
+            val response = JSONObject(nativePasskeyKeygenJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            PasskeyKey(
+                credentialIdB64 = response.getString("credential_id_b64"),
+                scalarB64 = response.getString("scalar_b64"),
+                cosePublicKeyB64 = response.getString("cose_public_key_b64"),
+            )
+        }
+    }
+
+    fun passkeyAuthenticatorData(
+        rpId: String,
+        flags: Int,
+        signCount: Int,
+        credentialIdB64: String? = null,
+        cosePublicKeyB64: String? = null,
+    ): ByteArray? {
+        return callNative {
+            val request = JSONObject()
+                .put("rp_id", rpId)
+                .put("flags", flags)
+                .put("sign_count", signCount)
+                .put("credential_id_b64", credentialIdB64 ?: "")
+                .put("cose_public_key_b64", cosePublicKeyB64 ?: "")
+                .toString()
+            val response = JSONObject(nativePasskeyAuthDataJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            Base64.getDecoder().decode(response.getString("authenticator_data_b64"))
+        }
+    }
+
+    fun passkeyAttestationObject(authenticatorData: ByteArray): ByteArray? {
+        return callNative {
+            val request = JSONObject()
+                .put("authenticator_data_b64", Base64.getEncoder().encodeToString(authenticatorData))
+                .toString()
+            val response = JSONObject(nativePasskeyAttestationObjectJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            Base64.getDecoder().decode(response.getString("attestation_object_b64"))
+        }
+    }
+
+    fun passkeySign(scalarB64: String, message: ByteArray): ByteArray? {
+        return callNative {
+            val request = JSONObject()
+                .put("scalar_b64", scalarB64)
+                .put("message_b64", Base64.getEncoder().encodeToString(message))
+                .toString()
+            val response = JSONObject(nativePasskeySignJson(request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            Base64.getDecoder().decode(response.getString("signature_der_b64"))
+        }
+    }
+
     private inline fun <T> callNative(block: () -> T): T? {
         if (!loaded) return null
         return runCatching(block).getOrElse { error("Native VELA bridge call failed: ${it.message}") }
@@ -463,4 +536,8 @@ object NativeVelaCore {
     private external fun nativeCombineRecoveryJson(requestJson: String, rmsOut: ByteArray): String
     private external fun nativeRmsPossessionHashJson(rms: ByteArray): String
     private external fun nativePlanRecoveryPublicationJson(requestJson: String): String
+    private external fun nativePasskeyKeygenJson(requestJson: String): String
+    private external fun nativePasskeyAuthDataJson(requestJson: String): String
+    private external fun nativePasskeyAttestationObjectJson(requestJson: String): String
+    private external fun nativePasskeySignJson(requestJson: String): String
 }

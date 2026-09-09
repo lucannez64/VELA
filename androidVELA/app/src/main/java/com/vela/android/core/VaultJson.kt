@@ -79,9 +79,11 @@ object VaultJson {
                     breaches.forEach { array.put(it.toJson()) }
                 })
 
-            // Metadata only, on purpose: Android never holds a passkey's
-            // private key, and re-uploading a passkey without it must not be
-            // possible from here.
+            // The private key is included when this device holds one (created
+            // here, or synced from a device that did), so passkeys keep working
+            // on every device. A metadata-only passkey encodes without the
+            // field: the desktop treats a missing key as "restore the stored
+            // one", so uploading a keyless item can never wipe a credential.
             is VaultItem.Passkey -> json
                 .put("item_type", "passkey")
                 .put("rp_id", rpId)
@@ -90,6 +92,7 @@ object VaultJson {
                 .put("user_handle", userHandle)
                 .put("user_name", userName)
                 .put("user_display_name", userDisplayName)
+                .apply { if (privateKey.isNotEmpty()) put("private_key", privateKey) }
                 .put("sign_count", signCount)
         }
 
@@ -203,6 +206,7 @@ object VaultJson {
                 userHandle = json.optString("user_handle", json.optString("userHandle")),
                 userName = json.optString("user_name", json.optString("userName")),
                 userDisplayName = json.optString("user_display_name", json.optString("userDisplayName")),
+                privateKey = json.optString("private_key", json.optString("privateKey")),
                 signCount = json.optLong("sign_count", json.optLong("signCount", 0)),
             )
 

@@ -69,4 +69,57 @@ class VaultJsonTest {
 
         assertEquals(emptyList<String>(), item.appIds)
     }
+
+    // ── Passkey provider (security/passkey-android-provider-adr.md) ──────────
+
+    @Test
+    fun `a desktop passkey arrives with its private key`() {
+        val json = """
+            {"items":[{"item_type":"passkey","id":"pk-1","name":"Example",
+              "rp_id":"example.com","rp_name":"Example",
+              "credential_id":"AQ","user_handle":"AA","user_name":"ada",
+              "user_display_name":"Ada","private_key":"AAECAw",
+              "sign_count":1,
+              "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}],
+             "tombstones":[]}
+        """.trimIndent()
+
+        val item = VaultJson.decode(json.toByteArray()).items.single() as VaultItem.Passkey
+
+        assertEquals("example.com", item.rpId)
+        assertEquals("AQ", item.credentialId)
+        assertEquals("AAECAw", item.privateKey)
+    }
+
+    @Test
+    fun `a passkey round trips through encode and decode`() {
+        val passkey = VaultItem.Passkey(
+            meta = VaultMeta(id = "pk-1", name = "Example"),
+            rpId = "example.com",
+            credentialId = "AQ",
+            userHandle = "AA",
+            userName = "ada",
+            privateKey = "AAECAw",
+            signCount = 7,
+        )
+
+        val decoded = VaultJson.decode(VaultJson.encode(VaultStore(listOf(passkey))))
+            .items.single() as VaultItem.Passkey
+
+        assertEquals("AAECAw", decoded.privateKey)
+        assertEquals(7L, decoded.signCount)
+    }
+
+    @Test
+    fun `a metadata-only passkey encodes without a key field`() {
+        // The desktop restores the stored key for a keyless update; encoding an
+        // absent key must stay absent, so an old client can never wipe one.
+        val passkey = VaultItem.Passkey(meta = VaultMeta(id = "pk-1", name = "Example"), rpId = "example.com")
+
+        val json = org.json.JSONObject(
+            String(VaultJson.encode(VaultStore(listOf(passkey))))
+        )
+
+        assertEquals(false, json.getJSONArray("items").getJSONObject(0).has("private_key"))
+    }
 }

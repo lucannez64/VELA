@@ -146,6 +146,17 @@ class MainActivity : FragmentActivity() {
                             }
                         }
                     },
+                    onOpenPasskeyProviderSettings = {
+                        // The Credential Manager provider picker (API 34+);
+                        // Settings.ACTION_CREDENTIAL_PROVIDER has no string
+                        // constant on older compile SDKs, so name it directly.
+                        val primary = Intent("android.settings.CREDENTIAL_PROVIDER")
+                        if (primary.resolveActivity(packageManager) != null) {
+                            startActivity(primary)
+                        } else {
+                            startActivity(Intent(Settings.ACTION_SETTINGS))
+                        }
+                    },
                     onSyncNow = {
                         // lifecycleScope (not a bare CoroutineScope): ties this
                         // coroutine to the Activity so it's cancelled instead of

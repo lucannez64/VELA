@@ -84,6 +84,7 @@ fun SettingsScreen(
     onResolveConflictUseLocal: () -> Unit,
     onResolveConflictUseRemote: () -> Unit,
     onOpenAutofillSettings: () -> Unit,
+    onOpenPasskeyProviderSettings: () -> Unit,
     onLock: () -> Unit,
     onReset: () -> Unit,
     autoLockMinutes: Int,
@@ -233,6 +234,21 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             VelaCard {
                 VelaListItem(title = "Enable VELA Autofill", subtitle = "Set VELA as system autofill provider", icon = Icons.Filled.Fingerprint, onClick = onOpenAutofillSettings)
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+
+        // Passkeys
+        item {
+            SectionHeader("Passkeys")
+            Spacer(Modifier.height(12.dp))
+            VelaCard {
+                VelaListItem(
+                    title = "Use VELA for passkeys system-wide",
+                    subtitle = "Serve your passkeys to any browser or app (Android 14+)",
+                    icon = Icons.Filled.Fingerprint,
+                    onClick = onOpenPasskeyProviderSettings,
+                )
             }
             Spacer(Modifier.height(24.dp))
         }

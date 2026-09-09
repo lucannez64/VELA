@@ -93,10 +93,15 @@ sealed interface VaultItem {
     }
 
     /**
-     * A passkey synced from another VELA device. Android can view the
-     * credential's metadata but cannot use it: there is no WebAuthn ceremony
-     * support on Android yet, and the private key is not present anyway —
-     * like the desktop UI, the sync payloads hold metadata for display only.
+     * A WebAuthn credential scoped to one relying party.
+     *
+     * Android is a passkey provider (`security/passkey-android-provider-adr.md`):
+     * it serves these credentials to websites and apps through Credential
+     * Manager. The private key lives here, sealed with the rest of the vault —
+     * it is used where it is stored (in the native bridge, one signature at a
+     * time) and never leaves the device; only signatures cross the provider
+     * boundary. Items synced before the provider existed carry an empty key
+     * and are metadata-only until the next sync delivers it.
      */
     data class Passkey(
         override val meta: VaultMeta,
@@ -106,7 +111,9 @@ sealed interface VaultItem {
         val userHandle: String = "",
         val userName: String = "",
         val userDisplayName: String = "",
-        /** WebAuthn signature counter, informational only here. */
+        /** ES256 private scalar, base64url. The secret — never logged, never rendered. */
+        val privateKey: String = "",
+        /** WebAuthn signature counter, incremented after every assertion. */
         val signCount: Long = 0,
     ) : VaultItem {
         override val type: VaultItemType = VaultItemType.Passkey

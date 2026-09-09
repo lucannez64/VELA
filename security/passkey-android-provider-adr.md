@@ -1,8 +1,10 @@
 # ADR — Android passkey provider
 
-**Status:** Accepted — in progress (implementation PR builds the APK in CI; the
-provider must be validated on a real device by setting it as the passkey /
-"preferred authenticator" provider).
+**Status:** Implemented — the provider service, ceremony, vault storage and
+sync plumbing are in (`androidVELA/app/.../security/passkey/`, the bridge's
+`passkey.rs`). Device-visible validation still needs a real device: set VELA
+as the passkey / "preferred authenticator" provider and run one create + one
+get ceremony.
 **Date:** 2026-08-20
 **Applies to:** `androidVELA/`, `libVELA/vela-android-bridge/`
 **Related:** `security/m7_oneshot_assertion.spthy`,
@@ -141,6 +143,15 @@ is what makes adding the variant safe).
 
 ## Open items
 - Where the sync payload is type-keyed, confirm server-side handling for the
-  new passkey type.
+  new passkey type. — *Resolved by inspection: passkeys ride the same sealed
+  vault chunks as every other item; the new `private_key` field deserializes
+  on the desktop with a default, and the desktop restores its stored key for
+  keyless updates, so a keyless item can never overwrite a live credential.*
 - Whether to land the provider service (device-visible but inert until a
   passkey exists + the user sets VELA as provider) in the same PR as storage.
+  — *Yes, one additive PR; the service is inert until the user enables it in
+  system settings.*
+- Signed-out enumeration: when the vault is locked, `onBeginGetCredentialRequest`
+  answers with an "Unlock VELA" authentication action rather than entries.
+  Entries cannot honestly be listed from a sealed vault; a locked device will
+  not be suggested until it has been unlocked once this session.

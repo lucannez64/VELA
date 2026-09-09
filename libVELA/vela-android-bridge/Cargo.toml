@@ -10,10 +10,16 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 base64 = "0.22"
+ciborium = "0.2"
 getrandom = "0.2"
 jni = "0.21"
+# The Android passkey provider (security/passkey-android-provider-adr.md) uses
+# the same ES256 credential keys as the desktop core; versions are pinned to
+# desktopVELA/vela-desktop-core's so the two graphs agree byte-for-byte.
+p256 = { version = "0.13", features = ["ecdsa"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 # Key material crossing JNI is wiped rather than left in a JVM string (audit C-1).
 zeroize = "1"
 vela-core = { path = "../vela-core" }

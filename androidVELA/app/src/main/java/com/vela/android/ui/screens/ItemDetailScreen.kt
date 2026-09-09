@@ -226,10 +226,10 @@ private fun NoteFields(item: VaultItem.SecureNote) {
 }
 
 /**
- * Read-only metadata for a passkey synced from another device. Android has
- * no WebAuthn ceremony support yet — and the private key is not in the sync
- * payload — so this shows where the credential is scoped and for whom, with
- * a note saying it must be used from a desktop device or the extension.
+ * Passkey details. The private key is never rendered — only the credential's
+ * scope and account. Passkeys created here (or synced with a key) are served
+ * by the system-wide passkey provider; items synced before the provider
+ * existed carry no key and are used from the device that holds it.
  */
 @Composable
 private fun PasskeyFields(item: VaultItem.Passkey, context: android.content.Context, scope: CoroutineScope) {
@@ -238,7 +238,12 @@ private fun PasskeyFields(item: VaultItem.Passkey, context: android.content.Cont
         DetailField("Website", item.rpId.ifBlank { null }, context, scope)
         DetailField("Credential ID", item.credentialId.ifBlank { null }, context, scope, isMono = true)
         Text(
-            "Passkeys are managed on a desktop device or in the browser extension.",
+            if (item.privateKey.isEmpty()) {
+                "This passkey's key is on the device that created it; it is used from there."
+            } else {
+                "VELA serves this passkey to apps and browsers system-wide once you set it " +
+                    "as your passkey provider (Settings \u2192 Passkeys)."
+            },
             color = VelaColors.TextMuted,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 8.dp)

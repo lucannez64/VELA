@@ -19,6 +19,8 @@ use vela_crypto::rekey;
 use vela_crypto::shamir;
 use zeroize::Zeroize;
 
+mod passkey;
+
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
 
 #[repr(C)]
@@ -527,6 +529,63 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeOpenRekey
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| {
         open_rekey_capsule_json(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+// ── Passkey provider primitives (security/passkey-android-provider-adr.md) ──
+//
+// Stateless WebAuthn primitives the Kotlin ceremony composes against keys
+// stored in the Kotlin vault. See `src/passkey.rs` for the invariants.
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativePasskeyKeygenJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        let request: passkey::KeygenRequest = serde_json::from_str(request)?;
+        Ok(passkey::keygen(&request)?)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativePasskeyAuthDataJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        let request: passkey::AuthDataRequest = serde_json::from_str(request)?;
+        Ok(passkey::build_authenticator_data(&request)?)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativePasskeyAttestationObjectJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        let request: passkey::AttestationRequest = serde_json::from_str(request)?;
+        Ok(passkey::build_attestation_object(&request)?)
+    });
+    jni_string(&mut env, &response)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativePasskeySignJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        let request: passkey::SignRequest = serde_json::from_str(request)?;
+        Ok(passkey::sign(&request)?)
     });
     jni_string(&mut env, &response)
 }

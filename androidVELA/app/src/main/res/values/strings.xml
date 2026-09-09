@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">VELA</string>
     <string name="autofill_service_label">VELA Autofill</string>
+    <string name="passkey_provider_label">VELA Passkeys</string>
+    <string name="passkey_provider_unlock_action">Unlock VELA</string>
 </resources>

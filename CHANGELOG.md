@@ -9,6 +9,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Android is a system-wide passkey provider (Android 14+, Credential Manager):
+  VELA answers `navigator.credentials` ceremonies from any browser or app with
+  VELA-stored passkeys. The private key is used where it is stored (native
+  bridge, one signature at a time), every ceremony runs behind VELA's prompt
+  screen (unlock, confirm, real biometric/PIN step when the site requires
+  verification), and `UV` is set only when that verification actually
+  happened. Passkeys now carry their key through sync in both directions, so
+  desktop-created passkeys work on Android and vice-versa.
+  Design: `security/passkey-android-provider-adr.md`.
 - Ephemeral web access: QR-linked, time-boxed, revocable browser sessions in
   **Read-Only** (one-shot sealed vault snapshot, RMS never enters the browser)
   and **Read-Write** (per-chunk keys sealed to an ephemeral hybrid keypair,

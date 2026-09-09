@@ -60,6 +60,34 @@
                 android:resource="@xml/autofill_service" />
         </service>
 
+        <!--
+        The system-wide passkey provider (security/passkey-android-provider-adr.md).
+        The platform binds this when any app or browser asks Credential Manager
+        for a passkey; VELA answers with a PendingIntent into its own prompt
+        screen, so every ceremony runs behind VELA's approval UI. Additive: the
+        autofill service above is untouched.
+        -->
+        <service
+            android:name=".security.passkey.VelaCredentialProviderService"
+            android:exported="true"
+            android:label="@string/passkey_provider_label"
+            android:permission="android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.credentials.CredentialProviderService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.credentials.provider"
+                android:resource="@xml/credential_provider_capabilities" />
+        </service>
+
+        <!-- Launched only through the provider's own PendingIntent: never exported. -->
+        <activity
+            android:name=".security.passkey.PasskeyPromptActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.VELA" />
+
         <!-- Enforces the auto-lock deadline while the app is backgrounded. -->
         <receiver
             android:name=".security.AutoLockReceiver"

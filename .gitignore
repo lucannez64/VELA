@@ -40,6 +40,12 @@ desktopVELA/dist/
 # msix artifacts. Regenerate with msix/register-dev.ps1.
 desktopVELA/vela-win-passkey/msix/build/
 
+# Android build and tooling caches
+androidVELA/.gradle/
+androidVELA/build/
+androidVELA/app/build/
+androidVELA/.kotlin/
+
 # OS files
 **/.DS_Store
 **/Thumbs.db
