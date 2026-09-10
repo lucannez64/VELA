@@ -34,6 +34,12 @@ final class VaultViewModel: ObservableObject {
     /// circular dependency between VaultViewModel and AccountViewModel.
     var onItemUpdated: ((VaultItem) async -> Void)?
 
+    /// Called after a *local* edit is persisted (add/update/delete), so the
+    /// account layer can push it to the server immediately instead of waiting
+    /// for the next timer tick. Not called after `applyMergedStore`, which is
+    /// the sync itself writing back.
+    var onLocalChange: (() -> Void)?
+
     init(repo: VaultRepository = VaultRepository()) {
         self.repo = repo
         bootstrap()
@@ -261,13 +267,14 @@ final class VaultViewModel: ObservableObject {
     func applyMergedStore(_ merged: VaultStore) {
         items = merged.items
         tombstones = merged.tombstones
-        persist()
+        persist(notifyLocalChange: false)
     }
 
-    private func persist() {
+    private func persist(notifyLocalChange: Bool = true) {
         guard let r = rms else { return }
         do {
             try repo.save(VaultStore(items: items, tombstones: tombstones), rms: r)
+            if notifyLocalChange { onLocalChange?() }
         } catch {
             errorMessage = "Couldn't save the vault."
         }

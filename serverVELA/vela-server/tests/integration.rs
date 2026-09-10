@@ -4589,3 +4589,54 @@ async fn oram_writes_declare_and_accept_post_rotation_epoch() {
         "an ORAM write sealed for the active post-rotation epoch succeeds"
     );
 }
+
+
+/// `GET /vault/events` opens an authenticated SSE stream, announces itself,
+/// and delivers a content-free change frame when the account's vault is
+/// written. This is the latency optimization the clients rely on, so it is
+/// worth one end-to-end pass through routing and auth.
+#[tokio::test]
+async fn vault_events_streams_hello_then_changes() {
+    use http_body_util::BodyExt;
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let (user_id, token) = seed_user_with_device(&state).await;
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/vault/events")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+
+    let mut body = resp.into_body();
+    let hello = body.frame().await.unwrap().unwrap().into_data().unwrap();
+    let hello = String::from_utf8_lossy(&hello);
+    assert!(hello.contains("event: hello"), "got: {hello}");
+
+    // Publish after the stream subscribed: a broadcast with no receivers is
+    // dropped by design, and the client's fallback is its next scheduled sync.
+    state.vault_events.publish(
+        user_id,
+        Uuid::new_v4(),
+        1,
+        vela_server::vault::events::VaultChangeKind::Chunk,
+    );
+
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), body.frame())
+        .await
+        .expect("change frame arrived in time")
+        .expect("body still open")
+        .expect("frame");
+    let change = String::from_utf8_lossy(&frame.into_data().unwrap()).to_string();
+    assert!(change.contains("event: change"), "got: {change}");
+    assert!(change.contains("\"kind\":\"chunk\""), "got: {change}");
+    assert!(!change.contains("user_id"), "owner id must not cross the wire");
+}

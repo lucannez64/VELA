@@ -250,6 +250,8 @@ Each device independently increments a per-chunk `lamport_clock` on every local 
 
 Uploads use an `If-Match: <version>` header for optimistic concurrency; the server rejects a PUT if the stored version has advanced since the client's last fetch, forcing a re-sync.
 
+**Change notification (latency optimization).** The scheduled interval remains the correctness floor, but an open, authenticated client may hold `GET /vault/events` (SSE) to learn immediately when any device on the account writes. Events are content-free — a revision, the writing device, the epoch, and a coarse kind; never a chunk id, version, or ciphertext — so the manifest remains the only way to learn *what* changed and the server's access-pattern profile is unchanged for everyone but the account owner. A subscriber that falls behind is sent `resync`; a client that misses an event simply syncs at its next scheduled or manual run. Local edits push immediately (no waiting for a tick), and clients ignore their own writes echoed back on the stream.
+
 ### 5.4 Cross-User Item Sharing (M19)
 
 A user may share one vault item with another VELA identity without granting any access to the rest of the vault. The channel is WebAuthn-free and server-blind: the server relays and retains opaque capsules but cannot open any of them. Admission decisions (key registration, send, linked-item mutation) live in the `vela-share-policy` crate as pure functions, hax-extracted to F* (`security/formal/share-channel-tamarin-results.md`).
@@ -346,6 +348,7 @@ The server uses embedded sled TTL counters for rate limits, challenge nonces, to
 | `/auth/challenge` | GET | None | Returns a 32-byte single-use nonce (60s TTL). |
 | `/auth/verify` | POST | None | Accepts a hybrid challenge signature; returns PASETO v4 session token on success. |
 | `/vault/sync` | GET | PASETO v4 | Returns manifest: list of `(chunk_id, version, lamport_clock, last_writer)`. |
+| `/vault/events` | GET | PASETO v4 | `text/event-stream` of content-free vault change notifications (`hello`, `change`, `resync`). Open clients sync on an event instead of waiting for their next timer; a missed event only delays the next scheduled sync. |
 | `/vault/chunk/{id}` | GET | PASETO v4 | Download one 1MB encrypted ORAM chunk. |
 | `/vault/chunk/{id}` | PUT | PASETO v4 | Upload a 1MB encrypted chunk. Requires `If-Match: <version>` header; returns `409 Conflict` if version has advanced. |
 | `/vault/chunk/{id}` | DELETE | PASETO v4 | Delete a stale encrypted chunk. Requires `If-Match: <version>`. |

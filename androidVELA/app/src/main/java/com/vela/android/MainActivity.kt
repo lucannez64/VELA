@@ -27,6 +27,7 @@ import com.vela.android.autofill.AutofillUnlockTokens
 import com.vela.android.core.VelaRepositories
 import com.vela.android.core.SharedCore
 import com.vela.android.security.WebAuthnCeremony
+import com.vela.android.sync.VaultEventStream
 import com.vela.android.ui.navigation.VelaNavHost
 import com.vela.android.ui.theme.LocalVelaPalette
 import com.vela.android.ui.theme.VelaTheme
@@ -46,6 +47,7 @@ import kotlin.coroutines.resume
 class MainActivity : FragmentActivity() {
     private var pendingCreateRms: ByteArray? = null
     private var backgroundSyncJob: Job? = null
+    private var vaultEventsJob: Job? = null
     private var onQrScanResult: ((String?) -> Unit)? = null
     private var pendingAutofillFill: AutofillFillRequest? = null
     private var pendingDriveAuthContinuation: kotlin.coroutines.Continuation<Intent?>? = null
@@ -84,14 +86,17 @@ class MainActivity : FragmentActivity() {
                     onAddItem = { item ->
                         VelaRepositories.vault.addItem(item)
                         VelaRepositories.audit.record("item_added", item.type.name.lowercase())
+                        requestSync("after-save")
                     },
                     onUpdateItem = { item ->
                         VelaRepositories.vault.updateItem(item)
                         VelaRepositories.audit.record("item_updated", item.type.name.lowercase())
+                        requestSync("after-save")
                     },
                     onDeleteItem = { id ->
                         VelaRepositories.vault.deleteItem(id)
                         VelaRepositories.audit.record("item_deleted", id.take(8))
+                        requestSync("after-save")
                     },
                     onLock = {
                         VelaRepositories.audit.record("vault_locked")
@@ -363,6 +368,7 @@ class MainActivity : FragmentActivity() {
 
     private fun startBackgroundSync() {
         cancelBackgroundSync()
+        startVaultEvents()
         val syncSettings = VelaRepositories.syncSettings.settings.value
         val intervalMinutes = syncSettings.backgroundSyncMinutes
         if (intervalMinutes <= 0) return
@@ -379,6 +385,60 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /**
+     * Follow the server's vault change stream while the vault is unlocked, so
+     * a write from another device pulls in without waiting for the next timer
+     * tick. Runs independently of `backgroundSyncMinutes` ("Never" disables
+     * the timer, not the user's edits reaching their other devices).
+     */
+    private fun startVaultEvents() {
+        cancelVaultEvents()
+        if (VelaRepositories.syncSettings.settings.value.serverUrl.isBlank()) return
+        vaultEventsJob = CoroutineScope(Dispatchers.IO).launch {
+            var backoffMs = 1000L
+            while (isActive) {
+                val settings = VelaRepositories.syncSettings.settings.value
+                if (!VelaRepositories.security.session.value.unlocked || settings.serverUrl.isBlank()) {
+                    delay(2000)
+                    continue
+                }
+                val deviceId = VelaRepositories.serverIdentity.load()?.deviceId ?: ""
+                try {
+                    VaultEventStream.follow(
+                        serverUrl = settings.serverUrl,
+                        token = settings.bearerToken,
+                        deviceId = deviceId,
+                        isCancelled = {
+                            !isActive || !VelaRepositories.security.session.value.unlocked
+                        },
+                        onEvent = { requestSync("remote-change") },
+                        onNewToken = { VelaRepositories.sync.acceptRefreshedToken(it) }
+                    )
+                    // A clean end means the server closed the stream; reconnect
+                    // after a beat so a flushing connection cannot spin.
+                    backoffMs = 1000L
+                    delay(1000)
+                } catch (e: Exception) {
+                    if (!isActive) return@launch
+                    backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
+                    delay(backoffMs)
+                }
+            }
+        }
+    }
+
+    /** Push a local edit now instead of waiting for the next timer tick. */
+    private fun requestSync(why: String) {
+        if (!VelaRepositories.security.session.value.unlocked) return
+        // Offline vaults (no server configured) save locally without surfacing
+        // a sync error the user did not ask for.
+        if (VelaRepositories.syncSettings.settings.value.serverUrl.isBlank()) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            VelaRepositories.sync.syncNow()
+            VelaRepositories.audit.record("vault_sync", why)
+        }
+    }
+
     private fun restartBackgroundSync() {
         if (VelaRepositories.security.session.value.unlocked) {
             startBackgroundSync()
@@ -388,6 +448,12 @@ class MainActivity : FragmentActivity() {
     private fun cancelBackgroundSync() {
         backgroundSyncJob?.cancel()
         backgroundSyncJob = null
+        cancelVaultEvents()
+    }
+
+    private fun cancelVaultEvents() {
+        vaultEventsJob?.cancel()
+        vaultEventsJob = null
     }
 
     override fun onDestroy() {

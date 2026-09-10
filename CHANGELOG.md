@@ -9,6 +9,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Instant cross-device sync: a local save is pushed immediately, and an
+  authenticated `GET /vault/events` SSE stream tells open clients when another
+  device wrote. Events are content-free (writer device, epoch, revision,
+  coarse kind; never a chunk id or ciphertext), a subscriber that falls behind
+  is told to resync, and a missed event only delays the next scheduled sync.
+  Wired into the native desktop app (gpui and Tauri), Android and iOS while
+  foregrounded, and the read-write ephemeral web vault.
 - Android is a system-wide passkey provider (Android 14+, Credential Manager):
   VELA answers `navigator.credentials` ceremonies from any browser or app with
   VELA-stored passkeys. The private key is used where it is stored (native

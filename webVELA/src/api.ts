@@ -76,6 +76,48 @@ export interface ChunkMeta {
   lamport: number;
 }
 
+/** One decoded vault change event from `GET /vault/events`. */
+export interface VaultEvent {
+  revision?: number;
+  /** Device (or web session) that wrote; own writes echo back. */
+  writer?: string;
+  epoch?: number;
+  kind?: string;
+}
+
+/**
+ * Incremental `text/event-stream` frame decoder. Feed it decoded chunks; it
+ * returns the `data:` payload of every completed event. Exported so the web
+ * vault's reconnect logic and tests share one parser.
+ */
+export class SseDecoder {
+  private line = '';
+  private data = '';
+
+  push(chunk: string): string[] {
+    const events: string[] = [];
+    for (const ch of chunk) {
+      if (ch !== '\n') {
+        this.line += ch;
+        continue;
+      }
+      const line = this.line.endsWith('\r') ? this.line.slice(0, -1) : this.line;
+      this.line = '';
+      if (line === '') {
+        if (this.data) {
+          events.push(this.data);
+          this.data = '';
+        }
+      } else if (line.startsWith('data:')) {
+        if (this.data) this.data += '\n';
+        this.data += line.slice(5).replace(/^ /, '');
+      }
+      // event:, id:, retry: and ': comment' lines carry nothing we need.
+    }
+    return events;
+  }
+}
+
 export class AuthedSession {
   /** Authenticated epoch returned by the latest sync manifest. */
   epoch = 1;
@@ -136,5 +178,36 @@ export class AuthedSession {
       'If-Match': String(ifMatch),
       'X-Vela-Epoch': String(this.epoch),
     });
+  }
+
+  /**
+   * Follow the server's vault change stream. Resolves when the connection ends
+   * or `signal` aborts; the caller owns reconnection/backoff. Events are
+   * content-free, so callers react by re-fetching the manifest.
+   */
+  async streamEvents(onEvent: (event: VaultEvent) => void, signal: AbortSignal): Promise<void> {
+    const r = await fetch(`${BASE}/vault/events`, {
+      headers: { Authorization: `Bearer ${this.token}`, Accept: 'text/event-stream' },
+      signal,
+    });
+    const renewed = r.headers.get('X-New-Token');
+    if (renewed) this.token = renewed;
+    if (!r.ok || !r.body) throw new Error(`Event stream failed (HTTP ${r.status})`);
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    const sse = new SseDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      for (const data of sse.push(decoder.decode(value, { stream: true }))) {
+        try {
+          onEvent(JSON.parse(data) as VaultEvent);
+        } catch {
+          // An unparseable frame still means "something happened": sync.
+          onEvent({});
+        }
+      }
+    }
   }
 }

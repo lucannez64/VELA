@@ -32,6 +32,12 @@ let polling = false;
 let authed: AuthedSession | null = null;
 let items: Record<string, unknown>[] = [];
 let dirty = false;
+/** Expiry of the current RW grant, reused when the watcher re-renders. */
+let rwExpiresAt: string | undefined;
+/** Aborts the vault event stream when the session ends. */
+let rwWatcher: AbortController | null = null;
+let remoteRefreshInFlight = false;
+let remoteRefreshPending = false;
 
 // RW session storage key — kept only as a purge target; the resume-with-PIN
 // feature has been removed (clearRwStore is called in beforeunload so the blob
@@ -72,6 +78,7 @@ const app = document.getElementById('app')!;
 
 /** Drop the in-memory secrets (keys / RMS / token) but keep what's on screen. */
 function wipeKeys() {
+  stopRwWatcher();
   shareDk = '';
   signingSk = '';
   chunkKeys = {};
@@ -441,6 +448,15 @@ async function loadReadWrite(expiresAt?: string) {
   const tok = await getSessionToken(sessionId, challenge, signature);
   authed = new AuthedSession(tok.token);
 
+  items = await pullRemoteVault();
+  rwExpiresAt = expiresAt;
+  showVault({ editable: true, expiresAt });
+  startRwWatcher();
+}
+
+/** Fetch and decrypt the server's current vault into `items`. */
+async function pullRemoteVault(): Promise<Record<string, unknown>[]> {
+  if (!authed) throw new Error('Session ended');
   const man = await authed.manifest();
 
   // Read the chunks the user's apps actually wrote (current → legacy → iOS).
@@ -463,8 +479,79 @@ async function loadReadWrite(expiresAt?: string) {
       authed.epoch,
     );
   }
-  items = json ? ((JSON.parse(json) as { items?: Record<string, unknown>[] }).items ?? []) : [];
-  showVault({ editable: true, expiresAt });
+  return json ? ((JSON.parse(json) as { items?: Record<string, unknown>[] }).items ?? []) : [];
+}
+
+/**
+ * Follow the server's vault change stream so writes from the user's apps show
+ * up without a manual reload. Own writes are ignored: the server echoes them
+ * with this web session's id as the writer, and they are already applied here.
+ */
+function stopRwWatcher() {
+  rwWatcher?.abort();
+  rwWatcher = null;
+}
+
+function startRwWatcher() {
+  stopRwWatcher();
+  if (!authed) return;
+  const controller = new AbortController();
+  rwWatcher = controller;
+  void (async () => {
+    let backoff = 1000;
+    while (!controller.signal.aborted && authed) {
+      try {
+        await authed.streamEvents((event) => {
+          if (controller.signal.aborted || !authed) return;
+          // `hello` carries no kind and asks for nothing.
+          if (event.kind === undefined) return;
+          if (event.writer && event.writer === sessionId) return; // our own write
+          scheduleRemoteRefresh();
+        }, controller.signal);
+        backoff = 1000;
+        if (controller.signal.aborted) return;
+        // A clean end means the server closed the stream; reconnect after a
+        // beat so a flushing connection cannot spin.
+        await sleep(1000);
+      } catch {
+        if (controller.signal.aborted || !authed) return;
+        // Server restart / network change / token expiry: back off, reconnect.
+        await sleep(backoff);
+        backoff = Math.min(backoff * 2, 30000);
+      }
+    }
+  })();
+}
+
+/** Coalesce a burst of change events into at most one refresh plus one queued. */
+function scheduleRemoteRefresh() {
+  if (remoteRefreshInFlight) {
+    remoteRefreshPending = true;
+    return;
+  }
+  void refreshFromServer();
+}
+
+async function refreshFromServer() {
+  if (!authed || remoteRefreshInFlight) return;
+  if (dirty) {
+    toast('This vault changed on another device. Save your edits, then reload.');
+    return;
+  }
+  remoteRefreshInFlight = true;
+  try {
+    items = await pullRemoteVault();
+    showVault({ editable: true, expiresAt: rwExpiresAt });
+    toast('Vault updated from another device');
+  } catch (e) {
+    toast((e as Error).message);
+  } finally {
+    remoteRefreshInFlight = false;
+  }
+  if (remoteRefreshPending) {
+    remoteRefreshPending = false;
+    void refreshFromServer();
+  }
 }
 
 async function saveVault() {

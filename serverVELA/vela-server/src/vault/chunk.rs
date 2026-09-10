@@ -337,6 +337,18 @@ pub async fn put_chunk(
     )
     .await?;
 
+    // Let the account's other devices know a write landed. Shadow writes
+    // (epoch above the served one) are invisible to readers, so they stay
+    // silent until the commit publishes the epoch change.
+    if write_epoch == read_epoch {
+        state.vault_events.publish(
+            session.user_id,
+            session.device_id,
+            write_epoch,
+            crate::vault::events::VaultChangeKind::Chunk,
+        );
+    }
+
     let mut resp_headers = HeaderMap::new();
     maybe_append_new_token(&mut resp_headers, &session);
     resp_headers.insert("X-Chunk-Version", new_version.to_string().parse().unwrap());
@@ -430,6 +442,13 @@ pub async fn delete_chunk(
         user_id = %session.user_id,
         version = current_version,
         "vault chunk deleted"
+    );
+
+    state.vault_events.publish(
+        session.user_id,
+        session.device_id,
+        write_epoch,
+        crate::vault::events::VaultChangeKind::Chunk,
     );
 
     let mut resp_headers = HeaderMap::new();

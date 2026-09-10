@@ -13,6 +13,13 @@ struct ContentView: View {
         vault.onItemUpdated = { [weak account] item in
             await account?.pushShareUpdates(for: item)
         }
+        // Push local edits immediately instead of waiting for the sync timer;
+        // the account layer queues one follow-up if a sync is already running.
+        // An unregistered/offline vault just keeps saving locally.
+        vault.onLocalChange = { [weak account] in
+            guard account?.isRegistered == true else { return }
+            account?.syncNow()
+        }
         _vm = StateObject(wrappedValue: vault)
         _accountVM = StateObject(wrappedValue: account)
     }

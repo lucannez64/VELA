@@ -55,6 +55,8 @@ class VaultSyncManager(
 ) {
     private val shareKeyRegistrationLock = Any()
     private val recoverySetupMutex = Mutex()
+    /** Serializes sync runs; live triggers can otherwise overlap a timer run. */
+    private val syncMutex = Mutex()
     private val recoveryJournal = RecoveryPublicationJournalStore(context)
     private val _state = MutableStateFlow(SyncState(lastSyncedAt = settingsStore.settings.value.lastSyncedAt))
     val state: StateFlow<SyncState> = _state
@@ -509,7 +511,7 @@ class VaultSyncManager(
     // enough of these nested blocking calls can exhaust the pool. Making
     // this a genuine suspend fun lets it cooperate with the dispatcher
     // instead of blocking a thread out of it.
-    suspend fun syncNow(): SyncState {
+    suspend fun syncNow(): SyncState = syncMutex.withLock {
         if (security.session.value.unlocked.not()) {
             return publish(error = "Unlock VELA before syncing")
         }
@@ -521,7 +523,7 @@ class VaultSyncManager(
 
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null, conflict = null)
-        return try {
+        try {
             syncUnlocked(settings, rms)
         } catch (e: Exception) {
             publish(error = e.message ?: "Sync failed")

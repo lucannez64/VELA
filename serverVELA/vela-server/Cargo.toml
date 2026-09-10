@@ -25,6 +25,8 @@ vela-share-policy = { path = "../vela-share-policy" }
 # ── Web framework ──────────────────────────────────────────────────────────────
 axum              = { version = "0.7", features = ["macros", "multipart"] }
 tokio             = { version = "1",   features = ["full"] }
+# `stream::unfold`/`chain` for the SSE vault event stream.
+futures-util      = "0.3"
 tower             = { version = "0.4", features = ["util"] }
 tower-http        = { version = "0.5", features = ["trace", "cors", "limit", "fs", "timeout"] }
 bytes             = "1"

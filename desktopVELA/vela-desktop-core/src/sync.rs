@@ -14,9 +14,11 @@ use crate::vault::VaultItem;
 use crate::{normalize_server_url, AppState};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chrono::{DateTime, Utc};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use vela_crypto::oram::CHUNK_SIZE;
 
@@ -1801,8 +1803,302 @@ pub fn set_server_url(state: &AppState, url: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── Live sync: push local saves, pull on server events ──────────────────────
+//
+// The scheduled interval and the manual button remain the floor. On top of
+// them, this runs for as long as the unlocked shell (or the app, for the Tauri
+// front end): a local save wakes it immediately, and `GET /vault/events` tells
+// it when another device wrote. Every failure is a backoff and retry — live
+// sync is an optimization over scheduled sync, never a replacement for it.
+
+/// Coalesce a burst of saves (imports, bulk edits) into one sync. Long enough
+/// to batch, short enough to still feel immediate.
+const LIVE_SYNC_DEBOUNCE: Duration = Duration::from_millis(400);
+/// How long to idle while locked, unconfigured, or missing an identity.
+const LIVE_SYNC_IDLE: Duration = Duration::from_secs(2);
+const EVENT_RECONNECT_MIN: Duration = Duration::from_secs(1);
+const EVENT_RECONNECT_MAX: Duration = Duration::from_secs(30);
+/// The server keep-alive is 15s; silence past this means a dead connection.
+const EVENT_READ_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Incremental `text/event-stream` parser. Feed it response chunks; it returns
+/// the `data:` payload of every completed event. Only `data` fields matter to
+/// this client — event names are advisory. Multibyte characters split across
+/// chunks are harmless here because every payload this server sends is ASCII.
+#[derive(Default)]
+struct SseParser {
+    line: String,
+    data: String,
+}
+
+impl SseParser {
+    fn push(&mut self, chunk: &str) -> Vec<String> {
+        let mut events = Vec::new();
+        for c in chunk.chars() {
+            match c {
+                '\n' => {
+                    let line = self.line.trim_end_matches('\r');
+                    if line.is_empty() {
+                        // Dispatch: a blank line ends the event.
+                        if !self.data.is_empty() {
+                            events.push(std::mem::take(&mut self.data));
+                        }
+                    } else if let Some(rest) = line.strip_prefix("data:") {
+                        if !self.data.is_empty() {
+                            self.data.push('\n');
+                        }
+                        self.data
+                            .push_str(rest.strip_prefix(' ').unwrap_or(rest));
+                    }
+                    // "event:", "id:", "retry:" and ": comments" are ignored.
+                    self.line.clear();
+                }
+                _ => self.line.push(c),
+            }
+        }
+        events
+    }
+}
+
+/// Whether a decoded event payload asks this device to sync. The opening
+/// `hello` (no `kind`) is informational; a change written by this device is
+/// already on the server; `resync` frames and unparseable payloads sync
+/// conservatively rather than risk missing a change.
+fn event_requests_sync(data: &str, device_id: &str) -> bool {
+    #[derive(Deserialize)]
+    struct Wire {
+        writer: Option<String>,
+        kind: Option<String>,
+    }
+    match serde_json::from_str::<Wire>(data) {
+        Ok(wire) if wire.kind.is_none() => false,
+        Ok(wire) => wire
+            .writer
+            .as_deref()
+            .map_or(true, |writer| writer != device_id),
+        Err(_) => true,
+    }
+}
+
+async fn live_sync_once<F: Fn()>(state: &Arc<AppState>, why: &str, on_sync: &F) {
+    match trigger_sync(state).await {
+        Ok(status) => {
+            if let Some(error) = &status.error {
+                tracing::debug!("live sync ({why}) reported: {error}");
+            } else {
+                if !status.conflicts.is_empty() {
+                    tracing::warn!(
+                        "live sync ({why}): {} conflict(s) detected",
+                        status.conflicts.len()
+                    );
+                } else {
+                    tracing::debug!("live sync ({why}) completed");
+                }
+                // The merged vault may differ from what a UI is showing.
+                on_sync();
+            }
+        }
+        Err(e) => tracing::debug!("live sync ({why}) failed: {e}"),
+    }
+}
+
+/// Open the event stream, re-authenticating once on a 401 and adopting any
+/// rotated token the response carries. Returns `None` on any failure; the
+/// caller backs off and retries.
+async fn open_event_stream(
+    state: &Arc<AppState>,
+    client: &ApiClient,
+    token: &mut String,
+    device_id: &str,
+) -> Option<reqwest::Response> {
+    for attempt in 0..2 {
+        let response = match client.open_vault_events(token).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::debug!("live sync: event stream connect failed: {e}");
+                return None;
+            }
+        };
+
+        if let Some(new_token) = response
+            .headers()
+            .get("X-New-Token")
+            .and_then(|value| value.to_str().ok())
+        {
+            state.session.write().set_server_token(new_token.to_string());
+            *token = new_token.to_string();
+        }
+
+        if response.status().is_success() {
+            return Some(response);
+        }
+
+        let status = response.status();
+        if status.as_u16() == 401 && attempt == 0 {
+            match authenticate_for_sync(state, client, device_id).await {
+                Ok(fresh) => {
+                    *token = fresh;
+                    continue;
+                }
+                Err(e) => {
+                    tracing::debug!("live sync: re-authentication failed: {e}");
+                    return None;
+                }
+            }
+        }
+        tracing::debug!("live sync: event stream refused with {status}");
+        return None;
+    }
+    None
+}
+
+/// Run live sync for the lifetime of the hosting task.
+///
+/// Callers bind its lifetime to the unlocked session (gpui: the `AppShell`
+/// task) or to the app (Tauri). It self-idles while locked, unconfigured or
+/// signed out, so keeping it alive longer than strictly necessary is safe.
+pub async fn run_live_sync(state: Arc<AppState>) {
+    run_live_sync_with(state, || {}).await;
+}
+
+/// [`run_live_sync`] with a hook invoked after every sync that changed (or
+/// merged) local state. Front ends use it to tell their renderer to re-read
+/// the vault; the core does not know how to do that itself.
+pub async fn run_live_sync_with<F>(state: Arc<AppState>, on_sync: F)
+where
+    F: Fn() + Send + Sync + 'static,
+{
+    let mut backoff = EVENT_RECONNECT_MIN;
+
+    loop {
+        if !state.is_unlocked() {
+            tokio::time::sleep(LIVE_SYNC_IDLE).await;
+            continue;
+        }
+
+        let server_url = normalize_server_url(&state.server_url.read());
+        if server_url.is_empty() {
+            tokio::time::sleep(LIVE_SYNC_IDLE).await;
+            continue;
+        }
+
+        let generation = state.session_generation();
+        let device_id = {
+            let session = state.session.read();
+            session.get_device_id().unwrap_or("unknown").to_string()
+        };
+        let client = ApiClient::with_url(server_url);
+        let mut token = match state.get_session_token() {
+            Some(token) => token,
+            None => match authenticate_for_sync(&state, &client, &device_id).await {
+                Ok(token) => token,
+                Err(e) => {
+                    tracing::debug!("live sync: authentication failed: {e}");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(EVENT_RECONNECT_MAX);
+                    continue;
+                }
+            },
+        };
+
+        let Some(response) = open_event_stream(&state, &client, &mut token, &device_id).await
+        else {
+            // A lock during connect means the next outer pass idles; no need
+            // to back off against a session that no longer exists.
+            if state.ensure_unlocked_since(generation).is_ok() {
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(EVENT_RECONNECT_MAX);
+            }
+            continue;
+        };
+        backoff = EVENT_RECONNECT_MIN;
+
+        let mut stream = response.bytes_stream();
+        let mut parser = SseParser::default();
+
+        'connected: loop {
+            tokio::select! {
+                _ = state.vault_changed.notified() => {
+                    // A local save: give a burst a moment to finish, then push.
+                    tokio::time::sleep(LIVE_SYNC_DEBOUNCE).await;
+                    if state.ensure_unlocked_since(generation).is_err() {
+                        break 'connected;
+                    }
+                    live_sync_once(&state, "after-save", &on_sync).await;
+                }
+                chunk = tokio::time::timeout(EVENT_READ_TIMEOUT, stream.next()) => {
+                    match chunk {
+                        Err(_) => {
+                            tracing::debug!("live sync: event stream timed out; reconnecting");
+                            break 'connected;
+                        }
+                        Ok(None) => {
+                            tracing::debug!("live sync: event stream closed; reconnecting");
+                            break 'connected;
+                        }
+                        Ok(Some(Err(e))) => {
+                            tracing::debug!("live sync: event stream error: {e}");
+                            break 'connected;
+                        }
+                        Ok(Some(Ok(bytes))) => {
+                            let text = String::from_utf8_lossy(&bytes);
+                            for data in parser.push(&text) {
+                                if event_requests_sync(&data, &device_id) {
+                                    if state.ensure_unlocked_since(generation).is_err() {
+                                        break 'connected;
+                                    }
+                                    live_sync_once(&state, "server-event", &on_sync).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Floor delay so a flapping connection cannot spin.
+        tokio::time::sleep(EVENT_RECONNECT_MIN).await;
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn sse_parser_frames_data_across_chunks() {
+        let mut parser = super::SseParser::default();
+        // A frame split across two reads stays incomplete until its blank line.
+        assert!(parser.push("event: hello\ndata: {\"rev").is_empty());
+        assert_eq!(
+            parser.push("ision\":1}\n\n"),
+            vec!["{\"revision\":1}".to_string()]
+        );
+        // CRLF, a keep-alive comment, and multi-line data all parse.
+        assert_eq!(
+            parser.push(": keep-alive\r\ndata: a\r\ndata: b\r\n\r\n"),
+            vec!["a\nb".to_string()]
+        );
+    }
+
+    #[test]
+    fn own_writes_and_control_frames_do_not_trigger_sync() {
+        let me = "11111111-1111-1111-1111-111111111111";
+        let other = "22222222-2222-2222-2222-222222222222";
+        assert!(!super::event_requests_sync(
+            &format!("{{\"revision\":7,\"writer\":\"{me}\",\"epoch\":1,\"kind\":\"chunk\"}}"),
+            me
+        ));
+        assert!(super::event_requests_sync(
+            &format!("{{\"revision\":8,\"writer\":\"{other}\",\"epoch\":1,\"kind\":\"chunk\"}}"),
+            me
+        ));
+        // Epoch commit and lagged resync frames name no useful writer.
+        assert!(super::event_requests_sync("{\"kind\":\"epoch\"}", me));
+        assert!(super::event_requests_sync("{\"kind\":\"lagged\"}", me));
+        // Opening hello: no kind, no writer — informational only.
+        assert!(!super::event_requests_sync("{\"revision\":4,\"epoch\":1}", me));
+    }
 
     #[test]
     fn adoption_validates_every_authenticated_capsule_authority() {

@@ -10,12 +10,17 @@
 //! In the Tauri build the renderer owns that scheduling, so the gpui port
 //! (which has no renderer) dropped it entirely — only the manual "Sync now"
 //! paths (`SettingsScreen::sync_now`, tray menu) remained, and the vault
-//! never synced on its own. This module restores both behaviors.
+//! never synced on its own. This module restores both behaviors, and adds the
+//! live channel: [`vela_desktop_core::sync::run_live_sync`] pushes local
+//! saves and reacts to the server's vault event stream, so nothing waits for
+//! the next tick.
 //!
 //! The returned [`Task`] runs until dropped: [`AppShell`] holds it for its
 //! lifetime, and `AppShell` is created on unlock and destroyed on lock, so
 //! background sync stops exactly when the session does — matching the
-//! original's `if (!session?.active) return` guard.
+//! original's `if (!session?.active) return` guard. The live task is spawned
+//! through `gpui_tokio`, whose task aborts its Tokio future on drop, so the
+//! event stream dies with the shell too.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,6 +41,17 @@ const TICK: Duration = Duration::from_secs(30);
 /// call and must be held by the caller.
 pub fn start(app_state: Arc<AppState>, cx: &mut Context<'_, crate::views::app_shell::AppShell>) -> Task<()> {
     cx.spawn(async move |_this, cx| {
+        // Live sync: local saves are pushed immediately, and the server's
+        // vault event stream pulls other devices' writes. Runs on Tokio via
+        // the gpui bridge; the returned Task aborts it when this scheduler
+        // task is dropped (i.e. when the app locks).
+        let _live_sync = gpui_tokio::Tokio::spawn(cx, {
+            let app_state = app_state.clone();
+            async move {
+                vela_desktop_core::sync::run_live_sync(app_state).await;
+            }
+        });
+
         // Startup sync, mirroring
         // `if (session?.active && settings?.sync_on_startup) doSync()`.
         if load_settings(&app_state).sync_on_startup {

@@ -1,4 +1,5 @@
 pub mod chunk;
+pub mod events;
 pub mod oram;
 pub mod rekey;
 pub mod sync;

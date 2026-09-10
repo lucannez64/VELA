@@ -11,6 +11,10 @@ use std::sync::Arc;
 pub struct ApiClient {
     h3_client: Option<Client>,
     fallback_client: Client,
+    /// No overall timeout: the SSE event stream is a connection, not a
+    /// request/response exchange, so the regular clients' 30s total timeout
+    /// would kill it. Per-read liveness is the caller's job.
+    stream_client: Client,
     base_url: String,
     preferred_protocol: Arc<RwLock<Option<PreferredProtocol>>>,
 }
@@ -129,6 +133,11 @@ impl ApiClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");
+        let stream_client = Client::builder()
+            // Bound connection setup; the response itself has no total timeout.
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("Failed to create streaming HTTP client");
         // reqwest's HTTP/3 support is unstable and gated behind the `http3`
         // feature (which also requires `--cfg reqwest_unstable`). Without it,
         // all traffic uses the TCP fallback client.
@@ -154,6 +163,7 @@ impl ApiClient {
         Self {
             h3_client,
             fallback_client,
+            stream_client,
             base_url: base_url.to_string(),
             preferred_protocol: Arc::new(RwLock::new(None)),
         }
@@ -282,6 +292,26 @@ impl ApiClient {
         let new_token = extract_new_token(&resp);
         let manifest: SyncManifest = resp.json().await?;
         Ok((manifest, new_token))
+    }
+
+    /// Open the server's vault change stream (`GET /vault/events`).
+    ///
+    /// Uses the no-timeout `stream_client`: the response body stays open for
+    /// as long as the connection is healthy. The caller owns the response and
+    /// must bound its own reads (the server sends a keep-alive comment every
+    /// 15s). HTTP/3 is deliberately avoided — reqwest's unstable H3 streaming
+    /// is not worth the risk for an advisory channel; a failed stream just
+    /// means falling back to scheduled sync.
+    pub async fn open_vault_events(&self, token: &str) -> Result<reqwest::Response> {
+        let resp = self
+            .stream_client
+            .get(format!("{}/vault/events", self.base_url))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+            .map_err(|e| anyhow!(describe_request_error(&e)))?;
+        Ok(resp)
     }
 
     pub async fn get_chunk(

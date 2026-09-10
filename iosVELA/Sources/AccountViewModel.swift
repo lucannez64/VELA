@@ -10,6 +10,9 @@ final class AccountViewModel: ObservableObject {
     @Published var status: String = ""
     @Published var busy = false
     @Published var recoveryShares: [String] = []   // shares to hand to the user after setup
+    /// Set when a live event asks for a sync while another run is in flight;
+    /// the finished run re-enters `syncNow` instead of the event being lost.
+    private var pendingSync = false
 
     private let store: AccountStore
     private let recoveryJournal = RecoveryPublicationJournalStore()
@@ -90,6 +93,11 @@ final class AccountViewModel: ObservableObject {
             do { status = try await work() }
             catch { status = "\(label) failed: \(error.localizedDescription)" }
             busy = false
+            // A live event that arrived mid-run queued a follow-up sync.
+            if pendingSync {
+                pendingSync = false
+                syncNow()
+            }
         }
     }
 
@@ -152,6 +160,13 @@ final class AccountViewModel: ObservableObject {
 
     /// Two-way vault sync (pull → merge → push).
     func syncNow() {
+        // A live event (or a second save) can arrive while a run is in flight;
+        // queue exactly one follow-up instead of dropping the change until the
+        // next timer tick.
+        guard !busy else {
+            pendingSync = true
+            return
+        }
         run("Syncing") { [self] in
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
             guard account != nil else { throw Failure("register first") }
@@ -844,9 +859,11 @@ final class AccountViewModel: ObservableObject {
     // MARK: - Background sync (foreground periodic timer, like Android)
 
     private var syncTask: Task<Void, Never>?
+    private var vaultEventsTask: Task<Void, Never>?
 
     func startPeriodicSync() {
         stopPeriodicSync()
+        startVaultEvents()
         guard isRegistered else { return }
         let stored = UserDefaults.standard.integer(forKey: "vela.backgroundSyncMinutes")
         let minutes = stored <= 0 ? 5 : stored
@@ -862,6 +879,48 @@ final class AccountViewModel: ObservableObject {
     func stopPeriodicSync() {
         syncTask?.cancel()
         syncTask = nil
+        stopVaultEvents()
+    }
+
+    // MARK: - Live vault events (foreground)
+
+    /// Follow the server's vault change stream while the app is foregrounded,
+    /// so a write from another device pulls in without waiting for the timer.
+    /// Started/stopped alongside the periodic timer in `ContentView`.
+    func startVaultEvents() {
+        stopVaultEvents()
+        guard isRegistered, account != nil else { return }
+        vaultEventsTask = Task { @MainActor [weak self] in
+            var backoff: UInt64 = 1
+            while !Task.isCancelled {
+                guard let self = self else { return }
+                guard self.vault.currentRMS != nil, self.account != nil else {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    continue
+                }
+                let client = self.client()
+                do {
+                    for try await event in client.vaultEvents() {
+                        if Task.isCancelled { break }
+                        await self.persistRenewedToken(from: client)
+                        backoff = 1
+                        if VelaClient.eventRequestsSync(event, deviceID: self.account?.deviceID) {
+                            self.syncNow()
+                        }
+                    }
+                } catch {
+                    // Server restart / network change / token expiry: back off.
+                }
+                if Task.isCancelled { return }
+                try? await Task.sleep(nanoseconds: backoff * 1_000_000_000)
+                backoff = min(backoff * 2, 30)
+            }
+        }
+    }
+
+    func stopVaultEvents() {
+        vaultEventsTask?.cancel()
+        vaultEventsTask = nil
     }
 
     func signOut() {
@@ -873,6 +932,7 @@ final class AccountViewModel: ObservableObject {
             VelaClient(baseURL: URL(string: $0.serverURL) ?? URL(string: defaultServer)!, token: $0.token)
         }
         account = nil
+        stopPeriodicSync()
         recoveryShares = []
         recoveryJournal.clear()
         status = "Signed out"

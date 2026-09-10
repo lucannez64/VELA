@@ -268,6 +268,21 @@ fn main() {
                 );
             }
 
+            // Live sync: local saves push immediately and the server's vault
+            // event stream pulls other devices' writes without waiting for the
+            // renderer's interval. The hook tells the webview to re-read the
+            // vault — the same event `trigger_sync` emits for scheduled runs.
+            {
+                let state = state.inner().clone();
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    vela_desktop_core::sync::run_live_sync_with(state, move || {
+                        let _ = app_handle.emit("vault-items-changed", ());
+                    })
+                    .await;
+                });
+            }
+
             let ipc_server = IpcServer::new();
             let host: Arc<dyn vela_desktop::host::Host> =
                 Arc::new(TauriHost(app.handle().clone()));

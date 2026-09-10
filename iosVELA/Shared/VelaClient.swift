@@ -197,6 +197,87 @@ actor VelaClient {
         return (try? JSONDecoder().decode(PutResp.self, from: data))?.version ?? (ifMatch + 1)
     }
 
+    // MARK: - Vault change stream (SSE)
+
+    /// One decoded `GET /vault/events` payload. `hello` has no kind; `resync`
+    /// (epoch commit / lagged subscriber) has a kind but no writer.
+    struct VaultEvent: Decodable, Sendable {
+        let revision: Int?
+        let writer: String?
+        let epoch: Int?
+        let kind: String?
+    }
+
+    /// Whether an event asks this device to sync. The opening `hello` is
+    /// informational, and a change this device wrote is already on the server.
+    static func eventRequestsSync(_ event: VaultEvent, deviceID: String?) -> Bool {
+        guard event.kind != nil else { return false }
+        guard let writer = event.writer else { return true }
+        return writer != deviceID
+    }
+
+    /// Join the `data:` lines of one SSE frame into its payload.
+    static func payload(fromEventLines lines: [String]) -> String? {
+        let data = lines.compactMap { line -> String? in
+            guard line.hasPrefix("data:") else { return nil }
+            var value = String(line.dropFirst(5))
+            if value.hasPrefix(" ") { value.removeFirst() }
+            return value
+        }.joined(separator: "\n")
+        return data.isEmpty ? nil : data
+    }
+
+    /// Follow `GET /vault/events`. The stream throws (or finishes) when the
+    /// connection ends; the caller owns reconnection and backoff. Only decoded
+    /// events are yielded — keep-alive comments and hello frames are skipped
+    /// here so callers cannot mistake them for changes.
+    func vaultEvents() async throws -> AsyncThrowingStream<VaultEvent, Error> {
+        guard let url = URL(string: "/vault/events", relativeTo: baseURL) else {
+            throw ServerError(status: 0, body: "bad path /vault/events")
+        }
+        var req = URLRequest(url: url)
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let token = token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (bytes, response) = try await session.bytes(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw ServerError(status: 0, body: "no HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServerError(status: http.statusCode, body: "event stream refused")
+        }
+        // Adopt a rotated token from the stream's response headers, then forget
+        // the rest of the response: the body is read via `bytes`.
+        if let newToken = http.value(forHTTPHeaderField: "X-New-Token"), !newToken.isEmpty {
+            token = newToken
+        }
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var lines: [String] = []
+                do {
+                    for try await line in bytes.lines {
+                        if line.isEmpty {
+                            if let payload = Self.payload(fromEventLines: lines),
+                               let event = try? JSONDecoder().decode(VaultEvent.self, from: Data(payload.utf8)) {
+                                continuation.yield(event)
+                            }
+                            lines.removeAll(keepingCapacity: true)
+                        } else {
+                            lines.append(line)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     // MARK: - Sharing
 
     struct ShareSendResponse: Decodable {

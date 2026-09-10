@@ -887,6 +887,14 @@ pub async fn post_commit(
     }
 
     tracing::info!(user_id = %user_id, epoch = new_epoch, "re-key committed");
+    // Every remaining device needs to adopt the new epoch; a `resync` event
+    // tells open clients now instead of at their next scheduled sync.
+    state.vault_events.publish(
+        session.user_id,
+        session.device_id,
+        new_epoch,
+        crate::vault::events::VaultChangeKind::Epoch,
+    );
     Ok(no_content(&session))
 }
 

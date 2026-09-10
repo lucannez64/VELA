@@ -16,6 +16,9 @@ pub struct AppStateInner {
     pub paseto_sk: AsymmetricSecretKey<V4>,
     pub paseto_pk: AsymmetricPublicKey<V4>,
     pub config: Config,
+    /// Per-process vault change fan-out for `GET /vault/events`. Not durable:
+    /// a missed event only delays a client's next sync, never loses data.
+    pub vault_events: crate::vault::events::VaultEventBus,
 }
 
 pub type AppState = Arc<AppStateInner>;
@@ -58,6 +61,7 @@ impl AppStateInner {
             paseto_sk,
             paseto_pk,
             config,
+            vault_events: crate::vault::events::VaultEventBus::new(),
         })
     }
 }

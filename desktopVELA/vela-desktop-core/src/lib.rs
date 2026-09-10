@@ -107,6 +107,10 @@ pub struct AppState {
     pub extension_connected: Arc<AtomicBool>,
     /// Serializes sync runs so local edits and merges cannot interleave.
     pub sync_mutex: tokio::sync::Mutex<()>,
+    /// Wakes the live-sync listener after a local vault mutation so the change
+    /// reaches the server without waiting for the next scheduled tick. `Notify`
+    /// coalesces a burst of saves into at most one pending wake-up.
+    pub vault_changed: tokio::sync::Notify,
     /// Coordinates synchronous secret-file writers with an RMS transition.
     /// Ordinary writers take a read guard before choosing the active crypto;
     /// migration takes the write guard through file rewrite + in-memory swap.
@@ -246,6 +250,7 @@ impl AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            vault_changed: tokio::sync::Notify::new(),
             key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),
@@ -324,7 +329,21 @@ impl AppState {
         // Match `lock_session`'s crypto -> vault order so a concurrent lock
         // cannot hold crypto while waiting on the vault snapshot we own.
         let vault = self.vault.read();
-        self.store.save_vault(&vault, crypto)
+        let result = self.store.save_vault(&vault, crypto);
+        if result.is_ok() {
+            // A persisted local edit is exactly what live sync exists to push:
+            // wake it now instead of waiting for the next scheduled tick. Sync's
+            // own writes call `store.save_vault` directly, so this cannot loop.
+            self.notify_vault_changed();
+        }
+        result
+    }
+
+    /// Signal that the local vault changed and should reach the server
+    /// promptly. Safe from any thread; extra calls while one wake-up is still
+    /// pending collapse into a single notification.
+    pub fn notify_vault_changed(&self) {
+        self.vault_changed.notify_one();
     }
 }
 
@@ -491,6 +510,7 @@ impl Default for AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            vault_changed: tokio::sync::Notify::new(),
             key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]
             browser_login_mutex: Arc::new(tokio::sync::Mutex::new(())),

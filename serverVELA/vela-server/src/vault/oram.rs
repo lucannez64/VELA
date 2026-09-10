@@ -313,6 +313,15 @@ pub async fn put_path(
         });
     }
 
+    // ORAM path writes are the reads/writes of a vault above the chunk
+    // threshold, so they notify exactly like chunk writes do.
+    state.vault_events.publish(
+        session.user_id,
+        session.device_id,
+        write_epoch,
+        crate::vault::events::VaultChangeKind::Oram,
+    );
+
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
     Ok((headers, Json(PutOramPathResponse { buckets: updated })))
