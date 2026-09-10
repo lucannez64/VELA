@@ -22,6 +22,7 @@ get_sync
 get_chunk
 put_chunk
 delete_chunk
+get_events              # vault-change stream: read-only, content-free, scoped to the granted vault
 get_path                # ORAM read
 put_path                # ORAM write
 

@@ -900,7 +900,7 @@ final class AccountViewModel: ObservableObject {
                 }
                 let client = self.client()
                 do {
-                    for try await event in client.vaultEvents() {
+                    for try await event in try await client.vaultEvents() {
                         if Task.isCancelled { break }
                         await self.persistRenewedToken(from: client)
                         backoff = 1
