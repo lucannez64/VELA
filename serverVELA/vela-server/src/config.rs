@@ -237,40 +237,31 @@ fn env_optional(name: &str) -> Option<String> {
 /// back to an ephemeral in-memory key — never refusing to start, so a redeploy
 /// can never lock the operator out of an otherwise healthy server.
 fn load_paseto_key(data_dir: &str) -> Result<(Vec<u8>, Vec<u8>)> {
-    use pasetors::keys::{AsymmetricKeyPair, Generate};
-    use pasetors::version4::V4;
-
-    let parse_key = |raw: Vec<u8>, source: &str| -> Result<(Vec<u8>, Vec<u8>)> {
-        anyhow::ensure!(
-            raw.len() == 64,
-            "{source} must be 64 bytes (got {})",
-            raw.len()
-        );
-        let pk = raw[32..].to_vec();
-        Ok((raw, pk))
-    };
-
     if let Ok(b64) = std::env::var("PASETO_SECRET_KEY") {
         let raw = B64
             .decode(b64.trim())
             .context("PASETO_SECRET_KEY is not valid base64")?;
-        return parse_key(raw, "PASETO_SECRET_KEY");
+        return parse_paseto_secret(raw, "PASETO_SECRET_KEY");
     }
 
-    let key_path = Path::new(data_dir).join("paseto.key");
-    match std::fs::read_to_string(&key_path) {
-        Ok(contents) => {
-            let raw = B64
-                .decode(contents.trim())
-                .context(format!("{} is not valid base64", key_path.display()))?;
-            return parse_key(raw, "paseto.key");
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            // Unreadable but present — do NOT silently rotate the key (that
-            // would invalidate every live session). Fail loudly instead.
-            anyhow::bail!("cannot read {}: {e}", key_path.display());
-        }
+    load_or_create_file_key(&Path::new(data_dir).join("paseto.key"))
+}
+
+/// Load `paseto.key`, generating and publishing one when absent.
+///
+/// Publication is atomic (temp file + no-clobber link) and the result is
+/// re-read afterwards, so every concurrent starter converges on the one key
+/// that actually landed on disk. Previously the file was opened with
+/// `create_new` and written in place: a sibling `Config::from_env()` could
+/// observe it between creation and the first write and fail with
+/// "paseto.key must be 64 bytes (got 0)" — parallel tests hit this, and a
+/// rolling deploy sharing a data directory could have too.
+fn load_or_create_file_key(key_path: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
+    use pasetors::keys::{AsymmetricKeyPair, Generate};
+    use pasetors::version4::V4;
+
+    if let Some(existing) = read_persisted_paseto_key(key_path)? {
+        return Ok(existing);
     }
 
     let kp = AsymmetricKeyPair::<V4>::generate()
@@ -278,30 +269,85 @@ fn load_paseto_key(data_dir: &str) -> Result<(Vec<u8>, Vec<u8>)> {
     let sk_bytes = kp.secret.as_bytes().to_vec();
     let pk_bytes = kp.public.as_bytes().to_vec();
 
-    match persist_paseto_key(&key_path, &sk_bytes) {
-        Ok(()) => tracing::info!(
-            path = %key_path.display(),
-            "generated and persisted PASETO keypair (sessions survive restarts)"
-        ),
-        Err(e) => tracing::warn!(
-            path = %key_path.display(),
-            error = %e,
-            "could not persist PASETO keypair — using an ephemeral key; \
-             tokens will be invalidated on restart"
-        ),
+    match persist_paseto_key(key_path, &sk_bytes) {
+        Ok(()) => {
+            tracing::info!(
+                path = %key_path.display(),
+                "generated and persisted PASETO keypair (sessions survive restarts)"
+            );
+        }
+        Err(e) => {
+            // Another starter may have published between our read and our
+            // write. Adopt their key instead of running on one that the file —
+            // and therefore every future start — disagrees with.
+            if let Ok(Some(existing)) = read_persisted_paseto_key(key_path) {
+                tracing::info!(
+                    path = %key_path.display(),
+                    "adopted concurrently-persisted PASETO keypair"
+                );
+                return Ok(existing);
+            }
+            tracing::warn!(
+                path = %key_path.display(),
+                error = %e,
+                "could not persist PASETO keypair — using an ephemeral key; \
+                 tokens will be invalidated on restart"
+            );
+            return Ok((sk_bytes, pk_bytes));
+        }
     }
 
-    Ok((sk_bytes, pk_bytes))
+    // Whatever the outcome, the file now holds a complete key; return that so
+    // callers that raced all end up with the same one.
+    match read_persisted_paseto_key(key_path)? {
+        Some(published) => Ok(published),
+        None => Ok((sk_bytes, pk_bytes)),
+    }
 }
 
-/// Write the PASETO secret key to `path` as base64 with owner-only permissions.
+/// Validate a raw PASETO v4 secret key (`sk ‖ pk`, 64 bytes) and split off the
+/// public half.
+fn parse_paseto_secret(raw: Vec<u8>, source: &str) -> Result<(Vec<u8>, Vec<u8>)> {
+    anyhow::ensure!(
+        raw.len() == 64,
+        "{source} must be 64 bytes (got {})",
+        raw.len()
+    );
+    let pk = raw[32..].to_vec();
+    Ok((raw, pk))
+}
+
+/// Read and parse the persisted key, or `None` when the file does not exist.
+///
+/// A present-but-unparseable file is an error, not a miss: silently generating
+/// a fresh key would invalidate every live session with no signal.
+fn read_persisted_paseto_key(path: &Path) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => anyhow::bail!("cannot read {}: {e}", path.display()),
+    };
+    let raw = B64
+        .decode(contents.trim())
+        .with_context(|| format!("{} is not valid base64", path.display()))?;
+    parse_paseto_secret(raw, &path.display().to_string()).map(Some)
+}
+
+/// Publish the PASETO secret key to `path` as base64 with owner-only
+/// permissions, atomically.
+///
+/// Written to a uniquely-named temp file in the same directory, fsynced, then
+/// linked into place. `hard_link` refuses to replace an existing `path`, so a
+/// second starter cannot silently rotate the key the first one adopted.
+/// Filesystems without hard links fall back to an atomic `rename` (replace).
 fn persist_paseto_key(path: &Path, sk_bytes: &[u8]) -> Result<()> {
     use std::io::Write as _;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("cannot create {}", parent.display()))?;
-    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("cannot create {}", parent.display()))?;
+
+    let tmp = parent.join(format!(".paseto.key.{}.tmp", uuid::Uuid::new_v4()));
 
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
@@ -310,12 +356,30 @@ fn persist_paseto_key(path: &Path, sk_bytes: &[u8]) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt as _;
         opts.mode(0o600);
     }
-    let mut file = opts
-        .open(path)
-        .with_context(|| format!("cannot create {}", path.display()))?;
-    file.write_all(B64.encode(sk_bytes).as_bytes())?;
-    file.sync_all()?;
-    Ok(())
+
+    let write = (|| -> Result<()> {
+        let mut file = opts
+            .open(&tmp)
+            .with_context(|| format!("cannot create {}", tmp.display()))?;
+        file.write_all(B64.encode(sk_bytes).as_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    })();
+    if let Err(e) = write {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    // Same-directory temp: the link (and the rename fallback) is atomic, so a
+    // concurrent reader sees either no file or the complete key — never the
+    // zero-length half-write that caused "must be 64 bytes (got 0)".
+    let published = match std::fs::hard_link(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
+        Err(_) => std::fs::rename(&tmp, path),
+    };
+    let _ = std::fs::remove_file(&tmp);
+    published.with_context(|| format!("cannot publish {}", path.display()))
 }
 
 fn env_flag(name: &str) -> bool {
@@ -437,5 +501,66 @@ mod tests {
         for cidr in ["10.0.0.0", "not-an-ip/24", "10.0.0.0/33", "::1/129"] {
             assert!(validate_proxy_cidr(cidr).is_err(), "{cidr} should be refused");
         }
+    }
+
+    use std::sync::{Arc, Barrier};
+
+    /// Regression for a real CI flake: parallel `Config::from_env()` callers
+    /// sharing one data directory used to read `paseto.key` while a sibling was
+    /// still writing it and failed with "must be 64 bytes (got 0)". Every
+    /// starter must observe a complete file and converge on a single key.
+    #[test]
+    fn concurrent_key_creation_is_atomic_and_convergent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = Arc::new(dir.path().join("paseto.key"));
+
+        let threads = 16;
+        let barrier = Arc::new(Barrier::new(threads));
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let path = Arc::clone(&path);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let (sk, pk) = load_or_create_file_key(&path).expect("key must load");
+                    assert_eq!(sk.len(), 64);
+                    assert_eq!(pk.len(), 32);
+                    assert_eq!(
+                        &sk[32..],
+                        &pk[..],
+                        "public half must be the tail of the secret"
+                    );
+                    sk
+                })
+            })
+            .collect();
+
+        let keys: Vec<Vec<u8>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert!(
+            keys.windows(2).all(|pair| pair[0] == pair[1]),
+            "concurrent starters diverged on different keys"
+        );
+
+        let on_disk = std::fs::read_to_string(&*path).expect("published key");
+        let decoded = B64.decode(on_disk.trim()).expect("valid base64");
+        assert_eq!(decoded, keys[0], "on-disk key must match every caller's");
+    }
+
+    /// A second publisher must never silently rotate a key another starter
+    /// already adopted: that would invalidate every session issued under it.
+    #[test]
+    fn an_existing_key_is_never_silently_rotated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("paseto.key");
+        let first = [1u8; 64];
+        let second = [2u8; 64];
+        persist_paseto_key(&path, &first).unwrap();
+
+        assert!(
+            persist_paseto_key(&path, &second).is_err(),
+            "publishing over an existing key must be refused"
+        );
+        let (sk, _) = read_persisted_paseto_key(&path).unwrap().unwrap();
+        assert_eq!(sk, first);
     }
 }
