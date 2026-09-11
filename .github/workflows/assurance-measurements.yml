@@ -1,0 +1,42 @@
+name: Assurance measurements
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["assurance/measurements"]
+    paths:
+      - '.github/workflows/assurance-measurements.yml'
+      - 'security/measurements/**'
+      - 'libVELA/vela-crypto/**'
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Build measurement executable
+        run: cargo build --locked --release --manifest-path libVELA/vela-crypto/Cargo.toml --example assurance_measure
+      - name: Collect three independent runs
+        run: python security/measurements/ci_measure.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: assurance-${{ matrix.os }}-${{ github.run_attempt }}
+          path: measurement-results/
+          if-no-files-found: error
+          retention-days: 30
