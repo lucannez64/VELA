@@ -1,0 +1,191 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M27_LocalIpcGate] Theory loaded
+[Theory M27_LocalIpcGate] Theory translated
+[Theory M27_LocalIpcGate] Derivation checks started
+[Theory M27_LocalIpcGate] Derivation checks ended
+[Theory M27_LocalIpcGate] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M27_LocalIpcGate
+
+begin
+
+// Function signature and definition of the equational theory E
+
+functions: fst/1, pair/2, snd/1
+equations: fst(<x.1, x.2>) = x.1, snd(<x.1, x.2>) = x.2
+
+rule (modulo E) HonestSnapshot:
+   [ Fr( ~c ) ]
+  --[ HonestBrowser( ~c ) ]->
+   [ Snapshot( ~c, 'same', 'host', 'browser' ), Out( ~c ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) LocalImpostorSnapshot:
+   [ Fr( ~c ) ]
+  --[ Impostor( ~c ) ]->
+   [ Snapshot( ~c, 'same', 'host', 'browser' ), Out( ~c ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) ProviderSnapshot:
+   [ Fr( ~c ) ]
+  --[ Provider( ~c ) ]->
+   [ Snapshot( ~c, 'same', 'provider', 'none' ), Out( ~c ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) OtherUserSnapshot:
+   [ Fr( ~c ) ]
+  --[ OtherUser( ~c ) ]->
+   [ Snapshot( ~c, 'other', 'host', 'browser' ), Out( ~c ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) AdmitHost:
+   [ Snapshot( c, 'same', 'host', 'browser' ), In( c ) ]
+  --[ Admitted( c ), HostAdmitted( c ), SameUserObserved( c ) ]->
+   [ ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) AdmitProvider:
+   [ Snapshot( c, 'same', 'provider', 'none' ), In( c ) ]
+  --[ Admitted( c ), SameUserObserved( c ) ]->
+   [ ]
+
+  /* has exactly the trivial AC variant */
+
+lemma same_user_required:
+  all-traces "∀ c #i. (Admitted( c ) @ #i) ⇒ (SameUserObserved( c ) @ #i)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ c #i. (Admitted( c ) @ #i) ∧ ¬(SameUserObserved( c ) @ #i)"
+*/
+simplify
+solve( Admitted( c ) @ #i )
+  case AdmitHost
+  by contradiction /* from formulas */
+next
+  case AdmitProvider
+  by contradiction /* from formulas */
+qed
+
+lemma other_user_rejected:
+  all-traces
+  "∀ c #i. (OtherUser( c ) @ #i) ⇒ (¬(∃ #j. Admitted( c ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ c #i. (OtherUser( c ) @ #i) ∧ ∃ #j. (Admitted( c ) @ #j)"
+*/
+simplify
+solve( Admitted( ~c ) @ #j )
+  case AdmitHost
+  by solve( Snapshot( ~c, 'same', 'host', 'browser' ) ▶₀ #j )
+next
+  case AdmitProvider
+  by solve( Snapshot( ~c, 'same', 'provider', 'none' ) ▶₀ #j )
+qed
+
+lemma honest_reachable:
+  exists-trace
+  "∃ c #i #j.
+    ((HonestBrowser( c ) @ #i) ∧ (HostAdmitted( c ) @ #j)) ∧ (#i < #j)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ c #i #j.
+  (HonestBrowser( c ) @ #i) ∧ (HostAdmitted( c ) @ #j) ∧ #i < #j"
+*/
+simplify
+solve( Snapshot( ~c, 'same', 'host', 'browser' ) ▶₀ #j )
+  case HonestSnapshot
+  solve( !KU( ~c ) @ #vk )
+    case HonestSnapshot
+    SOLVED // trace found
+  qed
+qed
+
+lemma basename_impostor_reachable:
+  exists-trace
+  "∃ c #i #j.
+    ((Impostor( c ) @ #i) ∧ (HostAdmitted( c ) @ #j)) ∧ (#i < #j)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ c #i #j. (Impostor( c ) @ #i) ∧ (HostAdmitted( c ) @ #j) ∧ #i < #j"
+*/
+simplify
+solve( Snapshot( ~c, 'same', 'host', 'browser' ) ▶₀ #j )
+  case LocalImpostorSnapshot
+  solve( !KU( ~c ) @ #vk )
+    case LocalImpostorSnapshot
+    SOLVED // trace found
+  qed
+qed
+
+lemma provider_without_browser_reachable:
+  exists-trace
+  "∃ c #i #j. ((Provider( c ) @ #i) ∧ (Admitted( c ) @ #j)) ∧ (#i < #j)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ c #i #j. (Provider( c ) @ #i) ∧ (Admitted( c ) @ #j) ∧ #i < #j"
+*/
+simplify
+solve( Admitted( ~c ) @ #j )
+  case AdmitProvider
+  solve( Snapshot( ~c, 'same', 'provider', 'none' ) ▶₀ #j )
+    case ProviderSnapshot
+    solve( !KU( ~c ) @ #vk )
+      case ProviderSnapshot
+      SOLVED // trace found
+    qed
+  qed
+qed
+
+lemma authentic_browser_required:
+  all-traces
+  "∀ c #j.
+    (HostAdmitted( c ) @ #j) ⇒ (∃ #i. (HonestBrowser( c ) @ #i) ∧ (#i < #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ c #j.
+  (HostAdmitted( c ) @ #j) ∧ ∀ #i. (HonestBrowser( c ) @ #i) ⇒ ¬(#i < #j)"
+*/
+simplify
+solve( Snapshot( c, 'same', 'host', 'browser' ) ▶₀ #j )
+  case LocalImpostorSnapshot
+  solve( !KU( ~c ) @ #vk )
+    case LocalImpostorSnapshot
+    SOLVED // trace found
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: security/formal/m27_local_ipc_gate.spthy
+
+  processing time: 0.13s
+  
+  same_user_required (all-traces): verified (4 steps)
+  other_user_rejected (all-traces): verified (4 steps)
+  honest_reachable (exists-trace): verified (4 steps)
+  basename_impostor_reachable (exists-trace): verified (4 steps)
+  provider_without_browser_reachable (exists-trace): verified (5 steps)
+  authentic_browser_required (all-traces): falsified - found trace (4 steps)
+
+==============================================================================

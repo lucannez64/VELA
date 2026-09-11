@@ -1,4 +1,4 @@
-//! Statistical verification harness for Path ORAM stash dynamics (M24).
+//! Finite regression harness for Path ORAM stash dynamics (M24).
 //!
 //! Access-pattern hiding is proven symbolically in
 //! `security/formal/m22c_path_oram_hiding.pv`; what cannot be expressed in a
@@ -9,11 +9,11 @@
 //! faithful tree-structured fake server (buckets keyed by (level, node),
 //! shared across sibling leaves exactly like the wire protocol), checking:
 //!
-//! 1. Hard invariants — every run, every trial:
+//! 1. Assertions at the implemented checkpoints:
 //!    - No registered chunk is ever lost (round-trip integrity through the
 //!      full prepare/download/access/write-back cycle).
 //!    - Buckets are always padded to exactly `BUCKET_SIZE`.
-//!    - `unregister` removes all traces.
+//!    - `unregister` removes the mapping and blocks further preparation.
 //!
 //! 2. A finite-workload regression ceiling, not an overflow probability proof.
 //! Targets cycle deterministically and leaf remaps use OS randomness.
@@ -113,6 +113,8 @@ fn full_cycle(
             "duplicate chunk id in stash after access"
         );
     }
+
+    assert!(write_back.iter().all(|bucket| bucket.len() == BUCKET_SIZE));
 
     // M24 fix: write-back rides the DOWNLOADED path (read-before-write).
     server.put_path(old_leaf, &write_back);

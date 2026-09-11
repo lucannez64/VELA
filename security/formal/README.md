@@ -411,12 +411,13 @@ This is the interaction property no individual model can express.
 
 Expected: **3 Tamarin lemmas verified**.
 
-## Local native-messaging admission (M27, unverified)
+## Local native-messaging admission (M27)
 
 [Model and implementation boundary](local-ipc-gate-assurance.md) separates
 same-user/basename/ancestry admission from M6 credential authorization. It
 includes an impostor trace: basenames do not attest binary authenticity.
-Expected solver outcomes are documented but have not been checked here.
+CI verified five lemmas and the expected authenticity counterexample with
+Tamarin 1.12.0 / Maude 3.5.1, without warnings. The full output is retained.
 
 [Measurement tooling](../measurements/README.md) records local ORAM/rekey
 microbenchmarks and provides a paired command runner for device experiments.

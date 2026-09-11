@@ -1,7 +1,7 @@
 # M24 Path-ORAM stash dynamics assurance record
 
-Statistical verification of the client-side stash — the probabilistic
-property class the symbolic family (M1–M23) cannot express.
+Finite regression evidence for the client-side stash, separate from symbolic
+access-pattern proofs. The historical filename is retained for existing links.
 
 ## Claim boundary (revised)
 
@@ -37,8 +37,7 @@ defects that all prior symbolic milestones and unit tests had missed:
    exists in the stash, and within one path the deepest occurrence wins.
 2. **Unbounded stash growth.** The same duplicated copies accumulated
    without bound: max observed **4692 blocks** on a 48-chunk/height-7 tree
-   against an expected small constant. **Fix:** deduplication collapses the
-   stash to its deterministic bound.
+   against an expected small constant. **Fix:** deduplication removes repeated identifiers in the tested workload.
 3. **Write-back clobbering.** Eviction rode the freshly *remapped* leaf
    while only the *old* leaf's path had been downloaded. Buckets below the
    LCA on the new side were overwritten without ever being read — silently
@@ -52,20 +51,20 @@ defects that all prior symbolic milestones and unit tests had missed:
 Checks in the harness (at the checkpoints implemented by each test):
 - Round-trip integrity: each chunk re-reads to its latest expected payload
   (content-checked, not just length) after thousands of mixed accesses.
-- Bucket padding is checked by the measurement harness; the original M24 helper does not assert it.
-- Unregister completeness: position-map entry, stash block, and future
-  prepare-access all reflect removal.
+- Bucket padding is asserted on every writeback in the M24 helper.
+- Unregister checks the position-map entry and future prepare-access refusal;
+  it does not establish removal from all server buckets or prevent stale reabsorption.
 - Duplicate-freedom: the stash never contains two blocks for one chunk.
 
 Sampled regression ceiling:
 - `stash_stays_bounded_over_five_thousand_accesses`: max stash over 5000
   mixed accesses on a height-7 / 48-chunk tree stays within the
-  deterministic dedup bound (`chunks + 4·(height+1)`).
+  workload regression ceiling (`chunks + 4·(height+1)`).
 
 ## Verification output
 
 ```text
-m24 oram-stash-bounds gate: 4/4 statistical + invariant tests passed
+m24 oram-stash-bounds gate: 4/4 regression tests passed
 ```
 
 Reproduce with:

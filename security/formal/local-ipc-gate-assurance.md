@@ -1,11 +1,20 @@
 # Local IPC admission: M27
 
-Status: model supplied; Tamarin has not been run for this revision. Expected:
-five verified lemmas (including three reachability witnesses), one intentional
-falsification (`authentic_browser_required`). Run:
+Verified in [CI run 34584794710](https://github.com/lucannez64/VELA/actions/runs/34584794710)
+at commit `720c76a7f6ec3c84665829511607de95814ddcc4`, using Tamarin 1.12.0
+and Maude 3.5.1: **five verified lemmas, one expected falsification, zero
+warnings**. The falsification is `authentic_browser_required`; the solver
+constructs the LocalImpostorSnapshot -> AdmitHost counterexample.
+
+[Full solver output](m27-verified-output.txt) is retained in the repository.
+The CI gate checks the exact named verdicts and rejects missing results,
+unexpected falsifications, unsupported-tool warnings and incomplete analysis.
+The initial run using Ubuntu Maude 3.2 was rejected for a tool-version warning;
+only the supported-version rerun is accepted as the assurance result.
 
 ```
-tamarin-prover --prove security/formal/m27_local_ipc_gate.spthy
+tamarin-prover --prove security/formal/m27_local_ipc_gate.spthy > m27.txt 2>&1
+python security/formal/check-local-ipc-proof.py m27.txt
 ```
 
 M6 already models credential release with a browser-channel assumption. M27

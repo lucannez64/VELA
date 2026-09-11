@@ -50,3 +50,5 @@ These measurements narrow SPEC's unevaluated boundary. Actual native-pipe/
 socket observations, real human/biometric approvals, and encrypted server path
 responses still require deployment-level experiments. The symbolic M22 model
 does not include any of these measured runtimes.
+
+Completed [CI results and interpretation](results-34584794710.md): 102,600 validated samples.

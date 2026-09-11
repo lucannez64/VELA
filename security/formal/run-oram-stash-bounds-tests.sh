@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# M24 · Path-ORAM stash dynamics — statistical verification over the real
+# M24 · Path-ORAM stash dynamics — finite regression testing over the real
 # implementation, plus the hard integrity invariants.
 #
 # Complements m22 (ProVerif access-pattern hiding, symbolic) with what a
@@ -11,7 +11,7 @@
 #   - stale-read bug: shared buckets held outdated block copies that
 #     `position()` could surface; absorption now deduplicates.
 #   - unbounded stash: the same duplicates accumulated without bound
-#     (max observed 4692 vs. the new deterministic dedup bound).
+#     (max observed 4692 before deduplication).
 #   - write-back clobbering: eviction rode the freshly remapped leaf while
 #     only the OLD leaf's path had been downloaded, destroying other chunks'
 #     blocks in unread sibling-subtree buckets. Write-back now rides the
@@ -35,4 +35,4 @@ if [[ "$verified" -lt 1 ]]; then
   exit 1
 fi
 
-echo "m24 oram-stash-bounds gate: 4/4 statistical + invariant tests passed"
+echo "m24 oram-stash-bounds gate: 4/4 regression tests passed"

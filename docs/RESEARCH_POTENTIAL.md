@@ -65,7 +65,8 @@ filter, not proof of authentic browser provenance or credential authorization.
 
 M6 models the higher-level handshake with a browser-channel assumption.
 [M27](../security/formal/local-ipc-gate-assurance.md) now models local admission
-and an explicit basename-impostor counterexample; its solver run is pending.
+and an explicit basename-impostor counterexample; CI checked all six expected
+verdicts with supported tools and no warnings.
 The original exact-binary and competitor-superiority claims are withdrawn.
 
 ### 2.4 Possession-proof recovery (M18) without releasing the server share
@@ -116,7 +117,7 @@ platforms.
   M24 claim boundary for its fixed-universe argument and malformed-path limit.
 - Formal models cover enrollment/recovery/rekey/web-session/ORAM; the
   native-messaging gate (2.3) now has a separate local-adversary model
-  (M27), pending solver validation; it exposes a basename-spoofing limit.
+  (M27), checked in CI; it exposes a basename-spoofing limit.
 - Side-channel claims in SPEC §9 ("out of scope") will be probed by
   reviewers — timing of IPC approvals and ORAM path sizes deserve at least
   a measurement.
@@ -131,3 +132,16 @@ platforms.
   regression evidence only, no small-stash tail guarantee or universal proof.
 - [Local IPC model](../security/formal/local-ipc-gate-assurance.md): explicit
   attacker capabilities and implementation mapping, separate from M6.
+
+### Completed boundary evaluation (2026-09-11)
+
+[M27 assurance record](../security/formal/local-ipc-gate-assurance.md): five
+lemmas verified, authentic-browser provenance falsified as expected. This
+narrows the proposed claim rather than proving the original stronger one.
+
+[Timing results](../security/measurements/sidechannel/results-34584794710.md):
+102,600 samples across three desktop runner platforms, covering scripted
+approval handling, gate ancestry depth, and ORAM target/capacity CPU timing.
+These use real policy/presence/ORAM source with explicit synthetic OS/UI
+boundaries; native transport and real human/biometric timing remain unmeasured.
+The M24 writeup now claims finite regression evidence, not a stash tail theorem.
