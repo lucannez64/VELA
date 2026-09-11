@@ -180,7 +180,7 @@ summary of summaries:
 analyzed: security/formal/m27_local_ipc_gate.spthy
 
   processing time: 0.13s
-  
+
   same_user_required (all-traces): verified (4 steps)
   other_user_rejected (all-traces): verified (4 steps)
   honest_reachable (exists-trace): verified (4 steps)
