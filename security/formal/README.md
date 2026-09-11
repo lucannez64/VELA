@@ -365,17 +365,11 @@ discharged.
 
 ## Checking Path-ORAM stash dynamics (M24, statistical)
 
-Stash-overflow behavior is probabilistic and iterative — beyond both
-Dolev-Yao reachability (Tamarin) and hax's unencoded i64 loop internals — so
-it is verified **statistically over the production implementation**:
-`libVELA/vela-crypto/tests/oram_stash_bounds.rs` drives the real `PathOram`
-through a tree-structured fake server under thousands of randomized
-accesses. Hard invariants (round-trip integrity, bucket padding,
-unregister completeness, stash duplicate-freedom) hold on every cycle; the
-stochastic bound is asserted with wide margins per the classical analysis.
-The harness found and pinned three real defects (stale reads, unbounded
-stash growth, write-back clobbering of unread buckets) — all fixed in
-`oram.rs`.
+M24 supplies finite regression evidence over the production implementation,
+not a formal stash bound or a quantified overflow probability. Its access
+schedule is cyclic with randomized leaf remapping. Classical stash theorems
+have not been transferred to this eviction algorithm. See
+[the revised claim boundary](oram-stash-bounds-statistical-results.md).
 
 ```bash
 ./run-oram-stash-bounds-tests.sh
@@ -416,3 +410,13 @@ This is the interaction property no individual model can express.
 ```
 
 Expected: **3 Tamarin lemmas verified**.
+
+## Local native-messaging admission (M27, unverified)
+
+[Model and implementation boundary](local-ipc-gate-assurance.md) separates
+same-user/basename/ancestry admission from M6 credential authorization. It
+includes an impostor trace: basenames do not attest binary authenticity.
+Expected solver outcomes are documented but have not been checked here.
+
+[Measurement tooling](../measurements/README.md) records local ORAM/rekey
+microbenchmarks and provides a paired command runner for device experiments.

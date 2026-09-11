@@ -405,7 +405,7 @@ The server uses embedded sled TTL counters for rate limits, challenge nonces, to
 | Unauthorized device enrollment | Enrolling device must present a valid challenge signature; its signature over the new device enrollment payload is verified separately. |
 | Session token theft | Short 15-minute TTL; JTI revocation on logout/device revocation; PASETO v4 is tamper-evident. |
 | Authentication forgery | Both ML-DSA-87 and Ed25519 signatures must verify; rate limiting further reduces attack surface. |
-| Metadata inference by server | Fixed-size blobs; Path ORAM; server cannot distinguish vault size, item count, or item type. |
+| Metadata inference by server | Padded blobs and ORAM reduce metadata leakage. Tree height, selected mode, request counts and timing may reveal capacity or activity; exact vault-size hiding is not established. |
 | Malicious-server share rollback (M19) | Share capsules are KEM-sealed with no AAD, so the AEAD layer cannot detect replay; the post-decryption freshness rule (apply only strictly newer `updated_at`, authenticated inside the capsule) makes a replayed capsule unable to revert a newer edit (C-2). |
 | Share-channel abuse: recipient enumeration, inbox flooding | "Recipient cannot receive shares" is one indistinguishable error for unknown user and no-key user (RT-3); per-recipient, per-pair, and per-inbox byte/item quotas with a 30-day inbox TTL; send/update/revoke admission is pure policy, hax-extracted to F*. |
 | Share-key substitution | `share_ek` bindings are device-signed by an enrolled, active, caller-owned device and accepted only with a strictly fresher RFC 3339 `signed_at` (M25); forged, replayed, foreign-device, and revoked-device bindings are proven unregistrable. |
@@ -413,6 +413,6 @@ The server uses embedded sled TTL counters for rate limits, challenge nonces, to
 ### Out of Scope (v2.0)
 - Client-side malware / keyloggers (trusted execution environment is a prerequisite).
 - Denial of service at the network layer.
-- Side-channel attacks against client cryptographic implementations (to be addressed by a dedicated timing-safety audit before v2.0 production release).
+- Side-channel attacks against client cryptographic implementations remain outside the proven boundary. The [timing probes](security/measurements/sidechannel/README.md) measure production gate/presence code under synthetic OS/UI boundaries and ORAM CPU paths; they do not establish constant-time execution, biometric timing safety, or network indistinguishability.
 - **Ruthless coercion / rubber-hose attacks:** An adversary who physically coerces the user to reveal a Shamir share (Share 1 via cloud credentials, Share 3 via trusted contact) or to authenticate with their FIDO2 credential. This is a real-world threat for password managers. v2.0 provides no protection against such attacks; future versions may explore threshold decryption or secret sharing with decoy shares.
 - **Screen/memory scraping:** Hardware keyloggers, cold-boot attacks, or RAM readout via malware. Out of scope until a hardware-assisted trusted display path is available.

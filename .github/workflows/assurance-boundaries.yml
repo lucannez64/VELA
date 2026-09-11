@@ -1,0 +1,59 @@
+name: Assurance boundaries
+on:
+  workflow_dispatch:
+  push:
+    branches: ["assurance/measurements"]
+    paths:
+      - '.github/workflows/assurance-boundaries.yml'
+      - 'security/formal/m27*'
+      - 'security/formal/check-local-ipc-proof.py'
+      - 'security/measurements/sidechannel/**'
+permissions:
+  contents: read
+jobs:
+  local-model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Tamarin
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y maude
+          curl -fLsS -o /tmp/tamarin.tar.gz https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
+          echo '201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin.tar.gz' | sha256sum --check
+          sudo tar -xzf /tmp/tamarin.tar.gz -C /usr/local/bin
+      - name: Prove and check exact verdicts
+        run: |
+          mkdir -p boundary-results
+          tamarin-prover --version > boundary-results/toolchain.txt
+          maude --version >> boundary-results/toolchain.txt
+          tamarin-prover --prove security/formal/m27_local_ipc_gate.spthy > boundary-results/m27.txt 2>&1
+          python3 security/formal/check-local-ipc-proof.py boundary-results/m27.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-ipc-proof
+          path: boundary-results/
+  timing:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - run: cargo build --locked --release --manifest-path security/measurements/sidechannel/Cargo.toml
+      - run: python security/measurements/sidechannel/collect.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: timing-${{ matrix.os }}
+          path: boundary-results/

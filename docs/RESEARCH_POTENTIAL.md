@@ -25,8 +25,8 @@ at a security venue for exactly this reason.
 VELA runs **two ORAM modes** — trivial ORAM (whole-vault sweep) below a
 threshold, Path ORAM above — and the *selection function* is hax-extracted
 from the Rust source into ProVerif, with both modes **proven observationally
-equivalent for access-pattern hiding**, plus statistically-tested stash
-bounds (`security/formal/oram-access-hiding-proverif-results.md`, m22b/m22c/m24).
+equivalent for access-pattern hiding**, plus finite-workload stash
+regression tests (`security/formal/oram-access-hiding-proverif-results.md`, m22b/m22c/m24).
 
 Why this is a real contribution: mode-switching between an exact scheme and
 an approximate/cheap one is exactly where implementations leak in practice,
@@ -57,19 +57,16 @@ third parties, live browser sessions) is the hard part and is handled.
 **Venues:** USENIX Security / CCS (systems sec), or EuroS&P.
 
 ### 2.3 Credential-less, process-ancestry IPC for browser extensions
-The desktop IPC gate admits only host processes that are (a) the same user,
-(b) the exact VELA host binary, (c) **actually spawned by a browser**
-(kernel-verified ancestry), instead of bearer tokens/capability files.
-Compare: every existing extension↔app bridge (Bitwarden desktop, 1Password,
-KeePassIPC) authenticates via shared secrets or origin allow-lists that can
-be stolen or spoofed by local malware in the user session.
+The desktop IPC gate checks same-user identity, host executable basename,
+and a recognized browser basename in a bounded process-ancestry walk. It does
+**not** attest binary contents: attacker-controlled executables can use those
+names. A provider-name branch also bypasses ancestry. This is an admission
+filter, not proof of authentic browser provenance or credential authorization.
 
-Why interesting: it reframes "local companion app security" from
-*possession-of-secret* to *OS-attested provenance*. Likely a good
-**short paper / poster / SOUPS-adjacent usable-security-of-architecture**
-piece, or a section of the big systems paper rather than its own paper. A
-systematization comparing all extension↔app bridges and their threat models
-(SoK-style) could stand on its own.
+M6 models the higher-level handshake with a browser-channel assumption.
+[M27](../security/formal/local-ipc-gate-assurance.md) now models local admission
+and an explicit basename-impostor counterexample; its solver run is pending.
+The original exact-binary and competitor-superiority claims are withdrawn.
 
 ### 2.4 Possession-proof recovery (M18) without releasing the server share
 Recovery where the requester proves possession of two Shamir shares via a
@@ -97,7 +94,7 @@ platforms.
 1. **One flagship systems paper** = 2.1 + 2.2 + 2.4 ("verified,
    metadata-private sync and key rotation for zero-knowledge vaults"),
    with 2.3 as a subsection. This is publishable; the pieces reinforce
-   each other and each already has machine-checked evidence.
+   each other and component evidence exists, but the IPC provenance boundary remains unproved.
 2. **Measure first.** No venue will accept any of this without numbers:
    ORAM overhead vs. vault size (the trivial/Path crossover), rekey cost,
    unlock latency, sync payload inflation vs. a plaintext-manifest
@@ -114,12 +111,23 @@ platforms.
   literature (Stefanov et al., ObliviStore, Recurphire; "The Emperor's New
   Password Manager" 2022 SoK; PQXDH/PQ3 specs) to confirm no one has done
   verified dual-mode ORAM or seed-rotation-in-ORAM before.
-- The ORAM stash-bound analysis is currently *statistical*, not a proof —
-  reviewers at a formal venue will ask; either prove it for bounded stash
-  parameters or position honestly as testing-backed.
+- The ORAM stash claim is now explicitly **regression-backed**, not a
+  small-stash theorem or quantified overflow probability. See the revised
+  M24 claim boundary for its fixed-universe argument and malformed-path limit.
 - Formal models cover enrollment/recovery/rekey/web-session/ORAM; the
-  native-messaging gate (2.3) has no model. A Dolev–Yao-style local
-  adversary model would strengthen it.
+  native-messaging gate (2.3) now has a separate local-adversary model
+  (M27), pending solver validation; it exposes a basename-spoofing limit.
 - Side-channel claims in SPEC §9 ("out of scope") will be probed by
   reviewers — timing of IPC approvals and ORAM path sizes deserve at least
   a measurement.
+
+## 5. Next-step assurance artifacts
+
+- [Measurement harness and run matrix](../security/measurements/README.md):
+  production ORAM/rekey CPU samples plus paired external-operation runner.
+  Installed competitor, cross-platform unlock, IPC approval and wire timing
+  measurements remain pending; proxies are not product benchmarks.
+- [Stash claim boundary](../security/formal/oram-stash-bounds-statistical-results.md):
+  regression evidence only, no small-stash tail guarantee or universal proof.
+- [Local IPC model](../security/formal/local-ipc-gate-assurance.md): explicit
+  attacker capabilities and implementation mapping, separate from M6.

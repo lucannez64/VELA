@@ -3,25 +3,26 @@
 Statistical verification of the client-side stash — the probabilistic
 property class the symbolic family (M1–M23) cannot express.
 
-## Tool boundary
+## Claim boundary (revised)
 
-The classical Path ORAM guarantee ("the stash stays O(log N) with
-overwhelming probability") is proved in the literature via a supermartingale
-argument; a full EasyCrypt formalization is research-scale work. What ships
-for M24 is:
+M24 is finite regression testing, not formal or statistical verification of
+an overflow probability. Access targets cycle deterministically; leaf remaps
+use OS randomness. There are no independent-trial confidence bounds.
+Assertions establish properties only on executed traces.
 
-1. **Direct statistical evidence** over the production `PathOram`
-   implementation, driven through a faithful tree-structured fake server
-   (buckets keyed by `(level, node)`, shared across sibling leaves exactly
-   like the wire protocol).
-2. **Hard deterministic invariants** asserted on every access of every run.
-3. A **deterministic post-fix bound**: after the M24 deduplication fix, the
-   stash holds at most one block per registered chunk plus path capacity.
+Deduplication implies at most one stash entry per distinct absorbed identifier
+(starting from an empty stash); target replacement preserves uniqueness and
+eviction only removes entries. With a fixed universe of N identifiers this
+provides a paper argument for at most N entries, not a machine-checked proof
+or a useful small-stash tail bound. It does not cover arbitrary server inputs:
+`access` accepts unknown identifiers and eviction retains unmapped blocks, so
+successive paths can grow that universe. Deleted stale blocks also need care.
 
-hax is intentionally absent from this milestone: the interesting logic is
-iterative and numeric (`deepest_shared_level` shifts, stash loops), which
-hax 0.3.7's F* prelude cannot encode (i64/u64 ops are while-loop internals,
-excluded from solver encoding) and ProVerif's nat has no arithmetic.
+Classical Path ORAM bounds cannot simply be imported: this implementation
+uses Z=4 and places each block only at its deepest shared level, retaining it
+if that bucket is full instead of trying shallower eligible buckets. No
+refinement to a published stash theorem has been established. The threshold
+`N + 4*(height+1)` in the test is a regression ceiling for that workload only.
 
 ## Real bugs found and fixed
 
@@ -48,15 +49,15 @@ defects that all prior symbolic milestones and unit tests had missed:
 
 ## Harness properties
 
-Hard invariants (every cycle of every test):
+Checks in the harness (at the checkpoints implemented by each test):
 - Round-trip integrity: each chunk re-reads to its latest expected payload
   (content-checked, not just length) after thousands of mixed accesses.
-- Bucket padding: every uploaded bucket is exactly `BUCKET_SIZE`.
+- Bucket padding is checked by the measurement harness; the original M24 helper does not assert it.
 - Unregister completeness: position-map entry, stash block, and future
   prepare-access all reflect removal.
 - Duplicate-freedom: the stash never contains two blocks for one chunk.
 
-Stochastic:
+Sampled regression ceiling:
 - `stash_stays_bounded_over_five_thousand_accesses`: max stash over 5000
   mixed accesses on a height-7 / 48-chunk tree stays within the
   deterministic dedup bound (`chunks + 4·(height+1)`).

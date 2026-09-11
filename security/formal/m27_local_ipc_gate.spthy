@@ -1,0 +1,54 @@
+theory M27_LocalIpcGate
+begin
+
+/* Kernel observations are private facts, never peer-supplied messages.
+   The attacker can create same-user executables with allowed basenames.
+   A snapshot abstracts the bounded (8 lookup) walk, not PID race freedom.
+   This models admission only, not presence approval or credential release. */
+rule HonestSnapshot:
+  [ Fr(~c) ]
+  --[ HonestBrowser(~c) ]->
+  [ Snapshot(~c, 'same', 'host', 'browser'), Out(~c) ]
+
+rule LocalImpostorSnapshot:
+  [ Fr(~c) ]
+  --[ Impostor(~c) ]->
+  [ Snapshot(~c, 'same', 'host', 'browser'), Out(~c) ]
+
+rule ProviderSnapshot:
+  [ Fr(~c) ]
+  --[ Provider(~c) ]->
+  [ Snapshot(~c, 'same', 'provider', 'none'), Out(~c) ]
+
+rule OtherUserSnapshot:
+  [ Fr(~c) ]
+  --[ OtherUser(~c) ]->
+  [ Snapshot(~c, 'other', 'host', 'browser'), Out(~c) ]
+
+rule AdmitHost:
+  [ Snapshot(c, 'same', 'host', 'browser'), In(c) ]
+  --[ Admitted(c), HostAdmitted(c), SameUserObserved(c) ]-> []
+
+rule AdmitProvider:
+  [ Snapshot(c, 'same', 'provider', 'none'), In(c) ]
+  --[ Admitted(c), SameUserObserved(c) ]-> []
+
+lemma same_user_required:
+  "All c #i. Admitted(c) @ i ==> SameUserObserved(c) @ i"
+
+lemma other_user_rejected:
+  "All c #i. OtherUser(c) @ i ==> not (Ex #j. Admitted(c) @ j)"
+
+lemma honest_reachable:
+  exists-trace "Ex c #i #j. HonestBrowser(c) @ i & HostAdmitted(c) @ j & i < j"
+
+lemma basename_impostor_reachable:
+  exists-trace "Ex c #i #j. Impostor(c) @ i & HostAdmitted(c) @ j & i < j"
+
+lemma provider_without_browser_reachable:
+  exists-trace "Ex c #i #j. Provider(c) @ i & Admitted(c) @ j & i < j"
+
+/* Intentionally false: executable names do not attest authentic binaries. */
+lemma authentic_browser_required:
+  "All c #j. HostAdmitted(c) @ j ==> (Ex #i. HonestBrowser(c) @ i & i < j)"
+end

@@ -15,14 +15,10 @@
 //!    - Buckets are always padded to exactly `BUCKET_SIZE`.
 //!    - `unregister` removes all traces.
 //!
-//! 2. Stochastic bounds — hold with overwhelming probability under the
-//!    classical Path ORAM analysis (Stefanov et al. 2013, bucket size ≥ 4):
-//!    the stash stays a small constant w.h.p. Asserted with wide margins so
-//!    genuine regressions trip CI rather than rare tails.
-//!
-//! Tool-boundary note: the classical bound is proved via a supermartingale
-//! argument (EasyCrypt-scale effort); what ships here is direct statistical
-//! evidence over the production code plus the hard invariants.
+//! 2. A finite-workload regression ceiling, not an overflow probability proof.
+//! Targets cycle deterministically and leaf remaps use OS randomness.
+//! Classical Path ORAM tail bounds have not been transferred to this eviction
+//! implementation. See security/formal/oram-stash-bounds-statistical-results.md.
 
 use std::collections::HashMap;
 
@@ -187,10 +183,8 @@ fn stash_stays_bounded_over_five_thousand_accesses() {
         );
     }
 
-    // With M24 deduplication the stash has a DETERMINISTIC bound:
-    // at most one block per registered chunk, plus the target re-push and
-    // whatever the downloaded path contributed before eviction — bounded by
-    // chunks + path slots. Verified empirically over 5000 mixed accesses.
+    // Fixed-universe regression workload; this ceiling is not a tail bound
+    // and does not cover arbitrary unknown identifiers from server paths.
     let mut max_stash_seen = 0usize;
     for step in 0..5000usize {
         let idx = step % n_chunks;
@@ -201,10 +195,10 @@ fn stash_stays_bounded_over_five_thousand_accesses() {
     }
 
     let height = oram.height() as usize;
-    let bound = n_chunks + 4 * (height + 1); // deterministic dedup bound
+    let bound = n_chunks + 4 * (height + 1); // workload regression ceiling
     assert!(
         max_stash_seen <= bound,
-        "stash exceeded statistical bound: max {max_stash_seen} > {bound} \
+        "stash exceeded regression ceiling: max {max_stash_seen} > {bound} \
          (height {height}, {n_chunks} chunks)"
     );
 }

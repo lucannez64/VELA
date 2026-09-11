@@ -1,0 +1,10 @@
+[package]
+name = "vela-sidechannel-measure"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+vela-crypto = { path = "../../../libVELA/vela-crypto" }
+
+[workspace]
