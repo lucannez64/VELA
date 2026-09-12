@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Star
@@ -64,17 +65,43 @@ fun VaultBrowserScreen(
     var query by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf<String?>(null) }
     var favoritesOnly by remember { mutableStateOf(false) }
+    // §1.1 drill-down: the active folder or tag; null shows everything.
+    var orgFilter by remember { mutableStateOf<OrgFilter?>(null) }
+
+    // One chip per distinct folder/tag with its item count, folders first.
+    // Keyed by the lowercase spelling so "Work" and "work" are one chip.
+    val orgChips = remember(items) {
+        fun collect(kind: String, valuesFor: (VaultItem) -> List<String>): List<OrgChip> {
+            val byKey = linkedMapOf<String, Pair<String, Int>>()
+            for (item in items) {
+                for (value in valuesFor(item)) {
+                    val key = value.lowercase()
+                    byKey[key] = value to (byKey[key]?.second ?: 0) + 1
+                }
+            }
+            return byKey.map { (key, label) -> OrgChip(kind, key, label.first, label.second) }
+        }
+        collect("folder") { item -> listOfNotNull(item.folder?.trim()).filter(String::isNotEmpty) } +
+            collect("tag") { item -> item.tags }
+    }
 
     val filteredItems = items
         .asSequence()
         .filter { item ->
+            val active = orgFilter
             val matchesQuery = query.isEmpty() ||
                 item.name.contains(query, ignoreCase = true) ||
                 (item is VaultItem.Login && item.url.contains(query, ignoreCase = true)) ||
-                (item is VaultItem.Login && item.username.contains(query, ignoreCase = true))
+                (item is VaultItem.Login && item.username.contains(query, ignoreCase = true)) ||
+                (item.folder?.contains(query, ignoreCase = true) == true) ||
+                item.tags.any { it.contains(query, ignoreCase = true) }
             val matchesType = selectedType == null || item.typeLabel == selectedType
             val matchesFavorite = !favoritesOnly || item.favorite
-            matchesQuery && matchesType && matchesFavorite
+            val matchesOrg = active == null || when (active.kind) {
+                "folder" -> item.folder?.lowercase() == active.value
+                else -> item.tags.any { it.lowercase() == active.value }
+            }
+            matchesQuery && matchesType && matchesFavorite && matchesOrg
         }
         // Favorites pin to the top, then alphabetical — mirrors what users
         // expect from the desktop list.
@@ -149,6 +176,22 @@ fun VaultBrowserScreen(
                         leading = Icons.Filled.Star,
                         onClick = { favoritesOnly = !favoritesOnly }
                     )
+                }
+            }
+            if (orgChips.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    orgChips.forEach { chip ->
+                        val active = orgFilter?.let { it.kind == chip.kind && it.value == chip.value } == true
+                        FilterChip(
+                            label = "${chip.label} · ${chip.count}",
+                            selected = active,
+                            leading = if (chip.kind == "folder") Icons.Filled.Folder else null,
+                            onClick = {
+                                orgFilter = if (active) null else OrgFilter(chip.kind, chip.value)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -305,8 +348,24 @@ private val VaultItem.typeLabel: String
         is VaultItem.FileBlob -> "file"
         is VaultItem.BreachMonitor -> "breach"
         is VaultItem.Passkey -> "passkey"
+        is VaultItem.Address -> "address"
+        is VaultItem.BankAccount -> "bank"
+        is VaultItem.ApiKey -> "api key"
+        is VaultItem.SshKey -> "ssh key"
         else -> "item"
     }
+
+/** §1.1 organization drill-down: [kind] is `"folder"` or `"tag"`, [value]
+ *  the case-insensitive key of the folder/tag to show. */
+private data class OrgFilter(val kind: String, val value: String)
+
+/** One folder/tag chip: what it selects and how many items carry it. */
+private data class OrgChip(
+    val kind: String,
+    val value: String,
+    val label: String,
+    val count: Int,
+)
 
 @Composable
 private fun FilterChip(

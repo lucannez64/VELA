@@ -22,6 +22,10 @@ pub enum ItemType {
     FileBlob,
     BreachMonitor,
     Passkey,
+    Address,
+    BankAccount,
+    ApiKey,
+    SshKey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +43,35 @@ pub struct VaultMeta {
     pub last_modified_device: Option<String>,
     #[serde(default)]
     pub favorite: bool,
+    /// User-assigned tags, in canonical form (trimmed, deduplicated
+    /// case-insensitively, sorted). Written by the item editor, merged by
+    /// union during sync — see `vela-sync-policy`'s `merge_org_fields`.
+    ///
+    /// `#[serde(default)]` is the A-2 rule: a client that predates the field
+    /// parses an item that has it, and re-serializes it without error, instead
+    /// of failing to decode the vault at all.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Removal records for tags (§1.1). A tag deleted on one device must not
+    /// come back when another device's stale copy still carries it: the
+    /// merge suppresses union'd tags whose removal record is newer than the
+    /// carrying copy's last edit. `#[serde(default, skip_serializing_if)]`
+    /// is the A-2 rule, as for `tags` above; the alias accepts the
+    /// snake_case spelling older drafts wrote.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "tag_tombstones")]
+    pub tag_tombstones: Vec<TagTombstone>,
+    /// User-defined extra fields (§1.3), available on every item type.
+    /// `#[serde(default, skip_serializing_if)]` is the A-2 rule; the alias
+    /// tolerates the snake_case spelling.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "custom_fields")]
+    pub custom_fields: Vec<CustomField>,
+    /// The single optional folder this item sits in, stored as the folder's
+    /// *name*. A folder is not an entity — there is no folder list to sync,
+    /// no schema beyond this field, and renaming a folder is a batch update of
+    /// the items that carry the old name. Merged last-writer-wins on
+    /// `updated_at`, like every other single-valued field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
     #[serde(default)]
     pub shared: bool,
     #[serde(default, alias = "share_recipient")]
@@ -55,6 +88,13 @@ pub enum VaultItem {
         username: String,
         #[serde(rename = "password")]
         pass: String,
+        /// Previous password values, newest first (§1.3). Recorded by
+        /// `update_item` when an edit changes the password; the live `pass`
+        /// is never in here. A-2: an old client's JSON without the field
+        /// parses with empty history, and it is only serialized when
+        /// non-empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "passwordHistory")]
+        password_history: Vec<PasswordHistoryEntry>,
         #[serde(default)]
         totp: Option<String>,
         /// Mobile apps the user linked to this login (`androidapp://<package>`).
@@ -181,6 +221,126 @@ pub enum VaultItem {
         #[serde(default, alias = "signCount")]
         sign_count: u32,
     },
+    /// A postal address (§1.3). Nothing here is secret-grade; it is stored
+    /// for form-filling and reference, like the Identity type.
+    Address {
+        #[serde(flatten)]
+        meta: VaultMeta,
+        #[serde(default, alias = "fullName")]
+        full_name: String,
+        #[serde(default, alias = "street_address")]
+        street: String,
+        #[serde(default, alias = "street_line2")]
+        street2: String,
+        #[serde(default)]
+        city: String,
+        #[serde(default)]
+        state: String,
+        #[serde(default, alias = "postalCode", alias = "zip")]
+        postal_code: String,
+        #[serde(default)]
+        country: String,
+        #[serde(default)]
+        phone: String,
+    },
+    /// A bank account (§1.3). `account_number` and `iban` are secrets:
+    /// zeroized and redacted like every other credential value.
+    BankAccount {
+        #[serde(flatten)]
+        meta: VaultMeta,
+        #[serde(default, alias = "bankName")]
+        bank_name: String,
+        /// `checking`, `savings`, … — free text, the site's own vocabulary.
+        #[serde(default, alias = "account_type")]
+        account_kind: String,
+        #[serde(default)]
+        holder: String,
+        #[serde(default, alias = "accountNumber")]
+        account_number: String,
+        #[serde(default, alias = "routingNumber")]
+        routing_number: String,
+        #[serde(default)]
+        iban: String,
+        #[serde(default)]
+        swift: String,
+    },
+    /// An API credential (§1.3). `api_key` is a secret.
+    ApiKey {
+        #[serde(flatten)]
+        meta: VaultMeta,
+        /// Base URL of the service the key belongs to, if any.
+        #[serde(default, alias = "base_url")]
+        url: String,
+        #[serde(default)]
+        username: String,
+        /// The credential itself. Named after what it is, not how it is
+        /// used: unlike a passkey's key it *does* leave the vault (the user
+        /// pastes it into config), so it gets the password treatment —
+        /// masked, copyable, zeroized on drop.
+        #[serde(default, alias = "apiKey")]
+        api_key: String,
+        /// Free-form expiry as the user recorded it ("2027-01", "never").
+        #[serde(default, alias = "expires_at")]
+        expires: Option<String>,
+    },
+    /// An SSH key pair (§1.3), stored for the CLI/SSH agent. The private key
+    /// is a secret; the public key is not — it is the part the user pastes
+    /// into `authorized_keys`, so it is the copyable display value.
+    SshKey {
+        #[serde(flatten)]
+        meta: VaultMeta,
+        /// `ed25519`, `rsa-4096`, `ecdsa-p256`, … — informational.
+        #[serde(default, alias = "keyType")]
+        kind: String,
+        #[serde(default, alias = "publicKey")]
+        public_key: String,
+        #[serde(default, alias = "privateKey")]
+        private_key: String,
+        #[serde(default)]
+        passphrase: String,
+        #[serde(default)]
+        comment: String,
+    },
+}
+
+/// A user-defined extra field (§1.3), attachable to every item type.
+///
+/// `Hidden` values are secrets: they zeroize like passwords and print
+/// `[REDACTED]` from `Debug`. The distinction matters — a hidden field is
+/// masked in the UI and wiped on drop, a text field is ordinary notes-grade
+/// data the user chose to keep visible.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomFieldType {
+    Text,
+    Hidden,
+}
+
+impl Default for CustomFieldType {
+    fn default() -> Self {
+        CustomFieldType::Text
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomField {
+    pub label: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default, alias = "field_type")]
+    pub field_type: CustomFieldType,
+}
+
+/// A previous password value (§1.3), recorded when an edit changes a login's
+/// password. Old passwords are still secrets — they may still work on the
+/// site or on other sites the user reused them on — so they zeroize and
+/// redact exactly like the live one.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct PasswordHistoryEntry {
+    #[serde(rename = "password")]
+    pub value: String,
+    #[serde(default = "default_created_at", alias = "changedAt")]
+    pub changed_at: DateTime<Utc>,
 }
 
 /// Redacted `Debug`, because the derived one printed the secrets.
@@ -208,11 +368,24 @@ impl VaultItem {
     /// what this protects, and zeroing them would cost on every drop for nothing.
     fn zeroize_secrets(&mut self) {
         use zeroize::Zeroize;
+        // Custom fields live on the meta shared by every variant; a hidden
+        // field's value is a secret exactly like the variant secrets below.
+        let hidden_custom = &mut self.meta_mut().custom_fields;
+        for field in hidden_custom.iter_mut() {
+            if field.field_type == CustomFieldType::Hidden {
+                field.value.zeroize();
+            }
+        }
         match self {
-            VaultItem::Login { pass, totp, .. } => {
+            VaultItem::Login { pass, totp, password_history, .. } => {
                 pass.zeroize();
                 if let Some(totp) = totp {
                     totp.zeroize();
+                }
+                // An old password may still work somewhere; the history is
+                // wiped with the same rigor as the live value.
+                for entry in password_history.iter_mut() {
+                    entry.value.zeroize();
                 }
             }
             VaultItem::CreditCard { number, cvv, pin, .. } => {
@@ -225,9 +398,21 @@ impl VaultItem {
             VaultItem::SecureNote { content, .. } => content.zeroize(),
             VaultItem::Identity { ssn, .. } => ssn.zeroize(),
             VaultItem::Passkey { private_key, .. } => private_key.zeroize(),
-            // Nothing secret: a file blob's bytes live in chunks, and a breach
-            // monitor holds an address the user already published.
-            VaultItem::FileBlob { .. } | VaultItem::BreachMonitor { .. } => {}
+            VaultItem::BankAccount { account_number, iban, .. } => {
+                account_number.zeroize();
+                iban.zeroize();
+            }
+            VaultItem::ApiKey { api_key, .. } => api_key.zeroize(),
+            VaultItem::SshKey { private_key, passphrase, .. } => {
+                private_key.zeroize();
+                if !passphrase.is_empty() {
+                    passphrase.zeroize();
+                }
+            }
+            // Nothing secret: a file blob's bytes live in chunks, a breach
+            // monitor holds an address the user already published, and an
+            // address item is reference data by design.
+            VaultItem::FileBlob { .. } | VaultItem::BreachMonitor { .. } | VaultItem::Address { .. } => {}
         }
     }
 }
@@ -244,7 +429,16 @@ impl std::fmt::Debug for VaultItem {
         let mut out = f.debug_struct("VaultItem");
         out.field("kind", &self.item_type())
             .field("id", &self.id())
-            .field("name", &self.name());
+            .field("name", &self.name())
+            // Organizational metadata, like the name: not secret, and an item
+            // you cannot place is useless to debug with.
+            .field("folder", &self.folder())
+            .field("tags", &self.tags())
+            // Custom fields, with hidden values treated as the secrets they
+            // are (§1.3). Whether a login *has* history is metadata; the old
+            // values are not shown at all.
+            .field("custom_fields", &self.redacted_custom_fields())
+            .field("password_history_len", &self.password_history().map(|h| h.len()));
         match self {
             VaultItem::Login { url, username, totp, .. } => {
                 out.field("url", url)
@@ -280,6 +474,28 @@ impl std::fmt::Debug for VaultItem {
                     .field("sign_count", sign_count)
                     .field("private_key", &REDACTED);
             }
+            VaultItem::Address { full_name, city, country, .. } => {
+                out.field("full_name", full_name)
+                    .field("city", city)
+                    .field("country", country);
+            }
+            VaultItem::BankAccount { bank_name, holder, .. } => {
+                out.field("bank_name", bank_name)
+                    .field("holder", holder)
+                    .field("account_number", &REDACTED)
+                    .field("iban", &REDACTED);
+            }
+            VaultItem::ApiKey { url, username, .. } => {
+                out.field("url", url)
+                    .field("username", username)
+                    .field("api_key", &REDACTED);
+            }
+            VaultItem::SshKey { kind, comment, .. } => {
+                out.field("kind", kind)
+                    .field("comment", comment)
+                    .field("private_key", &REDACTED)
+                    .field("passphrase", &REDACTED);
+            }
         }
         out.finish()
     }
@@ -292,6 +508,32 @@ impl std::fmt::Debug for VaultItem {
 pub struct Tombstone {
     pub id: String,
     #[serde(default = "default_created_at")]
+    pub deleted_at: DateTime<Utc>,
+    #[serde(default)]
+    pub deleted_by: Option<String>,
+}
+
+/// A recorded tag removal, carried inside the item so the sync merge can
+/// tell "this tag was removed at T" apart from "this copy never had the
+/// tag" — without it, plain union resurrects a removed tag on every merge
+/// with a stale copy. `tag` is the canonical key (lowercased, trimmed); the
+/// display spelling lives in `tags` while the tag exists.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TagTombstone {
+    pub tag: String,
+    #[serde(default = "default_created_at")]
+    pub deleted_at: DateTime<Utc>,
+}
+
+/// An item sitting in the trash (§1.2).
+///
+/// `delete_item` moves the whole item here *and* writes the tombstone: the
+/// tombstone is what sync propagates (deletions must win over stale copies),
+/// the copy is what makes an undo possible. Both live inside the encrypted
+/// vault JSON — the trash is not a server-visible structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedItem {
+    pub item: VaultItem,
     pub deleted_at: DateTime<Utc>,
     #[serde(default)]
     pub deleted_by: Option<String>,
@@ -332,7 +574,11 @@ impl VaultItem {
             | VaultItem::Identity { meta, .. }
             | VaultItem::FileBlob { meta, .. }
             | VaultItem::BreachMonitor { meta, .. }
-            | VaultItem::Passkey { meta, .. } => meta,
+            | VaultItem::Passkey { meta, .. }
+            | VaultItem::Address { meta, .. }
+            | VaultItem::BankAccount { meta, .. }
+            | VaultItem::ApiKey { meta, .. }
+            | VaultItem::SshKey { meta, .. } => meta,
         }
     }
 
@@ -344,7 +590,11 @@ impl VaultItem {
             | VaultItem::Identity { meta, .. }
             | VaultItem::FileBlob { meta, .. }
             | VaultItem::BreachMonitor { meta, .. }
-            | VaultItem::Passkey { meta, .. } => meta,
+            | VaultItem::Passkey { meta, .. }
+            | VaultItem::Address { meta, .. }
+            | VaultItem::BankAccount { meta, .. }
+            | VaultItem::ApiKey { meta, .. }
+            | VaultItem::SshKey { meta, .. } => meta,
         }
     }
 
@@ -365,6 +615,10 @@ impl VaultItem {
             VaultItem::FileBlob { .. } => ItemType::FileBlob,
             VaultItem::BreachMonitor { .. } => ItemType::BreachMonitor,
             VaultItem::Passkey { .. } => ItemType::Passkey,
+            VaultItem::Address { .. } => ItemType::Address,
+            VaultItem::BankAccount { .. } => ItemType::BankAccount,
+            VaultItem::ApiKey { .. } => ItemType::ApiKey,
+            VaultItem::SshKey { .. } => ItemType::SshKey,
         }
     }
 
@@ -386,6 +640,51 @@ impl VaultItem {
 
     pub fn favorite(&self) -> bool {
         self.meta().favorite
+    }
+
+    /// The item's tags, in canonical form.
+    pub fn tags(&self) -> &[String] {
+        &self.meta().tags
+    }
+
+    /// The item's tag removal records (§1.1).
+    pub fn tag_tombstones(&self) -> &[TagTombstone] {
+        &self.meta().tag_tombstones
+    }
+
+    /// The user-defined extra fields (§1.3), on every item type.
+    pub fn custom_fields(&self) -> &[CustomField] {
+        &self.meta().custom_fields
+    }
+
+    /// The previous password values (§1.3), newest first — logins only.
+    pub fn password_history(&self) -> Option<&[PasswordHistoryEntry]> {
+        match self {
+            VaultItem::Login { password_history, .. } => Some(password_history),
+            _ => None,
+        }
+    }
+
+    /// Redacted `(label, value)` pairs for `Debug`: hidden custom fields
+    /// print as `[REDACTED]`, text fields as themselves.
+    fn redacted_custom_fields(&self) -> Vec<(&str, &str)> {
+        self.meta()
+            .custom_fields
+            .iter()
+            .map(|f| {
+                let value = if f.field_type == CustomFieldType::Hidden {
+                    "[REDACTED]"
+                } else {
+                    f.value.as_str()
+                };
+                (f.label.as_str(), value)
+            })
+            .collect()
+    }
+
+    /// The folder this item sits in, if any.
+    pub fn folder(&self) -> Option<&str> {
+        self.meta().folder.as_deref()
     }
 
     pub fn shared(&self) -> bool {
@@ -481,6 +780,14 @@ impl VaultItem {
             // one that is meant to be copied; a passkey's is meant to be used
             // where it sits and never displayed, copied or released.
             VaultItem::Passkey { user_name, .. } => user_name.clone(),
+            // An address has no secret: the name is the natural display.
+            VaultItem::Address { full_name, .. } => full_name.clone(),
+            // Copyable secrets, like the login's password.
+            VaultItem::BankAccount { account_number, .. } => account_number.clone(),
+            VaultItem::ApiKey { api_key, .. } => api_key.clone(),
+            // The public key is the shareable half; the private half is never
+            // a display value.
+            VaultItem::SshKey { public_key, .. } => public_key.clone(),
         }
     }
 
@@ -499,6 +806,18 @@ impl VaultItem {
             VaultItem::FileBlob { filename, .. } => filename.clone(),
             VaultItem::BreachMonitor { email, .. } => email.clone(),
             VaultItem::Passkey { user_name, .. } => user_name.clone(),
+            VaultItem::Address { full_name, .. } => full_name.clone(),
+            // Last four digits, like the card: enough to recognize the
+            // account, not enough to use it.
+            VaultItem::BankAccount { account_number, .. } => {
+                if account_number.len() >= 4 {
+                    format!("•••• {}", &account_number[account_number.len() - 4..])
+                } else {
+                    "••••••••".to_string()
+                }
+            }
+            VaultItem::ApiKey { .. } => "••••••••••••".to_string(),
+            VaultItem::SshKey { public_key, .. } => public_key.clone(),
         }
     }
 
@@ -571,10 +890,152 @@ impl VaultItem {
         new
     }
 
+    /// Replaces the tags with `tags`, canonicalized (trimmed, deduplicated
+    /// case-insensitively, sorted — `vela-sync-policy`'s `normalize_tags`, the
+    /// same rule the merge applies). Canonical form at every write is what
+    /// keeps the merged output of a concurrent edit deterministic.
+    pub fn with_tags(&self, tags: Vec<String>) -> Self {
+        let mut new = self.clone();
+        new.meta_mut().tags = vela_sync_policy::normalize_tags(tags);
+        new
+    }
+
+    /// Sets or clears the folder. `None` and `Some("")` both mean "no
+    /// folder", so a UI can pass the raw, possibly-empty input straight here.
+    pub fn with_folder(&self, folder: Option<String>) -> Self {
+        let mut new = self.clone();
+        new.meta_mut().folder = folder
+            .map(|f| f.trim().to_string())
+            .filter(|f| !f.is_empty());
+        new
+    }
+
+    /// Union of this item's tags with `other`'s; every other field —
+    /// including the folder — stays this item's. Use at a merge point that
+    /// has already decided which side wins the item (and therefore the
+    /// single-valued folder): the tags are the one field that merges
+    /// additively, per `vela-sync-policy`'s `merge_org_fields`, so this
+    /// cannot drift from the policy crate's tested rule. Removal records
+    /// from both sides are carried into the result (newest per tag,
+    /// expired ones dropped).
+    pub fn with_org_fields_merged(&self, other: &VaultItem, now: DateTime<Utc>) -> Self {
+        let to_removals = |item: &VaultItem| {
+            item.tag_tombstones()
+                .iter()
+                .map(|t| vela_sync_policy::TagRemoval {
+                    tag: t.tag.clone(),
+                    deleted_at_ms: t.deleted_at.timestamp_millis(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let outcome = vela_sync_policy::merge_org_fields(vela_sync_policy::OrgMergeFacts {
+            local_tags: self.tags().to_vec(),
+            server_tags: other.tags().to_vec(),
+            local_folder: self.folder().map(str::to_string),
+            server_folder: other.folder().map(str::to_string),
+            // The caller decided this copy wins; its folder stays.
+            server_updated_at_newer: false,
+            local_updated_at_ms: self.updated_at().timestamp_millis(),
+            server_updated_at_ms: other.updated_at().timestamp_millis(),
+            local_tag_removals: to_removals(self),
+            server_tag_removals: to_removals(other),
+            now_ms: now.timestamp_millis(),
+        });
+        let mut new = self.clone();
+        let meta = new.meta_mut();
+        meta.tags = outcome.tags;
+        meta.tag_tombstones = outcome
+            .tag_removals
+            .into_iter()
+            .map(|r| TagTombstone {
+                tag: r.tag,
+                deleted_at: chrono::DateTime::from_timestamp_millis(r.deleted_at_ms)
+                    .unwrap_or(now),
+            })
+            .collect();
+        new
+    }
+
     pub fn with_name(&self, new_name: String) -> Self {
         let mut new = self.clone();
         new.meta_mut().name = new_name;
         new
+    }
+
+    /// Records the tag removals this edit makes relative to `existing`, and
+    /// clears the records of tags this edit (re-)adds.
+    ///
+    /// Without a removal record, the union merge would resurrect a removed
+    /// tag from every copy that still carries it — forever. With it, the
+    /// merge can tell "removed at T" apart from "never had it". The record
+    /// carries this edit's timestamp, which is the same `now` the caller
+    /// stamps `updated_at` with, so "edited after the removal" and "edited
+    /// after the record was written" are the same question.
+    pub fn with_tag_removals_recorded(mut self, existing: &VaultItem, now: DateTime<Utc>) -> Self {
+        let new_keys: std::collections::BTreeSet<String> = self
+            .tags()
+            .iter()
+            .map(|t| t.trim().to_lowercase())
+            .collect();
+        let old_keys: std::collections::BTreeSet<String> = existing
+            .tags()
+            .iter()
+            .map(|t| t.trim().to_lowercase())
+            .collect();
+
+        let mut removals: Vec<TagTombstone> = existing
+            .tag_tombstones()
+            .iter()
+            // A tag this edit (re-)adds is no longer removed.
+            .filter(|t| !new_keys.contains(&t.tag))
+            .cloned()
+            .collect();
+        for key in old_keys.difference(&new_keys) {
+            removals.push(TagTombstone {
+                tag: key.clone(),
+                deleted_at: now,
+            });
+        }
+        // Dedupe per key, newest record wins; sorted for determinism.
+        removals.sort_by(|a, b| a.tag.cmp(&b.tag).then(b.deleted_at.cmp(&a.deleted_at)));
+        removals.dedup_by(|a, b| a.tag == b.tag);
+
+        self.meta_mut().tag_tombstones = removals;
+        self
+    }
+
+    /// How many previous passwords are kept per login (§1.3). Old entries
+    /// fall off the front — the newest history entry is the just-replaced
+    /// password, so twelve covers roughly a year of quarterly rotation.
+    pub const MAX_PASSWORD_HISTORY: usize = 12;
+
+    /// Records the previous password into the history when this edit changes
+    /// a login's password, mirroring `with_tag_removals_recorded`'s pattern:
+    /// the diff is against `existing` (the stored copy), the timestamp is the
+    /// same `now` the caller stamps `updated_at` with, and the record is
+    /// capped at [`Self::MAX_PASSWORD_HISTORY`], newest first.
+    pub fn with_password_history_recorded(mut self, existing: &VaultItem, now: DateTime<Utc>) -> Self {
+        let (Self::Login { pass, .. }, VaultItem::Login { pass: previous, password_history: previous_history, .. }) =
+            (&mut self, existing)
+        else {
+            return self;
+        };
+        if *pass == *previous || previous.is_empty() {
+            return self;
+        }
+        let mut history: Vec<PasswordHistoryEntry> = previous_history.clone();
+        history.insert(
+            0,
+            PasswordHistoryEntry {
+                value: previous.clone(),
+                changed_at: now,
+            },
+        );
+        history.truncate(Self::MAX_PASSWORD_HISTORY);
+        if let VaultItem::Login { password_history, .. } = &mut self {
+            *password_history = history;
+        }
+        self
     }
 }
 
@@ -585,6 +1046,10 @@ pub struct VaultStore {
     pub items: Vec<VaultItem>,
     #[serde(default)]
     pub tombstones: Vec<Tombstone>,
+    /// The trash (§1.2): items deleted locally or received-deleted via sync,
+    /// restorable until purged (explicitly or by retention).
+    #[serde(default)]
+    pub deleted_items: Vec<DeletedItem>,
     /// Bumped by every mutation of `items`. [`Self::items_snapshot`] keys its
     /// cached `Arc` on this, so repeated reads share one allocation instead
     /// of deep-cloning the vault per request.
@@ -625,6 +1090,8 @@ struct VaultStoreRepr {
     items: Vec<VaultItem>,
     #[serde(default)]
     tombstones: Vec<Tombstone>,
+    #[serde(default)]
+    deleted_items: Vec<DeletedItem>,
 }
 
 impl From<VaultStoreRepr> for VaultStore {
@@ -632,6 +1099,7 @@ impl From<VaultStoreRepr> for VaultStore {
         let mut store = Self {
             items: repr.items,
             tombstones: repr.tombstones,
+            deleted_items: repr.deleted_items,
             generation: 0,
             snapshot: parking_lot::RwLock::new(None),
             item_index: HashMap::new(),
@@ -646,6 +1114,7 @@ impl Clone for VaultStore {
         Self {
             items: self.items.clone(),
             tombstones: self.tombstones.clone(),
+            deleted_items: self.deleted_items.clone(),
             generation: self.generation,
             // A clone rebuilds its snapshot lazily on first read rather than
             // sharing this store's slot — one extra copy on the rare clone
@@ -668,6 +1137,7 @@ impl VaultStore {
         Self {
             items: Vec::new(),
             tombstones: Vec::new(),
+            deleted_items: Vec::new(),
             generation: 0,
             snapshot: parking_lot::RwLock::new(None),
             item_index: HashMap::new(),
@@ -770,8 +1240,11 @@ impl VaultStore {
 
     pub fn delete_item(&mut self, id: &str, device_id: Option<&str>) {
         self.ensure_index();
-        if let Some(idx) = self.item_index.remove(id) {
-            self.items.remove(idx);
+        // The item's content moves to the trash before it leaves `items`:
+        // the tombstone is what sync propagates, the copy is what makes an
+        // undo possible.
+        let deleted_item = if let Some(idx) = self.item_index.remove(id) {
+            let item = self.items.remove(idx);
             // Only the entries after the hole moved. A full `reindex()` here
             // re-hashed and re-allocated the id of every item in the vault on
             // every single delete.
@@ -780,15 +1253,87 @@ impl VaultStore {
                     *position -= 1;
                 }
             }
+            item
         } else {
+            let item = self
+                .items
+                .iter()
+                .find(|item| item.id() == id)
+                .cloned();
             self.items.retain(|item| item.id() != id);
-        }
+            match item {
+                Some(item) => item,
+                // Nothing live carried this id (the sync merge reaches here
+                // for already-absent items): record only the tombstone.
+                None => {
+                    self.tombstones.push(Tombstone {
+                        id: id.to_string(),
+                        deleted_at: Utc::now(),
+                        deleted_by: device_id.map(|s| s.to_string()),
+                    });
+                    self.touch_generation();
+                    return;
+                }
+            }
+        };
+        self.deleted_items.retain(|d| d.item.id() != id);
+        self.deleted_items.push(DeletedItem {
+            item: deleted_item,
+            deleted_at: Utc::now(),
+            deleted_by: device_id.map(|s| s.to_string()),
+        });
         self.tombstones.push(Tombstone {
             id: id.to_string(),
             deleted_at: Utc::now(),
             deleted_by: device_id.map(|s| s.to_string()),
         });
         self.touch_generation();
+    }
+
+    /// Puts a trashed item back into the live vault (§1.2).
+    ///
+    /// The restore stamps a fresh `updated_at` so the revived copy is newer
+    /// than every device's tombstone for it, clears `last_modified_device`
+    /// (a restored copy is replication, not an unsynced local edit — the
+    /// next sync must not raise a phantom conflict against it), drops this
+    /// device's tombstone, and drops any trash copy of the same id. Returns
+    /// the restored item's id, or `None` when no trash entry carries it.
+    pub fn restore_item(&mut self, id: &str) -> Option<String> {
+        let pos = self.deleted_items.iter().position(|d| d.item.id() == id)?;
+        let mut item = self.deleted_items.remove(pos).item;
+        {
+            let meta = item.meta_mut();
+            meta.updated_at = Utc::now();
+            meta.last_modified_device = None;
+        }
+        self.tombstones.retain(|t| t.id != id);
+        self.add_item(item);
+        Some(id.to_string())
+    }
+
+    /// Drops a trash entry for good. The tombstone stays: without it, sync
+    /// would resurrect the item from a device that has not seen the delete.
+    /// Returns whether an entry was purged.
+    pub fn purge_deleted_item(&mut self, id: &str) -> bool {
+        let before = self.deleted_items.len();
+        self.deleted_items.retain(|d| d.item.id() != id);
+        let purged = self.deleted_items.len() != before;
+        if purged {
+            self.touch_generation();
+        }
+        purged
+    }
+
+    /// Trash entries older than `max_age` are purged — the same retention
+    /// window the tombstones get, so a trashed item and the tombstone that
+    /// guards it expire together.
+    pub fn prune_deleted_items(&mut self, max_age: chrono::Duration) {
+        let cutoff = Utc::now() - max_age;
+        let before = self.deleted_items.len();
+        self.deleted_items.retain(|d| d.deleted_at >= cutoff);
+        if self.deleted_items.len() != before {
+            self.touch_generation();
+        }
     }
 
     pub fn prune_tombstones(&mut self, max_age: chrono::Duration) {
@@ -843,6 +1388,15 @@ impl VaultStore {
                     || item
                         .notes()
                         .is_some_and(|n| n.to_lowercase().contains(&query_lower))
+                    // Organization metadata is part of what "search" means:
+                    // typing a tag or folder name should find its items.
+                    || item
+                        .folder()
+                        .is_some_and(|f| f.to_lowercase().contains(&query_lower))
+                    || item
+                        .tags()
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query_lower))
             })
             .collect()
     }
@@ -910,6 +1464,8 @@ impl VaultStore {
                 ItemType::Identity => identities += 1,
                 ItemType::FileBlob => files += 1,
                 ItemType::BreachMonitor | ItemType::Passkey => {}
+                // Counted by the sync policy / health scoring, not here.
+                ItemType::Address | ItemType::BankAccount | ItemType::ApiKey | ItemType::SshKey => {}
             }
         }
         (logins, cards, notes, identities, files)
@@ -1132,6 +1688,10 @@ mod tests {
             updated_at: now,
             last_modified_device: None,
             favorite: false,
+            tags: Vec::new(),
+            tag_tombstones: Vec::new(),
+            custom_fields: Vec::new(),
+            folder: None,
             shared: false,
             share_recipient: None,
         }
@@ -1145,6 +1705,7 @@ mod tests {
             pass: pass.into(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         }
@@ -1187,6 +1748,7 @@ mod tests {
                 pass: "hunter2-SECRET".into(),
                 totp: Some("JBSWY3DPEHPK3PXP".into()),
                 app_ids: Vec::new(),
+                password_history: Vec::new(),
                 credential_change_needs_reauth: None,
                 allow_second_factor_downgrade: None,
             },
@@ -1510,6 +2072,7 @@ mod tests {
             pass: "p".into(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         });
@@ -1520,6 +2083,402 @@ mod tests {
         assert_eq!(vault.search("gitlab.com").len(), 1);
         assert_eq!(vault.search("pet").len(), 1, "notes are searchable");
         assert!(vault.search("nonexistent").is_empty());
+    }
+
+    /// The A-2 round-trip rule, instantiated for the organization fields: an
+    /// item that carries them survives a serialize/deserialize cycle intact,
+    /// and a write through the typed API canonicalizes them so every client
+    /// stores the same bytes for the same tags.
+    #[test]
+    fn organization_fields_round_trip_through_serde() {
+        let item = login("1", "GitHub", "https://github.com", "ada", "p")
+            .with_tags(vec!["  Work ".into(), "work".into(), "VPN".into(), "".into()])
+            .with_folder(Some("  Dev ".into()));
+
+        assert_eq!(item.tags(), &["VPN".to_string(), "Work".to_string()]);
+        assert_eq!(item.folder(), Some("Dev"));
+
+        let json = serde_json::to_string(&item).unwrap();
+        let back: VaultItem = serde_json::from_str(&json).expect("round trip");
+        assert_eq!(back.tags(), item.tags());
+        assert_eq!(back.folder(), item.folder());
+    }
+
+    /// A vault written before the organization fields existed must load with
+    /// "no tags, no folder" — not fail to decode, and not invent structure —
+    /// and re-serializing it must not add a folder the user never had.
+    #[test]
+    fn an_item_from_before_the_org_fields_parses_with_defaults() {
+        let json = r#"{
+            "item_type": "login", "id": "1", "name": "Old", "url": "https://x.example",
+            "username": "ada", "password": "p"
+        }"#;
+        let item: VaultItem = serde_json::from_str(json).expect("an older item should load");
+        assert!(item.tags().is_empty(), "no tags is the pre-field meaning");
+        assert_eq!(item.folder(), None);
+
+        let back = serde_json::to_string(&item).unwrap();
+        assert!(!back.contains("\"folder\""), "{back}");
+        assert_eq!(back.matches("\"tags\"").count(), 1, "{back}");
+    }
+
+    #[test]
+    fn search_finds_items_by_tag_and_folder() {
+        let mut vault = VaultStore::new();
+        vault.add_item(
+            login("1", "GitHub", "https://github.com", "ada", "p")
+                .with_tags(vec!["work".into()])
+                .with_folder(Some("Development".into())),
+        );
+        vault.add_item(login("2", "Bank", "https://bank.example", "bob", "p"));
+
+        assert_eq!(vault.search("work").len(), 1, "a tag finds its item");
+        assert_eq!(vault.search("development").len(), 1, "a folder finds its items");
+        assert_eq!(vault.search("bank").len(), 1);
+    }
+
+    #[test]
+    fn tag_removals_are_recorded_and_readds_clear_them() {
+        let now = Utc::now();
+        let existing = login("1", "GitHub", "https://github.com", "ada", "p")
+            .with_tags(vec!["work".into(), "banking".into()]);
+
+        // The edit removes "work": a removal record is written for it, and
+        // only for it.
+        let edited = login("1", "GitHub", "https://github.com", "ada", "p")
+            .with_tags(vec!["banking".into()])
+            .with_tag_removals_recorded(&existing, now);
+        assert_eq!(edited.tags(), &["banking".to_string()]);
+        assert_eq!(
+            edited.tag_tombstones(),
+            &[TagTombstone { tag: "work".into(), deleted_at: now }],
+        );
+
+        // Re-adding the tag on a later edit clears the record: from then on
+        // the merge must treat the tag as genuinely wanted again.
+        let readded = login("1", "GitHub", "https://github.com", "ada", "p")
+            .with_tags(vec!["banking".into(), "work".into()])
+            .with_tag_removals_recorded(&edited, now + chrono::Duration::hours(1));
+        assert!(readded.tag_tombstones().is_empty(), "re-add clears the record");
+        assert_eq!(readded.tags(), &["banking".to_string(), "work".to_string()]);
+    }
+
+    /// The removal record serializes (A-2) and parses back.
+    #[test]
+    fn tag_tombstones_round_trip_through_serde() {
+        let now = Utc::now();
+        let before = login("1", "n", "u", "u", "p").with_tags(vec!["work".into()]);
+        let edited = login("1", "n", "u", "u", "p")
+            .with_tag_removals_recorded(&before, now);
+        let json = serde_json::to_string(&edited).unwrap();
+        assert!(json.contains("tagTombstones"), "{json}");
+        let back: VaultItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tag_tombstones(), edited.tag_tombstones());
+
+        // An old client's JSON (no field) parses with none.
+        let old: VaultItem = serde_json::from_str(
+            r#"{"item_type":"login","id":"1","name":"n","url":"https://x","username":"u","password":"p"}"#,
+        )
+        .unwrap();
+        assert!(old.tag_tombstones().is_empty());
+    }
+
+    // ── Trash (§1.2) ────────────────────────────────────────────────────────
+
+    #[test]
+    fn deleting_moves_the_item_to_the_trash_and_restore_revives_it() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "GitHub", "https://github.com", "ada", "p").with_tags(vec!["work".into()]));
+
+        vault.delete_item("1", Some("dev-1"));
+        assert!(vault.get_item("1").is_none(), "the item leaves the live vault");
+        assert_eq!(vault.deleted_items.len(), 1, "the content lands in the trash");
+        assert_eq!(vault.deleted_items[0].item.id(), "1");
+        assert_eq!(vault.deleted_items[0].item.tags(), &["work".to_string()], "the trash copy keeps organization metadata");
+        assert_eq!(vault.tombstones.len(), 1, "the tombstone still propagates the delete");
+        let deleted_at = vault.deleted_items[0].deleted_at;
+
+        assert!(vault.restore_item("1").is_some());
+        let restored = vault.get_item("1").expect("restored");
+        assert!(
+            restored.updated_at() > deleted_at,
+            "the restored copy must be newer than the deletion, so it beats every tombstone"
+        );
+        assert!(vault.tombstones.is_empty(), "restore drops this device's tombstone");
+        assert!(vault.deleted_items.is_empty(), "restore empties this id's trash entry");
+        assert_eq!(restored.tags(), &["work".to_string()], "tags survive the round trip");
+        assert_eq!(restored.last_modified_device(), None, "a restore is replication, not an unsynced edit");
+    }
+
+    #[test]
+    fn purge_removes_trash_content_but_keeps_the_tombstone() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "GitHub", "https://github.com", "ada", "p"));
+        vault.delete_item("1", None);
+
+        assert!(vault.purge_deleted_item("1"));
+        assert!(vault.deleted_items.is_empty(), "purge drops the content for good");
+        assert_eq!(vault.tombstones.len(), 1, "the tombstone stays: sync must not resurrect the item");
+        assert!(!vault.purge_deleted_item("1"), "purging an absent id reports false");
+    }
+
+    #[test]
+    fn trash_entries_expire_with_the_retention_window() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "n", "u", "u", "p"));
+        vault.delete_item("1", None);
+        assert_eq!(vault.deleted_items.len(), 1);
+
+        vault.prune_deleted_items(chrono::Duration::zero());
+        assert!(vault.deleted_items.is_empty(), "a zero retention purges everything");
+    }
+
+    #[test]
+    fn the_trash_round_trips_through_serde() {
+        let mut vault = VaultStore::new();
+        vault.add_item(login("1", "GitHub", "https://github.com", "ada", "p"));
+        vault.delete_item("1", Some("dev-9"));
+
+        let json = serde_json::to_string(&vault).unwrap();
+        let back: VaultStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.deleted_items.len(), 1);
+        assert_eq!(back.deleted_items[0].item.id(), "1");
+        assert_eq!(back.deleted_items[0].deleted_by.as_deref(), Some("dev-9"));
+
+        // An old client's store JSON (no field) parses with an empty trash.
+        let old: VaultStore = serde_json::from_str(r#"{"items":[],"tombstones":[]}"#).unwrap();
+        assert!(old.deleted_items.is_empty());
+    }
+
+    // ── §1.3: item model depth ──────────────────────────────────────────────
+
+    #[test]
+    fn a_password_change_is_recorded_in_the_history() {
+        let now = Utc::now();
+        let existing = login("1", "GitHub", "https://github.com", "ada", "old-pw");
+        let edited = login("1", "GitHub", "https://github.com", "ada", "new-pw")
+            .with_password_history_recorded(&existing, now);
+
+        let history = edited.password_history().expect("a login has history");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].value, "old-pw", "the OLD value is recorded");
+        assert_eq!(history[0].changed_at, now);
+        assert_eq!(edited.password().unwrap(), "new-pw");
+
+        // An edit that does not change the password records nothing.
+        let untouched = edited.clone().with_password_history_recorded(&edited, now);
+        assert_eq!(untouched.password_history().unwrap().len(), 1);
+        // Nor does a first-time set (there was no old value to keep).
+        let empty = login("1", "n", "u", "u", "");
+        let first = login("1", "n", "u", "u", "first").with_password_history_recorded(&empty, now);
+        assert!(first.password_history().unwrap().is_empty());
+
+        // The history is capped, newest first.
+        let mut rolling = login("1", "n", "u", "u", "p0");
+        for i in 1..=20 {
+            let next = login("1", "n", "u", "u", &format!("p{i}"))
+                .with_password_history_recorded(&rolling, now + chrono::Duration::hours(i as i64));
+            rolling = next;
+        }
+        let history = rolling.password_history().unwrap();
+        assert_eq!(history.len(), VaultItem::MAX_PASSWORD_HISTORY);
+        assert_eq!(history[0].value, "p19", "newest first");
+    }
+
+    /// A-2 for the new §1.3 fields: an item carrying them survives a JSON
+    /// cycle; an old client's item parses with them defaulted and does not
+    /// gain an empty history it never had.
+    #[test]
+    fn item_model_depth_fields_round_trip_through_serde() {
+        let now = Utc::now();
+        let base = login("1", "GitHub", "https://github.com", "ada", "p")
+            .with_password_history_recorded(
+                &login("1", "GitHub", "https://github.com", "ada", "old"),
+                now,
+            );
+        // The variant's own fields are not camelCased (see `app_ids`).
+        let json = serde_json::to_string(&base).unwrap();
+        assert!(json.contains("password_history"), "{json}");
+        let back: VaultItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.password_history().unwrap()[0].value, "old");
+
+        // Custom fields serialize with the camelCase key the rest of the
+        // meta uses, and the field_type alias is tolerated.
+        let with_custom = login("1", "n", "u", "u", "p");
+        let with_custom = {
+            let mut c = with_custom;
+            c.meta_mut().custom_fields = vec![
+                CustomField { label: "Recovery codes".into(), value: "1111 2222".into(), field_type: CustomFieldType::Text },
+                CustomField { label: "PIN".into(), value: "9876".into(), field_type: CustomFieldType::Hidden },
+            ];
+            c
+        };
+        let json = serde_json::to_string(&with_custom).unwrap();
+        assert!(json.contains("customFields"), "{json}");
+        assert!(json.contains("\"field_type\":\"hidden\""), "{json}");
+        let back: VaultItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.custom_fields().len(), 2);
+
+        // `Debug` shows text fields, but a hidden field's value is a secret:
+        // it prints as [REDACTED], like every other secret.
+        let rendered = format!("{with_custom:?}");
+        assert!(rendered.contains("1111 2222"), "text fields are debuggable: {rendered}");
+        assert!(!rendered.contains("9876"), "Debug leaked a hidden custom field: {rendered}");
+
+        // An old client's JSON (none of the new fields) parses with defaults.
+        let old: VaultItem = serde_json::from_str(
+            r#"{"item_type":"login","id":"1","name":"n","url":"https://x","username":"u","password":"p"}"#,
+        )
+        .unwrap();
+        assert!(old.password_history().unwrap().is_empty());
+        assert!(old.custom_fields().is_empty());
+        let back = serde_json::to_string(&old).unwrap();
+        assert!(!back.contains("password_history"), "{back}");
+        assert!(!back.contains("customFields"), "{back}");
+    }
+
+    /// The four new item types round-trip, and every secret they carry is
+    /// wiped on drop and never printed by `Debug`.
+    #[test]
+    fn new_item_types_round_trip_and_protect_their_secrets() {
+        let now = Utc::now();
+        let meta = |id: &str, name: &str| VaultMeta {
+            id: id.into(),
+            name: name.into(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+            last_modified_device: None,
+            favorite: false,
+            tags: Vec::new(),
+            tag_tombstones: Vec::new(),
+            custom_fields: Vec::new(),
+            folder: None,
+            shared: false,
+            share_recipient: None,
+        };
+        let items = vec![
+            VaultItem::Address {
+                meta: meta("1", "Home"),
+                full_name: "Ada Lovelace".into(),
+                street: "12 Analytical Way".into(),
+                street2: String::new(),
+                city: "London".into(),
+                state: String::new(),
+                postal_code: "NW1".into(),
+                country: "UK".into(),
+                phone: "+44 20 1234 5678".into(),
+            },
+            VaultItem::BankAccount {
+                meta: meta("2", "Checking"),
+                bank_name: "First Example Bank".into(),
+                account_kind: "checking".into(),
+                holder: "Ada Lovelace".into(),
+                account_number: "1234567890-SECRET".into(),
+                routing_number: "012345678".into(),
+                iban: "GB29-SECRET".into(),
+                swift: "EXAMGB22".into(),
+            },
+            VaultItem::ApiKey {
+                meta: meta("3", "CI token"),
+                url: "https://api.example".into(),
+                username: "ada".into(),
+                api_key: "sk-live-SECRET".into(),
+                expires: Some("2027-01".into()),
+            },
+            VaultItem::SshKey {
+                meta: meta("4", "Laptop key"),
+                kind: "ed25519".into(),
+                public_key: "ssh-ed25519 AAAAC3PUBLIC".into(),
+                private_key: "-----BEGIN OPENSSH PRIVATE KEY-SECRET".into(),
+                passphrase: "hunter2-SECRET".into(),
+                comment: "ada@laptop".into(),
+            },
+        ];
+
+        for item in &items {
+            let json = serde_json::to_string(item).unwrap();
+            let back: VaultItem = serde_json::from_str(&json).expect("round trip");
+            assert_eq!(back.item_type(), item.item_type());
+        }
+
+        // `Debug` must not leak any secret of the new types (the same
+        // guarantee the original types got after the crypto-hardening audit).
+        let rendered = format!("{items:?}");
+        for secret in [
+            "1234567890-SECRET",
+            "GB29-SECRET",
+            "sk-live-SECRET",
+            "BEGIN OPENSSH PRIVATE KEY-SECRET",
+            "hunter2-SECRET",
+            "1111 2222", // text custom fields ARE shown; hidden ones are not
+            "9876",
+        ] {
+            assert!(!rendered.contains(secret), "Debug leaked {secret:?}");
+        }
+        // …while the item stays identifiable.
+        assert!(rendered.contains("Checking"), "lost the name: {rendered}");
+    }
+
+    #[test]
+    fn dropping_new_item_types_wipes_their_secrets() {
+        let now = Utc::now();
+        let meta = || VaultMeta {
+            id: "1".into(),
+            name: "n".into(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+            last_modified_device: None,
+            favorite: false,
+            tags: Vec::new(),
+            tag_tombstones: Vec::new(),
+            custom_fields: vec![CustomField {
+                label: "PIN".into(),
+                value: "9876-SECRET".into(),
+                field_type: CustomFieldType::Hidden,
+            }],
+            folder: None,
+            shared: false,
+            share_recipient: None,
+        };
+
+        let mut api = VaultItem::ApiKey {
+            meta: meta(),
+            url: String::new(),
+            username: String::new(),
+            api_key: "sk-live-SECRET".into(),
+            expires: None,
+        };
+        api.zeroize_secrets();
+        match &api {
+            VaultItem::ApiKey { api_key, meta, .. } => {
+                assert!(api_key.bytes().all(|b| b == 0), "the key must be wiped");
+                assert!(
+                    meta.custom_fields[0].value.bytes().all(|b| b == 0),
+                    "hidden custom fields wipe with the item"
+                );
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        let mut ssh = VaultItem::SshKey {
+            meta: meta(),
+            kind: "ed25519".into(),
+            public_key: "ssh-ed25519 PUBLIC".into(),
+            private_key: "PRIVATE-SECRET".into(),
+            passphrase: "hunter2-SECRET".into(),
+            comment: String::new(),
+        };
+        ssh.zeroize_secrets();
+        match &ssh {
+            VaultItem::SshKey { private_key, passphrase, public_key, .. } => {
+                assert!(private_key.bytes().all(|b| b == 0));
+                assert!(passphrase.bytes().all(|b| b == 0));
+                assert_eq!(public_key, "ssh-ed25519 PUBLIC", "the public half is not a secret");
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[test]
@@ -1665,6 +2624,10 @@ mod tests {
                 updated_at: now,
                 last_modified_device: Some("test".to_string()),
                 favorite: false,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: false,
                 share_recipient: None,
             },

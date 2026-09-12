@@ -788,7 +788,7 @@ pub(crate) fn merge_server_vaults(
     server: crate::vault::VaultStore,
     device_id: &str,
 ) -> Vec<ConflictItem> {
-    use crate::vault::Tombstone;
+    use crate::vault::{DeletedItem, Tombstone};
 
     let mut conflicts = Vec::new();
 
@@ -838,15 +838,26 @@ pub(crate) fn merge_server_vaults(
         conflicts.iter().map(|c| c.item_id.clone()).collect();
 
     // ── 3. Merge items, filtering out tombstoned IDs ───────────────────────
+    // A tombstoned item is not merely dropped: the live copy moves into the
+    // trash (§1.2), so the deletion is undoable on THIS device too — the
+    // roadmap's "restorable on a second device".
+    let mut trashed: Vec<DeletedItem> = Vec::new();
     let mut final_items: HashMap<String, crate::vault::VaultItem> = local
         .items
         .drain(..)
         .filter(|item| {
-            tombstone_map
+            let tombstoned = tombstone_map
                 .get(item.id())
                 .map(|deleted_at| *deleted_at >= item.updated_at())
-                .unwrap_or(false)
-                == false
+                .unwrap_or(false);
+            if tombstoned {
+                trashed.push(DeletedItem {
+                    item: item.clone(),
+                    deleted_at: tombstone_map[item.id()],
+                    deleted_by: None,
+                });
+            }
+            !tombstoned
         })
         .map(|item| (item.id().to_string(), item))
         .collect();
@@ -857,18 +868,66 @@ pub(crate) fn merge_server_vaults(
             .map(|deleted_at| *deleted_at >= server_item.updated_at())
             .unwrap_or(false)
         {
+            // A server copy this device does not hold live arrives with a
+            // tombstone: keep its content in the trash as well (unless this
+            // device already trashed it — its own entry is the older-or-
+            // equal one and stays authoritative).
+            if !final_items.contains_key(&id)
+                && !local.deleted_items.iter().any(|d| d.item.id() == id)
+                && !trashed.iter().any(|d| d.item.id() == id)
+            {
+                trashed.push(DeletedItem {
+                    item: server_item.clone(),
+                    deleted_at: tombstone_map[&id],
+                    deleted_by: None,
+                });
+            }
             continue; // deleted item stays deleted
         }
         if let Some(existing) = final_items.get(&id) {
             // Never silently overwrite a conflicted local edit: it stays local
             // until the user resolves it in the ConflictResolution UI.
             if server_item.updated_at() > existing.updated_at() && !conflicted_ids.contains(&id) {
-                final_items.insert(id, server_item);
+                // The server copy wins the item — including the single-valued
+                // folder — but not the tags: they merge by union
+                // (`vela-sync-policy::merge_org_fields`), so a tag added
+                // offline survives another device's edit of any other field.
+                // Removal records ride along so a tag removed on either side
+                // is not resurrected by the union.
+                let merged = server_item.with_org_fields_merged(existing, Utc::now());
+                final_items.insert(id, merged);
             }
         } else {
             final_items.insert(id, server_item);
         }
     }
+
+    local.deleted_items.extend(trashed);
+
+    // ── 3b. Merge the trash (§1.2) ──────────────────────────────────────────
+    // Union by id, newest deletion wins; an entry is dropped when the item
+    // is live again with a newer `updated_at` (a restore on either side) —
+    // the same rule that lets the restored item survive the tombstones.
+    let mut trash_by_id: HashMap<String, DeletedItem> = local
+        .deleted_items
+        .drain(..)
+        .map(|d| (d.item.id().to_string(), d))
+        .collect();
+    for deleted in server.deleted_items {
+        trash_by_id
+            .entry(deleted.item.id().to_string())
+            .and_modify(|existing| {
+                if deleted.deleted_at > existing.deleted_at {
+                    *existing = deleted.clone();
+                }
+            })
+            .or_insert(deleted);
+    }
+    trash_by_id.retain(|id, deleted| match final_items.get(id) {
+        Some(live) => live.updated_at() <= deleted.deleted_at,
+        None => true,
+    });
+    local.deleted_items = trash_by_id.into_values().collect();
 
     local.replace_items(final_items.into_values().collect());
 
@@ -889,8 +948,10 @@ pub(crate) fn merge_server_vaults(
     }
     local.tombstones = merged_tombstones.into_values().collect();
 
-    // ── 5. Prune old tombstones to prevent unbounded growth ────────────────
+    // ── 5. Prune old tombstones (and with them expired trash) to prevent
+    // unbounded growth ──────────────────────────────────────────────────────
     local.prune_tombstones(chrono::Duration::days(TOMBSTONE_RETENTION_DAYS));
+    local.prune_deleted_items(chrono::Duration::days(TOMBSTONE_RETENTION_DAYS));
 
     conflicts
 }
@@ -1689,10 +1750,19 @@ pub async fn resolve_conflict(
         // If the merged vault currently holds the server version, restore the
         // stored local version so "keep local" always wins.
         if let Some(conflict) = &stored_conflict {
+            // The user chose this side, so its folder wins — but tags still
+            // union across both versions: picking a side in a field conflict
+            // is not a decision about organizational metadata the user may
+            // not even see in the dialog. `with_org_fields_merged` keeps
+            // every other field from `local_version`.
+            let restored = conflict
+                .local_version
+                .with_org_fields_merged(&conflict.server_version, Utc::now())
+                .with_updated_at(Utc::now());
             let mut vault = state.vault.write();
             if let Some(local_item) = vault.items.iter_mut().find(|i| i.id() == item_id) {
                 if local_item.updated_at() != conflict.local_version.updated_at() {
-                    *local_item = conflict.local_version.clone().with_updated_at(Utc::now());
+                    *local_item = restored;
                     vault.touch_generation();
                 }
             }
@@ -1710,8 +1780,14 @@ pub async fn resolve_conflict(
         );
     } else if let Some(conflict) = stored_conflict {
         // Resolve from the stored snapshot — immune to any intermediate syncs.
+        // Tags union across both versions so the losing side's organizational
+        // edits are not thrown away with the rest of it; the folder follows
+        // the chosen (server) side.
         let mut vault = state.vault.write();
-        let resolved = conflict.server_version.clone().with_updated_at(Utc::now());
+        let resolved = conflict
+            .server_version
+            .with_org_fields_merged(&conflict.local_version, Utc::now())
+            .with_updated_at(Utc::now());
         if let Some(local_item) = vault.items.iter_mut().find(|i| i.id() == item_id) {
             *local_item = resolved;
         } else {
@@ -2518,6 +2594,10 @@ mod tests {
                 updated_at,
                 last_modified_device: last_modified_device.map(|s| s.to_string()),
                 favorite: false,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: false,
                 share_recipient: None,
             },
@@ -2526,9 +2606,154 @@ mod tests {
             pass: "pw".to_string(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         }
+    }
+
+    /// The §1.2 done-when, as a test: a deletion made on another device
+    /// lands this device's copy in the local trash, and a restore from that
+    /// trash survives the next sync against the server's tombstone — the
+    /// stale trash entry loses to the restored item.
+    #[test]
+    fn a_remote_deletion_trashes_locally_and_a_restore_survives_sync() {
+        let t_old = Utc::now() - chrono::Duration::hours(2);
+        let t_del = Utc::now() - chrono::Duration::hours(1);
+
+        // This device holds the item (stale); the deleter's vault has no
+        // live item, its tombstone, and its own trash copy.
+        let mut local = store_with(vec![login("a", t_old, None)]);
+        let mut server = store_with(vec![]);
+        server.tombstones.push(crate::vault::Tombstone {
+            id: "a".into(),
+            deleted_at: t_del,
+            deleted_by: Some("deleter".into()),
+        });
+        server.deleted_items.push(crate::vault::DeletedItem {
+            item: login("a", t_old, Some("deleter")),
+            deleted_at: t_del,
+            deleted_by: Some("deleter".into()),
+        });
+
+        merge_server_vaults(&mut local, server, "this-device");
+        assert!(local.get_item("a").is_none(), "the deleted item leaves the live vault");
+        assert_eq!(local.deleted_items.len(), 1, "the copy lands in the local trash");
+        assert!(!local.tombstones.is_empty(), "the deletion propagates");
+
+        // The user restores it: newer than the tombstone, tombstone dropped.
+        local.restore_item("a");
+        assert!(local.get_item("a").is_some());
+
+        // The next sync still carries the (stale) tombstone and trash entry:
+        // the restored item must survive both, and the stale trash entry
+        // must yield to the restored copy.
+        let mut server = store_with(vec![]);
+        server.tombstones.push(crate::vault::Tombstone {
+            id: "a".into(),
+            deleted_at: t_del,
+            deleted_by: Some("deleter".into()),
+        });
+        server.deleted_items.push(crate::vault::DeletedItem {
+            item: login("a", t_old, Some("deleter")),
+            deleted_at: t_del,
+            deleted_by: Some("deleter".into()),
+        });
+        merge_server_vaults(&mut local, server, "this-device");
+        assert!(
+            local.get_item("a").is_some(),
+            "the restored item survives the tombstone"
+        );
+        assert!(
+            local.deleted_items.is_empty(),
+            "the stale trash entry loses to the restored item"
+        );
+    }
+
+    /// The §1.1 done-when, as a test: a tag added on this device and a newer
+    /// edit of a *different* field from another device merge without the tag
+    /// being lost and without a conflict — and the tags of both sides survive.
+    #[test]
+    fn a_tag_added_offline_survives_a_concurrent_edit_deterministically() {
+        let t_old = Utc::now() - chrono::Duration::hours(2);
+        let t_new = Utc::now() - chrono::Duration::hours(1);
+
+        // This device tagged the item at t_old; another device renamed it at
+        // t_new and that rename landed on the server first. The rename wins
+        // the item (last-writer-wins), the tag survives the merge. The local
+        // copy is not marked as an unsynced local edit — the ordinary UI edit
+        // path does not set `last_modified_device` — so this is replication,
+        // not a conflict.
+        let local_item = login("a", t_old, None).with_tags(vec!["banking".into()]);
+        let server_item = login("a", t_new, Some("other-device"))
+            .with_name("Renamed".into())
+            .with_tags(vec!["shared".into()])
+            .with_folder(Some("Finance".into()));
+
+        let mut local = store_with(vec![local_item]);
+        let server = store_with(vec![server_item]);
+        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        assert!(conflicts.is_empty(), "a tag plus a rename is not a conflict");
+
+        let merged = local.items.iter().find(|i| i.id() == "a").expect("kept");
+        assert_eq!(merged.name(), "Renamed", "the newer field edit wins");
+        assert_eq!(merged.folder(), Some("Finance"), "folder follows the newer copy");
+        assert_eq!(
+            merged.tags(),
+            &["banking".to_string(), "shared".to_string()],
+            "both sides' tags survive, canonically ordered"
+        );
+    }
+
+    /// A removal record suppresses the union: a tag removed on one device is
+    /// not resurrected by a newer-but-stale copy that still carries it — but
+    /// an edit made AFTER the removal still carrying the tag counts as
+    /// re-affirmation and the tag survives.
+    #[test]
+    fn a_tag_removal_beats_stale_copies_but_not_later_edits() {
+        let t0 = Utc::now() - chrono::Duration::hours(3);
+        let t_removal = Utc::now() - chrono::Duration::hours(2);
+        let t_after = Utc::now() - chrono::Duration::hours(1);
+
+        // This device carried "work" at t0; another device removed it at
+        // t_removal. That removal is newer than this stale copy: the tag
+        // must go.
+        let stale_local = login("a", t0, None).with_tags(vec!["work".into()]);
+        let before_removal = login("a", t0, Some("remover-device")).with_tags(vec!["work".into()]);
+        let server_with_removal = login("a", t_removal, Some("remover-device"))
+            .with_tag_removals_recorded(&before_removal, t_removal);
+
+        let mut local = store_with(vec![stale_local]);
+        let server = store_with(vec![server_with_removal]);
+        merge_server_vaults(&mut local, server, "this-device");
+        let merged = local.items.iter().find(|i| i.id() == "a").expect("kept");
+        assert!(
+            merged.tags().is_empty(),
+            "the removal must beat the stale copy, got {:?}",
+            merged.tags()
+        );
+        assert_eq!(merged.tag_tombstones().len(), 1, "the record rides along");
+
+        // The mirror: this device holds the removal (at t_removal) and the
+        // server's newer copy (t_after > t_removal) still carries the tag —
+        // its edit happened after the removal, so it re-affirmed the tag.
+        // The local copy is not marked as an unsynced local edit, so this
+        // is replication, not a conflict.
+        let before_removal = login("a", t0, Some("remover-device")).with_tags(vec!["work".into()]);
+        let local_removal = login("a", t_removal, None)
+            .with_tag_removals_recorded(&before_removal, t_removal);
+        let server_reaffirmed = login("a", t_after, Some("other-device"))
+            .with_tags(vec!["work".into()]);
+
+        let mut local = store_with(vec![local_removal]);
+        let server = store_with(vec![server_reaffirmed]);
+        merge_server_vaults(&mut local, server, "this-device");
+        let merged = local.items.iter().find(|i| i.id() == "a").expect("kept");
+        assert_eq!(
+            merged.tags(),
+            &["work".to_string()],
+            "an edit after the removal re-affirms the tag"
+        );
     }
 
     fn store_with(items: Vec<VaultItem>) -> VaultStore {

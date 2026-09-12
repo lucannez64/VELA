@@ -255,6 +255,10 @@ const META_HIDE = new Set([
   'id', 'type', 'kind', 'item_type', 'createdat', 'updatedat', 'created_at', 'updated_at',
   'lastmodifieddevice', 'last_modified_device', 'favorite', 'shared', 'sharerecipient',
   'share_recipient', 'version', 'lamport', 'conflictrefs', 'conflict_refs',
+  // §1.1 organization: preserved untouched (edits mutate the item in place),
+  // but the ephemeral vault is not the place to restructure it. 'tags' is an
+  // array and so would not render anyway; listed for completeness.
+  'folder', 'tags',
 ]);
 
 interface Leaf { path: string; key: string; value: string; isString: boolean; }

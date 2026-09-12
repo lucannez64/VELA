@@ -95,6 +95,10 @@ impl DesktopClient {
             updated_at: chrono::Utc::now(),
             last_modified_device: Some(self.device_id.clone()),
             favorite: false,
+            tags: Vec::new(),
+            tag_tombstones: Vec::new(),
+            custom_fields: Vec::new(),
+            folder: None,
             shared: false,
             share_recipient: None,
         };
@@ -105,6 +109,7 @@ impl DesktopClient {
             pass: password.to_string(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         });

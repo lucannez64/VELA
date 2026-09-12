@@ -11,4 +11,7 @@ pub use password::{
     calculate_password_strength, generate_password, password_entropy, strength_verdict,
     PasswordGeneratorOptions, PasswordStrength,
 };
-pub use vault::{BreachEntry, ItemType, Tombstone, VaultItem, VaultStore};
+pub use vault::{
+    BreachEntry, CustomField, CustomFieldType, DeletedItem, ItemType, PasswordHistoryEntry,
+    TagTombstone, Tombstone, VaultItem, VaultStore,
+};

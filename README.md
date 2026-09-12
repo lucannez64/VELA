@@ -51,6 +51,7 @@ Documentation map:
 
 - `SPEC.md` — protocol specification v2 (identity, enrollment, recovery, sharing).
 - `docs/INSTALL.md` — per-platform install & first-run guide (server, desktop, mobile, extension, ephemeral web).
+- `docs/ROADMAP.md` — what is not built yet, grouped by priority, with the design constraint behind each item.
 - `docs/RESEARCH_POTENTIAL.md` — which mechanisms are publishable research, venues, and gaps to close.
 - `CHANGELOG.md` — release history and security remediations.
 - `EPHEMERAL_WEB_ACCESS_DESIGN.md` — the web vault design cited throughout the code.

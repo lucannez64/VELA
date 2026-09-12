@@ -151,6 +151,75 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(Set(merged.map { $0.name }), ["A", "B"])
     }
 
+    /// §1.1: a tag added on this device and a newer edit of another field from
+    /// another device merge without losing the tag; tags from BOTH sides
+    /// survive, canonically ordered, and the folder follows the newer copy —
+    /// mirroring the desktop and Android merge tests.
+    func testMergeUnionsTagsAndKeepsNewerFolder() throws {
+        var older = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "p", totp: nil)
+        older.updatedAt = "2026-01-01T00:00:00Z"
+        older.tags = ["banking"]
+
+        var newer = older
+        newer.tags = ["shared"]
+        newer.folder = "Finance"
+        newer.name = "Renamed"
+        newer.updatedAt = "2026-06-01T00:00:00Z"
+
+        let merged = VaultMerge.merge(local: [older], remote: [newer])
+        let item = try XCTUnwrap(merged.first)
+        XCTAssertEqual(item.name, "Renamed")
+        XCTAssertEqual(item.folder, "Finance")
+        XCTAssertEqual(item.tags, ["banking", "shared"])
+    }
+
+    func testNormalizedTagsTrimsDeduplicatesAndSorts() {
+        XCTAssertEqual(
+            VaultMerge.normalizedTags(["  Work ", "work", "VPN", "", "  "]),
+            ["VPN", "Work"])
+    }
+
+    /// §1.3: a changed login password records the OLD value in the history;
+    /// an unchanged edit records nothing.
+    func testPasswordChangeIsRecordedInTheHistory() throws {
+        let existing = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "old", totp: nil)
+        let edited = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "new", totp: nil)
+
+        let recorded = edited.withPasswordHistoryRecorded(existing)
+        XCTAssertEqual(recorded.passwordHistoryList.count, 1)
+        XCTAssertEqual(recorded.passwordHistoryList[0].password, "old", "the OLD value is recorded")
+        XCTAssertEqual(recorded.password, "new")
+
+        let untouched = existing.withPasswordHistoryRecorded(existing)
+        XCTAssertTrue(untouched.passwordHistoryList.isEmpty, "an unchanged edit records nothing")
+    }
+
+    /// A removal record beats a stale copy that still carries the tag; an
+    /// edit made after the removal that still carries it re-affirms it.
+    func testTagRemovalBeatsStaleCopyButNotLaterEdit() throws {
+        var stale = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "p", totp: nil)
+        stale.updatedAt = "2026-01-01T00:00:00Z"
+        stale.tags = ["work"]
+
+        var remover = stale
+        remover.tags = []
+        remover.tagTombstones = [TagTombstone(tag: "work", deletedAt: "2026-06-01T00:00:00Z")]
+        remover.updatedAt = "2026-06-01T00:00:00Z"
+
+        // Stale copy (Jan) vs the removal (Jun): the removal wins.
+        let merged = VaultMerge.merge(local: [stale], remote: [remover])
+        let item = try XCTUnwrap(merged.first)
+        XCTAssertEqual(item.tags, [])
+        XCTAssertEqual(item.tagTombstones?.count, 1, "the record rides along")
+
+        // A copy edited after the removal (Jul) that still carries the tag
+        // has re-affirmed it.
+        var reaffirmed = stale
+        reaffirmed.updatedAt = "2026-07-01T00:00:00Z"
+        let mergedAfter = VaultMerge.merge(local: [remover], remote: [reaffirmed])
+        XCTAssertEqual(mergedAfter.first?.tags, ["work"])
+    }
+
     private static let iso: ISO8601DateFormatter = ISO8601DateFormatter()
 
     /// Timestamps relative to *now* so retention pruning (30 days) can't rot
@@ -184,6 +253,33 @@ final class Phase4Tests: XCTestCase {
             remote: VaultStore(items: [item]))
         XCTAssertEqual(merged.items.first?.username, "edited")
         XCTAssertEqual(merged.tombstones.count, 1, "the older tombstone is kept for propagation bookkeeping")
+    }
+
+    /// §1.2: a remote deletion lands the copy in the local trash, and a
+    /// restore (item newer than the tombstone) survives the next merge —
+    /// the stale trash entry yields to the restored item.
+    func testRemoteDeletionTrashesLocallyAndRestoreSurvivesSync() throws {
+        var item = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "p", totp: nil)
+        item.updatedAt = Self.stamp(daysAgo: 10)
+        let deletedAt = Self.stamp(daysAgo: 5)
+
+        let local = VaultStore(items: [item])
+        let remote = VaultStore(
+            items: [],
+            tombstones: [Tombstone(id: item.id, deletedAt: deletedAt)],
+            deletedItems: [DeletedItem(item: item, deletedAt: deletedAt)])
+
+        let merged = VaultMerge.mergeStores(local: local, remote: remote)
+        XCTAssertTrue(merged.items.isEmpty, "the deleted item leaves the live vault")
+        XCTAssertEqual(merged.deletedItems.count, 1, "the copy lands in the local trash")
+
+        // Restore on this device: item back, newer than the tombstone.
+        var restored = item
+        restored.updatedAt = Self.stamp(daysAgo: 1)
+        let localAfterRestore = VaultStore(items: [restored])
+        let mergedAfter = VaultMerge.mergeStores(local: localAfterRestore, remote: remote)
+        XCTAssertEqual(mergedAfter.items.count, 1, "the restored item survives the tombstone")
+        XCTAssertTrue(mergedAfter.deletedItems.isEmpty, "the stale trash entry yields")
     }
 
     func testVaultStoreRoundTripsTombstonesThroughJSON() throws {

@@ -462,6 +462,10 @@ async fn a_bot_wall_falls_back_to_the_browser_tier() {
                 updated_at: now,
                 last_modified_device: None,
                 favorite: false,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: false,
                 share_recipient: None,
             },
@@ -470,6 +474,7 @@ async fn a_bot_wall_falls_back_to_the_browser_tier() {
             pass: PASSWORD.to_string(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         });

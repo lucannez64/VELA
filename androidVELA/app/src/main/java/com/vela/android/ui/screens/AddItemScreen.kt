@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.vela.android.MainActivity
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultMeta
+import com.vela.android.core.normalizeTags
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
 import com.vela.android.ui.components.VelaCard
@@ -85,6 +86,10 @@ fun AddItemScreen(
     var cvv by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.CreditCard)?.cvv.orEmpty()) }
     var pin by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.CreditCard)?.pin.orEmpty()) }
     var totpScanMessage by remember(editItem?.id) { mutableStateOf<String?>(null) }
+    // §1.1 organization fields, common to every item type. Tags are entered
+    // comma-separated and canonicalized on save.
+    var folder by remember(editItem?.id) { mutableStateOf(editItem?.folder.orEmpty()) }
+    var tagsInput by remember(editItem?.id) { mutableStateOf(editItem?.tags?.joinToString(", ").orEmpty()) }
 
     val types = listOf(
         "login" to Icons.Filled.Key,
@@ -232,6 +237,11 @@ fun AddItemScreen(
                 }
             }
 
+            Spacer(Modifier.height(14.dp))
+            VelaTextField(value = folder, onValueChange = { folder = it }, label = "Folder")
+            Spacer(Modifier.height(14.dp))
+            VelaTextField(value = tagsInput, onValueChange = { tagsInput = it }, label = "Tags (comma-separated)")
+
             Spacer(Modifier.height(24.dp))
 
             VelaButton(
@@ -247,6 +257,8 @@ fun AddItemScreen(
                                 updatedAt = Instant.now(),
                                 lastModifiedDevice = editItem?.lastModifiedDevice,
                                 favorite = editItem?.favorite ?: false,
+                                tags = normalizeTags(tagsInput.split(",")),
+                                folder = folder.trim().ifBlank { null },
                                 shared = editItem?.shared ?: false,
                                 shareRecipient = editItem?.shareRecipient
                             ),
@@ -264,6 +276,8 @@ fun AddItemScreen(
                                 updatedAt = Instant.now(),
                                 lastModifiedDevice = editItem?.lastModifiedDevice,
                                 favorite = editItem?.favorite ?: false,
+                                tags = normalizeTags(tagsInput.split(",")),
+                                folder = folder.trim().ifBlank { null },
                                 shared = editItem?.shared ?: false,
                                 shareRecipient = editItem?.shareRecipient
                             ),
@@ -282,6 +296,8 @@ fun AddItemScreen(
                                 updatedAt = Instant.now(),
                                 lastModifiedDevice = editItem?.lastModifiedDevice,
                                 favorite = editItem?.favorite ?: false,
+                                tags = normalizeTags(tagsInput.split(",")),
+                                folder = folder.trim().ifBlank { null },
                                 shared = editItem?.shared ?: false,
                                 shareRecipient = editItem?.shareRecipient
                             ),

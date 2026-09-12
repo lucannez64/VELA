@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useApp, VaultItem, toBackendItem } from '../context/AppContext';
+import { useApp, VaultItem, toBackendItem, CustomField } from '../context/AppContext';
 import PasswordGenerator from './PasswordGenerator';
 
 interface Props {
@@ -9,11 +9,35 @@ interface Props {
   onSave: () => void;
 }
 
+type ItemType =
+  | 'login'
+  | 'creditCard'
+  | 'secureNote'
+  | 'address'
+  | 'bankAccount'
+  | 'apiKey'
+  | 'sshKey';
+
+const ITEM_TYPE_OPTIONS: { value: ItemType; label: string }[] = [
+  { value: 'login', label: 'Login' },
+  { value: 'creditCard', label: 'Credit Card' },
+  { value: 'secureNote', label: 'Secure Note' },
+  { value: 'address', label: 'Address' },
+  { value: 'bankAccount', label: 'Bank Account' },
+  { value: 'apiKey', label: 'API Key' },
+  { value: 'sshKey', label: 'SSH Key' },
+];
+
+const inputClass =
+  'w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40';
+const labelClass = 'block text-xs font-label uppercase tracking-widest text-outline mb-2';
+
 export default function AddItemModal({ editItem, onClose, onSave }: Props) {
   const { showToast } = useApp();
-  const [itemType, setItemType] = useState<'login' | 'creditCard' | 'secureNote'>(
-    (editItem?.item_type === 'login' || editItem?.item_type === 'creditCard' || editItem?.item_type === 'secureNote') 
-      ? editItem.item_type 
+  const supportedTypes: ItemType[] = ['login', 'creditCard', 'secureNote', 'address', 'bankAccount', 'apiKey', 'sshKey'];
+  const [itemType, setItemType] = useState<ItemType>(
+    editItem && (supportedTypes as string[]).includes(editItem.item_type)
+      ? (editItem.item_type as ItemType)
       : 'login'
   );
   const [showPasswordGenerator, setShowPasswordGenerator] = useState(false);
@@ -32,7 +56,48 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
     secureNote: editItem?.secure_note_content || '',
     credentialChangeNeedsReauth: editItem?.credential_change_needs_reauth ?? false,
     allowSecondFactorDowngrade: editItem?.allow_second_factor_downgrade ?? false,
+    // §1.3: one optional folder, tags as a comma-separated list.
+    // Canonicalized (trimmed, deduped, sorted) backend-side on save.
+    folder: editItem?.folder || '',
+    tags: (editItem?.tags || []).join(', '),
+    // §1.3 new item types.
+    fullName: editItem?.full_name || '',
+    street: editItem?.street || '',
+    streetLine2: editItem?.street_line2 || '',
+    city: editItem?.city || '',
+    state: editItem?.state || '',
+    postalCode: editItem?.postal_code || '',
+    country: editItem?.country || '',
+    phone: editItem?.phone || '',
+    bankName: editItem?.bank_name || '',
+    accountKind: editItem?.account_kind || '',
+    holder: editItem?.holder || '',
+    accountNumber: editItem?.account_number || '',
+    routingNumber: editItem?.routing_number || '',
+    iban: editItem?.iban || '',
+    swift: editItem?.swift || '',
+    apiKey: editItem?.api_key || '',
+    expires: editItem?.expires || '',
+    sshKind: editItem?.kind || '',
+    publicKey: editItem?.public_key || '',
+    privateKey: editItem?.private_key || '',
+    passphrase: editItem?.passphrase || '',
+    comment: editItem?.comment || '',
   });
+  // §1.3: user-defined extra fields, editable on every item type.
+  const [customFields, setCustomFields] = useState<CustomField[]>(
+    (editItem?.custom_fields || []).map(f => ({ ...f }))
+  );
+
+  const setField = (key: keyof typeof form, value: string) =>
+    setForm(prev => ({ ...prev, [key]: value }));
+
+  const addCustomField = () =>
+    setCustomFields(prev => [...prev, { label: '', value: '', field_type: 'text' }]);
+  const updateCustomField = (index: number, patch: Partial<CustomField>) =>
+    setCustomFields(prev => prev.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+  const removeCustomField = (index: number) =>
+    setCustomFields(prev => prev.filter((_, i) => i !== index));
 
   const handleSubmit = async () => {
     if (!form.name.trim()) {
@@ -64,6 +129,52 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
           itemType === 'login' ? form.credentialChangeNeedsReauth : undefined,
         allow_second_factor_downgrade:
           itemType === 'login' ? form.allowSecondFactorDowngrade : undefined,
+        tags: form.tags.split(',').map(t => t.trim()).filter(Boolean),
+        folder: form.folder.trim() || undefined,
+        custom_fields: customFields
+          .filter(f => f.label.trim() || f.value.trim())
+          .map(f => ({ label: f.label.trim(), value: f.value, field_type: f.field_type })),
+        // §1.3 new types — only the fields the chosen type carries.
+        ...(itemType === 'address'
+          ? {
+              full_name: form.fullName,
+              street: form.street,
+              street_line2: form.streetLine2,
+              city: form.city,
+              state: form.state,
+              postal_code: form.postalCode,
+              country: form.country,
+              phone: form.phone,
+            }
+          : {}),
+        ...(itemType === 'bankAccount'
+          ? {
+              bank_name: form.bankName,
+              account_kind: form.accountKind,
+              holder: form.holder,
+              account_number: form.accountNumber,
+              routing_number: form.routingNumber,
+              iban: form.iban,
+              swift: form.swift,
+            }
+          : {}),
+        ...(itemType === 'apiKey'
+          ? {
+              url: form.url,
+              username: form.username,
+              api_key: form.apiKey,
+              expires: form.expires || undefined,
+            }
+          : {}),
+        ...(itemType === 'sshKey'
+          ? {
+              kind: form.sshKind,
+              public_key: form.publicKey,
+              private_key: form.privateKey,
+              passphrase: form.passphrase || undefined,
+              comment: form.comment,
+            }
+          : {}),
         created_at: editItem?.created_at || now,
         updated_at: now,
         last_modified_device: editItem?.last_modified_device,
@@ -109,56 +220,76 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
         </div>
 
         {!editItem && (
-          <div className="flex gap-2 p-4 border-b border-outline-variant/10">
-            {(['login', 'creditCard', 'secureNote'] as const).map(type => (
-              <button
-                key={type}
-                onClick={() => setItemType(type)}
-                className={`flex-1 py-3 px-4 rounded-xl font-label text-sm capitalize transition-colors ${
-                  itemType === type 
-                    ? 'bg-primary/10 text-primary border border-primary' 
-                    : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
-                }`}
-              >
-                {type === 'creditCard' ? 'Card' : type}
-              </button>
-            ))}
+          <div className="p-4 border-b border-outline-variant/10">
+            <label className={labelClass}>Type</label>
+            <select
+              value={itemType}
+              onChange={e => setItemType(e.target.value as ItemType)}
+              className={`${inputClass} capitalize`}
+            >
+              {ITEM_TYPE_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Name *</label>
+              <label className={labelClass}>Name *</label>
               <input
                 type="text"
                 value={form.name}
-                onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-                className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
+                onChange={e => setField('name', e.target.value)}
+                className={inputClass}
                 placeholder="Item name"
               />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Folder</label>
+                <input
+                  type="text"
+                  value={form.folder}
+                  onChange={e => setField('folder', e.target.value)}
+                  className={inputClass}
+                  placeholder="Optional folder"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Tags</label>
+                <input
+                  type="text"
+                  value={form.tags}
+                  onChange={e => setField('tags', e.target.value)}
+                  className={inputClass}
+                  placeholder="comma, separated, tags"
+                />
+              </div>
             </div>
 
             {itemType === 'login' && (
               <>
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Username</label>
+                  <label className={labelClass}>Username</label>
                   <input
                     type="text"
                     value={form.username}
-                    onChange={e => setForm(prev => ({ ...prev, username: e.target.value }))}
-                    className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
+                    onChange={e => setField('username', e.target.value)}
+                    className={inputClass}
                     placeholder="username@email.com"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Password</label>
+                  <label className={labelClass}>Password</label>
                   <div className="relative">
                     <input
                       type="password"
                       value={form.password}
-                      onChange={e => setForm(prev => ({ ...prev, password: e.target.value }))}
+                      onChange={e => setField('password', e.target.value)}
                       spellCheck={false}
                       autoComplete="off"
                       className="w-full px-4 py-3 pr-24 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 font-mono"
@@ -172,7 +303,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                       Generate
                     </button>
                     {showPasswordGenerator && (
-                      <PasswordGenerator 
+                      <PasswordGenerator
                         onSelect={handlePasswordSelect}
                         onClose={() => setShowPasswordGenerator(false)}
                       />
@@ -181,38 +312,38 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Website URL</label>
+                  <label className={labelClass}>Website URL</label>
                   <input
                     type="url"
                     value={form.url}
-                    onChange={e => setForm(prev => ({ ...prev, url: e.target.value }))}
+                    onChange={e => setField('url', e.target.value)}
                     spellCheck={false}
                     autoComplete="off"
-                    className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
+                    className={inputClass}
                     placeholder="https://example.com"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">TOTP Secret</label>
+                  <label className={labelClass}>TOTP Secret</label>
                   <input
                     type="text"
                     value={form.totp}
-                    onChange={e => setForm(prev => ({ ...prev, totp: e.target.value }))}
+                    onChange={e => setField('totp', e.target.value)}
                     spellCheck={false}
                     autoComplete="off"
-                    className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+                    className={`${inputClass} font-mono`}
                     placeholder="Base32 secret or paste OTPAUTH URL"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Notes</label>
+                  <label className={labelClass}>Notes</label>
                   <textarea
                     value={form.notes}
-                    onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))}
+                    onChange={e => setField('notes', e.target.value)}
                     rows={3}
-                    className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 resize-none"
+                    className={`${inputClass} resize-none`}
                     placeholder="Additional notes..."
                   />
                 </div>
@@ -280,12 +411,12 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
             {itemType === 'creditCard' && (
               <>
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Card Number</label>
+                  <label className={labelClass}>Card Number</label>
                   <input
                     type="text"
                     value={form.cardNumber}
-                    onChange={e => setForm(prev => ({ ...prev, cardNumber: e.target.value.replace(/\D/g, '').replace(/(\d{4})/g, '$1 ').trim() }))}
-                    className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface outline-none focus:ring-2 focus:ring-primary/40 font-mono tracking-wider"
+                    onChange={e => setField('cardNumber', e.target.value.replace(/\D/g, '').replace(/(\d{4})/g, '$1 ').trim())}
+                    className={`${inputClass} font-mono tracking-wider`}
                     placeholder="•••• •••• •••• ••••"
                     maxLength={19}
                   />
@@ -293,34 +424,34 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Expiry</label>
+                    <label className={labelClass}>Expiry</label>
                     <input
                       type="text"
                       value={form.cardExp}
-                      onChange={e => setForm(prev => ({ ...prev, cardExp: e.target.value }))}
-                      className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+                      onChange={e => setField('cardExp', e.target.value)}
+                      className={`${inputClass} font-mono`}
                       placeholder="MM/YY"
                       maxLength={5}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">CVV</label>
+                    <label className={labelClass}>CVV</label>
                     <input
                       type="text"
                       value={form.cardCvv}
-                      onChange={e => setForm(prev => ({ ...prev, cardCvv: e.target.value.replace(/\D/g, '') }))}
-                      className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+                      onChange={e => setField('cardCvv', e.target.value.replace(/\D/g, ''))}
+                      className={`${inputClass} font-mono`}
                       placeholder="•••"
                       maxLength={4}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">PIN</label>
+                    <label className={labelClass}>PIN</label>
                     <input
                       type="text"
                       value={form.cardPin}
-                      onChange={e => setForm(prev => ({ ...prev, cardPin: e.target.value.replace(/\D/g, '') }))}
-                      className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+                      onChange={e => setField('cardPin', e.target.value.replace(/\D/g, ''))}
+                      className={`${inputClass} font-mono`}
                       placeholder="••••"
                       maxLength={6}
                     />
@@ -328,12 +459,12 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Cardholder Name</label>
+                  <label className={labelClass}>Cardholder Name</label>
                   <input
                     type="text"
                     value={form.cardholderName}
-                    onChange={e => setForm(prev => ({ ...prev, cardholderName: e.target.value }))}
-                    className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40"
+                    onChange={e => setField('cardholderName', e.target.value)}
+                    className={inputClass}
                     placeholder="JOHN DOE"
                   />
                 </div>
@@ -342,16 +473,242 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
 
             {itemType === 'secureNote' && (
               <div>
-                <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Content</label>
+                <label className={labelClass}>Content</label>
                 <textarea
                   value={form.secureNote}
-                  onChange={e => setForm(prev => ({ ...prev, secureNote: e.target.value }))}
+                  onChange={e => setField('secureNote', e.target.value)}
                   rows={10}
-                  className="w-full px-4 py-3 bg-surface-container-highest rounded-xl text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/40 resize-none font-mono"
+                  className={`${inputClass} resize-none font-mono`}
                   placeholder="Your secure note content..."
                 />
               </div>
             )}
+
+            {itemType === 'address' && (
+              <>
+                <div>
+                  <label className={labelClass}>Full Name</label>
+                  <input
+                    type="text"
+                    value={form.fullName}
+                    onChange={e => setField('fullName', e.target.value)}
+                    className={inputClass}
+                    placeholder="Ada Lovelace"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Street</label>
+                  <input
+                    type="text"
+                    value={form.street}
+                    onChange={e => setField('street', e.target.value)}
+                    className={inputClass}
+                    placeholder="12 Analytical Way"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Street line 2</label>
+                  <input
+                    type="text"
+                    value={form.streetLine2}
+                    onChange={e => setField('streetLine2', e.target.value)}
+                    className={inputClass}
+                    placeholder="Apartment, suite… (optional)"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>City</label>
+                    <input type="text" value={form.city} onChange={e => setField('city', e.target.value)} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>State / Region</label>
+                    <input type="text" value={form.state} onChange={e => setField('state', e.target.value)} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Postal Code</label>
+                    <input type="text" value={form.postalCode} onChange={e => setField('postalCode', e.target.value)} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Country</label>
+                    <input type="text" value={form.country} onChange={e => setField('country', e.target.value)} className={inputClass} />
+                  </div>
+                </div>
+                <div>
+                  <label className={labelClass}>Phone</label>
+                  <input type="tel" value={form.phone} onChange={e => setField('phone', e.target.value)} className={inputClass} placeholder="+1 555 000 1234" />
+                </div>
+              </>
+            )}
+
+            {itemType === 'bankAccount' && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Bank Name</label>
+                    <input type="text" value={form.bankName} onChange={e => setField('bankName', e.target.value)} className={inputClass} placeholder="First Example Bank" />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Account Type</label>
+                    <input type="text" value={form.accountKind} onChange={e => setField('accountKind', e.target.value)} className={inputClass} placeholder="checking" />
+                  </div>
+                </div>
+                <div>
+                  <label className={labelClass}>Holder</label>
+                  <input type="text" value={form.holder} onChange={e => setField('holder', e.target.value)} className={inputClass} placeholder="Ada Lovelace" />
+                </div>
+                <div>
+                  <label className={labelClass}>Account Number</label>
+                  <input
+                    type="password"
+                    value={form.accountNumber}
+                    onChange={e => setField('accountNumber', e.target.value)}
+                    spellCheck={false}
+                    autoComplete="off"
+                    className={`${inputClass} font-mono`}
+                    placeholder="••••••••"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Routing Number</label>
+                  <input type="text" value={form.routingNumber} onChange={e => setField('routingNumber', e.target.value)} className={`${inputClass} font-mono`} placeholder="012345678" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>IBAN</label>
+                    <input type="text" value={form.iban} onChange={e => setField('iban', e.target.value)} className={`${inputClass} font-mono`} placeholder="GB29 …" />
+                  </div>
+                  <div>
+                    <label className={labelClass}>SWIFT / BIC</label>
+                    <input type="text" value={form.swift} onChange={e => setField('swift', e.target.value)} className={`${inputClass} font-mono`} placeholder="EXAMGB22" />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {itemType === 'apiKey' && (
+              <>
+                <div>
+                  <label className={labelClass}>Service URL</label>
+                  <input type="url" value={form.url} onChange={e => setField('url', e.target.value)} className={inputClass} placeholder="https://api.example" />
+                </div>
+                <div>
+                  <label className={labelClass}>Username / Account</label>
+                  <input type="text" value={form.username} onChange={e => setField('username', e.target.value)} className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>API Key</label>
+                  <input
+                    type="password"
+                    value={form.apiKey}
+                    onChange={e => setField('apiKey', e.target.value)}
+                    spellCheck={false}
+                    autoComplete="off"
+                    className={`${inputClass} font-mono`}
+                    placeholder="sk-…"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Expires</label>
+                  <input type="text" value={form.expires} onChange={e => setField('expires', e.target.value)} className={inputClass} placeholder="2027-01 (free-form, optional)" />
+                </div>
+              </>
+            )}
+
+            {itemType === 'sshKey' && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Key Type</label>
+                    <input type="text" value={form.sshKind} onChange={e => setField('sshKind', e.target.value)} className={inputClass} placeholder="ed25519" />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Comment</label>
+                    <input type="text" value={form.comment} onChange={e => setField('comment', e.target.value)} className={inputClass} placeholder="ada@laptop" />
+                  </div>
+                </div>
+                <div>
+                  <label className={labelClass}>Public Key</label>
+                  <textarea
+                    value={form.publicKey}
+                    onChange={e => setField('publicKey', e.target.value)}
+                    rows={3}
+                    className={`${inputClass} resize-none font-mono`}
+                    placeholder="ssh-ed25519 AAAA…"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Private Key</label>
+                  <textarea
+                    value={form.privateKey}
+                    onChange={e => setField('privateKey', e.target.value)}
+                    rows={5}
+                    className={`${inputClass} resize-none font-mono`}
+                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Passphrase</label>
+                  <input
+                    type="password"
+                    value={form.passphrase}
+                    onChange={e => setField('passphrase', e.target.value)}
+                    className={`${inputClass} font-mono`}
+                    placeholder="Optional"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* §1.3: user-defined extra fields, on every item type. */}
+            <div className="pt-2 border-t border-outline-variant/40">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-xs font-label uppercase tracking-widest text-outline">Custom fields</div>
+                <button
+                  type="button"
+                  onClick={addCustomField}
+                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-primary/10 text-primary text-xs font-label hover:bg-primary/20 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-sm">add</span>
+                  Add field
+                </button>
+              </div>
+              {customFields.map((field, index) => (
+                <div key={index} className="flex gap-2 items-start mb-2">
+                  <input
+                    type="text"
+                    value={field.label}
+                    onChange={e => updateCustomField(index, { label: e.target.value })}
+                    className="w-1/3 px-3 py-2 bg-surface-container-highest rounded-lg text-on-surface text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    placeholder="Label"
+                  />
+                  <input
+                    type={field.field_type === 'hidden' ? 'password' : 'text'}
+                    value={field.value}
+                    onChange={e => updateCustomField(index, { value: e.target.value })}
+                    className={`flex-1 px-3 py-2 bg-surface-container-highest rounded-lg text-on-surface text-sm outline-none focus:ring-2 focus:ring-primary/40 ${field.field_type === 'hidden' ? 'font-mono' : ''}`}
+                    placeholder={field.field_type === 'hidden' ? 'Hidden value' : 'Value'}
+                  />
+                  <select
+                    value={field.field_type}
+                    onChange={e => updateCustomField(index, { field_type: e.target.value as CustomField['field_type'] })}
+                    className="px-2 py-2 bg-surface-container-highest rounded-lg text-on-surface-variant text-xs outline-none"
+                    title="Hidden values are masked like passwords"
+                  >
+                    <option value="text">text</option>
+                    <option value="hidden">hidden</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => removeCustomField(index)}
+                    className="p-2 text-on-surface-variant hover:text-red-400 rounded-lg transition-colors"
+                    title="Remove field"
+                  >
+                    <span className="material-symbols-outlined text-sm">close</span>
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

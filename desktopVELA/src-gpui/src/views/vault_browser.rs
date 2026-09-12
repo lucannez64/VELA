@@ -150,7 +150,12 @@ struct RowsKey {
     version: u64,
     filter: Filter,
     query: String,
+    /// The active folder/tag drill-down, if any. Folder first (`true`).
+    org: Option<(bool, String)>,
 }
+
+/// One folder or tag chip: display name + how many visible items carry it.
+type OrgChip = (String, usize);
 
 pub struct VaultBrowser {
     app_state: Arc<AppState>,
@@ -175,6 +180,12 @@ pub struct VaultBrowser {
     /// Per-`Filter::ALL` item counts for the filter chips, derived in the same
     /// pass as `cached_rows` (was four independent scans per render).
     cached_type_counts: [usize; 5],
+    /// The organization chips (folders, then tags) with item counts, and the
+    /// one currently drilling the list down. Sorted; folders before tags.
+    cached_folders: Vec<OrgChip>,
+    cached_tags: Vec<OrgChip>,
+    /// `(is_folder, name)` of the active drill-down, if any.
+    org_filter: Option<(bool, String)>,
     favicon_cache: FaviconCache,
 }
 
@@ -208,6 +219,9 @@ impl VaultBrowser {
             rows_key: None,
             cached_rows: Arc::new(Vec::new()),
             cached_type_counts: [0; 5],
+            cached_folders: Vec::new(),
+            cached_tags: Vec::new(),
+            org_filter: None,
             favicon_cache: favicon_ui::new_cache(),
         }
     }
@@ -320,7 +334,12 @@ impl VaultBrowser {
     /// computed from the actual inputs instead of by rebuilding the rows).
     fn refresh_rows(&mut self, cx: &Context<Self>) -> bool {
         let query = self.search_state.read(cx).as_str().to_lowercase();
-        let key = RowsKey { version: self.items_version, filter: self.filter, query: query.clone() };
+        let key = RowsKey {
+            version: self.items_version,
+            filter: self.filter,
+            query: query.clone(),
+            org: self.org_filter.clone(),
+        };
         if self.rows_key.as_ref() == Some(&key) {
             return false;
         }
@@ -333,6 +352,16 @@ impl VaultBrowser {
             .iter()
             .enumerate()
             .filter(|(_, item)| self.filter.matches(item.item_type()))
+            .filter(|(_, item)| match &self.org_filter {
+                None => true,
+                Some((true, folder)) => {
+                    item.folder().is_some_and(|f| f.eq_ignore_ascii_case(folder))
+                }
+                Some((false, tag)) => item
+                    .tags()
+                    .iter()
+                    .any(|t| t.eq_ignore_ascii_case(tag)),
+            })
             .filter_map(|(ix, item)| {
                 let lower_name = item.name().to_lowercase();
                 let hits = query.is_empty()
@@ -384,6 +413,27 @@ impl VaultBrowser {
                 }
             }
         }
+
+        // The organization chips. `BTreeMap` keyed by the lowercase spelling
+        // both deduplicates case-insensitively (first spelling wins for
+        // display — an item's tags are canonical on write, but items synced
+        // from older clients may not be) and yields them sorted.
+        let mut folders: std::collections::BTreeMap<String, (String, usize)> = Default::default();
+        let mut tags: std::collections::BTreeMap<String, (String, usize)> = Default::default();
+        for item in self.items.iter() {
+            if let Some(folder) = item.folder() {
+                let entry = folders
+                    .entry(folder.to_lowercase())
+                    .or_insert((folder.to_string(), 0));
+                entry.1 += 1;
+            }
+            for tag in item.tags() {
+                let entry = tags.entry(tag.to_lowercase()).or_insert((tag.clone(), 0));
+                entry.1 += 1;
+            }
+        }
+        self.cached_folders = folders.into_values().collect();
+        self.cached_tags = tags.into_values().collect();
 
         self.cached_rows = Arc::new(rows);
         self.cached_type_counts = counts;
@@ -547,6 +597,65 @@ impl Render for VaultBrowser {
                                 cx.notify();
                             }))
                     })),
+            )
+            .when(
+                !self.cached_folders.is_empty() || !self.cached_tags.is_empty(),
+                |el| {
+                    // Folder and tag drill-downs: one chip per distinct value
+                    // with its item count; clicking the active chip clears it.
+                    // Owned `String`s: the chips outlive the borrow of the
+                    // caches once `cx.listener` needs `self` mutably.
+                    let mut chips: Vec<(bool, String, usize)> = Vec::new();
+                    chips.extend(
+                        self.cached_folders
+                            .iter()
+                            .map(|(name, count)| (true, name.clone(), *count)),
+                    );
+                    chips.extend(
+                        self.cached_tags
+                            .iter()
+                            .map(|(name, count)| (false, name.clone(), *count)),
+                    );
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .children(chips.into_iter().map(|(is_folder, name, count)| {
+                                let active =
+                                    self.org_filter.as_ref() == Some(&(is_folder, name.clone()));
+                                let kind_label = if is_folder { "folder" } else { "tag" };
+                                div()
+                                    .id(SharedString::from(format!("org-{}-{name}", if is_folder { "f" } else { "t" })))
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_3()
+                                    .py(px(4.))
+                                    .rounded_full()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .map(|el| if active {
+                                        el.bg(palette.primary).text_color(palette.on_primary)
+                                    } else {
+                                        el.bg(palette.surface_container_highest)
+                                            .text_color(palette.on_surface_variant)
+                                    })
+                                    .child(format!("{kind_label}: {name}"))
+                                    .child(count.to_string())
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            let next = Some((is_folder, name.clone()));
+                                            this.org_filter =
+                                                if this.org_filter == next { None } else { next };
+                                            cx.notify();
+                                        }),
+                                    )
+                            })),
+                    )
+                },
             )
             .when_some(self.error.clone(), |el, error| {
                 el.child(div().text_sm().text_color(palette.error).child(error))
