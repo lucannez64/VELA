@@ -34,7 +34,18 @@ enum VaultMerge {
             }
             if let existing = mergedItems[item.id] {
                 if isNewerOrEqual(item.updatedAt, than: existing.updatedAt) {
-                    mergedItems[item.id] = item
+                    // The newer copy wins the item — including the
+                    // single-valued folder — but not the tags: those union
+                    // across both copies (with removal records suppressing
+                    // stale carriers), so a tag added on one device survives
+                    // the other device's edit of any field, and a tag
+                    // removed on one device is not resurrected by this
+                    // stale copy.
+                    var winner = item
+                    let mergedTags = mergedTagList(winner: item, loser: existing)
+                    winner.tags = normalizedTags(mergedTags.tags)
+                    winner.tagTombstones = mergedTags.removals
+                    mergedItems[item.id] = winner
                 }
             } else {
                 mergedItems[item.id] = item
@@ -43,11 +54,34 @@ enum VaultMerge {
         local.items.forEach(apply)
         remote.items.forEach(apply)
 
+        // ── Trash (§1.2): union by id, newest deletion wins. An entry yields
+        // to a live copy that is newer than the deletion — a restore on
+        // either side — and expires with the same retention tombstones get.
+        var trashByID: [String: DeletedItem] = [:]
+        for entry in local.deletedItems + remote.deletedItems {
+            if let existing = trashByID[entry.item.id] {
+                if isNewer(entry.deletedAt, than: existing.deletedAt) {
+                    trashByID[entry.item.id] = entry
+                }
+            } else {
+                trashByID[entry.item.id] = entry
+            }
+        }
+        let retentionCutoff = Date().addingTimeInterval(-Double(tombstoneRetentionDays) * 86_400)
+        let mergedTrash = trashByID.values.filter { entry in
+            guard let deletedOn = entry.date, deletedOn >= retentionCutoff else { return false }
+            if let live = mergedItems[entry.item.id] {
+                return !isNewer(live.updatedAt, than: entry.deletedAt)
+            }
+            return true
+        }
+
         return VaultStore(
             items: mergedItems.values.sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             },
-            tombstones: pruneTombstones(Array(tombstoneByID.values))
+            tombstones: pruneTombstones(Array(tombstoneByID.values)),
+            deletedItems: mergedTrash
         )
     }
 
@@ -64,6 +98,86 @@ enum VaultMerge {
 
     static func isNewerOrEqual(_ a: String, than b: String) -> Bool {
         a == b || isNewer(a, than: b)
+    }
+
+    /// The canonical tag list: trimmed, empties dropped, deduplicated
+    /// case-insensitively (first spelling wins), sorted — the same rule the
+    /// desktop's `vela-sync-policy::normalize_tags` applies, so every client
+    /// stores the same bytes for the same tags.
+    static func normalizedTags(_ values: [String]) -> [String] {
+        var byKey: [String: String] = [:]
+        for raw in values {
+            let tag = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !tag.isEmpty else { continue }
+            let key = tag.lowercased()
+            if byKey[key] == nil { byKey[key] = tag }
+        }
+        return byKey.sorted { $0.key < $1.key }.map(\.value)
+    }
+
+    /// Collapses removal records: newest per tag, expired dropped, sorted —
+    /// mirroring `vela-sync-policy::normalize_tag_removals`.
+    static func normalizedRemovals(_ removals: [TagTombstone], now: Date) -> [TagTombstone] {
+        let cutoff = now.timeIntervalSince1970 * 1000 - tagRemovalRetentionMs
+        var byTag: [String: TagTombstone] = [:]
+        for removal in removals
+        where removal.date.map({ $0.timeIntervalSince1970 * 1000 > cutoff }) ?? false {
+            if let existing = byTag[removal.tag] {
+                if (removal.date ?? .distantPast) > (existing.date ?? .distantPast) {
+                    byTag[removal.tag] = removal
+                }
+            } else {
+                byTag[removal.tag] = removal
+            }
+        }
+        return byTag.sorted { $0.key < $1.key }.map(\.value)
+    }
+
+    /// Removal-record retention: the same 30-day window item tombstones get.
+    static let tagRemovalRetentionMs: Double = 30 * 24 * 60 * 60 * 1000
+
+    private static func unixMillis(_ value: String) -> Double {
+        (parse(value)?.timeIntervalSince1970 ?? 0) * 1000
+    }
+
+    /// The merged tag list and removal records for a merge where `winner`'s
+    /// copy already won the item. Mirrors `vela-sync-policy::merge_org_fields`.
+    static func mergedTagList(winner: VaultItem, loser: VaultItem) -> (
+        tags: [String], removals: [TagTombstone]
+    ) {
+        let now = Date()
+        let removals = normalizedRemovals(
+            (winner.tagTombstones ?? []) + (loser.tagTombstones ?? []), now: now)
+        let winnerKeys = Set(normalizedTags(winner.tagList).map(\.lowercased()))
+        let loserKeys = Set(normalizedTags(loser.tagList).map(\.lowercased()))
+        let winnerMs = unixMillis(winner.updatedAt)
+        let loserMs = unixMillis(loser.updatedAt)
+
+        let kept = normalizedTags(winner.tagList + loser.tagList).filter { tag in
+            let key = tag.lowercased()
+            guard let removal = removals.first(where: { $0.tag == key }) else { return true }
+            var carriers: [Double] = []
+            if winnerKeys.contains(key) { carriers.append(winnerMs) }
+            if loserKeys.contains(key) { carriers.append(loserMs) }
+            guard let oldestCarrier = carriers.min() else { return false }
+            return (removal.date?.timeIntervalSince1970 ?? 0) * 1000 < oldestCarrier
+        }
+        return (kept, removals)
+    }
+
+    /// Records the tag removals an edit makes relative to the stored copy,
+    /// and clears the records of tags the edit (re-)adds — the iOS twin of
+    /// the desktop's `with_tag_removals_recorded`.
+    static func recordedRemovals(
+        old: [String], new: [String], previous: [TagTombstone], now: Date
+    ) -> [TagTombstone] {
+        let newKeys = Set(normalizedTags(new).map(\.lowercased()))
+        let oldKeys = Set(normalizedTags(old).map(\.lowercased()))
+        var kept = previous.filter { !newKeys.contains($0.tag.lowercased()) }
+        for key in oldKeys.subtracting(newKeys) {
+            kept.append(TagTombstone(tag: key, deletedAt: VaultClock.iso8601(from: now)))
+        }
+        return normalizedRemovals(kept, now: now)
     }
 
     /// RFC3339 timestamps arrive in two shapes here: iOS writes second

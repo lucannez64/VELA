@@ -17,6 +17,18 @@ object VaultJson {
         root.put("tombstones", JSONArray().also { tombstones ->
             store.tombstones.forEach { tombstones.put(it.toJson()) }
         })
+        if (store.deletedItems.isNotEmpty()) {
+            root.put("deleted_items", JSONArray().also { deleted ->
+                store.deletedItems.forEach { entry ->
+                    deleted.put(
+                        JSONObject()
+                            .put("item", entry.item.toJson())
+                            .put("deleted_at", entry.deletedAt.toString())
+                            .put("deleted_by", entry.deletedBy)
+                    )
+                }
+            })
+        }
         return root.toString().toByteArray(Charsets.UTF_8)
     }
 
@@ -35,20 +47,57 @@ object VaultJson {
                 add(tombstoneFromJson(tombstonesJson.getJSONObject(index)))
             }
         }
-        return VaultStore(items, tombstones)
+        // The trash (§1.2): optional (A-2) — written by desktop clients that
+        // own delete/restore, carried through untouched here.
+        val deletedJson = root.optJSONArray("deleted_items") ?: JSONArray()
+        val deletedItems = buildList {
+            for (index in 0 until deletedJson.length()) {
+                val entry = deletedJson.getJSONObject(index)
+                val item = entry.optJSONObject("item")?.let { itemFromJson(it) } ?: continue
+                val deletedAt = runCatching {
+                    Instant.parse(entry.optString("deleted_at"))
+                }.getOrDefault(Instant.now())
+                add(
+                    DeletedItem(
+                        item = item,
+                        deletedAt = deletedAt,
+                        deletedBy = entry.optNullableString("deleted_by"),
+                    )
+                )
+            }
+        }
+        return VaultStore(items, tombstones, deletedItems)
     }
 
     private fun VaultItem.toJson(): JSONObject {
         val json = metaToJson(meta, JSONObject())
 
         when (this) {
-            is VaultItem.Login -> json
-                .put("item_type", "login")
-                .put("url", url)
-                .put("username", username)
-                .put("password", password)
-                .put("totp", totp)
-                .put("app_ids", JSONArray().also { array -> appIds.forEach { array.put(it) } })
+            is VaultItem.Login -> {
+                json
+                    .put("item_type", "login")
+                    .put("url", url)
+                    .put("username", username)
+                    .put("password", password)
+                    .put("totp", totp)
+                    .put("app_ids", JSONArray().also { array -> appIds.forEach { array.put(it) } })
+                // §1.3: previous password values (newest first), only when
+                // there is any — matching the desktop's skip-if-empty.
+                if (passwordHistory.isNotEmpty()) {
+                    json.put(
+                        "password_history",
+                        JSONArray().apply {
+                            passwordHistory.forEach { entry ->
+                                put(
+                                    org.json.JSONObject()
+                                        .put("password", entry.password)
+                                        .put("changed_at", entry.changedAt.toString())
+                                )
+                            }
+                        }
+                    )
+                }
+            }
 
             is VaultItem.CreditCard -> json
                 .put("item_type", "creditCard")
@@ -94,21 +143,98 @@ object VaultJson {
                 .put("user_display_name", userDisplayName)
                 .apply { if (privateKey.isNotEmpty()) put("private_key", privateKey) }
                 .put("sign_count", signCount)
+
+            // §1.3: snake_case keys to match the desktop's variant fields.
+            is VaultItem.Address -> json
+                .put("item_type", "address")
+                .put("full_name", fullName)
+                .put("street", street)
+                .put("street_line2", streetLine2)
+                .put("city", city)
+                .put("state", state)
+                .put("postal_code", postalCode)
+                .put("country", country)
+                .put("phone", phone)
+
+            is VaultItem.BankAccount -> json
+                .put("item_type", "bankAccount")
+                .put("bank_name", bankName)
+                .put("account_kind", accountKind)
+                .put("holder", holder)
+                .put("account_number", accountNumber)
+                .put("routing_number", routingNumber)
+                .put("iban", iban)
+                .put("swift", swift)
+
+            is VaultItem.ApiKey -> json
+                .put("item_type", "apiKey")
+                .put("url", url)
+                .put("username", username)
+                .put("api_key", apiKey)
+                .put("expires", expires)
+
+            is VaultItem.SshKey -> json
+                .put("item_type", "sshKey")
+                .put("kind", kind)
+                .put("public_key", publicKey)
+                .put("private_key", privateKey)
+                .put("passphrase", passphrase)
+                .put("comment", comment)
         }
 
         return json
     }
 
-    private fun metaToJson(meta: VaultMeta, json: JSONObject): JSONObject = json
-        .put("id", meta.id)
-        .put("name", meta.name)
-        .put("notes", meta.notes)
-        .put("createdAt", meta.createdAt.toString())
-        .put("updatedAt", meta.updatedAt.toString())
-        .put("lastModifiedDevice", meta.lastModifiedDevice)
-        .put("favorite", meta.favorite)
-        .put("shared", meta.shared)
-        .put("shareRecipient", meta.shareRecipient)
+    private fun metaToJson(meta: VaultMeta, json: JSONObject): JSONObject {
+        json
+            .put("id", meta.id)
+            .put("name", meta.name)
+            .put("notes", meta.notes)
+            .put("createdAt", meta.createdAt.toString())
+            .put("updatedAt", meta.updatedAt.toString())
+            .put("lastModifiedDevice", meta.lastModifiedDevice)
+            .put("favorite", meta.favorite)
+            // §1.1: written unconditionally (an empty list is meaningful), the
+            // folder only when set — matching the desktop serde shape.
+            .put("tags", org.json.JSONArray(meta.tags))
+        if (meta.tagTombstones.isNotEmpty()) {
+            json.put(
+                "tagTombstones",
+                org.json.JSONArray().apply {
+                    meta.tagTombstones.forEach { removal ->
+                        put(
+                            org.json.JSONObject()
+                                .put("tag", removal.tag)
+                                .put("deleted_at", removal.deletedAt.toString())
+                        )
+                    }
+                }
+            )
+        }
+        // §1.3: user-defined extra fields (the desktop calls them
+        // `customFields`; the inner `field_type` is snake_case there).
+        if (meta.customFields.isNotEmpty()) {
+            json.put(
+                "customFields",
+                org.json.JSONArray().apply {
+                    meta.customFields.forEach { field ->
+                        put(
+                            org.json.JSONObject()
+                                .put("label", field.label)
+                                .put("value", field.value)
+                                .put("field_type", if (field.fieldType == CustomFieldType.Hidden) "hidden" else "text")
+                        )
+                    }
+                }
+            )
+        }
+        if (meta.folder != null) {
+            json.put("folder", meta.folder)
+        }
+        return json
+            .put("shared", meta.shared)
+            .put("shareRecipient", meta.shareRecipient)
+    }
 
     private fun itemFromJson(json: JSONObject): VaultItem? {
         val meta = metaFromJson(json)
@@ -121,6 +247,7 @@ object VaultJson {
                 password = json.optString("password"),
                 totp = json.optNullableString("totp"),
                 appIds = json.stringList("app_ids", "appIds"),
+                passwordHistory = passwordHistoryFromJson(json),
             )
 
             "creditCard", "creditcard", "card" -> VaultItem.CreditCard(
@@ -210,6 +337,49 @@ object VaultJson {
                 signCount = json.optLong("sign_count", json.optLong("signCount", 0)),
             )
 
+            // §1.3 new item types: snake_case keys to match the desktop's
+            // variant fields, with camelCase tolerated on read.
+            "address" -> VaultItem.Address(
+                meta = meta,
+                fullName = json.optString("full_name", json.optString("fullName")),
+                street = json.optString("street", json.optString("street_address")),
+                streetLine2 = json.optString("street_line2", json.optString("streetLine2")),
+                city = json.optString("city"),
+                state = json.optString("state"),
+                postalCode = json.optString("postal_code", json.optString("postalCode", json.optString("zip"))),
+                country = json.optString("country"),
+                phone = json.optString("phone"),
+            )
+
+            "bankAccount", "bankaccount" -> VaultItem.BankAccount(
+                meta = meta,
+                bankName = json.optString("bank_name", json.optString("bankName")),
+                accountKind = json.optString("account_kind", json.optString("account_type", json.optString("accountKind"))),
+                holder = json.optString("holder"),
+                accountNumber = json.optString("account_number", json.optString("accountNumber")),
+                routingNumber = json.optString("routing_number", json.optString("routingNumber")),
+                iban = json.optString("iban"),
+                swift = json.optString("swift"),
+            )
+
+            "apiKey", "apikey" -> VaultItem.ApiKey(
+                meta = meta,
+                url = json.optString("url", json.optString("base_url")),
+                username = json.optString("username"),
+                apiKey = json.optString("api_key", json.optString("apiKey")),
+                expires = json.optNullableString("expires")
+                    ?: json.optNullableString("expires_at"),
+            )
+
+            "sshKey", "sshkey", "ssh_key" -> VaultItem.SshKey(
+                meta = meta,
+                kind = json.optString("kind", json.optString("keyType", json.optString("key_type"))),
+                publicKey = json.optString("public_key", json.optString("publicKey")),
+                privateKey = json.optString("private_key", json.optString("privateKey")),
+                passphrase = json.optString("passphrase"),
+                comment = json.optString("comment"),
+            )
+
             else -> null
         }
     }
@@ -226,10 +396,74 @@ object VaultJson {
             lastModifiedDevice = json.optNullableString("last_modified_device")
                 ?: json.optNullableString("lastModifiedDevice"),
             favorite = json.optBoolean("favorite", false),
+            tags = json.stringList("tags"),
+            tagTombstones = tagTombstonesFromJson(json),
+            customFields = customFieldsFromJson(json),
+            folder = json.optNullableString("folder")?.takeIf { it.isNotBlank() },
             shared = json.optBoolean("shared", false),
             shareRecipient = json.optNullableString("share_recipient")
                 ?: json.optNullableString("shareRecipient"),
         )
+    }
+
+    /** Tag removal records, tolerant of both key spellings and of the
+     *  desktop's inner `deleted_at` (this app's own `deletedAt` too). */
+    private fun tagTombstonesFromJson(json: JSONObject): List<TagTombstone> {
+        val array = json.optJSONArray("tagTombstones")
+            ?: json.optJSONArray("tag_tombstones")
+            ?: return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val entry = array.getJSONObject(index)
+                val deletedAt = entry.optNullableString("deleted_at")
+                    ?: entry.optNullableString("deletedAt")
+                    ?: continue
+                val parsed = runCatching { Instant.parse(deletedAt) }.getOrNull() ?: continue
+                add(TagTombstone(tag = entry.optString("tag"), deletedAt = parsed))
+            }
+        }
+    }
+
+    /** §1.3: previous password values, tolerant of the desktop's inner
+     *  `password`/`changed_at` spellings. */
+    private fun passwordHistoryFromJson(json: JSONObject): List<PasswordHistoryEntry> {
+        val array = json.optJSONArray("password_history")
+            ?: json.optJSONArray("passwordHistory")
+            ?: return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val entry = array.getJSONObject(index)
+                val changedAt = entry.optNullableString("changed_at")
+                    ?: entry.optNullableString("changedAt")
+                    ?: continue
+                val parsed = runCatching { Instant.parse(changedAt) }.getOrNull() ?: continue
+                add(PasswordHistoryEntry(password = entry.optString("password"), changedAt = parsed))
+            }
+        }
+    }
+
+    /** §1.3: user-defined extra fields, tolerant of the desktop's
+     *  `customFields`/`custom_fields` spellings. */
+    private fun customFieldsFromJson(json: JSONObject): List<CustomField> {
+        val array = json.optJSONArray("customFields")
+            ?: json.optJSONArray("custom_fields")
+            ?: return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val entry = array.getJSONObject(index)
+                val type = when (entry.optString("field_type", entry.optString("fieldType", "text"))) {
+                    "hidden" -> CustomFieldType.Hidden
+                    else -> CustomFieldType.Text
+                }
+                add(
+                    CustomField(
+                        label = entry.optString("label"),
+                        value = entry.optString("value"),
+                        fieldType = type,
+                    )
+                )
+            }
+        }
     }
 
     private fun BreachEntry.toJson(): JSONObject = JSONObject()

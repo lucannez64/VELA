@@ -7,9 +7,18 @@ struct VaultListView: View {
     @State private var showingSettings = false
     @State private var query = ""
     @State private var filterKind: ItemKind?
+    // §1.1 organization drill-down: the active folder/tag chip, keyed
+    // case-insensitively; nil shows everything.
+    @State private var orgFilter: OrgChip?
 
     private var filtered: [VaultItem] {
-        ItemFilter.apply(vm.items, query: query, kind: filterKind)
+        ItemFilter.apply(vm.items, query: query, kind: filterKind).filter { item in
+            guard let chip = orgFilter else { return true }
+            switch chip.kind {
+            case "folder": return item.folder?.lowercased() == chip.key
+            default: return item.tagList.contains { $0.lowercased() == chip.key }
+            }
+        }
     }
 
     var body: some View {
@@ -21,6 +30,35 @@ struct VaultListView: View {
                     noMatches
                 } else {
                     List {
+                        // §1.1: folder/tag drill-downs, folders first. Shown
+                        // only when there is something to organize by.
+                        let chips = ItemFilter.organizationChips(vm.items)
+                        if !chips.isEmpty {
+                            Section {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        ForEach(chips) { chip in
+                                            Button {
+                                                orgFilter = (orgFilter == chip) ? nil : chip
+                                            } label: {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: chip.kind == "folder" ? "folder" : "tag")
+                                                    Text("\(chip.label) · \(chip.count)")
+                                                }
+                                                .font(.caption)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 5)
+                                                .background(
+                                                    Capsule().fill(orgFilter == chip ? Color.green.opacity(0.25) : Color.secondary.opacity(0.12))
+                                                )
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                            }
+                            .listRowInsets(EdgeInsets())
+                        }
                         ForEach(filtered) { item in
                             NavigationLink(value: item.id) {
                                 row(item)

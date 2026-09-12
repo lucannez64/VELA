@@ -10,5 +10,6 @@ pub mod password_generator;
 pub mod settings_screen;
 pub mod setup_screen;
 pub mod sharing_screen;
+pub mod trash_screen;
 pub mod vault_browser;
 pub mod welcome;

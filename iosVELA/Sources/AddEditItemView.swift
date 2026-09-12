@@ -31,6 +31,10 @@ struct AddEditItemView: View {
     // note
     @State private var content: String
 
+    // §1.1 organization: one optional folder, tags as a comma-separated list.
+    @State private var folder: String
+    @State private var tagsInput: String
+
     init(vm: VaultViewModel, editing: VaultItem? = nil) {
         self.vm = vm
         self.editing = editing
@@ -47,6 +51,8 @@ struct AddEditItemView: View {
         _cvv = State(initialValue: editing?.cvv ?? "")
         _pin = State(initialValue: editing?.pin ?? "")
         _content = State(initialValue: editing?.content ?? "")
+        _folder = State(initialValue: editing?.folder ?? "")
+        _tagsInput = State(initialValue: editing?.tagList.joined(separator: ", ") ?? "")
     }
 
     private var isEditing: Bool { editing != nil }
@@ -86,6 +92,13 @@ struct AddEditItemView: View {
                 }
 
                 if kind == .login { generatorSection }
+
+                Section("Organization") {
+                    TextField("Folder (optional)", text: $folder)
+                        .accessibilityIdentifier("folderField")
+                    TextField("Tags (comma-separated)", text: $tagsInput)
+                        .accessibilityIdentifier("tagsField")
+                }
 
                 if kind != .secureNote {
                     Section("Notes") {
@@ -186,14 +199,22 @@ struct AddEditItemView: View {
         }
 
         if let editing = editing {
-            // Preserve identity/meta of the edited item.
+            // Preserve identity/meta of the edited item. Tag removals are
+            // recorded by `vm.update` against the stored copy.
             item.id = editing.id
             item.createdAt = editing.createdAt
             item.favorite = editing.favorite
+            // §1.1: the form owns these, canonicalized on save.
+            item.tags = VaultMerge.normalizedTags(tagsInput.split(separator: ",").map(String.init))
+            let trimmedFolder = folder.trimmingCharacters(in: .whitespaces)
+            item.folder = trimmedFolder.isEmpty ? nil : trimmedFolder
             item.shared = editing.shared
             item.shareRecipient = editing.shareRecipient
             vm.update(item)
         } else {
+            item.tags = VaultMerge.normalizedTags(tagsInput.split(separator: ",").map(String.init))
+            let trimmedFolder = folder.trimmingCharacters(in: .whitespaces)
+            item.folder = trimmedFolder.isEmpty ? nil : trimmedFolder
             vm.add(item)
         }
         dismiss()

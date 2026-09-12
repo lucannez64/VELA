@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
@@ -64,6 +67,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.pow
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ItemDetailScreen(
     item: VaultItem?,
@@ -164,6 +168,49 @@ fun ItemDetailScreen(
                 is VaultItem.SecureNote -> NoteFields(item)
                 is VaultItem.Passkey -> PasskeyFields(item, context, scope)
                 else -> {}
+            }
+
+            // §1.1: where this item lives. Read-only; the edit screen owns
+            // changing it.
+            if (item.folder != null || item.tags.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                VelaCard {
+                    Text(
+                        "ORGANIZATION",
+                        color = VelaColors.TextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.5.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    item.folder?.let { folder ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Folder,
+                                "Folder",
+                                modifier = Modifier.size(16.dp),
+                                tint = VelaColors.TextSecondary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(folder, color = VelaColors.TextPrimary, fontSize = 14.sp)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if (item.tags.isNotEmpty()) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item.tags.forEach { tag ->
+                                Text(
+                                    tag,
+                                    color = VelaColors.TextSecondary,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier
+                                        .background(VelaColors.SurfaceLow, shape = RoundedCornerShape(999.dp))
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             if (item is VaultItem.Login) {

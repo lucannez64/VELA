@@ -15,6 +15,7 @@ import DevicesScreen from './views/DevicesScreen';
 import SharingScreen from './views/SharingScreen';
 import AuditLogScreen from './views/AuditLogScreen';
 import BreachMonitorScreen from './views/BreachMonitorScreen';
+import TrashView from './views/TrashView';
 import SettingsScreen from './views/SettingsScreen';
 import SessionExpiredOverlay from './components/SessionExpiredOverlay';
 import Toast from './components/Toast';
@@ -395,6 +396,7 @@ function AppContent() {
           {currentView === 'sharing' && <SharingScreen />}
           {currentView === 'audit' && <AuditLogScreen />}
           {currentView === 'breachMonitor' && <BreachMonitorScreen />}
+          {currentView === 'trash' && <TrashView />}
           {currentView === 'settings' && <SettingsScreen />}
         </main>
       </div>

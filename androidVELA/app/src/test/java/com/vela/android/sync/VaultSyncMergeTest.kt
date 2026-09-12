@@ -3,6 +3,8 @@ package com.vela.android.sync
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultMeta
 import com.vela.android.core.VaultStore
+import com.vela.android.core.normalizeTags
+import com.vela.android.core.withTagRemovalsRecorded
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -106,5 +108,77 @@ class VaultSyncMergeTest {
         // Same timestamps, remote applied last wins the tie.
         assertEquals("Server edit", byId.getValue("a").name)
         assertEquals("Local edit", byId.getValue("b").name)
+    }
+
+    private fun tagged(
+        id: String,
+        updatedAt: Instant,
+        tags: List<String>,
+        folder: String? = null,
+        name: String = "Site",
+    ) = VaultItem.Login(
+        meta = VaultMeta(
+            id = id, name = name, createdAt = earlier, updatedAt = updatedAt,
+            tags = tags, folder = folder,
+        ),
+        url = "https://$id.example", username = "ada", password = "hunter2",
+    )
+
+    /** The §1.1 done-when, on Android: a tag added on the phone and a newer
+     *  edit of another field from another device merge without losing the tag
+     *  and without a fight; tags from BOTH sides survive, canonically ordered,
+     *  and the folder follows the newer copy. */
+    @Test
+    fun `a tag added offline survives a concurrent edit`() {
+        val local = tagged("a", earlier, tags = listOf("banking"))
+        val remote = tagged(
+            "a", now, tags = listOf("shared"), folder = "Finance", name = "Renamed",
+        )
+
+        val merged = mergeVaultStores(VaultStore(listOf(local)), VaultStore(listOf(remote)))
+        val item = merged.items.single()
+
+        assertEquals("Renamed", item.name)
+        assertEquals("Finance", item.folder)
+        assertEquals(listOf("banking", "shared"), item.tags)
+    }
+
+    @Test
+    fun `tag canonicalization trims deduplicates and sorts`() {
+        val tags = normalizeTags(listOf("  Work ", "work", "VPN", "", "  "))
+        assertEquals(listOf("VPN", "Work"), tags)
+    }
+
+    /** The removal record is written against the STORED item's tags and the
+     *  merged result honors it — the Android twin of the desktop test. */
+    @Test
+    fun `a tag removal beats a stale copy in the merge`() {
+        val removalTime = now
+        val staleCarrier = tagged("a", earlier, tags = listOf("work"))
+        // The remover's copy: no tags, but the removal recorded at `now`.
+        val remover = tagged("a", now, tags = emptyList())
+            .withTagRemovalsRecorded(staleCarrier, removalTime)
+
+        assertTrue(remover.tagTombstones.any { it.tag == "work" })
+
+        val merged = mergeVaultStores(
+            VaultStore(listOf(staleCarrier)),
+            VaultStore(listOf(remover)),
+        )
+        val item = merged.items.single()
+        assertTrue(
+            "the removal must beat the stale copy, got ${item.tags}",
+            item.tags.isEmpty(),
+        )
+        assertTrue(item.tagTombstones.any { it.tag == "work" })
+
+        // A copy edited AFTER the removal that still carries the tag has
+        // re-affirmed it — the tag survives.
+        val reaffirmed = tagged("a", now.plusSeconds(60), tags = listOf("work"))
+        val mergerWithRemoval = mergeVaultStores(
+            VaultStore(listOf(remover)),
+            VaultStore(listOf(reaffirmed)),
+        )
+        assertEquals(listOf("work"), mergerWithRemoval.items.single().tags)
     }
 }

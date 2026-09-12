@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use tauri::{command, AppHandle, Emitter, State};
 
-use crate::vault::{BreachEntry, PasswordGeneratorOptions, VaultItem};
+use crate::vault::{BreachEntry, DeletedItem, PasswordGeneratorOptions, VaultItem};
 use crate::AppState;
 
 pub use vela_desktop_core::breach::PasswordBreachResult;
@@ -88,6 +88,33 @@ pub async fn delete_item(
     id: String,
 ) -> Result<(), String> {
     vela_desktop_core::commands::vault::delete_item(&state, &id).await?;
+    emit_vault_items_changed(&app);
+    Ok(())
+}
+
+#[command]
+pub fn get_deleted_items(state: State<'_, Arc<AppState>>) -> Result<Vec<DeletedItem>, String> {
+    vela_desktop_core::commands::vault::get_deleted_items(&state)
+}
+
+#[command]
+pub async fn restore_item(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<VaultItem, String> {
+    let restored = vela_desktop_core::commands::vault::restore_item(&state, &id).await?;
+    emit_vault_items_changed(&app);
+    Ok(restored)
+}
+
+#[command]
+pub async fn purge_deleted_item(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    vela_desktop_core::commands::vault::purge_deleted_item(&state, &id).await?;
     emit_vault_items_changed(&app);
     Ok(())
 }

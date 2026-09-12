@@ -11,6 +11,7 @@ const navItems: { id: View; label: string; icon: string }[] = [
   { id: 'sharing', label: 'Sharing', icon: 'share_reviews' },
   { id: 'audit', label: 'Audit Log', icon: 'history' },
   { id: 'breachMonitor', label: 'Breach Monitor', icon: 'security' },
+  { id: 'trash', label: 'Trash', icon: 'delete' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 

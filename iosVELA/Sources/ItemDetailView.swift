@@ -48,6 +48,55 @@ struct ItemDetailView: View {
                 Section("Notes") { Text(notes) }
             }
 
+            // §1.1: where this item lives. Read-only; the Edit sheet owns
+            // changing it.
+            if current.folder != nil || !current.tagList.isEmpty {
+                Section("Organization") {
+                    if let folder = current.folder, !folder.isEmpty {
+                        HStack {
+                            Image(systemName: "folder").foregroundStyle(.secondary)
+                            Text(folder)
+                        }
+                    }
+                    if !current.tagList.isEmpty {
+                        HStack {
+                            ForEach(current.tagList, id: \.self) { tag in
+                                Text(tag)
+                                    .font(.caption)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // §1.3: user-defined extra fields. Hidden values mask like a
+            // password (revealed by tapping the row's copy — CopyButton is
+            // deliberate: a hidden field is meant to be pasted, not read).
+            if !current.customFieldList.isEmpty {
+                Section("Custom Fields") {
+                    ForEach(current.customFieldList, id: \.label) { field in
+                        if field.isHidden {
+                            secretRow(field.label, field.value)
+                        } else {
+                            copyRow(field.label, field.value)
+                        }
+                    }
+                }
+            }
+
+            // §1.3: previous password values, masked; copying one is a
+            // deliberate act (CopyButton per row).
+            if !current.passwordHistoryList.isEmpty {
+                Section("Password History (\(current.passwordHistoryList.count))") {
+                    ForEach(Array(current.passwordHistoryList.enumerated()), id: \.offset) { _, entry in
+                        secretRow("Replaced \(entry.changedAt.prefix(10))", entry.password)
+                    }
+                }
+            }
+
             Section {
                 Button(role: .destructive) {
                     vm.delete(current)
@@ -126,6 +175,36 @@ struct ItemDetailView: View {
         Section(current.kind.displayName) {
             if let email = current.email { field("Email", email) }
             if let filename = current.filename { field("File", filename) }
+            // §1.3: the new item types, rendered from their wire fields.
+            switch current.kind {
+            case .address:
+                if let name = current.full_name, !name.isEmpty { field("Name", name) }
+                if let street = current.street, !street.isEmpty { field("Street", street) }
+                if let city = current.city, !city.isEmpty { field("City", city) }
+                if let state = current.state, !state.isEmpty { field("State", state) }
+                if let zip = current.postal_code, !zip.isEmpty { field("Postal code", zip) }
+                if let country = current.country, !country.isEmpty { field("Country", country) }
+                if let phone = current.phone, !phone.isEmpty { copyRow("Phone", phone) }
+            case .bankAccount:
+                if let bank = current.bank_name, !bank.isEmpty { field("Bank", bank) }
+                if let holder = current.holder, !holder.isEmpty { field("Holder", holder) }
+                if let routing = current.routing_number, !routing.isEmpty { field("Routing", routing) }
+                if let iban = current.iban, !iban.isEmpty { copyRow("IBAN", iban) }
+                if let swift = current.swift, !swift.isEmpty { field("SWIFT", swift) }
+            case .apiKey:
+                if let url = current.url, !url.isEmpty { field("Service", url) }
+                if let username = current.username, !username.isEmpty { field("Username", username) }
+                if let key = current.api_key, !key.isEmpty { secretRow("API key", key) }
+                if let expires = current.expires, !expires.isEmpty { field("Expires", expires) }
+            case .sshKey:
+                if let kind = current.kind, !kind.isEmpty { field("Key type", kind) }
+                if let comment = current.comment, !comment.isEmpty { field("Comment", comment) }
+                if let publicKey = current.public_key, !publicKey.isEmpty { copyRow("Public key", publicKey) }
+                if let secretKey = current.private_key, !secretKey.isEmpty { secretRow("Private key", secretKey) }
+                if let passphrase = current.passphrase, !passphrase.isEmpty { secretRow("Passphrase", passphrase) }
+            default:
+                EmptyView()
+            }
         }
     }
 

@@ -16,6 +16,8 @@ final class VaultViewModel: ObservableObject {
     /// `items` so a local delete survives sync instead of being resurrected by
     /// another device's copy on the next pull.
     @Published var tombstones: [Tombstone] = []
+    /// The trash (§1.2): deleted items, restorable until purged.
+    @Published var deletedItems: [DeletedItem] = []
     @Published var lockState: LockState = .noVault
     @Published var unlockMode: UnlockMode = .biometric
     @Published var errorMessage: String?
@@ -162,7 +164,14 @@ final class VaultViewModel: ObservableObject {
     /// Replace an existing item by id, stamping `updatedAt`.
     func update(_ item: VaultItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        let updated = item.touched()
+        // Tag removals are recorded against the STORED item (the merge
+        // suppresses union'd tags whose removal record is newer than the
+        // carrier's last edit); (re-)added tags clear their records. A
+        // changed login password pushes the old value into the history (§1.3).
+        let updated = item
+            .withTagRemovalsRecorded(items[index])
+            .withPasswordHistoryRecorded(items[index])
+            .touched()
         items[index] = updated
         persist()
         AuditLog.shared.record("item_updated", item.name)
@@ -173,12 +182,39 @@ final class VaultViewModel: ObservableObject {
 
     func delete(_ item: VaultItem) {
         items.removeAll { $0.id == item.id }
+        // The content moves to the trash (§1.2) before it leaves `items`: the
+        // tombstone is what sync propagates, the copy is what makes an undo
+        // possible.
+        deletedItems.removeAll { $0.item.id == item.id }
+        deletedItems.append(DeletedItem(item: item, deletedAt: VaultClock.nowISO8601()))
         // Record the deletion so sync propagates it instead of resurrecting
         // the item from another device's (or the server's) copy.
         tombstones.removeAll { $0.id == item.id }
         tombstones.append(Tombstone(id: item.id, deletedAt: VaultClock.nowISO8601()))
         persist()
         AuditLog.shared.record("item_deleted")
+    }
+
+    /// Puts a trashed item back into the live vault (§1.2). The restored copy
+    /// is newer than every tombstone, so the restore propagates on sync.
+    func restore(id: String) {
+        guard let entry = deletedItems.first(where: { $0.item.id == id }) else { return }
+        deletedItems.removeAll { $0.item.id == id }
+        tombstones.removeAll { $0.id == id }
+        var restored = entry.item
+        restored.updatedAt = VaultClock.nowISO8601()
+        restored.lastModifiedDevice = nil
+        items.append(restored)
+        persist()
+        AuditLog.shared.record("item_restored")
+    }
+
+    /// Erases a trash entry for good; the tombstone stays so sync cannot
+    /// resurrect the item from another device's copy.
+    func purge(id: String) {
+        deletedItems.removeAll { $0.item.id == id }
+        persist()
+        AuditLog.shared.record("item_purged")
     }
 
     /// Lock the vault: drop the in-memory RMS and items, return to the unlock screen.
@@ -205,6 +241,7 @@ final class VaultViewModel: ObservableObject {
         rms = newRMS
         items = []
         tombstones = []
+        deletedItems = []
         backgroundedAt = nil
         try repo.save(VaultStore(items: items), rms: newRMS)
         try repo.saveKeyEpoch(keyEpoch, rms: newRMS)
@@ -261,19 +298,22 @@ final class VaultViewModel: ObservableObject {
     var currentRMS: Data? { rms }
 
     /// The full local store, available while unlocked (needed for sync).
-    var currentStore: VaultStore { VaultStore(items: items, tombstones: tombstones) }
+    var currentStore: VaultStore {
+        VaultStore(items: items, tombstones: tombstones, deletedItems: deletedItems)
+    }
 
     /// Replace the vault contents after a sync merge and persist locally.
     func applyMergedStore(_ merged: VaultStore) {
         items = merged.items
         tombstones = merged.tombstones
+        deletedItems = merged.deletedItems
         persist(notifyLocalChange: false)
     }
 
     private func persist(notifyLocalChange: Bool = true) {
         guard let r = rms else { return }
         do {
-            try repo.save(VaultStore(items: items, tombstones: tombstones), rms: r)
+            try repo.save(VaultStore(items: items, tombstones: tombstones, deletedItems: deletedItems), rms: r)
             if notifyLocalChange { onLocalChange?() }
         } catch {
             errorMessage = "Couldn't save the vault."
