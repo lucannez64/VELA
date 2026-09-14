@@ -38,7 +38,7 @@ struct AddEditItemView: View {
     init(vm: VaultViewModel, editing: VaultItem? = nil) {
         self.vm = vm
         self.editing = editing
-        _kind = State(initialValue: editing?.kind ?? .login)
+        _kind = State(initialValue: editing?.itemKind ?? .login)
         _name = State(initialValue: editing?.name ?? "")
         _notes = State(initialValue: editing?.notes ?? "")
         _url = State(initialValue: editing?.url ?? "")

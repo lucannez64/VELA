@@ -145,14 +145,14 @@ struct VaultListView: View {
 
     private func row(_ item: VaultItem) -> some View {
         HStack(spacing: 12) {
-            if item.kind == .login, let url = item.url, !url.isEmpty {
-                FaviconImage(url: url, fallback: item.kind.systemImage, size: 36, cornerRadius: 8)
+            if item.itemKind == .login, let url = item.url, !url.isEmpty {
+                FaviconImage(url: url, fallback: item.itemKind.systemImage, size: 36, cornerRadius: 8)
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(.green.opacity(0.2))
                         .frame(width: 36, height: 36)
-                    Image(systemName: item.kind.systemImage)
+                    Image(systemName: item.itemKind.systemImage)
                         .font(.headline)
                         .foregroundStyle(.green)
                 }

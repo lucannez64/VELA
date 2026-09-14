@@ -158,7 +158,7 @@ final class VaultViewModel: ObservableObject {
     func add(_ item: VaultItem) {
         items.append(item)
         persist()
-        AuditLog.shared.record("item_added", item.kind.displayName)
+        AuditLog.shared.record("item_added", item.itemKind.displayName)
     }
 
     /// Replace an existing item by id, stamping `updatedAt`.

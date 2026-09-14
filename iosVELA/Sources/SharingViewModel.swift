@@ -46,7 +46,7 @@ final class SharingViewModel: ObservableObject {
                 let decoded = openCapsule(item.capsule, identityHandle: identityHandle)
                 return ReceivedShare(id: item.id, from: item.sender_user_id,
                                      itemName: decoded?.name ?? "Shared item",
-                                     itemType: decoded?.kind.displayName ?? "Item", item: decoded)
+                                     itemType: decoded?.itemKind.displayName ?? "Item", item: decoded)
             }
             let myUserID = account.account?.userID ?? ""
             sent = linked

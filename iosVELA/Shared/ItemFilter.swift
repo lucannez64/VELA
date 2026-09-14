@@ -5,7 +5,7 @@ enum ItemFilter {
     static func apply(_ items: [VaultItem], query: String, kind: ItemKind?) -> [VaultItem] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         return items.filter { item in
-            (kind == nil || item.kind == kind)
+            (kind == nil || item.itemKind == kind)
                 && (trimmed.isEmpty
                     || item.name.localizedCaseInsensitiveContains(trimmed)
                     || item.subtitle.localizedCaseInsensitiveContains(trimmed)

@@ -239,14 +239,16 @@ struct VaultItem: Codable, Identifiable, Equatable {
     var passphrase: String?
     var comment: String?
 
-    var kind: ItemKind { ItemKind(rawValue: item_type) ?? .login }
+    /// The item's kind. Named `itemKind` because the SSH-key wire field
+    /// `kind` occupies the plain name on this flat struct.
+    var itemKind: ItemKind { ItemKind(rawValue: item_type) ?? .login }
 
     /// The item's tags (never nil for UI use).
     var tagList: [String] { tags ?? [] }
 
     /// Secondary text for list rows / autofill, by type.
     var subtitle: String {
-        switch kind {
+        switch itemKind {
         case .login: return username ?? url ?? ""
         case .creditCard: return cardholderName ?? maskedCardNumber
         case .secureNote: return "Secure note"
@@ -318,7 +320,7 @@ struct VaultItem: Codable, Identifiable, Equatable {
     /// and the record is capped, newest first — the iOS twin of the desktop's
     /// `with_password_history_recorded`.
     func withPasswordHistoryRecorded(_ existing: VaultItem, now: Date = Date()) -> VaultItem {
-        guard kind == .login, existing.kind == .login,
+        guard itemKind == .login, existing.itemKind == .login,
               let previous = existing.password, !previous.isEmpty,
               password != previous
         else { return self }

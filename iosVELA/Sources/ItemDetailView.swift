@@ -18,15 +18,15 @@ struct ItemDetailView: View {
             Section {
                 HStack(spacing: 16) {
                     FaviconImage(
-                        url: current.kind == .login ? current.url : nil,
-                        fallback: current.kind.systemImage,
+                        url: current.itemKind == .login ? current.url : nil,
+                        fallback: current.itemKind.systemImage,
                         size: 64,
                         cornerRadius: 14
                     )
                     VStack(alignment: .leading, spacing: 4) {
                         Text(current.name)
                             .font(.title2.bold())
-                        Text(current.kind.displayName)
+                        Text(current.itemKind.displayName)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
@@ -37,7 +37,7 @@ struct ItemDetailView: View {
             }
             .listRowBackground(Color.clear)
 
-            switch current.kind {
+            switch current.itemKind {
             case .login: loginSection
             case .creditCard: cardSection
             case .secureNote: noteSection
@@ -172,11 +172,11 @@ struct ItemDetailView: View {
     }
 
     @ViewBuilder private var genericSection: some View {
-        Section(current.kind.displayName) {
+        Section(current.itemKind.displayName) {
             if let email = current.email { field("Email", email) }
             if let filename = current.filename { field("File", filename) }
             // §1.3: the new item types, rendered from their wire fields.
-            switch current.kind {
+            switch current.itemKind {
             case .address:
                 if let name = current.full_name, !name.isEmpty { field("Name", name) }
                 if let street = current.street, !street.isEmpty { field("Street", street) }
@@ -197,7 +197,7 @@ struct ItemDetailView: View {
                 if let key = current.api_key, !key.isEmpty { secretRow("API key", key) }
                 if let expires = current.expires, !expires.isEmpty { field("Expires", expires) }
             case .sshKey:
-                if let kind = current.kind, !kind.isEmpty { field("Key type", kind) }
+                if let kind = current.itemKind, !kind.isEmpty { field("Key type", kind) }
                 if let comment = current.comment, !comment.isEmpty { field("Comment", comment) }
                 if let publicKey = current.public_key, !publicKey.isEmpty { copyRow("Public key", publicKey) }
                 if let secretKey = current.private_key, !secretKey.isEmpty { secretRow("Private key", secretKey) }
