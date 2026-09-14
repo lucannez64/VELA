@@ -148,8 +148,8 @@ enum VaultMerge {
         let now = Date()
         let removals = normalizedRemovals(
             (winner.tagTombstones ?? []) + (loser.tagTombstones ?? []), now: now)
-        let winnerKeys = Set(normalizedTags(winner.tagList).map(\.lowercased()))
-        let loserKeys = Set(normalizedTags(loser.tagList).map(\.lowercased()))
+        let winnerKeys = Set(normalizedTags(winner.tagList).map { $0.lowercased() })
+        let loserKeys = Set(normalizedTags(loser.tagList).map { $0.lowercased() })
         let winnerMs = unixMillis(winner.updatedAt)
         let loserMs = unixMillis(loser.updatedAt)
 
@@ -171,8 +171,8 @@ enum VaultMerge {
     static func recordedRemovals(
         old: [String], new: [String], previous: [TagTombstone], now: Date
     ) -> [TagTombstone] {
-        let newKeys = Set(normalizedTags(new).map(\.lowercased()))
-        let oldKeys = Set(normalizedTags(old).map(\.lowercased()))
+        let newKeys = Set(normalizedTags(new).map { $0.lowercased() })
+        let oldKeys = Set(normalizedTags(old).map { $0.lowercased() })
         var kept = previous.filter { !newKeys.contains($0.tag.lowercased()) }
         for key in oldKeys.subtracting(newKeys) {
             kept.append(TagTombstone(tag: key, deletedAt: VaultClock.iso8601(from: now)))
