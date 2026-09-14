@@ -150,13 +150,15 @@ class VaultSyncMergeTest {
     }
 
     /** The removal record is written against the STORED item's tags and the
-     *  merged result honors it — the Android twin of the desktop test. */
+     *  merged result honors it — the Android twin of the desktop test.
+     *  Timestamps are relative to *now* so the 30-day retention window
+     *  cannot rot them. */
     @Test
     fun `a tag removal beats a stale copy in the merge`() {
-        val removalTime = now
-        val staleCarrier = tagged("a", earlier, tags = listOf("work"))
+        val removalTime = Instant.now()
+        val staleCarrier = tagged("a", removalTime.minusSeconds(86_400 * 5), tags = listOf("work"))
         // The remover's copy: no tags, but the removal recorded at `now`.
-        val remover = tagged("a", now, tags = emptyList())
+        val remover = tagged("a", removalTime, tags = emptyList())
             .withTagRemovalsRecorded(staleCarrier, removalTime)
 
         assertTrue(remover.tagTombstones.any { it.tag == "work" })
@@ -174,7 +176,7 @@ class VaultSyncMergeTest {
 
         // A copy edited AFTER the removal that still carries the tag has
         // re-affirmed it — the tag survives.
-        val reaffirmed = tagged("a", now.plusSeconds(60), tags = listOf("work"))
+        val reaffirmed = tagged("a", removalTime.plusSeconds(60), tags = listOf("work"))
         val mergerWithRemoval = mergeVaultStores(
             VaultStore(listOf(remover)),
             VaultStore(listOf(reaffirmed)),

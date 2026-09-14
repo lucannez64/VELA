@@ -196,26 +196,29 @@ final class Phase4Tests: XCTestCase {
 
     /// A removal record beats a stale copy that still carries the tag; an
     /// edit made after the removal that still carries it re-affirms it.
+    /// Timestamps are relative to *now* (the house `stamp` helper) so the
+    /// 30-day retention window cannot rot these dates.
     func testTagRemovalBeatsStaleCopyButNotLaterEdit() throws {
         var stale = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "p", totp: nil)
-        stale.updatedAt = "2026-01-01T00:00:00Z"
+        stale.updatedAt = Self.stamp(daysAgo: 10)
         stale.tags = ["work"]
 
         var remover = stale
         remover.tags = []
-        remover.tagTombstones = [TagTombstone(tag: "work", deletedAt: "2026-06-01T00:00:00Z")]
-        remover.updatedAt = "2026-06-01T00:00:00Z"
+        remover.tagTombstones = [TagTombstone(tag: "work", deletedAt: Self.stamp(daysAgo: 5))]
+        remover.updatedAt = Self.stamp(daysAgo: 5)
 
-        // Stale copy (Jan) vs the removal (Jun): the removal wins.
+        // Stale copy (10 days old) vs the removal (5 days old): the removal
+        // wins.
         let merged = VaultMerge.merge(local: [stale], remote: [remover])
         let item = try XCTUnwrap(merged.first)
         XCTAssertEqual(item.tags, [])
         XCTAssertEqual(item.tagTombstones?.count, 1, "the record rides along")
 
-        // A copy edited after the removal (Jul) that still carries the tag
-        // has re-affirmed it.
+        // A copy edited after the removal (1 day ago) that still carries the
+        // tag has re-affirmed it.
         var reaffirmed = stale
-        reaffirmed.updatedAt = "2026-07-01T00:00:00Z"
+        reaffirmed.updatedAt = Self.stamp(daysAgo: 1)
         let mergedAfter = VaultMerge.merge(local: [remover], remote: [reaffirmed])
         XCTAssertEqual(mergedAfter.first?.tags, ["work"])
     }
