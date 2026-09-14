@@ -111,8 +111,14 @@ struct ItemDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Edit") { editing = true }
-                    .accessibilityIdentifier("editButton")
+                // Only the creatable kinds have an editor here; for the §1.3
+                // types (address/bank account/API key/SSH key) an edit sheet
+                // would silently no-op on save, so the button is hidden —
+                // matching the gpui front end's gating.
+                if ItemKind.creatable.contains(current.itemKind) {
+                    Button("Edit") { editing = true }
+                        .accessibilityIdentifier("editButton")
+                }
             }
         }
         .sheet(isPresented: $editing) {
@@ -197,7 +203,7 @@ struct ItemDetailView: View {
                 if let key = current.api_key, !key.isEmpty { secretRow("API key", key) }
                 if let expires = current.expires, !expires.isEmpty { field("Expires", expires) }
             case .sshKey:
-                if let kind = current.itemKind, !kind.isEmpty { field("Key type", kind) }
+                if let kind = current.kind, !kind.isEmpty { field("Key type", kind) }
                 if let comment = current.comment, !comment.isEmpty { field("Comment", comment) }
                 if let publicKey = current.public_key, !publicKey.isEmpty { copyRow("Public key", publicKey) }
                 if let secretKey = current.private_key, !secretKey.isEmpty { secretRow("Private key", secretKey) }
