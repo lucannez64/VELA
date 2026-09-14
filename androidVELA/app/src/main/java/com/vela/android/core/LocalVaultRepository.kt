@@ -127,6 +127,17 @@ class LocalVaultRepository(
                     is VaultItem.Passkey -> item.rpId.lowercase(Locale.US).contains(normalized) ||
                         item.rpName.lowercase(Locale.US).contains(normalized) ||
                         item.userName.lowercase(Locale.US).contains(normalized)
+                    // §1.3: searchable identifier fields for the new types.
+                    is VaultItem.Address -> item.fullName.lowercase(Locale.US).contains(normalized) ||
+                        item.street.lowercase(Locale.US).contains(normalized) ||
+                        item.city.lowercase(Locale.US).contains(normalized)
+                    is VaultItem.BankAccount -> item.bankName.lowercase(Locale.US).contains(normalized) ||
+                        item.holder.lowercase(Locale.US).contains(normalized)
+                    is VaultItem.ApiKey -> item.username.lowercase(Locale.US).contains(normalized) ||
+                        item.url.lowercase(Locale.US).contains(normalized)
+                    is VaultItem.SshKey -> item.kind.lowercase(Locale.US).contains(normalized) ||
+                        item.comment.lowercase(Locale.US).contains(normalized) ||
+                        item.publicKey.lowercase(Locale.US).contains(normalized)
                 }
         }
     }

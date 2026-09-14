@@ -330,6 +330,237 @@ pub fn conflicted_local_edit_can_be_overwritten(mut facts: ItemMergeFacts) -> bo
     merge_action_matches_spec(facts, MergeAction::AcceptServer)
 }
 
+// ── Organization fields (tags / folder) ─────────────────────────────────────
+
+/// A recorded tag removal, carried inside the item so a removal survives
+/// merges with copies that still have the tag.
+///
+/// `tag` is the canonical key (the lowercased, trimmed spelling) and
+/// `deleted_at_ms` the unix-millisecond time of the removal — plain data so
+/// this crate stays dependency-free; the cores convert to/from their own
+/// timestamp types at the boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TagRemoval {
+    pub tag: String,
+    pub deleted_at_ms: i64,
+}
+
+/// Removal records older than this stop suppressing stale copies — the same
+/// retention window item tombstones get. Long enough for any realistic
+/// offline device to catch up.
+pub const TAG_REMOVAL_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
+/// Canonical tag form: trimmed, empties dropped, deduplicated
+/// case-insensitively (first spelling wins), sorted. Sorting is what makes
+/// the merged output byte-identical no matter which side was local and which
+/// was server.
+pub fn normalize_tags<I: IntoIterator<Item = String>>(tags: I) -> Vec<String> {
+    // Keyed by the lowercase spelling so "Work" and "work" cannot coexist;
+    // `BTreeMap` yields values in key order, which is the canonical order.
+    let mut by_key: std::collections::BTreeMap<String, String> = Default::default();
+    for tag in tags {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        by_key
+            .entry(trimmed.to_lowercase())
+            .or_insert_with(|| trimmed.to_string());
+    }
+    by_key.into_values().collect()
+}
+
+/// Collapses removal records: deduplicated per key keeping the *newest*
+/// removal, expired ones dropped. Order of the output is the sorted key
+/// order, so it is deterministic.
+pub fn normalize_tag_removals(
+    removals: impl IntoIterator<Item = TagRemoval>,
+    now_ms: i64,
+) -> Vec<TagRemoval> {
+    let mut by_key: std::collections::BTreeMap<String, i64> = Default::default();
+    for removal in removals {
+        if removal.deleted_at_ms > now_ms.saturating_sub(TAG_REMOVAL_RETENTION_MS) {
+            by_key
+                .entry(removal.tag)
+                .and_modify(|newest| {
+                    if removal.deleted_at_ms > *newest {
+                        *newest = removal.deleted_at_ms;
+                    }
+                })
+                .or_insert(removal.deleted_at_ms);
+        }
+    }
+    by_key
+        .into_iter()
+        .map(|(tag, deleted_at_ms)| TagRemoval { tag, deleted_at_ms })
+        .collect()
+}
+
+/// Observations when two versions of one item meet during a merge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrgMergeFacts {
+    pub local_tags: Vec<String>,
+    pub server_tags: Vec<String>,
+    pub local_folder: Option<String>,
+    pub server_folder: Option<String>,
+    /// Is the server copy at least as new as the local one (`updated_at`)?
+    /// Ties resolve to the server, like the rest of the merge.
+    pub server_updated_at_newer: bool,
+    /// Unix-millisecond `updated_at` of each copy: a removal record only
+    /// suppresses a tag on copies that have not been edited since the
+    /// removal. An edit of a copy that still carries the tag counts as
+    /// re-affirming it — the same whole-item reasoning every other field
+    /// gets.
+    pub local_updated_at_ms: i64,
+    pub server_updated_at_ms: i64,
+    /// Removal records each copy carries (see [`TagRemoval`]).
+    pub local_tag_removals: Vec<TagRemoval>,
+    pub server_tag_removals: Vec<TagRemoval>,
+    /// Now, for removal-record retention.
+    pub now_ms: i64,
+}
+
+/// The organizational metadata an item carries after a merge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrgMergeOutcome {
+    pub tags: Vec<String>,
+    pub folder: Option<String>,
+    /// The merged removal records (newest per key, expired dropped). Kept
+    /// even for tags that survived: a stale third copy that still carries
+    /// the tag must still lose it on its next merge.
+    pub tag_removals: Vec<TagRemoval>,
+}
+
+/// The spec `merge_org_fields` is held to, stated so the implementation and
+/// the property can be checked against each other (same pattern as
+/// [`merge_action_matches_spec`]).
+pub fn org_merge_matches_spec(facts: OrgMergeFacts, outcome: &OrgMergeOutcome) -> bool {
+    let expected = merge_org_fields(facts);
+    *outcome == expected
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|outcome| {
+    org_merge_matches_spec(facts, &outcome)
+}))]
+pub fn merge_org_fields(facts: OrgMergeFacts) -> OrgMergeOutcome {
+    let removals = normalize_tag_removals(
+        facts.local_tag_removals.into_iter().chain(facts.server_tag_removals),
+        facts.now_ms,
+    );
+
+    let mut by_key: std::collections::BTreeMap<String, String> = Default::default();
+    let mut add_all = |tags: &[String]| {
+        for tag in tags {
+            let trimmed = tag.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            by_key
+                .entry(trimmed.to_lowercase())
+                .or_insert_with(|| trimmed.to_string());
+        }
+    };
+    add_all(&facts.local_tags);
+    add_all(&facts.server_tags);
+
+    let local_updated = facts.local_updated_at_ms;
+    let server_updated = facts.server_updated_at_ms;
+    let tags: Vec<String> = by_key
+        .into_iter()
+        .filter(|(key, _)| match removals.iter().find(|r| &r.tag == key) {
+            // A removal record wins against any copy that has not been
+            // edited since the removal; the newest edit of a copy that
+            // still carries the tag beats the removal (re-affirmation).
+            Some(removal) => {
+                let mut carriers: Vec<i64> = Vec::with_capacity(2);
+                if facts.local_tags.iter().any(|t| t.trim().to_lowercase() == *key) {
+                    carriers.push(local_updated);
+                }
+                if facts.server_tags.iter().any(|t| t.trim().to_lowercase() == *key) {
+                    carriers.push(server_updated);
+                }
+                match carriers.iter().min() {
+                    Some(oldest_carrier) => removal.deleted_at_ms < *oldest_carrier,
+                    None => false,
+                }
+            }
+            None => true,
+        })
+        .map(|(_, spelling)| spelling)
+        .collect();
+
+    OrgMergeOutcome {
+        tags,
+        folder: if facts.server_updated_at_newer {
+            facts.server_folder
+        } else {
+            facts.local_folder
+        }
+        .map(|f| f.trim().to_string())
+        .filter(|f| !f.is_empty()),
+        tag_removals: removals,
+    }
+}
+
+/// Witness: a tag added offline survives the server's newer copy arriving —
+/// the additive edit that whole-item last-writer-wins would have lost.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn local_tag_is_lost_to_a_newer_server_copy(tag: String) -> bool {
+    let outcome = merge_org_fields(OrgMergeFacts {
+        local_tags: vec![tag.clone()],
+        server_tags: Vec::new(),
+        local_folder: None,
+        server_folder: None,
+        server_updated_at_newer: true,
+        local_updated_at_ms: 1_000,
+        server_updated_at_ms: 2_000,
+        local_tag_removals: Vec::new(),
+        server_tag_removals: Vec::new(),
+        now_ms: 3_000,
+    });
+    !outcome.tags.contains(&tag)
+}
+
+/// Witness: the folder obeys last-writer-wins. A newer server copy that names
+/// folder B is never answered with the local folder A.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn folder_disobeys_last_writer_wins() -> bool {
+    let outcome = merge_org_fields(OrgMergeFacts {
+        local_tags: Vec::new(),
+        server_tags: Vec::new(),
+        local_folder: Some("Personal".to_string()),
+        server_folder: Some("Work".to_string()),
+        server_updated_at_newer: true,
+        local_updated_at_ms: 1_000,
+        server_updated_at_ms: 2_000,
+        local_tag_removals: Vec::new(),
+        server_tag_removals: Vec::new(),
+        now_ms: 3_000,
+    });
+    outcome.folder.as_deref() != Some("Work")
+}
+
+/// Witness: a recorded removal beats a stale copy that still carries the tag
+/// — union alone would resurrect it on every merge.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn a_removed_tag_is_resurrected_by_a_stale_copy() -> bool {
+    let outcome = merge_org_fields(OrgMergeFacts {
+        // Local removed the tag (its copy no longer carries it); the server
+        // copy is older and still has it.
+        local_tags: Vec::new(),
+        server_tags: vec!["work".to_string()],
+        local_folder: None,
+        server_folder: None,
+        server_updated_at_newer: false,
+        local_updated_at_ms: 2_000,
+        server_updated_at_ms: 1_000,
+        local_tag_removals: vec![TagRemoval { tag: "work".into(), deleted_at_ms: 2_000 }],
+        server_tag_removals: Vec::new(),
+        now_ms: 3_000,
+    });
+    outcome.tags.contains(&"work".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,6 +635,160 @@ mod tests {
         let mut stale = seen;
         stale.server_lamport = 4; // < last seen 5
         assert_eq!(plan_chunk_download(stale), ChunkDownloadDecision::Reject);
+    }
+
+    #[test]
+    fn org_merge_unions_tags_and_keeps_the_newer_folder() {
+        // Both sides tag offline; the union keeps both, canonically ordered.
+        let outcome = merge_org_fields(OrgMergeFacts {
+            local_tags: vec!["work".into(), " VPN ".into()],
+            server_tags: vec!["Work".into(), "banking".into()],
+            local_folder: Some("Personal".into()),
+            server_folder: Some("Work".into()),
+            server_updated_at_newer: true,
+            local_updated_at_ms: 1_000,
+            server_updated_at_ms: 2_000,
+            local_tag_removals: Vec::new(),
+            server_tag_removals: Vec::new(),
+            now_ms: 3_000,
+        });
+        assert_eq!(outcome.tags, vec!["banking", "VPN", "work"]);
+        assert_eq!(outcome.folder.as_deref(), Some("Work"));
+
+        // A local edit that is the newest wins the folder back.
+        let outcome = merge_org_fields(OrgMergeFacts {
+            local_tags: Vec::new(),
+            server_tags: Vec::new(),
+            local_folder: Some("Personal".into()),
+            server_folder: Some("Work".into()),
+            server_updated_at_newer: false,
+            local_updated_at_ms: 2_000,
+            server_updated_at_ms: 1_000,
+            local_tag_removals: Vec::new(),
+            server_tag_removals: Vec::new(),
+            now_ms: 3_000,
+        });
+        assert_eq!(outcome.folder.as_deref(), Some("Personal"));
+
+        // And the spec function agrees with the implementation everywhere.
+        let facts = OrgMergeFacts {
+            local_tags: vec!["a".into()],
+            server_tags: vec!["b".into()],
+            local_folder: None,
+            server_folder: Some("F".into()),
+            server_updated_at_newer: true,
+            local_updated_at_ms: 1_000,
+            server_updated_at_ms: 2_000,
+            local_tag_removals: Vec::new(),
+            server_tag_removals: Vec::new(),
+            now_ms: 3_000,
+        };
+        assert!(org_merge_matches_spec(facts.clone(), &merge_org_fields(facts)));
+    }
+
+    #[test]
+    fn org_merge_is_symmetric_in_the_sides() {
+        // The canonical order exists so that which device was "local" during
+        // the merge does not change the merged tags.
+        let a = merge_org_fields(OrgMergeFacts {
+            local_tags: vec!["B".into(), "a".into()],
+            server_tags: vec!["C".into()],
+            local_folder: None,
+            server_folder: None,
+            server_updated_at_newer: true,
+            local_updated_at_ms: 1_000,
+            server_updated_at_ms: 2_000,
+            local_tag_removals: Vec::new(),
+            server_tag_removals: Vec::new(),
+            now_ms: 3_000,
+        });
+        let b = merge_org_fields(OrgMergeFacts {
+            local_tags: vec!["C".into()],
+            server_tags: vec!["a".into(), "B".into()],
+            local_folder: None,
+            server_folder: None,
+            server_updated_at_newer: true,
+            local_updated_at_ms: 2_000,
+            server_updated_at_ms: 1_000,
+            local_tag_removals: Vec::new(),
+            server_tag_removals: Vec::new(),
+            now_ms: 3_000,
+        });
+        assert_eq!(a.tags, b.tags);
+        assert_eq!(a.tags, vec!["a", "B", "C"]);
+    }
+
+    #[test]
+    fn a_removal_beats_stale_copies_but_not_newer_edits() {
+        // This device removed "work" at 2_000 (its copy carries the removal
+        // record); the server copy is older (1_000) and still has the tag.
+        // The removal must win — plain union resurrected it forever.
+        let outcome = merge_org_fields(OrgMergeFacts {
+            local_tags: Vec::new(),
+            server_tags: vec!["work".into()],
+            local_folder: None,
+            server_folder: None,
+            server_updated_at_newer: false,
+            local_updated_at_ms: 2_000,
+            server_updated_at_ms: 1_000,
+            local_tag_removals: vec![TagRemoval { tag: "work".into(), deleted_at_ms: 2_000 }],
+            server_tag_removals: Vec::new(),
+            now_ms: 3_000,
+        });
+        assert!(!outcome.tags.contains(&"work".to_string()));
+        // The record is kept even though the tag is gone: a third stale copy
+        // that still carries the tag must lose it on ITS next merge.
+        assert_eq!(outcome.tag_removals.len(), 1);
+
+        // The other direction: the other device edited the item AFTER the
+        // removal (2_500 > 2_000) and still carries the tag — an edit
+        // affirms the tags its copy carries, so the tag survives.
+        let outcome = merge_org_fields(OrgMergeFacts {
+            local_tags: Vec::new(),
+            server_tags: vec!["work".into()],
+            local_folder: None,
+            server_folder: None,
+            server_updated_at_newer: true,
+            local_updated_at_ms: 2_000,
+            server_updated_at_ms: 2_500,
+            local_tag_removals: vec![TagRemoval { tag: "work".into(), deleted_at_ms: 2_000 }],
+            server_tag_removals: Vec::new(),
+            now_ms: 3_000,
+        });
+        assert!(outcome.tags.contains(&"work".to_string()));
+        // The stale removal record is retained until it expires: copies that
+        // have not edited since the removal must still lose the tag.
+        assert_eq!(outcome.tag_removals.len(), 1);
+    }
+
+    #[test]
+    fn expired_removals_stop_suppressing() {
+        // The removal is older than the retention window: it no longer
+        // suppresses anything, and it does not come back in the output.
+        let outcome = merge_org_fields(OrgMergeFacts {
+            local_tags: Vec::new(),
+            server_tags: vec!["work".into()],
+            local_folder: None,
+            server_folder: None,
+            server_updated_at_newer: false,
+            local_updated_at_ms: 2_000,
+            server_updated_at_ms: 1_000,
+            local_tag_removals: vec![TagRemoval {
+                tag: "work".into(),
+                deleted_at_ms: 2_000,
+            }],
+            server_tag_removals: Vec::new(),
+            now_ms: 2_000 + TAG_REMOVAL_RETENTION_MS + 1,
+        });
+        assert_eq!(outcome.tags, vec!["work"]);
+        assert!(outcome.tag_removals.is_empty());
+    }
+
+    #[test]
+    fn witnesses_hold_for_the_org_merge() {
+        assert!(!local_tag_is_lost_to_a_newer_server_copy("banking".to_string()));
+        assert!(!folder_disobeys_last_writer_wins());
+        assert!(!a_removed_tag_is_resurrected_by_a_stale_copy());
     }
 
     #[test]

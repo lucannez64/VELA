@@ -9,6 +9,45 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Vault organization (roadmap §1.1): every item now carries **tags** and an
+  optional single **folder**, stored inside the encrypted vault JSON (no
+  server-visible structure). Editing and filtering on desktop (Tauri/React and
+  gpui), Android and iOS; search matches tags and folder names everywhere.
+  Tags canonicalize on write (trimmed, case-insensitively deduplicated,
+  sorted) by the same rule on every platform, and the sync merges them by
+  **union** — a tag added offline survives another device's edit of any other
+  field — while the folder (single-valued) is last-writer-wins. Removing a
+  tag records a per-tag removal timestamp on the item, so the union does not
+  resurrect it from other devices' stale copies (an edit of a copy made
+  *after* the removal that still carries the tag counts as re-adding it).
+  The rule is specified and witnessed in `vela-sync-policy::merge_org_fields`
+  and applied in the desktop merge/conflict resolution, Android's
+  `mergeVaultStores` and iOS's `VaultMerge`; deterministic under a simulated
+  concurrent edit. New fields follow the A-2 round-trip rule, so older
+  clients do not delete them.
+- Trash / recycle bin (roadmap §1.2): deleting an item moves its full
+  content into an encrypted `deleted_items` list inside the vault JSON
+  (tombstone semantics unchanged for sync) instead of destroying it. A Trash
+  screen on desktop (React and gpui) lists trashed items with Restore and
+  two-step Delete-forever; restore stamps the revived copy newer than every
+  tombstone so it propagates to every device, and sync delivers remote
+  deletions into each device's own trash — a deletion made anywhere is
+  undoable everywhere. Purge keeps the tombstone; trash entries share the
+  tombstones' 30-day retention. Restore and purge append to the encrypted
+  audit log (`item_restored` / `item_purged`).
+- Item model depth (roadmap §1.3): **password history** — a rotation records
+  the old password with its timestamp, newest first, capped at 12, recorded
+  against the stored copy by every editing client (desktop, Android, iOS);
+  **custom fields** on every item type with a `hidden` kind that is masked
+  like a password, zeroized on drop and redacted from `Debug`; and four new
+  item types — **address**, **bank account** (account number/IBAN are
+  secrets), **API key** (the key is a secret) and **SSH key** (private key +
+  passphrase are secrets; the public key is the copyable half), stored for
+  the CLI/SSH agent. All new fields follow the A-2 round-trip rule; the new
+  types decode/encode on every client (own typed variants on Android, flat
+  fields on iOS, passthrough on the web vault). Full create/edit/display on
+  the React desktop including custom-fields editing and a password-history
+  viewer; gpui/Android/iOS display them read-only for now.
 - Instant cross-device sync: a local save is pushed immediately, and an
   authenticated `GET /vault/events` SSE stream tells open clients when another
   device wrote. Events are content-free (writer device, epoch, revision,

@@ -63,7 +63,7 @@ final class Phase5Tests: XCTestCase {
         let card = VaultItem.newCard(name: "Visa", number: "4111111111111111", exp: "12/29",
                                      cvv: "123", pin: "4321", cardholderName: "Alice Smith", notes: "main")
         let back = try roundTrip(card)
-        XCTAssertEqual(back.kind, .creditCard)
+        XCTAssertEqual(back.itemKind, .creditCard)
         XCTAssertEqual(back.item_type, "creditCard")
         XCTAssertEqual(back.number ?? "", "4111111111111111")
         XCTAssertEqual(back.exp ?? "", "12/29")
@@ -75,7 +75,7 @@ final class Phase5Tests: XCTestCase {
     func testSecureNoteRoundTrip() throws {
         let note = VaultItem.newNote(name: "Recovery codes", content: "abc-123\nxyz-789")
         let back = try roundTrip(note)
-        XCTAssertEqual(back.kind, .secureNote)
+        XCTAssertEqual(back.itemKind, .secureNote)
         XCTAssertEqual(back.content ?? "", "abc-123\nxyz-789")
         XCTAssertEqual(back.title ?? "", "Recovery codes")
     }
@@ -84,7 +84,7 @@ final class Phase5Tests: XCTestCase {
         let login = VaultItem.newLogin(name: "GitHub", url: "https://github.com",
                                        username: "alice", password: "hunter2", totp: "GEZDGNBVGY3TQOJQ")
         let back = try roundTrip(login)
-        XCTAssertEqual(back.kind, .login)
+        XCTAssertEqual(back.itemKind, .login)
         XCTAssertEqual(back.password ?? "", "hunter2")
         XCTAssertEqual(back.totp ?? "", "GEZDGNBVGY3TQOJQ")
     }

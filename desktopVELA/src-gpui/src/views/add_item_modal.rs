@@ -57,6 +57,11 @@ pub struct AddItemModal {
     card_pin: Entity<EditableTextState>,
     cardholder_name: Entity<EditableTextState>,
     secure_note_content: Entity<EditableTextState>,
+    /// Organization metadata (§1.1): one optional folder, tags as a
+    /// comma-separated list. Both canonicalize on save via
+    /// `VaultItem::with_tags` / `with_folder`.
+    folder: Entity<EditableTextState>,
+    tags: Entity<EditableTextState>,
     generator: Option<Entity<PasswordGenerator>>,
     _generator_subscription: Option<gpui::Subscription>,
     saving: bool,
@@ -93,6 +98,8 @@ impl AddItemModal {
             card_pin: field(cx),
             cardholder_name: field(cx),
             secure_note_content: field(cx),
+            folder: field(cx),
+            tags: field(cx),
             generator: None,
             _generator_subscription: None,
             saving: false,
@@ -111,6 +118,13 @@ impl AddItemModal {
         this.name.update(cx, |s, cx| s.emplace(item.name(), cx));
         if let Some(notes) = item.notes() {
             this.notes.update(cx, |s, cx| s.emplace(notes, cx));
+        }
+        if let Some(folder) = item.folder() {
+            this.folder.update(cx, |s, cx| s.emplace(folder, cx));
+        }
+        if !item.tags().is_empty() {
+            let joined = item.tags().join(", ");
+            this.tags.update(cx, |s, cx| s.emplace(joined.as_str(), cx));
         }
         match &item {
             VaultItem::Login { url, username, pass, totp, credential_change_needs_reauth, allow_second_factor_downgrade, .. } => {
@@ -184,8 +198,24 @@ impl AddItemModal {
             (!n.trim().is_empty()).then_some(n)
         };
         let now = Utc::now();
+        // Organization fields are read from the form and canonicalized on the
+        // finished item below (`with_tags`/`with_folder`), so both the add and
+        // edit paths write the same canonical bytes and an edit carries the
+        // item's tags/folder forward rather than resetting them.
+        let tags: Vec<String> = self
+            .tags
+            .read(cx)
+            .as_str()
+            .split(',')
+            .map(str::to_string)
+            .collect();
+        let folder = {
+            let f = self.folder.read(cx).as_str().to_string();
+            (!f.trim().is_empty()).then_some(f)
+        };
         let meta = match &self.editing {
-            // Preserve everything the form doesn't itself edit.
+            // Preserve everything the form doesn't itself edit. `tags` and
+            // `folder` are overwritten right below from the form fields.
             Some(original) => VaultMeta {
                 id: original.id.clone(),
                 name,
@@ -194,6 +224,10 @@ impl AddItemModal {
                 updated_at: now,
                 last_modified_device: original.last_modified_device.clone(),
                 favorite: original.favorite,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: original.shared,
                 share_recipient: original.share_recipient.clone(),
             },
@@ -205,6 +239,10 @@ impl AddItemModal {
                 updated_at: now,
                 last_modified_device: None,
                 favorite: false,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: false,
                 share_recipient: None,
             },
@@ -225,6 +263,7 @@ impl AddItemModal {
                     pass: self.password.read(cx).as_str().to_string(),
                     totp,
                     app_ids: Vec::new(),
+                    password_history: Vec::new(),
                     credential_change_needs_reauth: Some(self.needs_reauth),
                     allow_second_factor_downgrade: Some(allow_downgrade),
                 }
@@ -249,6 +288,10 @@ impl AddItemModal {
                 content: self.secure_note_content.read(cx).as_str().to_string(),
             },
         };
+
+        // Canonicalize the organization fields (trim, dedupe, sort tags) and
+        // carry them onto whichever item type was built.
+        let item = item.with_tags(tags).with_folder(folder);
 
         self.saving = true;
         self.error = None;
@@ -303,6 +346,43 @@ impl Render for AddItemModal {
                 .whitespace_nowrap()
                 .overflow_x_scroll(),
         ));
+
+        // Organization fields (§1.1), common to every item kind: one optional
+        // folder and a comma-separated tag list. Both feed the meta built in
+        // `submit`, which canonicalizes them on save.
+        body = body
+            .child(labeled_field(
+                &palette,
+                "FOLDER",
+                text_input("field-folder")
+                    .state(self.folder.downgrade())
+                    .placeholder("Optional folder")
+                    .caret_blink_interval_500ms()
+                    .bg(palette.surface_container_highest)
+                    .text_color(palette.on_surface)
+                    .rounded_lg()
+                    .p_3()
+                    .w_full()
+                    .min_h_auto()
+                    .whitespace_nowrap()
+                    .overflow_x_scroll(),
+            ))
+            .child(labeled_field(
+                &palette,
+                "TAGS",
+                text_input("field-tags")
+                    .state(self.tags.downgrade())
+                    .placeholder("comma, separated, tags")
+                    .caret_blink_interval_500ms()
+                    .bg(palette.surface_container_highest)
+                    .text_color(palette.on_surface)
+                    .rounded_lg()
+                    .p_3()
+                    .w_full()
+                    .min_h_auto()
+                    .whitespace_nowrap()
+                    .overflow_x_scroll(),
+            ));
 
         body = match self.kind {
             ItemKind::Login => body

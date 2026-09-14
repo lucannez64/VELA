@@ -50,6 +50,15 @@ pub enum AuditAction {
     ItemDeleted {
         item_type: String,
     },
+    /// A trashed item was put back into the live vault (§1.2).
+    ItemRestored {
+        item_type: String,
+    },
+    /// A trashed item was permanently erased — the content is gone, only the
+    /// deletion tombstone remains (§1.2).
+    ItemPurged {
+        item_type: String,
+    },
     SettingsChanged,
     /// This install was found storing its device signing keys in cleartext and
     /// they have now been encrypted.

@@ -579,6 +579,10 @@ mod tests {
             updated_at,
             last_modified_device: None,
             favorite: false,
+            tags: Vec::new(),
+            tag_tombstones: Vec::new(),
+            custom_fields: Vec::new(),
+            folder: None,
             shared: true,
             share_recipient: None,
         }
@@ -592,6 +596,7 @@ mod tests {
             pass: pass.into(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         }

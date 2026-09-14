@@ -14,7 +14,7 @@ use gpui::{
 };
 
 use chrono::{DateTime, Local};
-use vela_desktop_core::vault::{ItemType, VaultItem};
+use vela_desktop_core::vault::{CustomFieldType, ItemType, VaultItem};
 use vela_desktop_core::AppState;
 
 use crate::background::GuardedSpawn;
@@ -417,6 +417,139 @@ impl Render for ItemDetail {
             );
         }
 
+        // Where this item lives (§1.1). Shown read-only; the Edit modal owns
+        // changing it.
+        if item.folder().is_some() || !item.tags().is_empty() {
+            let mut org = div()
+                .p_4()
+                .rounded_xl()
+                .bg(palette.surface_container_low)
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    fonts::tracked_text("ORGANIZATION", px(10.), 0.2)
+                        .font_family(fonts::LABEL)
+                        .text_size(px(10.))
+                        .text_color(palette.outline),
+                );
+            if let Some(folder) = item.folder() {
+                org = org.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(palette.on_surface)
+                        .child(icon("folder", px(16.), palette.on_surface_variant))
+                        .child(folder.to_string()),
+                );
+            }
+            if !item.tags().is_empty() {
+                org = org.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .children(item.tags().iter().map(|tag| {
+                            div()
+                                .px_3()
+                                .py(px(2.))
+                                .rounded_full()
+                                .text_xs()
+                                .bg(palette.surface_container_highest)
+                                .text_color(palette.on_surface_variant)
+                                .child(tag.clone())
+                        })),
+                );
+            }
+            fields = fields.child(org);
+        }
+
+        // §1.3: user-defined extra fields. A hidden value's label is shown,
+        // its value is masked — the value is a secret and this front end has
+        // no reveal control for it.
+        if !item.custom_fields().is_empty() {
+            let mut card = div()
+                .p_4()
+                .rounded_xl()
+                .bg(palette.surface_container_low)
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    fonts::tracked_text("CUSTOM FIELDS", px(10.), 0.2)
+                        .font_family(fonts::LABEL)
+                        .text_size(px(10.))
+                        .text_color(palette.outline),
+                );
+            for field in item.custom_fields() {
+                card = card.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(palette.on_surface_variant)
+                                .child(field.label.clone()),
+                        )
+                        .child(
+                            div()
+                                .font_family(fonts::MONO)
+                                .text_color(palette.on_surface)
+                                .child(if field.field_type == CustomFieldType::Hidden {
+                                    "••••••••".to_string()
+                                } else {
+                                    field.value.clone()
+                                }),
+                        ),
+                );
+            }
+            fields = fields.child(card);
+        }
+
+        // §1.3: previous password values — the count is metadata; the values
+        // are secrets and are not shown here at all.
+        if item.password_history().is_some_and(|h| !h.is_empty()) {
+            fields = fields.child(
+                div()
+                    .p_4()
+                    .rounded_xl()
+                    .bg(palette.surface_container_low)
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        fonts::tracked_text(
+                            &format!("PASSWORD HISTORY ({})", item.password_history().unwrap().len()),
+                            px(10.),
+                            0.2,
+                        )
+                        .font_family(fonts::LABEL)
+                        .text_size(px(10.))
+                        .text_color(palette.outline),
+                    )
+                    .children(item.password_history().unwrap().iter().map(|entry| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_4()
+                            .text_sm()
+                            .child(div().font_family(fonts::MONO).text_color(palette.on_surface).child("••••••••"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(palette.on_surface_variant)
+                                    .child(entry.changed_at.format("%b %e, %Y").to_string()),
+                            )
+                    })),
+            );
+        }
+
         let totp_section = if matches!(&item, VaultItem::Login { totp: Some(_), .. }) {
             let progress = (self.totp_remaining as f32 / self.totp_period.max(1) as f32).clamp(0., 1.);
             Some(
@@ -662,8 +795,19 @@ impl Render for ItemDetail {
                             // Passkeys are ceremony-created credentials whose
                             // private key never crosses IPC; the generic
                             // editor has nothing to edit and sharing one
-                            // would need its own flow.
-                            .when(!is_received_share && !matches!(item, VaultItem::Passkey { .. }), |el| {
+                            // would need its own flow. The §1.3 item types
+                            // are read-only here too: this native front end
+                            // creates/edits login/card/note (the React
+                            // desktop edits everything).
+                            .when(
+                                !is_received_share
+                                    && matches!(
+                                        item,
+                                        VaultItem::Login { .. }
+                                            | VaultItem::CreditCard { .. }
+                                            | VaultItem::SecureNote { .. }
+                                    ),
+                                |el| {
                                 el.child(
                                     div()
                                         .id("edit-item")

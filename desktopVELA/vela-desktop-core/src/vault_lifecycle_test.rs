@@ -21,6 +21,10 @@ fn meta(id: &str, name: &str) -> VaultMeta {
         updated_at: now,
         last_modified_device: None,
         favorite: false,
+        tags: Vec::new(),
+        tag_tombstones: Vec::new(),
+        custom_fields: Vec::new(),
+        folder: None,
         shared: false,
         share_recipient: None,
     }
@@ -34,6 +38,7 @@ fn login(id: &str, name: &str, url: &str, user: &str, pass: &str) -> VaultItem {
         pass: pass.into(),
         totp: None,
         app_ids: Vec::new(),
+        password_history: Vec::new(),
         credential_change_needs_reauth: None,
         allow_second_factor_downgrade: None,
     }

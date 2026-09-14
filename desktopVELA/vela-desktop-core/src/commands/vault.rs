@@ -75,6 +75,8 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
     // (save_vault no-ops) while still returning success.
     require_unlocked(state)?;
 
+    let now = Utc::now();
+
     // Block edits on items received via share (shared=true, no share_recipient),
     // and carry forward fields this client has no UI for.
     let item = {
@@ -83,7 +85,17 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
             Some(existing) if existing.is_received_share() => {
                 return Err("Cannot modify a received shared item".to_string());
             }
-            Some(existing) => item.preserving_app_ids(existing),
+            Some(existing) => item
+                .preserving_app_ids(existing)
+                // Removed tags become removal records (against the STORED
+                // item's tags, not the form's rebuild) so the union merge
+                // does not resurrect them from other devices' copies;
+                // (re-)added tags clear their records. Same `now` as the
+                // `updated_at` stamp below.
+                .with_tag_removals_recorded(existing, now)
+                // A changed login password pushes the old value into the
+                // history (§1.3).
+                .with_password_history_recorded(existing, now),
             None => item,
         }
     };
@@ -116,7 +128,7 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
     };
     let (updated, item_type) = {
         let mut vault = state.vault.write();
-        let updated = item.with_updated_at(Utc::now());
+        let updated = item.with_updated_at(now);
         let item_type = format!("{:?}", updated.item_type()).to_lowercase();
         vault.update_item(updated.clone());
         (updated, item_type)
@@ -170,6 +182,77 @@ pub async fn delete_item(state: &Arc<AppState>, id: &str) -> Result<(), String> 
         crate::commands::provider::schedule_autofill_sync(state);
     }
 
+    Ok(())
+}
+
+/// The trash (§1.2): items deleted on this or any device, restorable until
+/// purged.
+pub fn get_deleted_items(state: &Arc<AppState>) -> Result<Vec<crate::vault::DeletedItem>, String> {
+    require_unlocked(state)?;
+    let vault = state.vault.read();
+    Ok(vault.deleted_items.clone())
+}
+
+/// Puts a trashed item back into the live vault. The restored copy is newer
+/// than every tombstone, so the restore propagates on the next sync.
+pub async fn restore_item(state: &Arc<AppState>, id: &str) -> Result<VaultItem, String> {
+    require_unlocked(state)?;
+
+    let restored = {
+        let mut vault = state.vault.write();
+        let item_id = vault
+            .restore_item(id)
+            .ok_or_else(|| "Item is not in the trash".to_string())?;
+        let item = vault
+            .get_item(&item_id)
+            .cloned()
+            .ok_or_else(|| "Restored item vanished".to_string())?;
+        item
+    };
+
+    save_vault(state)?;
+
+    record_audit_event(
+        state,
+        AuditAction::ItemRestored {
+            item_type: format!("{:?}", restored.item_type()).to_lowercase(),
+        },
+    );
+
+    if restored.item_type() == crate::vault::ItemType::Passkey {
+        crate::commands::provider::schedule_autofill_sync(state);
+    }
+
+    tracing::info!("Item restored from trash: id={}", restored.id());
+    Ok(restored)
+}
+
+/// Erases a trash entry for good. The deletion tombstone stays, so sync
+/// cannot resurrect the item from another device's copy.
+pub async fn purge_deleted_item(state: &Arc<AppState>, id: &str) -> Result<(), String> {
+    require_unlocked(state)?;
+
+    let item_type = {
+        let mut vault = state.vault.write();
+        let item_type = vault
+            .deleted_items
+            .iter()
+            .find(|d| d.item.id() == id)
+            .map(|d| format!("{:?}", d.item.item_type()).to_lowercase())
+            .ok_or_else(|| "Item is not in the trash".to_string())?;
+        vault.purge_deleted_item(id);
+        item_type
+    };
+
+    save_vault(state)?;
+
+    record_audit_event(state, AuditAction::ItemPurged { item_type: item_type.clone() });
+
+    if item_type == "passkey" {
+        crate::commands::provider::schedule_autofill_sync(state);
+    }
+
+    tracing::info!("Trash entry purged: id={id}");
     Ok(())
 }
 
@@ -663,6 +746,10 @@ pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<
                     updated_at: now,
                     last_modified_device: None,
                     favorite: false,
+                    tags: Vec::new(),
+                    tag_tombstones: Vec::new(),
+                    custom_fields: Vec::new(),
+                    folder: None,
                     shared: false,
                     share_recipient: None,
                 },
@@ -671,6 +758,7 @@ pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<
                 pass: entry.password,
                 totp: entry.otp,
                 app_ids: Vec::new(),
+                password_history: Vec::new(),
                 credential_change_needs_reauth: None,
                 allow_second_factor_downgrade: None,
             };
@@ -795,6 +883,10 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
                             updated_at: now,
                             last_modified_device: None,
                             favorite: false,
+                            tags: Vec::new(),
+                            tag_tombstones: Vec::new(),
+                            custom_fields: Vec::new(),
+                            folder: None,
                             shared: false,
                             share_recipient: None,
                         },
@@ -803,6 +895,7 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
                         pass: entry.password,
                         totp,
                         app_ids: Vec::new(),
+                        password_history: Vec::new(),
                         credential_change_needs_reauth: None,
                         allow_second_factor_downgrade: None,
                     };
@@ -821,6 +914,10 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
                             updated_at: now,
                             last_modified_device: None,
                             favorite: false,
+                            tags: Vec::new(),
+                            tag_tombstones: Vec::new(),
+                            custom_fields: Vec::new(),
+                            folder: None,
                             shared: false,
                             share_recipient: None,
                         },
@@ -1068,6 +1165,10 @@ mod tests {
                 updated_at: now,
                 last_modified_device: None,
                 favorite: false,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: false,
                 share_recipient: None,
             },
@@ -1076,6 +1177,7 @@ mod tests {
             pass: pass.into(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         }
@@ -1289,6 +1391,10 @@ mod tests {
                 updated_at: now,
                 last_modified_device: None,
                 favorite: false,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: false,
                 share_recipient: None,
             },
@@ -1500,6 +1606,10 @@ mod tests {
                     updated_at: now,
                     last_modified_device: None,
                     favorite: false,
+                    tags: Vec::new(),
+                    tag_tombstones: Vec::new(),
+                    custom_fields: Vec::new(),
+                    folder: None,
                     shared: false,
                     share_recipient: None,
                 },
@@ -1515,6 +1625,10 @@ mod tests {
                     updated_at: now,
                     last_modified_device: None,
                     favorite: false,
+                    tags: Vec::new(),
+                    tag_tombstones: Vec::new(),
+                    custom_fields: Vec::new(),
+                    folder: None,
                     shared: false,
                     share_recipient: None,
                 },
@@ -1588,6 +1702,10 @@ mod tests {
                     updated_at: Utc::now(),
                     last_modified_device: None,
                     favorite: false,
+                    tags: Vec::new(),
+                    tag_tombstones: Vec::new(),
+                    custom_fields: Vec::new(),
+                    folder: None,
                     shared: false,
                     share_recipient: None,
                 },
@@ -1628,6 +1746,10 @@ mod tests {
                     updated_at: Utc::now(),
                     last_modified_device: None,
                     favorite: false,
+                    tags: Vec::new(),
+                    tag_tombstones: Vec::new(),
+                    custom_fields: Vec::new(),
+                    folder: None,
                     shared: false,
                     share_recipient: None,
                 },
@@ -1699,8 +1821,12 @@ mod tests {
 
     #[test]
     fn export_path_rejects_missing_directory() {
-        let (store, _export) = store_and_export_dirs();
-        let err = validate_export_path(store.path(), "/nonexistent-dir-xyz/a.json").unwrap_err();
+        let (store, export) = store_and_export_dirs();
+        // An absolute path whose parent does not exist — built from the real
+        // temp root so it is absolute on every platform (a literal
+        // "/nonexistent-…" is not absolute on Windows).
+        let raw = export.path().join("nonexistent-dir-xyz").join("a.json");
+        let err = validate_export_path(store.path(), raw.to_str().unwrap()).unwrap_err();
         assert!(err.contains("not accessible"), "{err}");
     }
 

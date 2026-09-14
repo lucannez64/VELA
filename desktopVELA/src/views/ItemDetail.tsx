@@ -18,6 +18,8 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
   const [showCardNumber, setShowCardNumber] = useState(false);
   const [showCVV, setShowCVV] = useState(false);
   const [showCardPin, setShowCardPin] = useState(false);
+  const [showSecretField, setShowSecretField] = useState<Record<string, boolean>>({});
+  const [showHistory, setShowHistory] = useState(false);
   const [totpTimeLeft, setTotpTimeLeft] = useState(30);
   const [totpPeriod, setTotpPeriod] = useState(30);
   const [totpCode, setTotpCode] = useState('--- ---');
@@ -32,6 +34,7 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
     setShowCardNumber(false);
     setShowCVV(false);
     setShowCardPin(false);
+    setShowHistory(false);
   }, [item.id]);
 
   useEffect(() => {
@@ -420,13 +423,13 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
                   <div className="flex items-center justify-between">
                     <span className="text-on-surface font-mono">{showCardPin ? item.card_pin : '••••'}</span>
                     <div className="flex gap-1">
-                      <button 
+                      <button
                         onClick={() => setShowCardPin(!showCardPin)}
                         className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
                       >
                         <span className="material-symbols-outlined text-xl">{showCardPin ? 'visibility_off' : 'visibility'}</span>
                       </button>
-                      <button 
+                      <button
                         onClick={() => copyToClipboard(item.card_pin!, 'PIN')}
                         className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
                       >
@@ -438,7 +441,235 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
               )}
             </>
           )}
+
+          {/* ── §1.3 item model depth ────────────────────────────────────── */}
+
+          {item.item_type === 'address' && (
+            <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 col-span-1 md:col-span-2">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Address</label>
+              <p className="text-on-surface text-sm leading-relaxed whitespace-pre-line">
+                {[
+                  item.full_name,
+                  item.street,
+                  item.street_line2,
+                  [item.city, item.state, item.postal_code].filter(Boolean).join(' '),
+                  item.country,
+                  item.phone,
+                ].filter(Boolean).join('\n')}
+              </p>
+              <button
+                onClick={() => copyToClipboard(item.full_name || '', 'Name')}
+                className="mt-4 text-xs font-label text-primary uppercase tracking-widest flex items-center gap-2 hover:opacity-80 transition-opacity"
+              >
+                <span className="material-symbols-outlined text-sm">content_copy</span>
+                Copy name
+              </button>
+            </div>
+          )}
+
+          {item.item_type === 'bankAccount' && (
+            <>
+              <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Bank / Holder</label>
+                <span className="text-on-surface text-lg font-medium">{item.bank_name || item.holder || '—'}</span>
+                <p className="text-xs text-on-surface-variant mt-1">{item.account_kind}</p>
+              </div>
+              <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Account Number</label>
+                <div className="flex items-center justify-between">
+                  <span className="text-on-surface text-xl font-mono tracking-wider">
+                    {showCardNumber ? item.account_number : `•••• ${item.account_number?.slice(-4)}`}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setShowCardNumber(!showCardNumber)}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
+                    >
+                      <span className="material-symbols-outlined text-xl">{showCardNumber ? 'visibility_off' : 'visibility'}</span>
+                    </button>
+                    <button
+                      onClick={() => copyToClipboard(item.account_number!, 'Account number')}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                    >
+                      <span className="material-symbols-outlined text-xl">content_copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {(item.routing_number || item.iban || item.swift) && (
+                <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 col-span-1 md:col-span-2">
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Routing / IBAN / SWIFT</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                    <div><span className="text-on-surface-variant block text-[10px] uppercase mb-1">Routing</span><span className="text-on-surface font-mono">{item.routing_number || '—'}</span></div>
+                    <div><span className="text-on-surface-variant block text-[10px] uppercase mb-1">IBAN</span><span className="text-on-surface font-mono break-all">{item.iban || '—'}</span></div>
+                    <div><span className="text-on-surface-variant block text-[10px] uppercase mb-1">SWIFT</span><span className="text-on-surface font-mono">{item.swift || '—'}</span></div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {item.item_type === 'apiKey' && (
+            <>
+              {item.url && (
+                <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
+                  <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Service</label>
+                  <span className="text-on-surface text-sm break-all">{item.url}</span>
+                </div>
+              )}
+              <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 col-span-1 md:col-span-2">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">
+                  API Key{item.expires ? ` · expires ${item.expires}` : ''}
+                </label>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-on-surface font-mono text-sm tracking-wider break-all">
+                    {showPassword ? item.api_key : '••••••••••••'}
+                  </span>
+                  <div className="flex gap-1 shrink-0">
+                    <button
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
+                    >
+                      <span className="material-symbols-outlined text-xl">{showPassword ? 'visibility_off' : 'visibility'}</span>
+                    </button>
+                    <button
+                      onClick={() => item.api_key && copyToClipboard(item.api_key, 'API key')}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                    >
+                      <span className="material-symbols-outlined text-xl">content_copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {item.item_type === 'sshKey' && (
+            <>
+              <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Key Type</label>
+                <span className="text-on-surface font-mono">{item.kind || '—'}</span>
+                {item.comment && <p className="text-xs text-on-surface-variant mt-1">{item.comment}</p>}
+              </div>
+              <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 min-w-0">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Public Key</label>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-on-surface font-mono text-xs break-all">{item.public_key || '—'}</span>
+                  <button
+                    onClick={() => item.public_key && copyToClipboard(item.public_key, 'Public key')}
+                    className="p-2 shrink-0 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                  >
+                    <span className="material-symbols-outlined text-xl">content_copy</span>
+                  </button>
+                </div>
+              </div>
+              <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5 col-span-1 md:col-span-2">
+                <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Private Key</label>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-on-surface font-mono text-sm tracking-wider break-all">
+                    {showPassword ? item.private_key : '••••••••••••'}
+                  </span>
+                  <div className="flex gap-1 shrink-0">
+                    <button
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant"
+                    >
+                      <span className="material-symbols-outlined text-xl">{showPassword ? 'visibility_off' : 'visibility'}</span>
+                    </button>
+                    <button
+                      onClick={() => item.private_key && copyToClipboard(item.private_key, 'Private key')}
+                      className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                    >
+                      <span className="material-symbols-outlined text-xl">content_copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
+
+        {/* §1.3: user-defined extra fields. Hidden values mask like a
+            password, with per-field reveal. */}
+        {(item.custom_fields?.length ?? 0) > 0 && (
+          <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Custom Fields</label>
+            <div className="space-y-3">
+              {item.custom_fields!.map((field, index) => {
+                const key = `cf-${index}`;
+                const revealed = showSecretField[key] ?? false;
+                return (
+                  <div key={key} className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-on-surface-variant w-1/3 shrink-0 truncate">{field.label || '(unlabeled)'}</span>
+                    <div className="flex items-center justify-end gap-1 flex-1 min-w-0">
+                      <span className="text-on-surface text-sm font-mono break-all text-right">
+                        {field.field_type === 'hidden' && !revealed ? '••••••••' : field.value}
+                      </span>
+                      {field.field_type === 'hidden' && (
+                        <button
+                          onClick={() => setShowSecretField(prev => ({ ...prev, [key]: !revealed }))}
+                          className="p-1.5 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant shrink-0"
+                        >
+                          <span className="material-symbols-outlined text-base">{revealed ? 'visibility_off' : 'visibility'}</span>
+                        </button>
+                      )}
+                      {field.value && (
+                        <button
+                          onClick={() => copyToClipboard(field.value, field.label || 'Field')}
+                          className="p-1.5 hover:bg-surface-container-highest rounded-lg transition-colors text-primary shrink-0"
+                        >
+                          <span className="material-symbols-outlined text-base">content_copy</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* §1.3: previous password values. The newest first; masked by
+            default with one reveal for the whole list — an old password may
+            still work somewhere, so copying it is a deliberate act. */}
+        {(item.password_history?.length ?? 0) > 0 && (
+          <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <div className="flex items-center justify-between mb-4">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline">
+                Password History ({item.password_history!.length})
+              </label>
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className="flex items-center gap-1 px-3 py-1 rounded-lg bg-surface-container-highest text-on-surface-variant text-xs hover:text-on-surface transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">{showHistory ? 'visibility_off' : 'visibility'}</span>
+                {showHistory ? 'Hide' : 'Reveal'}
+              </button>
+            </div>
+            <div className="space-y-2">
+              {item.password_history!.map((entry, index) => (
+                <div key={index} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-on-surface font-mono">
+                    {showHistory ? entry.password : '••••••••••••'}
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs text-outline">
+                      {new Date(entry.changed_at).toLocaleDateString()}
+                    </span>
+                    {showHistory && (
+                      <button
+                        onClick={() => copyToClipboard(entry.password, 'Previous password')}
+                        className="p-1.5 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+                      >
+                        <span className="material-symbols-outlined text-base">content_copy</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {item.secure_note_content && (
           <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
@@ -451,6 +682,30 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
           <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
             <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Additional Notes</label>
             <p className="text-on-surface whitespace-pre-wrap text-sm leading-relaxed">{item.notes}</p>
+          </div>
+        )}
+
+        {/* §1.1: where this item lives. Shown read-only; the Edit modal owns
+            changing it. */}
+        {(!!item.folder || (item.tags && item.tags.length > 0)) && (
+          <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Organization</label>
+            <div className="flex flex-wrap items-center gap-2">
+              {item.folder && (
+                <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container-highest text-on-surface text-sm">
+                  <span className="material-symbols-outlined text-base text-on-surface-variant">folder</span>
+                  {item.folder}
+                </span>
+              )}
+              {(item.tags || []).map(tag => (
+                <span
+                  key={tag}
+                  className="px-3 py-1 rounded-full bg-surface-container-highest text-on-surface-variant text-xs font-medium"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 

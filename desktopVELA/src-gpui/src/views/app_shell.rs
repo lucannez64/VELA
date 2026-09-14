@@ -23,6 +23,7 @@ use crate::views::add_item_modal::{AddItemModal, AddItemModalEvent};
 use crate::views::item_detail::{ItemDetail, ItemDetailEvent};
 use crate::views::settings_screen::{SettingsScreen, SettingsScreenEvent};
 use crate::views::sharing_screen::SharingScreen;
+use crate::views::trash_screen::TrashScreen;
 use crate::views::vault_browser::{VaultBrowser, VaultBrowserEvent};
 
 pub enum AppShellEvent {
@@ -42,6 +43,7 @@ enum Content {
     Sharing(Entity<SharingScreen>),
     Devices(Entity<DevicesScreen>),
     BreachMonitor(Entity<BreachMonitorScreen>),
+    Trash(Entity<TrashScreen>),
     /// No remaining screens use this — kept for future nav entries.
     #[allow(dead_code)]
     Placeholder(&'static str),
@@ -197,6 +199,7 @@ impl AppShell {
             NavView::Sharing => self.show_sharing(cx),
             NavView::Audit => self.show_audit_log(cx),
             NavView::BreachMonitor => self.show_breach_monitor(cx),
+            NavView::Trash => self.show_trash(cx),
         }
         cx.notify();
     }
@@ -308,6 +311,15 @@ impl AppShell {
         cx.notify();
     }
 
+    fn show_trash(&mut self, cx: &mut Context<Self>) {
+        let trash = cx.new({
+            let app_state = self.app_state.clone();
+            move |cx| TrashScreen::new(app_state, cx)
+        });
+        self.content = Content::Trash(trash);
+        cx.notify();
+    }
+
     fn show_devices(&mut self, cx: &mut Context<Self>) {
         let devices = cx.new({
             let app_state = self.app_state.clone();
@@ -361,6 +373,7 @@ impl Render for AppShell {
             Content::Sharing(v) => v.clone().into_any_element(),
             Content::Devices(v) => v.clone().into_any_element(),
             Content::BreachMonitor(v) => v.clone().into_any_element(),
+            Content::Trash(v) => v.clone().into_any_element(),
             Content::Placeholder(name) => placeholder(&palette, name).into_any_element(),
         };
 

@@ -42,18 +42,25 @@ const FAVICON_CACHE_MAX_ENTRIES: usize = 256;
 /// remains, and an expired entry was already treated as a miss.
 fn cache_insert(domain: String, data_url: String) {
     let mut cache = FAVICON_CACHE.lock().unwrap();
-    evict_favicon_cache(&mut cache, FAVICON_CACHE_MAX_ENTRIES);
+    evict_favicon_cache(&mut cache, FAVICON_CACHE_MAX_ENTRIES, Instant::now(), FAVICON_CACHE_TTL);
     cache.insert(domain, (data_url, Instant::now()));
 }
 
 fn evict_favicon_cache(
     cache: &mut HashMap<String, (String, Instant)>,
     max_entries: usize,
+    now: Instant,
+    ttl: Duration,
 ) {
     if cache.len() < max_entries {
         return;
     }
-    cache.retain(|_, (_, fetched_at)| fetched_at.elapsed() < FAVICON_CACHE_TTL);
+    // `now - fetched_at` rather than `fetched_at.elapsed()`: the injected
+    // clock is what makes this testable with tiny, epoch-independent ages
+    // (an `Instant` cannot be constructed further back than the platform
+    // clock's epoch — boot time on Windows — so a test that subtracts a
+        // 24-hour TTL panics on a freshly booted machine).
+    cache.retain(|_, (_, fetched_at)| now.duration_since(*fetched_at) < ttl);
     while cache.len() >= max_entries {
         let Some(oldest) = cache
             .iter()
@@ -345,24 +352,29 @@ mod tests {
     fn favicon_cache_eviction_drops_expired_then_stalest() {
         let mut cache: HashMap<String, (String, Instant)> = HashMap::new();
         let now = Instant::now();
+        // Ages in milliseconds, anchored by `checked_sub` so the test cannot
+        // overflow no matter how young the platform clock's epoch is (an
+        // `Instant` on Windows only reaches back to boot — subtracting a
+        // 24-hour TTL panicked on freshly booted machines). The ordering is
+        // what the eviction logic cares about: b is older than a, both past
+        // the TTL; fresh is younger than it.
+        let ago = |millis: u64| {
+            now.checked_sub(Duration::from_millis(millis))
+                .expect("clock epoch younger than the test's millisecond offsets")
+        };
+        let ttl = Duration::from_millis(4);
         // Two entries already past the TTL.
-        cache.insert(
-            "old-a.example".into(),
-            ("data:a".into(), now - FAVICON_CACHE_TTL - Duration::from_secs(10)),
-        );
-        cache.insert(
-            "old-b.example".into(),
-            ("data:b".into(), now - FAVICON_CACHE_TTL * 2),
-        );
+        cache.insert("old-a.example".into(), ("data:a".into(), ago(8)));
+        cache.insert("old-b.example".into(), ("data:b".into(), ago(12)));
         // One fresh entry, older than a third one inserted below.
-        cache.insert("fresh.example".into(), ("data:f".into(), now - Duration::from_secs(60)));
+        cache.insert("fresh.example".into(), ("data:f".into(), ago(2)));
 
         // Under capacity → no-op, everything survives.
-        evict_favicon_cache(&mut cache, 10);
+        evict_favicon_cache(&mut cache, 10, now, ttl);
         assert_eq!(cache.len(), 3);
 
         // At capacity: expired entries go first…
-        evict_favicon_cache(&mut cache, 2);
+        evict_favicon_cache(&mut cache, 2, now, ttl);
         assert!(!cache.contains_key("old-a.example"));
         assert!(!cache.contains_key("old-b.example"));
         assert!(cache.contains_key("fresh.example"));
@@ -372,11 +384,11 @@ mod tests {
         // below the cap so the insert lands within it).
         cache.insert("newer.example".into(), ("data:n".into(), now));
         assert_eq!(cache.len(), 2);
-        evict_favicon_cache(&mut cache, 1);
+        evict_favicon_cache(&mut cache, 1, now, ttl);
         assert_eq!(cache.len(), 0);
 
         cache.insert("newer.example".into(), ("data:n".into(), now));
-        evict_favicon_cache(&mut cache, 2);
+        evict_favicon_cache(&mut cache, 2, now, ttl);
         assert_eq!(cache.len(), 1);
         assert!(
             cache.contains_key("newer.example"),

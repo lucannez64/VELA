@@ -20,16 +20,18 @@ pub enum NavView {
     Sharing,
     Audit,
     BreachMonitor,
+    Trash,
     Settings,
 }
 
 impl NavView {
-    const ALL: [NavView; 6] = [
+    const ALL: [NavView; 7] = [
         NavView::Vault,
         NavView::Devices,
         NavView::Sharing,
         NavView::Audit,
         NavView::BreachMonitor,
+        NavView::Trash,
         NavView::Settings,
     ];
 
@@ -40,6 +42,7 @@ impl NavView {
             NavView::Sharing => "Sharing",
             NavView::Audit => "Audit Log",
             NavView::BreachMonitor => "Breach Monitor",
+            NavView::Trash => "Trash",
             NavView::Settings => "Settings",
         }
     }
@@ -51,6 +54,7 @@ impl NavView {
             NavView::Sharing => "share_reviews",
             NavView::Audit => "history",
             NavView::BreachMonitor => "security",
+            NavView::Trash => "delete",
             NavView::Settings => "settings",
         }
     }

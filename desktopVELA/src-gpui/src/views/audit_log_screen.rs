@@ -76,6 +76,8 @@ fn action_label_icon(action: &AuditAction) -> (&'static str, &'static str) {
         AuditAction::ItemAdded { .. } => ("Item added", "add"),
         AuditAction::ItemUpdated { .. } => ("Item updated", "edit"),
         AuditAction::ItemDeleted { .. } => ("Item deleted", "delete"),
+        AuditAction::ItemRestored { .. } => ("Item restored", "restore_from_trash"),
+        AuditAction::ItemPurged { .. } => ("Item purged", "delete_forever"),
         AuditAction::PasswordGenerated { .. } => ("Password generated", "password"),
         AuditAction::SettingsChanged => ("Settings changed", "settings"),
         AuditAction::WebSessionGranted { .. } => ("Web session granted", "devices"),

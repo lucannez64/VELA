@@ -297,7 +297,10 @@ impl Store {
         // Ordering is the safety property: the journal must reach stable
         // storage before any file can reach the new key. Rename alone is
         // atomic but does not guarantee persistence across power loss.
-        fs::File::open(&path)?.sync_all()?;
+        // Opened for write as well as read: on Windows `FlushFileBuffers`
+        // (what `sync_all` reaches) requires a GENERIC_WRITE handle, so a
+        // read-only `File::open` fails with ACCESS_DENIED.
+        fs::OpenOptions::new().write(true).open(&path)?.sync_all()?;
         #[cfg(unix)]
         fs::File::open(&self.store_path)?.sync_all()?;
         Ok(())
@@ -386,7 +389,9 @@ impl Store {
         ] {
             let consumer = self.store_path.join(file);
             if consumer.exists() {
-                fs::File::open(consumer)?.sync_all()?;
+                // Write access too: on Windows `FlushFileBuffers` (what
+                // `sync_all` reaches) requires a GENERIC_WRITE handle.
+                fs::OpenOptions::new().write(true).open(consumer)?.sync_all()?;
             }
         }
         #[cfg(unix)]
@@ -770,6 +775,10 @@ mod tests {
                 updated_at: now,
                 last_modified_device: None,
                 favorite: false,
+                tags: Vec::new(),
+                tag_tombstones: Vec::new(),
+                custom_fields: Vec::new(),
+                folder: None,
                 shared: false,
                 share_recipient: None,
             },
@@ -778,6 +787,7 @@ mod tests {
             pass: "hunter2pw".into(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         });

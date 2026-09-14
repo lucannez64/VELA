@@ -86,7 +86,11 @@ fn item_updated_at(item: &VaultItem) -> DateTime<Utc> {
         | VaultItem::Identity { meta, .. }
         | VaultItem::FileBlob { meta, .. }
         | VaultItem::BreachMonitor { meta, .. }
-        | VaultItem::Passkey { meta, .. } => meta.updated_at,
+        | VaultItem::Passkey { meta, .. }
+        | VaultItem::Address { meta, .. }
+        | VaultItem::BankAccount { meta, .. }
+        | VaultItem::ApiKey { meta, .. }
+        | VaultItem::SshKey { meta, .. } => meta.updated_at,
     }
 }
 
@@ -660,6 +664,10 @@ impl AndroidClient {
             updated_at: Utc::now(),
             last_modified_device: Some(self.device_id.clone()),
             favorite: false,
+            tags: Vec::new(),
+            tag_tombstones: Vec::new(),
+            custom_fields: Vec::new(),
+            folder: None,
             shared: false,
             share_recipient: None,
         };
@@ -670,6 +678,7 @@ impl AndroidClient {
             pass: password.to_string(),
             totp: None,
             app_ids: Vec::new(),
+            password_history: Vec::new(),
             credential_change_needs_reauth: None,
             allow_second_factor_downgrade: None,
         });
@@ -698,7 +707,11 @@ impl AndroidClient {
             | VaultItem::Identity { meta, .. }
             | VaultItem::FileBlob { meta, .. }
             | VaultItem::BreachMonitor { meta, .. }
-            | VaultItem::Passkey { meta, .. } => meta.updated_at = ts,
+            | VaultItem::Passkey { meta, .. }
+            | VaultItem::Address { meta, .. }
+            | VaultItem::BankAccount { meta, .. }
+            | VaultItem::ApiKey { meta, .. }
+            | VaultItem::SshKey { meta, .. } => meta.updated_at = ts,
         }
     }
 

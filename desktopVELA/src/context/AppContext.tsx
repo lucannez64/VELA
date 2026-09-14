@@ -18,7 +18,11 @@ export interface VaultItem {
     | 'identity'
     | 'file'
     | 'breachMonitor'
-    | 'passkey';
+    | 'passkey'
+    | 'address'
+    | 'bankAccount'
+    | 'apiKey'
+    | 'sshKey';
   username?: string;
   password?: string;
   url?: string;
@@ -49,12 +53,64 @@ export interface VaultItem {
   checked_at?: string;
   breach_count?: number;
   breaches?: BreachEntry[];
+  // §1.3: user-defined extra fields, attachable to every item type. `hidden`
+  // values are masked like passwords.
+  custom_fields?: CustomField[];
+  // §1.3: previous password values, newest first (logins only).
+  password_history?: PasswordHistoryEntry[];
+  // §1.3 new item types — direct wire spellings.
+  // address
+  full_name?: string;
+  street?: string;
+  street_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+  phone?: string;
+  // bankAccount
+  bank_name?: string;
+  account_kind?: string;
+  holder?: string;
+  account_number?: string;
+  routing_number?: string;
+  iban?: string;
+  swift?: string;
+  // apiKey
+  api_key?: string;
+  expires?: string;
+  // sshKey
+  kind?: string;
+  public_key?: string;
+  private_key?: string;
+  passphrase?: string;
+  comment?: string;
   created_at: string;
   updated_at: string;
   last_modified_device?: string;
   favorite: boolean;
+  /** §1.1 organization: canonical tags and one optional folder name. */
+  tags: string[];
+  folder?: string;
   shared: boolean;
   share_recipient?: string;
+}
+
+export interface DeletedItem {
+  item: VaultItem;
+  deleted_at: string;
+  deleted_by?: string;
+}
+
+export interface CustomField {
+  label: string;
+  value: string;
+  field_type: 'text' | 'hidden';
+}
+
+export interface PasswordHistoryEntry {
+  password: string;
+  changed_at: string;
 }
 
 export interface BreachEntry {
@@ -99,6 +155,16 @@ export function toBackendItem(item: VaultItem): object {
     updated_at: item.updated_at,
     last_modified_device: item.last_modified_device || null,
     favorite: item.favorite,
+    tags: item.tags || [],
+    folder: item.folder || null,
+    // §1.3: sent unconditionally, like `tags` — `update_item` replaces the
+    // whole item, so omitting the key would wipe fields set on another
+    // device. An empty list means "none".
+    customFields: (item.custom_fields || []).map(f => ({
+      label: f.label,
+      value: f.value || '',
+      field_type: f.field_type || 'text',
+    })),
     shared: item.shared,
     share_recipient: item.share_recipient || null,
   };
@@ -166,6 +232,51 @@ export function toBackendItem(item: VaultItem): object {
         user_name: item.username || '',
         user_display_name: item.username || '',
       };
+    // ── §1.3 item model depth ─────────────────────────────────────────────
+    case 'address':
+      return {
+        ...base,
+        item_type: 'address',
+        full_name: item.full_name || '',
+        street: item.street || '',
+        street_line2: item.street_line2 || '',
+        city: item.city || '',
+        state: item.state || '',
+        postal_code: item.postal_code || '',
+        country: item.country || '',
+        phone: item.phone || '',
+      };
+    case 'bankAccount':
+      return {
+        ...base,
+        item_type: 'bankAccount',
+        bank_name: item.bank_name || '',
+        account_kind: item.account_kind || '',
+        holder: item.holder || '',
+        account_number: item.account_number || '',
+        routing_number: item.routing_number || '',
+        iban: item.iban || '',
+        swift: item.swift || '',
+      };
+    case 'apiKey':
+      return {
+        ...base,
+        item_type: 'apiKey',
+        url: item.url || '',
+        username: item.username || '',
+        api_key: item.api_key || '',
+        expires: item.expires || null,
+      };
+    case 'sshKey':
+      return {
+        ...base,
+        item_type: 'sshKey',
+        kind: item.kind || '',
+        public_key: item.public_key || '',
+        private_key: item.private_key || '',
+        passphrase: item.passphrase || '',
+        comment: item.comment || '',
+      };
     default:
       return { ...base, item_type: item.item_type };
   }
@@ -179,6 +290,14 @@ export function fromBackendItem(item: any): VaultItem {
     updated_at: item.updated_at || new Date().toISOString(),
     last_modified_device: item.last_modified_device,
     favorite: item.favorite || false,
+    tags: item.tags || [],
+    folder: item.folder || undefined,
+    custom_fields: (item.customFields || []).map((f: any) => ({
+      label: f.label || '',
+      value: f.value || '',
+      field_type: (f.field_type || 'text') as 'text' | 'hidden',
+    })),
+    password_history: item.password_history || undefined,
     shared: item.shared || false,
     share_recipient: item.share_recipient,
   };
@@ -235,6 +354,51 @@ export function fromBackendItem(item: any): VaultItem {
         // field the logins use.
         username: item.user_name,
       };
+    // ── §1.3 item model depth ─────────────────────────────────────────────
+    case 'address':
+      return {
+        ...base,
+        item_type: 'address',
+        full_name: item.full_name,
+        street: item.street,
+        street_line2: item.street_line2,
+        city: item.city,
+        state: item.state,
+        postal_code: item.postal_code,
+        country: item.country,
+        phone: item.phone,
+      };
+    case 'bankAccount':
+      return {
+        ...base,
+        item_type: 'bankAccount',
+        bank_name: item.bank_name,
+        account_kind: item.account_kind,
+        holder: item.holder,
+        account_number: item.account_number,
+        routing_number: item.routing_number,
+        iban: item.iban,
+        swift: item.swift,
+      };
+    case 'apiKey':
+      return {
+        ...base,
+        item_type: 'apiKey',
+        url: item.url,
+        username: item.username,
+        api_key: item.api_key,
+        expires: item.expires || undefined,
+      };
+    case 'sshKey':
+      return {
+        ...base,
+        item_type: 'sshKey',
+        kind: item.kind,
+        public_key: item.public_key,
+        private_key: item.private_key,
+        passphrase: item.passphrase,
+        comment: item.comment,
+      };
     default:
       return { ...base, item_type: item.item_type };
   }
@@ -255,7 +419,7 @@ export interface Settings {
   extension_version?: string;
 }
 
-type View = 'vault' | 'devices' | 'sharing' | 'audit' | 'settings' | 'breachMonitor';
+type View = 'vault' | 'devices' | 'sharing' | 'audit' | 'settings' | 'breachMonitor' | 'trash';
 type SetupStep = 'welcome' | 'biometric' | 'recovery' | 'complete';
 
 interface AppContextType {

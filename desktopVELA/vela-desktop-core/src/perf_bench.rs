@@ -27,6 +27,10 @@ fn login(i: usize, device: Option<&str>) -> VaultItem {
             updated_at: now,
             last_modified_device: device.map(|s| s.to_string()),
             favorite: i % 11 == 0,
+            tags: Vec::new(),
+            tag_tombstones: Vec::new(),
+            custom_fields: Vec::new(),
+            folder: None,
             shared: false,
             share_recipient: None,
         },
@@ -35,6 +39,7 @@ fn login(i: usize, device: Option<&str>) -> VaultItem {
         pass: format!("Correct-Horse-Battery-Staple-{i}!"),
         totp: if i % 5 == 0 { Some("JBSWY3DPEHPK3PXP".to_string()) } else { None },
         app_ids: Vec::new(),
+        password_history: Vec::new(),
         // Fields added by the M9a in-core login work; the perf benchmark does
         // not exercise them, so their defaults are fine.
         credential_change_needs_reauth: None,

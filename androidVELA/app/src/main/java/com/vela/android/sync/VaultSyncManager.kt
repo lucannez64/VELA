@@ -1,12 +1,14 @@
 package com.vela.android.sync
 
 import android.content.Context
+import com.vela.android.core.DeletedItem
 import com.vela.android.core.LocalVaultRepository
 import com.vela.android.core.NativeVelaCore
 import com.vela.android.core.Tombstone
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultJson
 import com.vela.android.core.VaultStore
+import com.vela.android.core.withMergedTags
 import com.vela.android.security.SecureVaultManager
 import com.vela.android.security.WebAuthnCeremony
 import kotlinx.coroutines.async
@@ -1081,7 +1083,13 @@ internal fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore
 
         val existing = mergedItems[item.id]
         if (existing == null || item.updatedAt >= existing.updatedAt) {
-            mergedItems[item.id] = item
+            // The newer copy wins the item — including the single-valued
+            // folder — but not the tags: those union across both copies
+            // (mirroring `vela-sync-policy::merge_org_fields`), so a tag added
+            // on one device survives the other device's edit of any field.
+            mergedItems[item.id] =
+                if (existing == null) item
+                else item.withMergedTags(existing)
         }
     }
 
@@ -1109,9 +1117,27 @@ internal fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore
         }
     }
 
+    // ── Trash (§1.2): union by id, newest deletion wins. An entry yields to
+    // a live copy that is newer than the deletion — a restore on either
+    // side — and expires with the same 30-day retention tombstones get.
+    val newestTrash = linkedMapOf<String, DeletedItem>()
+    for (entry in local.deletedItems + remote.deletedItems) {
+        val existing = newestTrash[entry.item.id]
+        if (existing == null || entry.deletedAt > existing.deletedAt) {
+            newestTrash[entry.item.id] = entry
+        }
+    }
+    val trashCutoff = Instant.now().minus(java.time.Duration.ofDays(30))
+    val mergedTrash = newestTrash.values
+        .filter { entry ->
+            val live = mergedItems[entry.item.id]
+            (live == null || live.updatedAt <= entry.deletedAt) && entry.deletedAt >= trashCutoff
+        }
+
     return VaultStore(
         items = mergedItems.values.sortedBy { it.name.lowercase() },
-        tombstones = pruneTombstones(tombstones)
+        tombstones = pruneTombstones(tombstones),
+        deletedItems = mergedTrash
     )
 }
 

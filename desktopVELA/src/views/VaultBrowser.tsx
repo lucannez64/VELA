@@ -103,6 +103,8 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
   const { copyToClipboard } = useClipboard();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
+  // §1.1 organization drill-down: one active folder or tag, or none.
+  const [orgFilter, setOrgFilter] = useState<{ kind: 'folder' | 'tag'; value: string } | null>(null);
   const [vaultHealth, setVaultHealth] = useState<VaultHealth | null>(null);
   const scrollParentRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -114,17 +116,49 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
       result = result.filter(item => item.item_type === filter);
     }
 
+    if (orgFilter) {
+      result = result.filter(item =>
+        orgFilter.kind === 'folder'
+          ? (item.folder || '').toLowerCase() === orgFilter.value
+          : (item.tags || []).some(t => t.toLowerCase() === orgFilter.value)
+      );
+    }
+
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(item =>
         item.name.toLowerCase().includes(query) ||
         item.username?.toLowerCase().includes(query) ||
-        item.url?.toLowerCase().includes(query)
+        item.url?.toLowerCase().includes(query) ||
+        item.folder?.toLowerCase().includes(query) ||
+        item.tags?.some(t => t.toLowerCase().includes(query))
       );
     }
 
     return result;
-  }, [propItems, filter, searchQuery]);
+  }, [propItems, filter, orgFilter, searchQuery]);
+
+  // The folder/tag chips, sorted, with how many items carry each. Keyed by
+  // the lowercase spelling so "Work" and "work" are one chip.
+  const orgChips = useMemo(() => {
+    const collect = (pick: (item: VaultItem) => string[]) => {
+      const byKey = new Map<string, { value: string; count: number }>();
+      for (const item of propItems) {
+        for (const raw of pick(item)) {
+          if (!raw) continue;
+          const key = raw.toLowerCase();
+          const entry = byKey.get(key) || { value: raw, count: 0 };
+          entry.count += 1;
+          byKey.set(key, entry);
+        }
+      }
+      return [...byKey.values()].sort((a, b) => a.value.localeCompare(b.value));
+    };
+    return {
+      folders: collect(item => (item.folder ? [item.folder] : [])),
+      tags: collect(item => item.tags || []),
+    };
+  }, [propItems]);
 
   useEffect(() => {
     const fetchHealth = async () => {
@@ -258,6 +292,47 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
           </button>
         ))}
       </div>
+
+      {(orgChips.folders.length > 0 || orgChips.tags.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2 mb-8">
+          {orgChips.folders.map(({ value, count }) => {
+            const active = orgFilter?.kind === 'folder' && orgFilter.value === value.toLowerCase();
+            return (
+              <button
+                key={`folder:${value}`}
+                onClick={() => setOrgFilter(active ? null : { kind: 'folder', value: value.toLowerCase() })}
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-label font-medium transition-colors ${
+                  active
+                    ? 'bg-primary text-on-primary'
+                    : 'bg-surface-container-highest text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <span className="material-symbols-outlined text-sm">folder</span>
+                {value}
+                <span className="opacity-70">{count}</span>
+              </button>
+            );
+          })}
+          {orgChips.tags.map(({ value, count }) => {
+            const active = orgFilter?.kind === 'tag' && orgFilter.value === value.toLowerCase();
+            return (
+              <button
+                key={`tag:${value}`}
+                onClick={() => setOrgFilter(active ? null : { kind: 'tag', value: value.toLowerCase() })}
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-label font-medium transition-colors ${
+                  active
+                    ? 'bg-primary text-on-primary'
+                    : 'bg-surface-container-highest text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <span className="material-symbols-outlined text-sm">sell</span>
+                {value}
+                <span className="opacity-70">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize() }}>
         {rowVirtualizer.getVirtualItems().map(virtualRow => {

@@ -15,6 +15,23 @@ use url::Url;
 
 use vela_desktop_core::browser::{cdp, host, intercept};
 
+/// `PipeIo` holds raw `OwnedFd`s on Unix and `tokio::fs::File`s on Windows;
+/// `connect_pipe` takes anything `AsyncRead`/`AsyncWrite`. Normalize here.
+#[cfg(unix)]
+fn pipe_file(fd: std::os::unix::io::OwnedFd) -> tokio::fs::File {
+    tokio::fs::File::from_std(std::fs::File::from(fd))
+}
+
+#[cfg(windows)]
+fn pipe_file(file: tokio::fs::File) -> tokio::fs::File {
+    file
+}
+
+#[cfg(not(any(unix, windows)))]
+fn pipe_file<T>(file: T) -> T {
+    file
+}
+
 #[tokio::main]
 async fn main() {
     let url = std::env::args()
@@ -23,8 +40,8 @@ async fn main() {
 
     let (browser, pipe) = host::spawn().await.expect("could not spawn the browser");
     let cdp = {
-        let command = tokio::fs::File::from_std(std::fs::File::from(pipe.command));
-        let message = tokio::fs::File::from_std(std::fs::File::from(pipe.message));
+        let command = pipe_file(pipe.command);
+        let message = pipe_file(pipe.message);
         cdp::Cdp::connect_pipe(command, message).await.expect("could not connect")
     };
     let (session, target_id) = cdp::create_page_session(&cdp).await.expect("session");
