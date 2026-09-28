@@ -91,6 +91,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dev debuginfo (≈ −69% target-dir size). See `docs/BUILD_PERFORMANCE.md`.
 
 ### Fixed
+- Android passkey creation now performs user verification for
+  `userVerification: "preferred"` (WebAuthn's default) as well as `"required"`,
+  matching Android platform passkeys. Presence-only creation produced a `UV=0`
+  credential that relying parties such as Uber reject at their server even
+  though VELA stored the key. Also emits `authenticatorAttachment` and the
+  requested `credProps.rk`, and accepts `{"publicKey": …}`-wrapped or
+  stringified request JSON.
 - Bumped `rustls` to 0.23.45 in `serverVELA` and `desktopVELA`
   (RUSTSEC-2026-0285, TLS 1.3 handshake encryption-level boundary), clearing
   the `cargo-audit` hard gate. The remaining audit notices (`fxhash`,

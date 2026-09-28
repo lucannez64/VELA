@@ -123,6 +123,10 @@ object PasskeyAuthenticator {
                 // Empty when the relying party built its own clientDataJSON
                 // and handed us the hash to sign over.
                 clientDataJson ?: "",
+                // VELA stores every passkey as a discoverable credential (it
+                // enumerates them by RP at get time), so `rk` is honestly true
+                // when the relying party asks for `credProps`.
+                credentialProperties = true.takeIf { options.requestedCredProps },
             ),
         )
     }

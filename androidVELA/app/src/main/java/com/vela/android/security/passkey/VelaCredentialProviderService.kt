@@ -102,6 +102,16 @@ class VelaCredentialProviderService : androidx.credentials.provider.CredentialPr
 
             val response = BeginCreateCredentialResponse.Builder()
             if (creation != null) {
+                // Non-sensitive (RP id + policy flags, no user identifiers or
+                // key material) — lets a relying-party failure be diagnosed
+                // from logcat without guessing at its create options.
+                android.util.Log.d(
+                    TAG,
+                    "begin create rp=${creation.rpId} " +
+                        "uv(require=${creation.requireUserVerification}, " +
+                        "prefer=${creation.preferUserVerification}) " +
+                        "credProps=${creation.requestedCredProps}",
+                )
                 response.addCreateEntry(
                     CreateEntry.Builder(
                         creation.userName.ifEmpty { creation.rpId },

@@ -59,15 +59,56 @@ class WebAuthnJsonTest {
         // authenticatorSelection; reading it top-level made every UV-required
         // relying party (Uber among them) a presence-only registration.
         assertTrue(options.requireUserVerification)
+        assertTrue(options.preferUserVerification)
+        assertFalse(options.requestedCredProps)
     }
 
     @Test
-    fun `user verification preferred is not required`() {
+    fun `user verification preferred is not required but is preferred`() {
         val options = WebAuthnJson.parseCreationOptions(
             """{"rp":{"id":"example.com"},"user":{"id":"AA"},"challenge":"AA",
                  "authenticatorSelection":{"userVerification":"preferred"}}""".trimIndent()
         )!!
         assertFalse(options.requireUserVerification)
+        assertTrue(options.preferUserVerification)
+    }
+
+    @Test
+    fun `an absent user verification defaults to preferred`() {
+        val options = WebAuthnJson.parseCreationOptions(
+            """{"rp":{"id":"example.com"},"user":{"id":"AA"},"challenge":"AA"}""".trimIndent()
+        )!!
+        assertFalse(options.requireUserVerification)
+        assertTrue(options.preferUserVerification)
+    }
+
+    @Test
+    fun `discouraged user verification is not preferred`() {
+        val options = WebAuthnJson.parseCreationOptions(
+            """{"rp":{"id":"example.com"},"user":{"id":"AA"},"challenge":"AA",
+                 "authenticatorSelection":{"userVerification":"discouraged"}}""".trimIndent()
+        )!!
+        assertFalse(options.requireUserVerification)
+        assertFalse(options.preferUserVerification)
+    }
+
+    @Test
+    fun `credProps is reported as requested`() {
+        val options = WebAuthnJson.parseCreationOptions(
+            """{"rp":{"id":"example.com"},"user":{"id":"AA"},"challenge":"AA",
+                 "extensions":{"credProps":true}}""".trimIndent()
+        )!!
+        assertTrue(options.requestedCredProps)
+    }
+
+    @Test
+    fun `a publicKey-wrapped creation request is parsed`() {
+        val options = WebAuthnJson.parseCreationOptions(
+            """{"publicKey":{"rp":{"id":"example.com"},"user":{"id":"AA"},"challenge":"AA",
+                 "authenticatorSelection":{"userVerification":"required"}}}""".trimIndent()
+        )!!
+        assertEquals("example.com", options.rpId)
+        assertTrue(options.requireUserVerification)
     }
 
     @Test
@@ -107,6 +148,8 @@ class WebAuthnJsonTest {
         assertEquals("AQID", WebAuthnJson.b64urlEncode(options.challenge))
         assertEquals(listOf("BAUF", "CA"), options.allowCredentialIds)
         assertFalse(options.requireUserVerification)
+        // Absent userVerification defaults to "preferred".
+        assertTrue(options.preferUserVerification)
     }
 
     // ── Credential selection ─────────────────────────────────────────────────
@@ -179,10 +222,23 @@ class WebAuthnJsonTest {
             String(WebAuthnJson.b64urlDecode(response.getJSONObject("response").getString("authenticatorData"))!!),
         )
         assertEquals("internal", response.getJSONObject("response").getJSONArray("transports").getString(0))
+        assertEquals("platform", response.getString("authenticatorAttachment"))
         assertEquals(0, response.getJSONObject("clientExtensionResults").length())
         assertEquals("{}", String(
             WebAuthnJson.b64urlDecode(response.getJSONObject("response").getString("clientDataJSON"))!!
         ))
+    }
+
+    @Test
+    fun `the registration response reports credProps rk when requested`() {
+        val response = org.json.JSONObject(
+            WebAuthnJson.registrationResponse(
+                "AQ", "attestation".toByteArray(), "authData".toByteArray(),
+                "spki", "{}", credentialProperties = true
+            )
+        )
+        val credProps = response.getJSONObject("clientExtensionResults").getJSONObject("credProps")
+        assertEquals(true, credProps.getBoolean("rk"))
     }
 
     @Test
@@ -198,6 +254,7 @@ class WebAuthnJsonTest {
         assertEquals("sig", String(WebAuthnJson.b64urlDecode(inner.getString("signature"))!!))
         assertEquals("handle", String(WebAuthnJson.b64urlDecode(inner.getString("userHandle"))!!))
         assertEquals("{}", String(WebAuthnJson.b64urlDecode(inner.getString("clientDataJSON"))!!))
+        assertEquals("platform", response.getString("authenticatorAttachment"))
         assertEquals(0, response.getJSONObject("clientExtensionResults").length())
     }
 

@@ -122,6 +122,13 @@ the RP requires it, a real verification (biometric/PIN via the already-requested
 `USE_BIOMETRIC`). The Kotlin ceremony sets the `UV` flag in `authenticatorData`
 only when that happened — not because the RP requested it.
 
+`userVerification: "preferred"` (the WebAuthn default, and what Android
+platform passkeys use) also attempts a real verification and falls back to
+presence-only only when the device cannot provide one; `"discouraged"` is
+presence-only. The response also carries `authenticatorAttachment` and, when
+requested, `clientExtensionResults.credProps.rk` — the shape relying-party
+clients and Chromium-family browsers parse.
+
 ### 5. Additive / safety
 
 Everything is additive: a new vault item variant, a new service, a new activity,

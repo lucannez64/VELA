@@ -58,8 +58,11 @@ import kotlinx.coroutines.launch
  *   and there is no code path that runs it without this screen having been
  *   shown and confirmed.
  * - `UV` is set only when a real biometric/PIN verification succeeded here,
- *   never because the relying party asked for it. A request that requires
- *   verification is refused if the device cannot provide it.
+ *   never because the relying party asked for it. A request that *requires*
+ *   verification is refused if the device cannot provide it; a `"preferred"`
+ *   request (WebAuthn's default) tries verification and falls back to
+ *   presence-only, because Android platform passkeys are device-lock backed
+ *   and relying parties check the flag server-side.
  * - The origin in `clientDataJSON` comes from the platform (privileged
  *   browser) or from the calling app's own signing certificate — never from
  *   anything the request could have chosen for itself. A privileged browser
@@ -148,23 +151,33 @@ class PasskeyPromptActivity : FragmentActivity() {
         if (stage != Stage.Confirm) return
         errorText = null
 
-        if (shown.requireUserVerification) {
-            runBiometricVerification { verified -> runCeremony(shown, verified) }
+        if (shown.preferUserVerification) {
+            // "required" refuses when the device cannot verify; "preferred"
+            // (WebAuthn's default, and what Android platform passkeys do)
+            // falls back to presence-only when it cannot.
+            runBiometricVerification(required = shown.requireUserVerification) { verified ->
+                runCeremony(shown, verified)
+            }
         } else {
-            // Presence only: a tap on this screen. No UV flag.
+            // "discouraged": a tap on this screen. No UV flag.
             runCeremony(shown, verified = false)
         }
     }
 
-    private fun runBiometricVerification(onVerified: (Boolean) -> Unit) {
+    private fun runBiometricVerification(required: Boolean, onVerified: (Boolean) -> Unit) {
         val manager = BiometricManager.from(this)
         val authenticators = BiometricManager.Authenticators.BIOMETRIC_WEAK or
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
         if (manager.canAuthenticate(authenticators) !=
             BiometricManager.BIOMETRIC_SUCCESS
         ) {
-            errorText = "This site requires biometric or PIN verification, which " +
-                "this device cannot provide."
+            if (required) {
+                errorText = "This site requires biometric or PIN verification, which " +
+                    "this device cannot provide."
+            } else {
+                // "preferred": presence-only is permitted, so proceed without UV.
+                onVerified(false)
+            }
             return
         }
         stage = Stage.Verifying
@@ -235,6 +248,7 @@ class PasskeyPromptActivity : FragmentActivity() {
     private sealed class Ceremony {
         abstract val originSummary: String
         abstract val requireUserVerification: Boolean
+        abstract val preferUserVerification: Boolean
 
         /** Runs the ceremony. Call at most once per approval. */
         abstract fun run(verified: Boolean): CeremonyResult
@@ -250,6 +264,8 @@ class PasskeyPromptActivity : FragmentActivity() {
                 get() = origin ?: "an app on this device"
             override val requireUserVerification: Boolean
                 get() = options.requireUserVerification
+            override val preferUserVerification: Boolean
+                get() = options.preferUserVerification
 
             override fun run(verified: Boolean): CeremonyResult {
                 val result = PasskeyAuthenticator.getAssertion(
@@ -277,6 +293,8 @@ class PasskeyPromptActivity : FragmentActivity() {
                 get() = origin ?: "an app on this device"
             override val requireUserVerification: Boolean
                 get() = options.requireUserVerification
+            override val preferUserVerification: Boolean
+                get() = options.preferUserVerification
 
             override fun run(verified: Boolean): CeremonyResult {
                 val registration = PasskeyAuthenticator.makeCredential(

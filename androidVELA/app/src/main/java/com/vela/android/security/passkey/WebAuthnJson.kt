@@ -40,11 +40,27 @@ object WebAuthnJson {
         val challenge: ByteArray,
         val algorithms: List<Int>,
         val excludedCredentialIds: List<String>,
+        /** `userVerification: "required"` — refuse unless a real verification ran. */
         val requireUserVerification: Boolean,
+        /**
+         * `userVerification` is not `"discouraged"`.
+         *
+         * WebAuthn's default is `"preferred"`: perform verification when the
+         * device can. Android platform passkeys are device-lock backed and
+         * relying parties (Uber, banks) check the `UV` flag at their server, so
+         * presence-only creation is the anomaly — the credential is stored but
+         * the server rejects the registration.
+         */
+        val preferUserVerification: Boolean,
+        /** The RP asked for the `credProps` extension (to learn discoverability). */
+        val requestedCredProps: Boolean,
     )
 
     fun parseCreationOptions(requestJson: String): CreationOptions? {
-        val json = runCatching { JSONObject(requestJson) }.getOrNull() ?: return null
+        // Credential Manager hands the provider the standard creation
+        // dictionary, but some callers wrap it as `{"publicKey": {…}}` (and a
+        // few stringify it), so unwrap before reading any field.
+        val json = unwrapRequest(requestJson) ?: return null
         val rp = json.optJSONObject("rp") ?: return null
         val rpId = rp.optString("id").takeIf { it.isNotEmpty() } ?: return null
         val user = json.optJSONObject("user") ?: return null
@@ -68,18 +84,15 @@ object WebAuthnJson {
             }
             .orEmpty()
 
-        // `userVerification` lives under `authenticatorSelection` in the
-        // `PublicKeyCredentialCreationOptions` dictionary (WebAuthn §5.4). A
-        // top-level copy is accepted only as a fallback, for callers that hoist
-        // it. Reading it at the top level alone — as this did — silently
-        // treated every relying party that required UV as presence-only: the
-        // credential was created with the UV flag clear, so the relying
-        // party's server rejected the registration even though VELA had already
-        // stored the key.
-        val selection = json.optJSONObject("authenticatorSelection")
-        val userVerification = selection?.optString("userVerification")
-            ?.takeIf { it.isNotEmpty() }
-            ?: json.optString("userVerification")
+        // `userVerification` lives under `authenticatorSelection` (WebAuthn
+        // §5.4); a top-level copy is accepted as a fallback. Absent means
+        // "preferred", which — unlike "discouraged" — wants UV when possible.
+        val selection = json.optJsonObjectOrString("authenticatorSelection")
+        val userVerification = (
+            selection?.optString("userVerification")?.takeIf { it.isNotEmpty() }
+                ?: json.optString("userVerification")
+            ).lowercase()
+        val extensions = json.optJsonObjectOrString("extensions")
 
         return CreationOptions(
             rpId = rpId,
@@ -91,7 +104,38 @@ object WebAuthnJson {
             algorithms = algorithms,
             excludedCredentialIds = excluded,
             requireUserVerification = userVerification == "required",
+            preferUserVerification = userVerification != "discouraged",
+            requestedCredProps = extensions?.opt("credProps").truthy() == true,
         )
+    }
+
+    /**
+     * The request dictionary, unwrapping a `{"publicKey": {…}}` envelope.
+     *
+     * `navigator.credentials.create/get` take `{ publicKey: … }`; some callers
+     * pass that whole object through Credential Manager instead of the inner
+     * dictionary, which would otherwise fail every field lookup.
+     */
+    private fun unwrapRequest(requestJson: String): JSONObject? {
+        val parsed = runCatching { JSONObject(requestJson) }.getOrNull() ?: return null
+        return parsed.optJsonObjectOrString("publicKey") ?: parsed
+    }
+
+    /** `optJSONObject`, also accepting a stringified JSON object. */
+    private fun JSONObject.optJsonObjectOrString(key: String): JSONObject? {
+        optJSONObject(key)?.let { return it }
+        val raw = optString(key)
+        return raw.takeIf { it.startsWith("{") }
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+    }
+
+    /** JSON booleans, `"true"`, or a present object all mean "requested". */
+    private fun Any?.truthy(): Boolean? = when (this) {
+        null, JSONObject.NULL -> null
+        is Boolean -> this
+        is String -> equals("true", ignoreCase = true)
+        is JSONObject -> true
+        else -> null
     }
 
     // ── Authentication (navigator.credentials.get) ───────────────────────────
@@ -101,10 +145,12 @@ object WebAuthnJson {
         val challenge: ByteArray,
         val allowCredentialIds: List<String>,
         val requireUserVerification: Boolean,
+        /** See [CreationOptions.preferUserVerification]. */
+        val preferUserVerification: Boolean,
     )
 
     fun parseRequestOptions(requestJson: String): RequestOptions? {
-        val json = runCatching { JSONObject(requestJson) }.getOrNull() ?: return null
+        val json = unwrapRequest(requestJson) ?: return null
         val rpId = json.optString("rpId").takeIf { it.isNotEmpty() } ?: return null
         val challenge = b64urlDecode(json.optString("challenge")) ?: return null
 
@@ -116,11 +162,14 @@ object WebAuthnJson {
             }
             .orEmpty()
 
+        val userVerification = json.optString("userVerification").lowercase()
+
         return RequestOptions(
             rpId = rpId,
             challenge = challenge,
             allowCredentialIds = allowed,
-            requireUserVerification = json.optString("userVerification") == "required",
+            requireUserVerification = userVerification == "required",
+            preferUserVerification = userVerification != "discouraged",
         )
     }
 
@@ -152,7 +201,12 @@ object WebAuthnJson {
      * parse more than the spec minimum and cross-check consistency:
      * `authenticatorData` must equal the bytes inside the attestation,
      * `publicKeyAlgorithm` the algorithm parsed from it, and `publicKey` the
-     * SubjectPublicKeyInfo DER of the attested key.
+     * SubjectPublicKeyInfo DER of the attested key. `authenticatorAttachment`
+     * and the requested `credProps.rk` are part of the shape relying-party
+     * clients and browsers parse, so they are emitted too.
+     *
+     * [credentialProperties] is the `credProps.rk` value to report, or null
+     * when the relying party did not request the extension.
      */
     fun registrationResponse(
         credentialIdB64: String,
@@ -160,23 +214,35 @@ object WebAuthnJson {
         authenticatorData: ByteArray,
         publicKeySpkiDerB64: String,
         clientDataJson: String,
-    ): String = JSONObject()
-        .put("id", credentialIdB64)
-        .put("rawId", credentialIdB64)
-        .put("type", "public-key")
-        .put(
-            "response",
-            JSONObject()
-                .put("attestationObject", b64urlEncode(attestationObject))
-                .put("authenticatorData", b64urlEncode(authenticatorData))
-                .put("publicKeyAlgorithm", -7)
-                .put("publicKey", publicKeySpkiDerB64)
-                .put("clientDataJSON", b64urlEncode(clientDataJson.toByteArray(Charsets.UTF_8)))
-                .put("transports", JSONArray().put("internal")),
-        )
-        // Required by the relying party's parser even when empty.
-        .put("clientExtensionResults", JSONObject())
-        .toString()
+        credentialProperties: Boolean? = null,
+    ): String {
+        val clientExtensionResults = JSONObject()
+        if (credentialProperties != null) {
+            clientExtensionResults.put(
+                "credProps",
+                JSONObject().put("rk", credentialProperties),
+            )
+        }
+        return JSONObject()
+            .put("id", credentialIdB64)
+            .put("rawId", credentialIdB64)
+            .put("type", "public-key")
+            .put("authenticatorAttachment", "platform")
+            .put(
+                "response",
+                JSONObject()
+                    .put("attestationObject", b64urlEncode(attestationObject))
+                    .put("authenticatorData", b64urlEncode(authenticatorData))
+                    .put("publicKeyAlgorithm", -7)
+                    .put("publicKey", publicKeySpkiDerB64)
+                    .put("clientDataJSON", b64urlEncode(clientDataJson.toByteArray(Charsets.UTF_8)))
+                    .put("transports", JSONArray().put("internal")),
+            )
+            // Required by the relying party's parser, and carries credProps
+            // when the relying party asked for it.
+            .put("clientExtensionResults", clientExtensionResults)
+            .toString()
+    }
 
     /** The `PublicKeyCredential` JSON an assertion ceremony returns. */
     fun assertionResponse(
@@ -197,6 +263,7 @@ object WebAuthnJson {
             .put("id", credentialIdB64)
             .put("rawId", credentialIdB64)
             .put("type", "public-key")
+            .put("authenticatorAttachment", "platform")
             .put("response", response)
             // Required by the relying party's parser even when empty.
             .put("clientExtensionResults", JSONObject())
