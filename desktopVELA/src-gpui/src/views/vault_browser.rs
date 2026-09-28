@@ -15,10 +15,11 @@
 //! — matches the original's `FaviconIcon.tsx` behavior (fallback to the
 //! type icon until/unless a real favicon loads).
 //!
-//! Row copy (password → card number → username priority, matching the
-//! original's `handleCopy`) and open-URL (native `open`/xdg-open, matching
-//! `handleOpenUrl`) are both real and wired — neither mutates the vault, so
-//! both are safe to fully port unlike the write-path actions elsewhere.
+//! Row copy (password → card number → username → secure-note content
+//! priority, matching the original's `handleCopy`) and open-URL (native
+//! `open`/xdg-open, matching `handleOpenUrl`) are both real and wired — neither
+//! mutates the vault, so both are safe to fully port unlike the write-path
+//! actions elsewhere.
 
 use std::sync::Arc;
 
@@ -115,6 +116,9 @@ enum CopySource {
     Password,
     CardNumber,
     Username,
+    /// A secure note has no username/password/card field, so without this the
+    /// row's copy icon always toasted "Nothing to copy".
+    SecureNote,
 }
 
 /// Resolves a row's copy payload from the live items snapshot. Returns
@@ -136,6 +140,9 @@ fn resolve_copy_value(
         }
         (Some(CopySource::Username), _) => {
             item.username().map(|user| ("Username", user.to_string()))
+        }
+        (Some(CopySource::SecureNote), VaultItem::SecureNote { content, .. }) if !content.is_empty() => {
+            Some(("Secure note", content.clone()))
         }
         _ => None,
     }
@@ -678,16 +685,18 @@ fn item_row(
     let shared = item.shared();
     let is_received = item.is_received_share();
     // Matches the original's `handleCopy` priority: password, then card
-    // number, then username, else nothing to copy. Only the *which field*
-    // decision happens at render time; the value itself is resolved from
-    // live vault state when the icon is clicked, so no rendered row keeps
-    // its own plaintext copy alive.
+    // number, then username, then a secure note's content, else nothing to
+    // copy. Only the *which field* decision happens at render time; the value
+    // itself is resolved from live vault state when the icon is clicked, so no
+    // rendered row keeps its own plaintext copy alive.
     let copy_source = if item.password().is_some() {
         Some(CopySource::Password)
     } else if matches!(item, VaultItem::CreditCard { number, .. } if !number.is_empty()) {
         Some(CopySource::CardNumber)
     } else if item.username().is_some() {
         Some(CopySource::Username)
+    } else if matches!(item, VaultItem::SecureNote { content, .. } if !content.is_empty()) {
+        Some(CopySource::SecureNote)
     } else {
         None
     };
@@ -1087,4 +1096,55 @@ fn stat_tile(
         )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use vela_desktop_core::vault::VaultMeta;
 
+    fn meta(id: &str, name: &str) -> VaultMeta {
+        let now = Utc::now();
+        VaultMeta {
+            id: id.to_string(),
+            name: name.to_string(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+            last_modified_device: None,
+            favorite: false,
+            shared: false,
+            share_recipient: None,
+        }
+    }
+
+    fn secure_note(id: &str, content: &str) -> VaultItem {
+        VaultItem::SecureNote {
+            meta: meta(id, "My note"),
+            title: "My note".to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    /// A secure note has no password/card/username, so before this fix its row
+    /// copy icon always fell through to the "Nothing to copy" toast.
+    #[test]
+    fn secure_note_row_copy_returns_content() {
+        let items = vec![secure_note("n1", "my secret note")];
+        assert_eq!(
+            resolve_copy_value(&items, "n1", Some(CopySource::SecureNote)),
+            Some(("Secure note", "my secret note".to_string())),
+        );
+    }
+
+    #[test]
+    fn empty_secure_note_has_nothing_to_copy() {
+        let items = vec![secure_note("n1", "")];
+        assert_eq!(resolve_copy_value(&items, "n1", Some(CopySource::SecureNote)), None);
+    }
+
+    #[test]
+    fn missing_item_has_nothing_to_copy() {
+        let items: Vec<VaultItem> = Vec::new();
+        assert_eq!(resolve_copy_value(&items, "gone", Some(CopySource::SecureNote)), None);
+    }
+}

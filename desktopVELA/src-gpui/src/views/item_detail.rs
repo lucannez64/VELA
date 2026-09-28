@@ -369,52 +369,27 @@ impl Render for ItemDetail {
         }
 
         if let VaultItem::SecureNote { content, .. } = &item {
-            fields = fields.child(
-                div()
-                    .p_4()
-                    .rounded_xl()
-                    .bg(palette.surface_container_low)
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        fonts::tracked_text("SECURE NOTE", px(10.), 0.2)
-                            .font_family(fonts::LABEL)
-                            .text_size(px(10.))
-                            .text_color(palette.outline),
-                    )
-                    .child(
-                        div()
-                            .font_family(fonts::MONO)
-                            .text_color(palette.on_surface)
-                            .child(content.clone()),
-                    ),
-            );
+            fields = fields.child(note_card(
+                &palette,
+                "SECURE NOTE",
+                content,
+                (!content.is_empty()).then_some(content.as_str()),
+                true,
+                window,
+                cx,
+            ));
         }
 
         if let Some(notes) = item.notes() {
-            fields = fields.child(
-                div()
-                    .p_4()
-                    .rounded_xl()
-                    .bg(palette.surface_container_low)
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        fonts::tracked_text("ADDITIONAL NOTES", px(10.), 0.2)
-                            .font_family(fonts::LABEL)
-                            .text_size(px(10.))
-                            .text_color(palette.outline),
-                    )
-                    .child(
-                        div()
-                            .font_family(fonts::BODY)
-                            .text_sm()
-                            .text_color(palette.on_surface)
-                            .child(notes.to_string()),
-                    ),
-            );
+            fields = fields.child(note_card(
+                &palette,
+                "ADDITIONAL NOTES",
+                notes,
+                None,
+                false,
+                window,
+                cx,
+            ));
         }
 
         let totp_section = if matches!(&item, VaultItem::Login { totp: Some(_), .. }) {
@@ -873,6 +848,74 @@ fn footer_stat(
                 .mb_1(),
         )
         .child(value_el.child(value))
+}
+
+/// A full-width card for a multi-line note body.
+///
+/// `copy_value` is `Some` for the secure-note body — which previously had no
+/// copy affordance at all, so a secure note could only be copied by the list
+/// row's icon and that toasted "Nothing to copy" — and `None` for free-form
+/// additional notes.
+fn note_card(
+    palette: &Palette,
+    label: &'static str,
+    content: &str,
+    copy_value: Option<&str>,
+    mono: bool,
+    window: &mut Window,
+    cx: &mut Context<ItemDetail>,
+) -> impl IntoElement {
+    let mut label_row = div().flex().items_center().justify_between().child(
+        fonts::tracked_text(label, px(10.), 0.2)
+            .font_family(fonts::LABEL)
+            .text_size(px(10.))
+            .text_color(palette.outline),
+    );
+
+    if let Some(value) = copy_value {
+        let value = value.to_string();
+        let hover_t = animation::hover_transition(format!("copy-{label}"), window, cx);
+        let t = *hover_t.evaluate(window, cx);
+        let hover_bg = animation::lerp_hsla(gpui::transparent_black(), palette.surface_container_highest, t);
+        label_row = label_row.child(
+            div()
+                .id(SharedString::from(format!("copy-{label}")))
+                .p_2()
+                .rounded_lg()
+                .cursor_pointer()
+                .bg(hover_bg)
+                .on_hover(move |is_hovered, _, cx| {
+                    hover_t.update(cx, |v, cx| {
+                        *v = *is_hovered as u8 as f32;
+                        cx.notify();
+                    });
+                })
+                .child(icon("content_copy", px(18.), palette.primary))
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                    this.copy(label, &value, cx);
+                    cx.notify();
+                })),
+        );
+    }
+
+    let body = if mono {
+        div().font_family(fonts::MONO).text_color(palette.on_surface)
+    } else {
+        div()
+            .font_family(fonts::BODY)
+            .text_sm()
+            .text_color(palette.on_surface)
+    };
+
+    div()
+        .p_4()
+        .rounded_xl()
+        .bg(palette.surface_container_low)
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(label_row)
+        .child(body.child(content.to_string()))
 }
 
 /// `mono`: whether the value uses the monospace font — matches the

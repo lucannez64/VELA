@@ -442,7 +442,15 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
 
         {item.secure_note_content && (
           <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
-            <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Secure Note</label>
+            <div className="flex items-center justify-between mb-4">
+              <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline">Secure Note</label>
+              <button
+                onClick={() => copyToClipboard(item.secure_note_content!, 'Secure note')}
+                className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors text-primary"
+              >
+                <span className="material-symbols-outlined text-xl">content_copy</span>
+              </button>
+            </div>
             <p className="text-on-surface whitespace-pre-wrap font-mono">{item.secure_note_content}</p>
           </div>
         )}

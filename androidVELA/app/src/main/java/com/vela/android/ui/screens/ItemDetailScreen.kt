@@ -161,7 +161,7 @@ fun ItemDetailScreen(
             when (item) {
                 is VaultItem.Login -> LoginFields(item, context, scope)
                 is VaultItem.CreditCard -> CardFields(item, context, scope)
-                is VaultItem.SecureNote -> NoteFields(item)
+                is VaultItem.SecureNote -> NoteFields(item, context, scope)
                 is VaultItem.Passkey -> PasskeyFields(item, context, scope)
                 else -> {}
             }
@@ -214,14 +214,39 @@ private fun CardFields(item: VaultItem.CreditCard, context: android.content.Cont
 }
 
 @Composable
-private fun NoteFields(item: VaultItem.SecureNote) {
+private fun NoteFields(item: VaultItem.SecureNote, context: android.content.Context, scope: CoroutineScope) {
     VelaCard {
-        Text(
-            item.content,
-            color = VelaColors.TextPrimary,
-            fontSize = 15.sp,
-            lineHeight = 22.sp
-        )
+        Column(modifier = Modifier.padding(vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "SECURE NOTE",
+                    color = VelaColors.TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 2.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                if (item.content.isNotBlank()) {
+                    IconButton(
+                        onClick = { SecureClipboard.copy(context, scope, "Secure note", item.content) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.ContentCopy, "Copy",
+                            modifier = Modifier.size(16.dp),
+                            tint = VelaColors.TextMuted
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                item.content,
+                color = VelaColors.TextPrimary,
+                fontSize = 15.sp,
+                lineHeight = 22.sp
+            )
+        }
     }
 }
 

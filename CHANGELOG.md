@@ -91,6 +91,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dev debuginfo (≈ −69% target-dir size). See `docs/BUILD_PERFORMANCE.md`.
 
 ### Fixed
+- Secure notes can now be copied: the desktop vault-list row copy icon takes
+  a note's body instead of toasting "Nothing to copy", and every front end
+  (gpui, Tauri, Android, iOS) has a copy button on the note detail view.
 - Silent `TypeError` when assembling the shimmed WebAuthn credential;
   an explicit dialog approval now correctly satisfies passkey user
   verification.

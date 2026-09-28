@@ -118,7 +118,14 @@ struct ItemDetailView: View {
 
     @ViewBuilder private var noteSection: some View {
         Section("Note") {
-            Text(current.content ?? "").textSelection(.enabled)
+            HStack(alignment: .top) {
+                Text(current.content ?? "").textSelection(.enabled)
+                if let content = current.content, !content.isEmpty {
+                    Spacer()
+                    CopyButton(value: content)
+                        .accessibilityIdentifier("copyNoteButton")
+                }
+            }
         }
     }
 

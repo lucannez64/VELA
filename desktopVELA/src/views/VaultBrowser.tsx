@@ -203,6 +203,8 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
       copyToClipboard(item.card_number, 'Card number');
     } else if (item.username) {
       copyToClipboard(item.username, 'Username');
+    } else if (item.secure_note_content) {
+      copyToClipboard(item.secure_note_content, 'Secure note');
     } else {
       showToast('Nothing to copy', 'info');
     }
