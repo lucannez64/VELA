@@ -91,6 +91,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dev debuginfo (≈ −69% target-dir size). See `docs/BUILD_PERFORMANCE.md`.
 
 ### Fixed
+- Bumped `rustls` to 0.23.45 in `serverVELA` and `desktopVELA`
+  (RUSTSEC-2026-0285, TLS 1.3 handshake encryption-level boundary), clearing
+  the `cargo-audit` hard gate. The remaining audit notices (`fxhash`,
+  `instant`, `proc-macro-error2`) are unmaintained warnings pulled in by `sled`
+  and do not fail the gate.
 - Android passkey creation now honors user verification. The creation
   dictionary nests `userVerification` under `authenticatorSelection`, but the
   provider read it at the top level, so every relying party that required UV
