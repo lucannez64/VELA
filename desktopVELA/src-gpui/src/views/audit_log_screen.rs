@@ -3,13 +3,24 @@
 //! `vela_desktop_core::audit::load_audit_log`, the same encrypted local
 //! audit log the shipped Tauri app reads — safe, no vault mutation.
 //!
+//! The feed is virtualized with gpui's variable-height `list` (the same
+//! element `VaultBrowser` uses). The original Tauri view rendered every entry
+//! eagerly, which is survivable in React's reconciler but not here: gpui rebuilt
+//! the whole tree — and a hover `Transition` per row — on every repaint, and the
+//! loading spinner's 10fps ticker kept repainting forever, so a large log made
+//! the app crawl. `list` renders only the visible window and the ticker is
+//! dropped once the entries land.
+//!
 //! Not ported: nothing was actually skipped here — the original has no
 //! actions besides reading/rendering the log.
 
 use std::sync::Arc;
 
 use chrono::{DateTime, Local};
-use gpui::{div, prelude::*, px, Context, IntoElement, Render, SharedString, Task, Window};
+use gpui::{
+    div, list, prelude::*, px, App, Context, IntoElement, ListAlignment, ListState, Render,
+    SharedString, Task, Window,
+};
 
 use vela_desktop_core::audit::{AuditAction, AuditEntry};
 use vela_desktop_core::AppState;
@@ -20,10 +31,26 @@ use crate::fonts;
 use crate::icon::icon;
 use crate::theme::Palette;
 
+/// One virtualized row: a day header or an entry (index into `entries`).
+enum AuditRow {
+    Date(SharedString),
+    Entry(usize),
+}
+
 pub struct AuditLogScreen {
-    entries: Option<Vec<AuditEntry>>,
+    /// Shared with the `list` render closure, which only gets `&mut App` and so
+    /// cannot read `self` — the same snapshot-by-`Arc` trick `VaultBrowser`
+    /// uses for its items.
+    entries: Option<Arc<Vec<AuditEntry>>>,
+    /// Flattened day-header/entry rows, rebuilt once when the log loads rather
+    /// than on every repaint (which is what made a large log expensive).
+    rows: Arc<Vec<AuditRow>>,
     error: Option<SharedString>,
-    _pulse_task: Task<()>,
+    list_state: ListState,
+    /// Drives the loading spinner while the entries are in flight, then is
+    /// dropped when they land — a large loaded log must not be repainted 10×/s
+    /// for a spinner that is no longer on screen.
+    _pulse_task: Option<Task<()>>,
 }
 
 impl AuditLogScreen {
@@ -43,10 +70,16 @@ impl AuditLogScreen {
                     Some(log) => {
                         let mut entries = log.entries;
                         entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-                        this.entries = Some(entries);
+                        let rows = build_rows(&entries);
+                        this.list_state.reset(rows.len());
+                        this.rows = Arc::new(rows);
+                        this.entries = Some(Arc::new(entries));
                     }
                     None => this.error = Some("Failed to load audit log".into()),
                 }
+                // Loading is over either way; the spinner's repaint loop has
+                // nothing left to animate.
+                this._pulse_task = None;
                 cx.notify();
             })
             .ok();
@@ -55,8 +88,10 @@ impl AuditLogScreen {
 
         Self {
             entries: None,
+            rows: Arc::new(Vec::new()),
             error: None,
-            _pulse_task: animation::spawn_pulse_ticker(cx),
+            list_state: ListState::new(0, ListAlignment::Top, px(400.)),
+            _pulse_task: Some(animation::spawn_pulse_ticker(cx)),
         }
     }
 }
@@ -139,14 +174,89 @@ fn device_name(entry: &AuditEntry) -> &str {
     }
 }
 
+/// The entry's calendar-day label in the local timezone (the original's
+/// `toLocaleDateString` with month/day/year).
+fn local_date(entry: &AuditEntry) -> String {
+    let local: DateTime<Local> = entry.timestamp.with_timezone(&Local);
+    local.format("%B %-d, %Y").to_string()
+}
+
+/// Flattens already-sorted (descending) entries into day headers + entry rows.
+///
+/// A contiguous same-day run becomes one header, so the input is walked once —
+/// cheaper than a map, and it preserves the original's "most recent day first"
+/// ordering for free.
+fn build_rows(entries: &[AuditEntry]) -> Vec<AuditRow> {
+    let mut rows = Vec::with_capacity(entries.len() + 8);
+    let mut last_date: Option<String> = None;
+    for (index, entry) in entries.iter().enumerate() {
+        let date = local_date(entry);
+        if last_date.as_deref() != Some(date.as_str()) {
+            rows.push(AuditRow::Date(date.clone().into()));
+            last_date = Some(date);
+        }
+        rows.push(AuditRow::Entry(index));
+    }
+    rows
+}
+
 impl Render for AuditLogScreen {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
+        let rows = self.rows.clone();
+        let entries = self.entries.clone();
+
+        // The page header stays put; the virtualized `list` fills the rest of
+        // the viewport and scrolls internally, so only visible rows are built.
+        let body = match (&self.entries, &self.error) {
+            (None, Some(error)) => div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_16()
+                .text_color(palette.error)
+                .child(error.clone())
+                .into_any_element(),
+            (None, None) => div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_16()
+                .child(
+                    icon("progress_activity", px(36.), palette.primary)
+                        .opacity(animation::pulse_alpha(1.0)),
+                )
+                .into_any_element(),
+            (Some(entries), _) if entries.is_empty() => div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py_16()
+                .text_color(palette.on_surface_variant)
+                .child("No activity yet")
+                .into_any_element(),
+            (Some(_), _) => list(self.list_state.clone(), move |ix, window, app| match &rows[ix] {
+                AuditRow::Date(date) => date_header(&palette, date).into_any_element(),
+                AuditRow::Entry(entry_ix) => {
+                    // `rows` and `entries` are snapshots from the same load
+                    // (rebuilt together, above), so the index is always valid.
+                    let entries = entries.as_ref().expect("rows imply loaded entries");
+                    div()
+                        .pb_2()
+                        .child(audit_row(&palette, &entries[*entry_ix], window, app))
+                        .into_any_element()
+                }
+            })
+            .flex_1()
+            .min_h(px(0.))
+            .w_full()
+            .into_any_element(),
+        };
 
         div()
-            .id("audit-log-scroll")
             .size_full()
-            .overflow_y_scroll()
+            .flex()
+            .flex_col()
             .bg(palette.surface)
             .font_family(fonts::LABEL)
             .p_8()
@@ -155,7 +265,7 @@ impl Render for AuditLogScreen {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .mb_8()
+                    .mb_6()
                     .child(
                         div()
                             .flex()
@@ -201,80 +311,23 @@ impl Render for AuditLogScreen {
                             ),
                     ),
             )
-            .map(|el| match &self.entries {
-                None => el.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .py_16()
-                        .child(
-                            icon("progress_activity", px(36.), palette.primary)
-                                .opacity(animation::pulse_alpha(1.0)),
-                        ),
-                ),
-                Some(entries) if entries.is_empty() => el.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .py_16()
-                        .text_color(palette.on_surface_variant)
-                        .child("No activity yet"),
-                ),
-                Some(entries) => el.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_8()
-                        .children(date_groups(entries).into_iter().map(|(date, group)| {
-                            date_group_section(&palette, &date, group, window, cx)
-                        })),
-                ),
-            })
-            .when_some(self.error.clone(), |el, error| {
-                el.child(div().text_sm().text_color(palette.error).child(error))
-            })
+            // The error state is rendered by `body` above (there is no log to
+            // show), so it isn't appended a second time here.
+            .child(body)
     }
 }
 
-/// Groups already-sorted (descending) entries into contiguous same-day runs
-/// — cheaper than a hashmap since the input is pre-sorted by timestamp, and
-/// preserves the original's "most recent day first" ordering for free.
-fn date_groups(entries: &[AuditEntry]) -> Vec<(String, Vec<&AuditEntry>)> {
-    let mut groups: Vec<(String, Vec<&AuditEntry>)> = Vec::new();
-    for entry in entries {
-        let local: DateTime<Local> = entry.timestamp.with_timezone(&Local);
-        let date = local.format("%B %-d, %Y").to_string();
-        match groups.last_mut() {
-            Some((last_date, group)) if *last_date == date => group.push(entry),
-            _ => groups.push((date, vec![entry])),
-        }
-    }
-    groups
-}
-
-fn date_group_section(
-    palette: &Palette,
-    date: &str,
-    entries: Vec<&AuditEntry>,
-    window: &mut Window,
-    cx: &mut Context<AuditLogScreen>,
-) -> impl IntoElement {
+/// A day separator inside the virtualized list. Padding rather than margin so
+/// the `list` measurement stays a simple box height.
+fn date_header(palette: &Palette, date: &str) -> impl IntoElement {
     div()
+        .pt_4()
+        .pb_2()
         .child(
             fonts::tracked_text(date, px(12.), 0.1)
                 .font_family(fonts::LABEL)
                 .text_xs()
-                .text_color(palette.outline)
-                .mb_4(),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .children(entries.into_iter().map(|entry| audit_row(palette, entry, window, cx))),
+                .text_color(palette.outline),
         )
 }
 
@@ -282,7 +335,7 @@ fn audit_row(
     palette: &Palette,
     entry: &AuditEntry,
     window: &mut Window,
-    cx: &mut Context<AuditLogScreen>,
+    app: &mut App,
 ) -> impl IntoElement {
     let (label, icon_name) = action_label_icon(&entry.action);
     let color = action_color(&entry.action, palette);
@@ -292,8 +345,8 @@ fn audit_row(
     let device = device_name(entry).to_string();
     let row_id = SharedString::from(format!("audit-{}", entry.id));
 
-    let hover_t = animation::hover_transition(row_id.clone(), window, cx);
-    let t = *hover_t.evaluate(window, cx);
+    let hover_t = animation::hover_transition(row_id.clone(), window, app);
+    let t = *hover_t.evaluate(window, app);
     let bg = animation::lerp_hsla(palette.surface_container, palette.surface_container_high, t);
 
     div()
@@ -461,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn date_groups_contiguous_days_preserving_order() {
+    fn build_rows_contiguous_days_preserving_order() {
         // Noon UTC keeps the local calendar day stable in every timezone
         // (±12h never crosses midnight; even ±14h keeps the two days apart).
         let day2_late = entry("c", ts("2025-03-02T11:00:00Z"), AuditAction::VaultUnlocked);
@@ -469,20 +522,42 @@ mod tests {
         let day1 = entry("a", ts("2025-03-01T12:00:00Z"), AuditAction::VaultCreated);
         let entries = vec![day2_late, day2_early, day1];
 
-        let groups = date_groups(&entries);
-        assert_eq!(groups.len(), 2, "two calendar days → two groups");
-        // Most recent day first, entries in original (descending) order.
-        assert_eq!(groups[0].1.len(), 2);
-        assert_eq!(groups[0].1[0].id, "c");
-        assert_eq!(groups[0].1[1].id, "b");
-        assert_eq!(groups[1].1.len(), 1);
-        assert_eq!(groups[1].1[0].id, "a");
-        assert_ne!(groups[0].0, groups[1].0, "group headers are the day labels");
+        let rows = build_rows(&entries);
+        // header, c, b, header, a — two calendar days, entries in the
+        // original (descending) order.
+        assert_eq!(rows.len(), 5, "two day headers plus three entries");
+        let (AuditRow::Date(first_day), AuditRow::Date(second_day)) = (&rows[0], &rows[3]) else {
+            panic!("expected day headers at rows 0 and 3");
+        };
+        assert_ne!(first_day, second_day, "group headers are the day labels");
+        let AuditRow::Entry(c) = &rows[1] else { panic!("row 1 is an entry") };
+        let AuditRow::Entry(b) = &rows[2] else { panic!("row 2 is an entry") };
+        let AuditRow::Entry(a) = &rows[4] else { panic!("row 4 is an entry") };
+        assert_eq!(entries[*c].id, "c");
+        assert_eq!(entries[*b].id, "b");
+        assert_eq!(entries[*a].id, "a");
     }
 
     #[test]
-    fn date_groups_empty_input() {
-        assert!(date_groups(&[]).is_empty());
+    fn build_rows_empty_input() {
+        assert!(build_rows(&[]).is_empty());
+    }
+
+    #[test]
+    fn build_rows_reindexes_across_day_boundaries() {
+        // The entry indices must point into the *original* slice — the second
+        // day's first entry is index 2, not 0.
+        let entries = vec![
+            entry("a", ts("2025-03-02T11:00:00Z"), AuditAction::VaultUnlocked),
+            entry("b", ts("2025-03-02T09:00:00Z"), AuditAction::VaultLocked),
+            entry("c", ts("2025-03-01T12:00:00Z"), AuditAction::VaultCreated),
+        ];
+        let rows = build_rows(&entries);
+        // header, a, b, header, c
+        assert!(matches!(rows[3], AuditRow::Date(_)));
+        let AuditRow::Entry(third) = &rows[4] else { panic!("row 4 is the day-2 entry") };
+        assert_eq!(*third, 2);
+        assert_eq!(entries[*third].id, "c");
     }
 
     #[test]
@@ -501,11 +576,10 @@ mod tests {
     fn local_timezone_conversion_is_stable() {
         // The grouping math must hold for any reference timestamp.
         let t = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
-        let e = entry("x", t, AuditAction::VaultLocked);
-        let entries = [e];
-        let groups = date_groups(&entries);
-        assert_eq!(groups.len(), 1);
-        assert!(groups[0].0.contains("2025"));
+        let entries = [entry("x", t, AuditAction::VaultLocked)];
+        let rows = build_rows(&entries);
+        assert_eq!(rows.len(), 2);
+        let AuditRow::Date(date) = &rows[0] else { panic!("first row is the day header") };
+        assert!(date.contains("2025"));
     }
 }
-

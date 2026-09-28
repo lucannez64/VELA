@@ -91,6 +91,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dev debuginfo (≈ −69% target-dir size). See `docs/BUILD_PERFORMANCE.md`.
 
 ### Fixed
+- The gpui Activity Log is now virtualized (gpui's variable-height `list`,
+  like the vault browser): it builds only the visible rows, flattens the
+  day groups once when the log loads, and stops the loading spinner's repaint
+  loop once the entries land. A large audit log previously rebuilt every row
+  and every hover animation on each repaint — including the 10fps spinner tick
+  — which made the app crawl.
 - Android passkey creation now performs user verification for
   `userVerification: "preferred"` (WebAuthn's default) as well as `"required"`,
   matching Android platform passkeys. Presence-only creation produced a `UV=0`
