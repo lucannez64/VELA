@@ -41,7 +41,9 @@ class WebAuthnJsonTest {
              "challenge":"AQID",
              "pubKeyCredParams":[{"type":"public-key","alg":-7}],
              "excludeCredentials":[{"type":"public-key","id":"BAUF"}],
-             "userVerification":"required"}
+             "authenticatorSelection":{"authenticatorAttachment":"platform",
+               "residentKey":"required","requireResidentKey":true,
+               "userVerification":"required"}}
             """.trimIndent()
         )!!
 
@@ -53,6 +55,9 @@ class WebAuthnJsonTest {
         assertEquals("AAEC", WebAuthnJson.b64urlEncode(options.userHandle))
         assertEquals(listOf(-7), options.algorithms)
         assertEquals(listOf("BAUF"), options.excludedCredentialIds)
+        // The real dictionary nests userVerification under
+        // authenticatorSelection; reading it top-level made every UV-required
+        // relying party (Uber among them) a presence-only registration.
         assertTrue(options.requireUserVerification)
     }
 
@@ -60,9 +65,18 @@ class WebAuthnJsonTest {
     fun `user verification preferred is not required`() {
         val options = WebAuthnJson.parseCreationOptions(
             """{"rp":{"id":"example.com"},"user":{"id":"AA"},"challenge":"AA",
-                 "userVerification":"preferred"}""".trimIndent()
+                 "authenticatorSelection":{"userVerification":"preferred"}}""".trimIndent()
         )!!
         assertFalse(options.requireUserVerification)
+    }
+
+    @Test
+    fun `a hoisted top-level userVerification is still honored`() {
+        val options = WebAuthnJson.parseCreationOptions(
+            """{"rp":{"id":"example.com"},"user":{"id":"AA"},"challenge":"AA",
+                 "userVerification":"required"}""".trimIndent()
+        )!!
+        assertTrue(options.requireUserVerification)
     }
 
     @Test

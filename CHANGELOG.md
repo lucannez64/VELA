@@ -91,6 +91,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dev debuginfo (≈ −69% target-dir size). See `docs/BUILD_PERFORMANCE.md`.
 
 ### Fixed
+- Android passkey creation now honors user verification. The creation
+  dictionary nests `userVerification` under `authenticatorSelection`, but the
+  provider read it at the top level, so every relying party that required UV
+  (Uber, most banks) got a credential with the `UV` flag clear and rejected the
+  registration — even though VELA had already stored the passkey. The prompt now
+  runs biometric/device-credential verification and sets `UV` when required.
 - Secure notes can now be copied: the desktop vault-list row copy icon takes
   a note's body instead of toasting "Nothing to copy", and every front end
   (gpui, Tauri, Android, iOS) has a copy button on the note detail view.

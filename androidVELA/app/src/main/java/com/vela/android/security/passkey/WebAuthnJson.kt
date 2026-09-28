@@ -68,6 +68,19 @@ object WebAuthnJson {
             }
             .orEmpty()
 
+        // `userVerification` lives under `authenticatorSelection` in the
+        // `PublicKeyCredentialCreationOptions` dictionary (WebAuthn §5.4). A
+        // top-level copy is accepted only as a fallback, for callers that hoist
+        // it. Reading it at the top level alone — as this did — silently
+        // treated every relying party that required UV as presence-only: the
+        // credential was created with the UV flag clear, so the relying
+        // party's server rejected the registration even though VELA had already
+        // stored the key.
+        val selection = json.optJSONObject("authenticatorSelection")
+        val userVerification = selection?.optString("userVerification")
+            ?.takeIf { it.isNotEmpty() }
+            ?: json.optString("userVerification")
+
         return CreationOptions(
             rpId = rpId,
             rpName = rp.optString("name"),
@@ -77,7 +90,7 @@ object WebAuthnJson {
             challenge = challenge,
             algorithms = algorithms,
             excludedCredentialIds = excluded,
-            requireUserVerification = json.optString("userVerification") == "required",
+            requireUserVerification = userVerification == "required",
         )
     }
 
