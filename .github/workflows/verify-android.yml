@@ -33,6 +33,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # `tools` was removed from the SDK repository, but setup-android's
+          # default package list still includes it, so "sdkmanager tools" now
+          # fails before anything builds. Pin the packages we actually need.
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
 
       - name: Install Android NDK
         run: |
