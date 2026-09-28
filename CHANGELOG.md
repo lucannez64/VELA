@@ -100,6 +100,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dev debuginfo (≈ −69% target-dir size). See `docs/BUILD_PERFORMANCE.md`.
 
 ### Fixed
+- gpui modal backdrops now `occlude()`. gpui decides what handles a scroll
+  wheel with `HitboxId::should_handle_scroll`, a hit-box check rather than a
+  hover check, so a backdrop's click handler alone did not stop it — the list
+  behind an open modal (Add New Item, delete / revoke / share / security-key /
+  recovery, etc.) still scrolled under the wheel. Stopping the hit-test at the
+  backdrop fixes every modal at once.
 - The gpui Activity Log is now virtualized (gpui's variable-height `list`,
   like the vault browser): it builds only the visible rows, flattens the
   day groups once when the log loads, and stops the loading spinner's repaint

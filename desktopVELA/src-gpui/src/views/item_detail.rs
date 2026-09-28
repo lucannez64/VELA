@@ -698,6 +698,9 @@ fn delete_confirm_modal(
         .id("delete-confirm-backdrop")
         .absolute()
         .inset_0()
+        // Stop the hit-test at the backdrop, so the scroll container behind it
+        // doesn't still handle `ScrollWheelEvent` (see add_item_modal's comment).
+        .occlude()
         .bg(gpui::black().opacity(0.6))
         .flex()
         .items_center()

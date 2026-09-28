@@ -885,6 +885,9 @@ fn modal_backdrop(
         .id(id)
         .absolute()
         .inset_0()
+        // Block the hit-test at the backdrop so the scrollable content behind
+        // it doesn't keep handling `ScrollWheelEvent` (see add_item_modal).
+        .occlude()
         .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
         .flex()
         .items_center()

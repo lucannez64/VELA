@@ -686,6 +686,7 @@ fn share_modal(
         .id("share-modal-backdrop")
         .absolute()
         .inset_0()
+        .occlude()
         .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
         .flex()
         .items_center()

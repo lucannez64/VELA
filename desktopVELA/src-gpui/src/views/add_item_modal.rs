@@ -593,6 +593,14 @@ impl Render for AddItemModal {
             .id("add-item-backdrop")
             .absolute()
             .inset_0()
+            // `occlude()` sets this hitbox to `HitboxBehavior::BlockMouse`, so
+            // the window's hit-test loop stops here. Without it the backlog of
+            // hitboxes keeps including the vault's scroll container behind the
+            // backdrop, which then handles `ScrollWheelEvent` —
+            // `should_handle_scroll()` is a hitbox check, not a hover check, so
+            // the backdrop's own handler does not stop it. Result: the list
+            // scrolled behind the open modal.
+            .occlude()
             .bg(gpui::black().opacity(0.6))
             .flex()
             .items_center()
