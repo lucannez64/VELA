@@ -224,6 +224,9 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "getAvailableLogins":
       handleGetAvailableLogins(data, sender, sendResponse);
       break;
+    case "getCards":
+      handleGetCards(data, sender, sendResponse);
+      return true;
     case "checkDesktopConnection":
       checkDesktopConnection(sendResponse);
       return true;
@@ -403,6 +406,31 @@ async function handleGetAvailableLogins(data, sender, sendResponse) {
   } catch (error) {
     console.log("[VELA] handleGetAvailableLogins error:", error.message);
     sendResponse({ success: false, error: error.message, logins: [] });
+  }
+}
+
+async function handleGetCards(data, sender, sendResponse) {
+  try {
+    // Same authorisation as a login request: only the active, top-frame page
+    // may ask. Unlike logins there is no domain to match — a card works at any
+    // merchant — so the page is the *release target* the desktop audits, not
+    // the card's identity. The content script only calls this after the user
+    // clicks the shield on a payment field, never on passive focus.
+    const auth = await authorizeCredentialRequest(data, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, error: auth.error, cards: [] });
+      return;
+    }
+    const response = await sendNativeMessage({ action: "getCards", url: data.url || "" });
+    if (response && response.success && Array.isArray(response.cards)) {
+      sendResponse({ success: true, cards: response.cards });
+    } else if (response && response.requires_biometric) {
+      sendResponse({ success: false, requires_biometric: true, cards: [] });
+    } else {
+      sendResponse({ success: false, cards: [] });
+    }
+  } catch (error) {
+    sendResponse({ success: false, error: error.message, cards: [] });
   }
 }
 

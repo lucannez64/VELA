@@ -916,6 +916,15 @@ pub mod server {
             .get("user_initiated")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        // Credit cards are not scoped to a domain — the same card is spent at
+        // any merchant — so the caller asks for them explicitly with
+        // `credential_type: "card"`, and only after it has seen a payment form.
+        // Everything else keeps the login behaviour.
+        let wants_cards = message
+            .payload
+            .get("credential_type")
+            .and_then(|v| v.as_str())
+            == Some("card");
         let state = host.state();
 
         {
@@ -941,9 +950,21 @@ pub mod server {
         // signatures and in-core logins, which sign the user in elsewhere —
         // still ask the human every time through `crate::presence`.
         let vault = state.vault.read();
-        let items = vault.search_by_domain(&base_domain);
+        let items: Vec<VaultItem> = if wants_cards {
+            vault
+                .items_snapshot()
+                .iter()
+                .filter(|item| matches!(item, VaultItem::CreditCard { .. }))
+                .cloned()
+                .collect()
+        } else {
+            vault
+                .search_by_domain(&base_domain)
+                .into_iter()
+                .cloned()
+                .collect()
+        };
         if user_initiated {
-            let items: Vec<_> = items.into_iter().cloned().collect();
             if !items.is_empty() {
                 // Blast-radius limits (issue #149, D). No prompt can tell a
                 // hostile same-uid process from the browser when both ask for
@@ -951,10 +972,17 @@ pub mod server {
                 // attacker instead: how many *distinct* domains one unlock is
                 // worth, and how loud each release is. Both fire only when
                 // something was actually released — a miss matches nothing.
+                // A card is keyed to the page it was filled on (the release is
+                // what is being bounded, not the card), so this is unchanged.
+                let release_key = if base_domain.is_empty() {
+                    "card-fill"
+                } else {
+                    base_domain.as_str()
+                };
                 drop(vault);
-                if let Err(reason) = state.try_record_credential_release(&base_domain) {
+                if let Err(reason) = state.try_record_credential_release(release_key) {
                     warn!(
-                        "Per-unlock domain cap reached at '{base_domain}' for {}",
+                        "Per-unlock domain cap reached at '{release_key}' for {}",
                         peer.describe()
                     );
                     return IpcMessage::error(reason);
@@ -969,11 +997,11 @@ pub mod server {
                     &state,
                     crate::audit::AuditAction::CredentialReleased {
                         caller: peer.describe(),
-                        domain: base_domain.clone(),
+                        domain: release_key.to_string(),
                     },
                 ) {
                     warn!(
-                        "Refused plaintext release for '{base_domain}' to {}: audit write failed: {audit_error}",
+                        "Refused plaintext release for '{release_key}' to {}: audit write failed: {audit_error}",
                         peer.describe()
                     );
                     return IpcMessage::error(
@@ -982,21 +1010,37 @@ pub mod server {
                             .to_string(),
                     );
                 }
-                host.show_toast(&format!("Filled {base_domain} for {}", peer.describe()));
+                if wants_cards {
+                    host.show_toast(&format!("Filled a card for {}", peer.describe()));
+                } else {
+                    host.show_toast(&format!("Filled {base_domain} for {}", peer.describe()));
+                }
             }
             return autofill_response(items, false);
         }
 
         let metadata: Vec<_> = items
-            .into_iter()
-            .map(|item| {
-                serde_json::json!({
+            .iter()
+            .map(|item| match item {
+                VaultItem::Login { .. } => serde_json::json!({
                     "item_type": "login",
                     "id": item.id(),
                     "name": item.name(),
                     "username": item.username(),
                     "url": item.url(),
-                })
+                }),
+                VaultItem::CreditCard { exp, cardholder_name, .. } => serde_json::json!({
+                    "item_type": "creditCard",
+                    "id": item.id(),
+                    "name": item.name(),
+                    "exp": exp,
+                    "cardholder_name": cardholder_name,
+                }),
+                other => serde_json::json!({
+                    "item_type": "item",
+                    "id": other.id(),
+                    "name": other.name(),
+                }),
             })
             .collect();
         autofill_value_response(serde_json::Value::Array(metadata), false)
@@ -2062,6 +2106,78 @@ pub mod server {
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["username"], "alice");
             assert!(items[0].get("password").is_none(), "passive autofill must not leak passwords");
+        }
+
+        /// Cards are not scoped to a domain: a card request returns every card
+        /// in the vault (and only cards), no matter which site asked. Logins
+        /// still never come back on a card request, and vice versa.
+        #[tokio::test]
+        async fn autofill_card_request_returns_cards_regardless_of_domain() {
+            let (_dir, mock) = MockHost::new(true);
+            let now = chrono::Utc::now();
+            let meta = |id: &str, name: &str| VaultMeta {
+                id: id.into(),
+                name: name.into(),
+                notes: None,
+                created_at: now,
+                updated_at: now,
+                last_modified_device: None,
+                favorite: false,
+                shared: false,
+                share_recipient: None,
+            };
+            {
+                let mut vault = mock.state.vault.write();
+                vault.add_item(VaultItem::CreditCard {
+                    meta: meta("card1", "Visa"),
+                    number: "4111111111111111".into(),
+                    exp: "12/29".into(),
+                    cvv: "123".into(),
+                    pin: Some("9999".into()),
+                    cardholder_name: Some("Ada Lovelace".into()),
+                });
+                vault.add_item(VaultItem::Login {
+                    meta: meta("login1", "Shop"),
+                    url: "https://shop.example".into(),
+                    username: "ada".into(),
+                    pass: "hunter2".into(),
+                    totp: None,
+                    app_ids: Vec::new(),
+                    credential_change_needs_reauth: None,
+                    allow_second_factor_downgrade: None,
+                });
+            }
+            let host: Arc<dyn Host> = mock.clone();
+            let peer = test_peer();
+
+            // Asked from a site the card has no relationship with.
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({
+                    "domain": "https://shop.example",
+                    "credential_type": "card",
+                    "user_initiated": true
+                }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &peer).await;
+            let items = resp.payload["items"].as_array().unwrap();
+            assert_eq!(items.len(), 1, "only the card, not the login");
+            assert_eq!(items[0]["item_type"], "creditCard");
+            assert_eq!(items[0]["number"], "4111111111111111");
+            assert_eq!(items[0]["cvv"], "123");
+            assert_eq!(items[0]["cardholder_name"], "Ada Lovelace");
+
+            // A login request is unchanged: no cards leak into it.
+            let req = message(
+                IpcMessageType::AutofillRequest,
+                serde_json::json!({ "domain": "https://shop.example", "user_initiated": true }),
+                "cap",
+            );
+            let resp = process_message(req, &host, &peer).await;
+            let items = resp.payload["items"].as_array().unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0]["item_type"], "login");
         }
 
         /// Issue #149, D: a drain should be visible while it happens, not

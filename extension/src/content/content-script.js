@@ -83,6 +83,10 @@
   let velaSaveBarEl = null;
   let velaCurrentLogins = null;
   let velaRequiresBiometric = false;
+  // Cards are fetched only when the user clicks the shield on a payment field
+  // (never on passive focus), so this holds secrets only for the dropdown that
+  // is already on screen.
+  let velaCurrentCards = null;
   let velaLoginRequestPromise = null;
   let velaLoginRequestKey = "";
   let velaCapturedCredentials = null;
@@ -926,6 +930,19 @@
 
   async function velaOnFocusIn(e) {
     const el = e.target;
+
+    // Payment fields first: the card heuristics are deliberately narrow, but
+    // they must win over the login ones so a cardholder field (which contains
+    // "account") is not mistaken for a username.
+    if (velaIsCardField(el)) {
+      velaActiveField = el;
+      velaCurrentCards = null;
+      if (velaHoveredField !== el) {
+        velaInjectFieldIcon(el);
+      }
+      return;
+    }
+
     if (!velaIsAutofillable(el)) return;
 
     velaActiveField = el;
@@ -969,7 +986,7 @@
 
   function velaOnMouseOver(e) {
     const el = e.target;
-    if (!velaIsAutofillable(el)) return;
+    if (!velaIsAutofillable(el) && !velaIsCardField(el)) return;
     if (velaActiveField === el) return;
     if (velaHoveredField === el) return;
     velaHoveredField = el;
@@ -1065,6 +1082,10 @@
         velaHideDropdown();
       } else {
         velaActiveField = field;
+        if (velaIsCardField(field)) {
+          velaShowCardsForField(field);
+          return;
+        }
         if (velaCurrentLogins !== null) {
           if (velaRequiresBiometric) {
             velaShowDropdown(field, { requiresBiometric: true }, velaIsNewPasswordField(field));
@@ -1303,6 +1324,199 @@
           <div class="vela-dd-item-fill-hint">Fill ↵</div>
         </div>`;
     }).join("");
+  }
+
+  // --- Credit cards ---
+  //
+  // A card is not scoped to a site, so the heuristics here only decide whether
+  // a field is a payment field; the fill is offered as a whole-card action
+  // from whichever payment field the user invoked VELA on. The heuristics are
+  // deliberately narrow so an ordinary "name"/"number" input is not claimed.
+
+  function velaCardText(el) {
+    return [el.name, el.id, el.getAttribute("autocomplete"), el.getAttribute("x-autocomplete"),
+            el.getAttribute("x-webkit-autocomplete"), el.getAttribute("data-stripe"),
+            el.placeholder, el.getAttribute("aria-label"), el.getAttribute("title")]
+      .filter(Boolean).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function velaCardFieldKind(el) {
+    if (!el || el.tagName.toLowerCase() !== "input") return null;
+    if (el.hasAttribute("data-vela-ui") || el.hasAttribute("data-bwignore")) return null;
+    if (el.disabled || el.readOnly) return null;
+    const type = (el.type || "text").toLowerCase();
+    if (!["text", "tel", "number"].includes(type)) return null;
+
+    const t = velaCardText(el);
+    if (!t) return null;
+    const has = (...needles) => needles.some((needle) => t.includes(needle));
+
+    // CVV first: "cvc"/"cvv" never appear in a login field.
+    if (has("cvv", "cvc", "csc", "cvn", "ccv", "cardcode", "securitycode", "cardverif", "cryptogramme")) return "cvv";
+    // Split expiry before the combined expiry names, which also contain "exp".
+    if (has("ccexpmonth", "cardexpmonth", "expmonth", "expirymonth", "expmo", "cardmonth", "ccmm", "cbdatemois")) return "expMonth";
+    if (has("ccexpyear", "cardexpyear", "expyear", "expiryyear", "expyy", "cardyear", "ccyy", "cbdateann")) return "expYear";
+    if (has("ccnumber", "cardnumber", "creditcard", "ccnum", "cardnum", "ccno", "cardno",
+            "numerocarte", "numcarte", "cbnum", "cardpan")) return "number";
+    if (has("ccexp", "cardexp", "ccxp", "expirationdate", "expirydate", "cardexpiry",
+            "cardexpiration", "paymentcardexpiration", "validite", "dateexpiration")) return "exp";
+    if (has("cardholder", "ccname", "cardname", "nameoncard")) return "name";
+    return null;
+  }
+
+  // The trigger check: a cardholder field only counts when the same form also
+  // has a number/expiry/CVV, so a lone "account holder name" on a signup form
+  // never offers cards. `velaCardFieldKind` (used when filling) still matches
+  // the cardholder field once a payment group is known.
+  function velaIsCardField(el) {
+    const kind = velaCardFieldKind(el);
+    if (!kind) return null;
+    if (kind !== "name") return kind;
+    const scope = el.form || el.closest("form") || document;
+    const hasPayment = Array.from(scope.querySelectorAll("input")).some((field) => {
+      const k = velaCardFieldKind(field);
+      return k && k !== "name";
+    });
+    return hasPayment ? kind : null;
+  }
+
+  async function getCardsForPage() {
+    try {
+      const response = await sendExtensionMessage("getCards", { url: globalThis.location.href });
+      if (response && response.success && Array.isArray(response.cards)) return response.cards;
+    } catch (_) {}
+    return [];
+  }
+
+  function velaShowCardsForField(field) {
+    if (velaCurrentCards !== null && velaActiveField === field) {
+      velaShowCardDropdown(field, velaCurrentCards);
+      return;
+    }
+    velaShowCardDropdown(field, null);
+    getCardsForPage().then((cards) => {
+      velaCurrentCards = cards;
+      if (velaActiveField === field) velaShowCardDropdown(field, cards);
+    }).catch(() => {
+      velaCurrentCards = [];
+      if (velaActiveField === field) velaShowCardDropdown(field, []);
+    });
+  }
+
+  function velaCardListItems(cards) {
+    return cards.map((card) => {
+      const name = velaEscapeHtml(card.name || "Card");
+      const digits = String(card.number || "").replace(/\D/g, "");
+      const last4 = digits.slice(-4);
+      const sub = [card.cardholderName, last4 ? `•••• ${last4}` : ""]
+        .filter(Boolean).map(velaEscapeHtml).join(" · ");
+      const initial = name.charAt(0).toUpperCase();
+      return `
+        <div class="vela-dd-item" data-vela-card-id="${velaEscapeHtml(card.id || "")}">
+          <div class="vela-dd-item-avatar">${initial}</div>
+          <div class="vela-dd-item-info">
+            <div class="vela-dd-item-name">${name}</div>
+            ${sub ? `<div class="vela-dd-item-user">${sub}</div>` : ""}
+          </div>
+          <div class="vela-dd-item-fill-hint">Fill ↵</div>
+        </div>`;
+    }).join("");
+  }
+
+  function velaShowCardDropdown(field, cards) {
+    if (velaDropdownEl) {
+      velaDropdownEl.remove();
+      velaDropdownEl = null;
+    }
+
+    const dd = document.createElement("div");
+    dd.setAttribute("data-vela-ui", "true");
+    dd.className = "vela-inline-dropdown vela-autofill-animate-slide-up";
+
+    const header = `
+      <div class="vela-dd-header">
+        <span class="vela-dd-logo">${velaShieldSvg(14)}</span>
+        <span class="vela-dd-title">VELA – cards</span>
+      </div>`;
+
+    if (cards === null) {
+      dd.innerHTML = `${header}
+        <div class="vela-dd-loading">
+          <div class="vela-dd-spinner"></div>
+          <span>Searching vault…</span>
+        </div>`;
+    } else if (!cards.length) {
+      dd.innerHTML = `${header}
+        <div class="vela-dd-empty">No saved cards. Add one in VELA Desktop.</div>`;
+    } else {
+      dd.innerHTML = `${header}${velaCardListItems(cards)}`;
+    }
+
+    document.documentElement.appendChild(dd);
+    velaDropdownEl = dd;
+    velaSelectedIndex = -1;
+    velaPositionDropdown(field);
+
+    dd.querySelectorAll("[data-vela-card-id]").forEach((item) => {
+      item.addEventListener("click", () => {
+        const id = item.getAttribute("data-vela-card-id");
+        const card = (velaCurrentCards || []).find((c) => String(c.id) === id);
+        velaHideDropdown();
+        if (card) velaFillCard(card, field);
+      });
+      item.addEventListener("mousedown", (e) => e.preventDefault());
+    });
+  }
+
+  function velaParseExpiry(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (digits.length < 3) return null;
+    let mm, yy, yyyy;
+    if (digits.length === 4) {
+      mm = digits.slice(0, 2); yy = digits.slice(2, 4); yyyy = "20" + yy;
+    } else if (digits.length === 6) {
+      mm = digits.slice(0, 2); yyyy = digits.slice(2, 6); yy = yyyy.slice(2, 4);
+    } else if (digits.length === 3) {
+      mm = "0" + digits.slice(0, 1); yy = digits.slice(1, 3); yyyy = "20" + yy;
+    } else {
+      mm = digits.slice(0, 2); yy = digits.slice(-2); yyyy = "20" + yy;
+    }
+    const month = Number(mm);
+    if (!month || month > 12) return null;
+    return { mm, yy, yyyy, mmyy: `${mm}/${yy}`, mmyyyy: `${mm}/${yyyy}` };
+  }
+
+  function velaExpiryString(field, exp) {
+    const max = parseInt(field.getAttribute("maxlength") || "0", 10);
+    const hint = `${field.placeholder || ""} ${field.getAttribute("aria-label") || ""}`;
+    return (hint.includes("/") || max === 0 || max >= 5) ? exp.mmyy : `${exp.mm}${exp.yy}`;
+  }
+
+  function velaYearString(field, exp) {
+    const max = parseInt(field.getAttribute("maxlength") || "0", 10);
+    return (max > 0 && max <= 2) ? exp.yy : exp.yyyy;
+  }
+
+  // Fill the whole payment group around `anchor`: number, cardholder, CVV and
+  // whichever expiry shape the form uses (one combined field, or split
+  // month/year).
+  function velaFillCard(card, anchor) {
+    const scope = (anchor && (anchor.form || anchor.closest("form"))) || document;
+    const byKind = {};
+    for (const el of scope.querySelectorAll("input")) {
+      const kind = velaCardFieldKind(el);
+      if (kind && !byKind[kind]) byKind[kind] = el;
+    }
+    const exp = velaParseExpiry(card.exp);
+
+    if (card.cardholderName && byKind.name) fillElement(byKind.name, card.cardholderName);
+    if (card.number && byKind.number) fillElement(byKind.number, String(card.number).replace(/\s+/g, ""));
+    if (exp) {
+      if (byKind.exp) fillElement(byKind.exp, velaExpiryString(byKind.exp, exp));
+      if (byKind.expMonth) fillElement(byKind.expMonth, exp.mm);
+      if (byKind.expYear) fillElement(byKind.expYear, velaYearString(byKind.expYear, exp));
+    }
+    if (card.cvv && byKind.cvv) fillElement(byKind.cvv, card.cvv);
   }
 
   function velaPositionDropdown(field) {

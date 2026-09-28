@@ -47,7 +47,7 @@ class VelaAutofillService : AutofillService() {
             val fillable = AutofillFieldSet.from(fields)
             Log.d(TAG, "onFillRequest: fields=${fields.size} usernames=${fillable.usernameFields.size} passwords=${fillable.passwordFields.size}")
 
-            if (!fillable.canFill) {
+            if (!fillable.canFill && !fillable.isPaymentForm) {
                 Log.d(TAG, "onFillRequest: nothing fillable")
                 callback.onSuccess(null)
                 return
@@ -67,27 +67,51 @@ class VelaAutofillService : AutofillService() {
             // believed is [AutofillMatcher]'s decision, not ours. Do not collapse
             // it onto the package name — that is what let any app ask for any
             // site's credentials (audit A-2).
-            val candidates = VelaRepositories.vault
-                .findAutofillLogins(fields.claimedWebDomain(), packageName)
-            // NOTE: never log `domain` or candidate names/urls/usernames here —
-            // logcat is readable via ADB / READ_LOGS and leaks which sites the
-            // user has credentials for.
-            Log.d(TAG, "onFillRequest: candidates=${candidates.size}")
-
             val responseBuilder = FillResponse.Builder()
-                .setSaveInfo(buildSaveInfo(fillable))
             var added = 0
-            candidates.take(MAX_DATASETS).forEachIndexed { index, login ->
-                Log.d(TAG, "onFillRequest: building dataset $index")
-                val dataset = AutofillDatasetBuilder.buildLoginDataset(this, fillable, login)
-                if (dataset != null) {
-                    responseBuilder.addDataset(dataset)
-                    added++
+
+            if (fillable.canFill) {
+                val candidates = VelaRepositories.vault
+                    .findAutofillLogins(fields.claimedWebDomain(), packageName)
+                // NOTE: never log `domain` or candidate names/urls/usernames here —
+                // logcat is readable via ADB / READ_LOGS and leaks which sites the
+                // user has credentials for.
+                Log.d(TAG, "onFillRequest: login candidates=${candidates.size}")
+                responseBuilder.setSaveInfo(buildSaveInfo(fillable))
+                candidates.take(MAX_DATASETS).forEachIndexed { index, login ->
+                    Log.d(TAG, "onFillRequest: building login dataset $index")
+                    val dataset = AutofillDatasetBuilder.buildLoginDataset(this, fillable, login)
+                    if (dataset != null) {
+                        responseBuilder.addDataset(dataset)
+                        added++
+                    }
                 }
             }
-            val response = responseBuilder.build()
-            Log.d(TAG, "onFillRequest: sending response with $added/${candidates.size.coerceAtMost(MAX_DATASETS)} datasets")
-            callback.onSuccess(response)
+
+            // Cards are not scoped to a site: a payment form may be filled with
+            // any stored card. Nothing is saved back (fill-only), so a payment
+            // form never gets SaveInfo.
+            if (fillable.isPaymentForm) {
+                val cards = VelaRepositories.vault.items.value.filterIsInstance<VaultItem.CreditCard>()
+                Log.d(TAG, "onFillRequest: cards=${cards.size}")
+                cards.take(MAX_DATASETS).forEach { card ->
+                    AutofillDatasetBuilder.buildCardDataset(this, fillable, card)?.let { dataset ->
+                        responseBuilder.addDataset(dataset)
+                        added++
+                    }
+                }
+            }
+
+            // A login form must still get a response even with no matching
+            // logins, because the response carries the save prompt. A pure
+            // payment form with no card to offer gets nothing.
+            if (added == 0 && !fillable.canFill) {
+                Log.d(TAG, "onFillRequest: nothing to offer")
+                callback.onSuccess(null)
+                return
+            }
+            Log.d(TAG, "onFillRequest: sending response with $added datasets")
+            callback.onSuccess(responseBuilder.build())
         } catch (e: Exception) {
             Log.e(TAG, "onFillRequest crashed", e)
             callback.onSuccess(null)
@@ -207,6 +231,12 @@ class VelaAutofillService : AutofillService() {
             .putExtra(MainActivity.EXTRA_AUTOFILL_UNLOCK, true)
             .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_USERNAME_IDS, ArrayList(fields.usernameFields))
             .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_PASSWORD_IDS, ArrayList(fields.passwordFields))
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_CARD_NUMBER_IDS, ArrayList(fields.cardNumberFields))
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_CARD_EXPIRY_IDS, ArrayList(fields.cardExpiryFields))
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_CARD_EXP_MONTH_IDS, ArrayList(fields.cardExpiryMonthFields))
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_CARD_EXP_YEAR_IDS, ArrayList(fields.cardExpiryYearFields))
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_CARD_CVV_IDS, ArrayList(fields.cardCvvFields))
+            .putParcelableArrayListExtra(MainActivity.EXTRA_AUTOFILL_CARD_NAME_IDS, ArrayList(fields.cardNameFields))
             .putExtra(MainActivity.EXTRA_AUTOFILL_DOMAIN, domain)
             .putExtra(MainActivity.EXTRA_AUTOFILL_PACKAGE, packageName)
             // Proof this intent came from us and not from any app that noticed
@@ -232,7 +262,7 @@ class VelaAutofillService : AutofillService() {
     private fun buildSaveInfo(fields: AutofillFieldSet): SaveInfo {
         return SaveInfo.Builder(
             SaveInfo.SAVE_DATA_TYPE_PASSWORD,
-            fields.allIds()
+            fields.loginIds()
         )
             .setDescription("Save login in VELA")
             .build()
@@ -267,18 +297,30 @@ object AutofillDatasetBuilder {
         packageName: String?,
         maxDatasets: Int = 5
     ): FillResponse? {
-        if (!fields.canFill) return null
-        val candidates = VelaRepositories.vault.findAutofillLogins(domain, packageName)
-        if (candidates.isEmpty()) return null
+        if (!fields.canFill && !fields.isPaymentForm) return null
 
         val builder = FillResponse.Builder()
         var added = 0
-        candidates.take(maxDatasets).forEach { login ->
-            val dataset = buildLoginDataset(context, fields, login)
-            if (dataset != null) {
-                builder.addDataset(dataset)
-                added++
+        if (fields.canFill) {
+            val candidates = VelaRepositories.vault.findAutofillLogins(domain, packageName)
+            candidates.take(maxDatasets).forEach { login ->
+                val dataset = buildLoginDataset(context, fields, login)
+                if (dataset != null) {
+                    builder.addDataset(dataset)
+                    added++
+                }
             }
+        }
+        if (fields.isPaymentForm) {
+            VelaRepositories.vault.items.value
+                .filterIsInstance<VaultItem.CreditCard>()
+                .take(maxDatasets)
+                .forEach { card ->
+                    buildCardDataset(context, fields, card)?.let { dataset ->
+                        builder.addDataset(dataset)
+                        added++
+                    }
+                }
         }
         if (added == 0) return null
         return builder.build()
@@ -308,6 +350,89 @@ object AutofillDatasetBuilder {
             Log.e(TAG, "buildLoginDataset failed", e)
             null
         }
+    }
+
+    fun buildCardDataset(context: Context, fields: AutofillFieldSet, card: VaultItem.CreditCard): Dataset? {
+        return try {
+            val presentation = presentation(context, card.name, cardSubtitle(card))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val presentations = presentations(presentation)
+                val dataset = Dataset.Builder(presentations)
+                fields.cardNameFields.forEach { id ->
+                    if (card.cardholderName.isNotBlank()) {
+                        dataset.setField(id, autofillField(card.cardholderName, presentations))
+                    }
+                }
+                fields.cardNumberFields.forEach { id ->
+                    if (card.cardNumber.isNotBlank()) {
+                        dataset.setField(id, autofillField(card.cardNumber, presentations))
+                    }
+                }
+                parseExpiry(card.expiration)?.let { exp ->
+                    fields.cardExpiryFields.forEach { dataset.setField(it, autofillField(exp.mmyy, presentations)) }
+                    fields.cardExpiryMonthFields.forEach { dataset.setField(it, autofillField(exp.mm, presentations)) }
+                    fields.cardExpiryYearFields.forEach { dataset.setField(it, autofillField(exp.year, presentations)) }
+                }
+                fields.cardCvvFields.forEach { id ->
+                    if (card.cvv.isNotBlank()) {
+                        dataset.setField(id, autofillField(card.cvv, presentations))
+                    }
+                }
+                dataset.build()
+            } else {
+                legacyCardDataset(fields, card, presentation)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "buildCardDataset failed", e)
+            null
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun legacyCardDataset(fields: AutofillFieldSet, card: VaultItem.CreditCard, presentation: RemoteViews): Dataset {
+        val dataset = Dataset.Builder(presentation)
+        fun set(ids: List<AutofillId>, value: String) {
+            if (value.isNotBlank()) {
+                ids.forEach { dataset.setValue(it, AutofillValue.forText(value), presentation) }
+            }
+        }
+        set(fields.cardNameFields, card.cardholderName)
+        set(fields.cardNumberFields, card.cardNumber)
+        parseExpiry(card.expiration)?.let { exp ->
+            set(fields.cardExpiryFields, exp.mmyy)
+            set(fields.cardExpiryMonthFields, exp.mm)
+            set(fields.cardExpiryYearFields, exp.year)
+        }
+        set(fields.cardCvvFields, card.cvv)
+        return dataset.build()
+    }
+
+    private fun cardSubtitle(card: VaultItem.CreditCard): String {
+        val digits = card.cardNumber.filter { it.isDigit() }
+        return if (digits.length >= 4) "•••• ${digits.takeLast(4)}" else card.cardholderName
+    }
+
+    private data class CardExpiry(val mm: String, val yy: String, val year: String, val mmyy: String)
+
+    /**
+     * VELA stores the expiry as the user typed it (`12/29`, `1229`, `12/2029`).
+     * Digits are normalized so a combined field gets `MM/YY` and split
+     * month/year fields get their own half.
+     */
+    private fun parseExpiry(value: String): CardExpiry? {
+        val digits = value.filter { it.isDigit() }
+        if (digits.length < 3) return null
+        val mm: String
+        val yy: String
+        val year: String
+        when (digits.length) {
+            4 -> { mm = digits.substring(0, 2); yy = digits.substring(2, 4); year = "20$yy" }
+            6 -> { mm = digits.substring(0, 2); year = digits.substring(2, 6); yy = year.substring(2, 4) }
+            3 -> { mm = "0${digits.substring(0, 1)}"; yy = digits.substring(1, 3); year = "20$yy" }
+            else -> { mm = digits.substring(0, 2); yy = digits.takeLast(2); year = "20$yy" }
+        }
+        if ((mm.toIntOrNull() ?: return null) !in 1..12) return null
+        return CardExpiry(mm, yy, year, "$mm/$yy")
     }
 
     fun presentation(context: Context, title: String, subtitle: String?): RemoteViews {
@@ -472,23 +597,119 @@ private fun List<ParsedAutofillField>.valueFor(id: AutofillId): String? {
 
 data class AutofillFieldSet(
     val usernameFields: List<AutofillId>,
-    val passwordFields: List<AutofillId>
+    val passwordFields: List<AutofillId>,
+    val cardNumberFields: List<AutofillId> = emptyList(),
+    val cardExpiryFields: List<AutofillId> = emptyList(),
+    val cardExpiryMonthFields: List<AutofillId> = emptyList(),
+    val cardExpiryYearFields: List<AutofillId> = emptyList(),
+    val cardCvvFields: List<AutofillId> = emptyList(),
+    val cardNameFields: List<AutofillId> = emptyList(),
 ) {
     val canFill: Boolean = usernameFields.isNotEmpty() || passwordFields.isNotEmpty()
 
-    fun allIds(): Array<AutofillId> = (usernameFields + passwordFields).distinct().toTypedArray()
+    /** A field anywhere in a payment group — the trigger for offering cards. */
+    val isPaymentForm: Boolean = cardNumberFields.isNotEmpty() || cardExpiryFields.isNotEmpty() ||
+            cardExpiryMonthFields.isNotEmpty() || cardExpiryYearFields.isNotEmpty() ||
+            cardCvvFields.isNotEmpty()
+
+    fun loginIds(): Array<AutofillId> = (usernameFields + passwordFields).distinct().toTypedArray()
+
+    fun allIds(): Array<AutofillId> = (
+            usernameFields + passwordFields + cardNumberFields + cardExpiryFields +
+                    cardExpiryMonthFields + cardExpiryYearFields + cardCvvFields + cardNameFields
+            ).distinct().toTypedArray()
 
     companion object {
         fun from(fields: List<ParsedAutofillField>): AutofillFieldSet {
             // First, filter to "autofillable" inputs only (extension: velaIsAutofillable)
             val autofillable = fields.filter { it.isAutofillable() }
+            val usernames = mutableListOf<AutofillId>()
+            val passwords = mutableListOf<AutofillId>()
+            val numbers = mutableListOf<AutofillId>()
+            val expiries = mutableListOf<AutofillId>()
+            val expMonths = mutableListOf<AutofillId>()
+            val expYears = mutableListOf<AutofillId>()
+            val cvvs = mutableListOf<AutofillId>()
+            val names = mutableListOf<AutofillId>()
+            for (field in autofillable) {
+                // A payment field is claimed before the login heuristics, so a
+                // cardholder field is never mistaken for a username.
+                when (field.cardFieldKind()) {
+                    CardField.Number -> numbers += field.autofillId
+                    CardField.Expiry -> expiries += field.autofillId
+                    CardField.ExpMonth -> expMonths += field.autofillId
+                    CardField.ExpYear -> expYears += field.autofillId
+                    CardField.Cvv -> cvvs += field.autofillId
+                    CardField.Name -> names += field.autofillId
+                    null -> if (field.isUsernameField()) usernames += field.autofillId
+                    else if (field.isPasswordField()) passwords += field.autofillId
+                }
+            }
             return AutofillFieldSet(
-                usernameFields = autofillable.filter { it.isUsernameField() }.map { it.autofillId }.distinct(),
-                passwordFields = autofillable.filter { it.isPasswordField() }.map { it.autofillId }.distinct()
+                usernameFields = usernames.distinct(),
+                passwordFields = passwords.distinct(),
+                cardNumberFields = numbers.distinct(),
+                cardExpiryFields = expiries.distinct(),
+                cardExpiryMonthFields = expMonths.distinct(),
+                cardExpiryYearFields = expYears.distinct(),
+                cardCvvFields = cvvs.distinct(),
+                cardNameFields = names.distinct(),
             )
         }
     }
 }
+
+/** Which part of a payment group a field is, if any. */
+internal enum class CardField { Number, Expiry, ExpMonth, ExpYear, Cvv, Name }
+
+/**
+ * The payment-field heuristics, deliberately narrow so an ordinary
+ * "name"/"number" input is not claimed. Mirrors the browser extension's
+ * `velaCardFieldKind`. CVV and the split expiry months/years are matched before
+ * the generic number/expiry names, which would otherwise absorb them.
+ *
+ * Takes the raw signals rather than a [ParsedAutofillField] so it is testable on
+ * the JVM (an `AutofillId` cannot be constructed off-device).
+ */
+internal fun cardFieldKindOf(
+    htmlName: String?,
+    htmlId: String?,
+    autocomplete: String?,
+    hint: String?,
+    idEntry: String?,
+): CardField? {
+    val text = listOfNotNull(htmlName, htmlId, autocomplete, hint, idEntry)
+        .joinToString(" ")
+        .lowercase()
+        .replace(Regex("[^a-z0-9]"), "")
+    if (text.isEmpty()) return null
+    fun has(vararg needles: String) = needles.any { text.contains(it) }
+
+    if (has("cvv", "cvc", "csc", "cvn", "ccv", "cardcode", "securitycode", "cardverif", "cryptogramme")) {
+        return CardField.Cvv
+    }
+    if (has("ccexpmonth", "cardexpmonth", "expmonth", "expirymonth", "expmo", "cardmonth", "ccmm", "cbdatemois")) {
+        return CardField.ExpMonth
+    }
+    if (has("ccexpyear", "cardexpyear", "expyear", "expiryyear", "expyy", "cardyear", "ccyy", "cbdateann")) {
+        return CardField.ExpYear
+    }
+    if (has("ccnumber", "cardnumber", "creditcard", "ccnum", "cardnum", "ccno", "cardno",
+            "numerocarte", "numcarte", "cbnum", "cardpan")) {
+        return CardField.Number
+    }
+    if (has("ccexp", "cardexp", "ccxp", "expirationdate", "expirydate", "cardexpiry",
+            "cardexpiration", "paymentcardexpiration", "validite", "dateexpiration")) {
+        return CardField.Expiry
+    }
+    if (has("cardholder", "ccname", "cardname", "nameoncard")) {
+        return CardField.Name
+    }
+    return null
+}
+
+private fun ParsedAutofillField.cardFieldKind(): CardField? =
+    cardFieldKindOf(htmlName, htmlId, effectiveAutocomplete, androidHint, idEntry)
 
 /**
  * Extension equivalent of `velaIsAutofillable(el)`.

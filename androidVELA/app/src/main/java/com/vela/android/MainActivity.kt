@@ -350,9 +350,29 @@ class MainActivity : FragmentActivity() {
         }
         val usernameIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_USERNAME_IDS).orEmpty()
         val passwordIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_PASSWORD_IDS).orEmpty()
-        if (usernameIds.isEmpty() && passwordIds.isEmpty()) return null
+        val cardNumberIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_CARD_NUMBER_IDS).orEmpty()
+        val cardExpiryIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_CARD_EXPIRY_IDS).orEmpty()
+        val cardExpMonthIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_CARD_EXP_MONTH_IDS).orEmpty()
+        val cardExpYearIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_CARD_EXP_YEAR_IDS).orEmpty()
+        val cardCvvIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_CARD_CVV_IDS).orEmpty()
+        val cardNameIds = intent.parcelableArrayListExtraCompat<AutofillId>(EXTRA_AUTOFILL_CARD_NAME_IDS).orEmpty()
+        if (usernameIds.isEmpty() && passwordIds.isEmpty() && cardNumberIds.isEmpty() &&
+            cardExpiryIds.isEmpty() && cardExpMonthIds.isEmpty() && cardExpYearIds.isEmpty() &&
+            cardCvvIds.isEmpty() && cardNameIds.isEmpty()
+        ) {
+            return null
+        }
         return AutofillFillRequest(
-            fields = AutofillFieldSet(usernameIds, passwordIds),
+            fields = AutofillFieldSet(
+                usernameFields = usernameIds,
+                passwordFields = passwordIds,
+                cardNumberFields = cardNumberIds,
+                cardExpiryFields = cardExpiryIds,
+                cardExpiryMonthFields = cardExpMonthIds,
+                cardExpiryYearFields = cardExpYearIds,
+                cardCvvFields = cardCvvIds,
+                cardNameFields = cardNameIds,
+            ),
             domain = intent.getStringExtra(EXTRA_AUTOFILL_DOMAIN),
             packageName = intent.getStringExtra(EXTRA_AUTOFILL_PACKAGE)
         )
@@ -510,6 +530,12 @@ class MainActivity : FragmentActivity() {
         const val EXTRA_AUTOFILL_UNLOCK = "com.vela.android.extra.AUTOFILL_UNLOCK"
         const val EXTRA_AUTOFILL_USERNAME_IDS = "com.vela.android.extra.AUTOFILL_USERNAME_IDS"
         const val EXTRA_AUTOFILL_PASSWORD_IDS = "com.vela.android.extra.AUTOFILL_PASSWORD_IDS"
+        const val EXTRA_AUTOFILL_CARD_NUMBER_IDS = "com.vela.android.extra.AUTOFILL_CARD_NUMBER_IDS"
+        const val EXTRA_AUTOFILL_CARD_EXPIRY_IDS = "com.vela.android.extra.AUTOFILL_CARD_EXPIRY_IDS"
+        const val EXTRA_AUTOFILL_CARD_EXP_MONTH_IDS = "com.vela.android.extra.AUTOFILL_CARD_EXP_MONTH_IDS"
+        const val EXTRA_AUTOFILL_CARD_EXP_YEAR_IDS = "com.vela.android.extra.AUTOFILL_CARD_EXP_YEAR_IDS"
+        const val EXTRA_AUTOFILL_CARD_CVV_IDS = "com.vela.android.extra.AUTOFILL_CARD_CVV_IDS"
+        const val EXTRA_AUTOFILL_CARD_NAME_IDS = "com.vela.android.extra.AUTOFILL_CARD_NAME_IDS"
         const val EXTRA_AUTOFILL_DOMAIN = "com.vela.android.extra.AUTOFILL_DOMAIN"
         const val EXTRA_AUTOFILL_PACKAGE = "com.vela.android.extra.AUTOFILL_PACKAGE"
         const val EXTRA_AUTOFILL_TOKEN = "com.vela.android.extra.AUTOFILL_TOKEN"

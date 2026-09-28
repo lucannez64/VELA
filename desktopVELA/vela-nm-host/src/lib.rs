@@ -289,6 +289,57 @@ pub fn handle_get_logins(message: &Value) -> Value {
     json!({ "success": true, "logins": logins })
 }
 
+pub fn handle_get_cards(message: &Value) -> Value {
+    // Cards are never offered passively: the extension only asks after it has
+    // seen a payment form and the user explicitly invoked VELA. The page URL
+    // still travels along because the desktop keys the release (cap + audit)
+    // to the site it was filled on.
+    let response = send_to_desktop(
+        json!({
+            "msg_type": "autofill_request",
+            "payload": {
+                "credential_type": "card",
+                "domain": message.get("url").cloned().unwrap_or(Value::Null),
+                "user_initiated": true,
+            },
+        }),
+        false,
+    );
+
+    let Some(response) = response else {
+        return json!({ "success": false, "cards": [] });
+    };
+    if !matches!(
+        response.get("msg_type").and_then(Value::as_str),
+        Some("AutofillResponse") | Some("autofill_response")
+    ) {
+        return json!({ "success": false, "cards": [] });
+    }
+
+    let payload = response.get("payload").cloned().unwrap_or(Value::Null);
+    if payload.get("requires_biometric").and_then(Value::as_bool).unwrap_or(false) {
+        return json!({ "success": false, "requires_biometric": true, "cards": [] });
+    }
+
+    let mut cards = Vec::new();
+    for item in payload.get("items").and_then(Value::as_array).into_iter().flatten() {
+        if item.get("item_type").and_then(Value::as_str) != Some("creditCard") {
+            continue;
+        }
+        // Never the PIN: no web checkout asks for an ATM PIN, and returning it
+        // would widen the secret surface for nothing.
+        cards.push(json!({
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "cardholderName": item.get("cardholder_name").cloned().unwrap_or(Value::Null),
+            "number": item.get("number").cloned().unwrap_or(Value::Null),
+            "exp": item.get("exp").cloned().unwrap_or(Value::Null),
+            "cvv": item.get("cvv").cloned().unwrap_or(Value::Null),
+        }));
+    }
+    json!({ "success": true, "cards": cards })
+}
+
 pub fn handle_save_credentials(message: &Value) -> Value {
     let response = send_to_desktop(
         json!({
@@ -530,6 +581,7 @@ pub fn handle_message(message: &Value) -> Value {
         "ping" => handle_ping,
         "openVault" | "openSettings" => handle_open_vault,
         "getLogins" | "getAvailableLogins" => handle_get_logins,
+        "getCards" => handle_get_cards,
         "saveCredentials" => handle_save_credentials,
         "passkeyCreate" => handle_passkey_create,
         "passkeyGet" => handle_passkey_get,

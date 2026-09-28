@@ -67,6 +67,11 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
+          # iOS 18 "text to insert": the only supported way for a third-party
+          # provider to offer credit-card values (one field per insertion).
+          NSExtensionAttributes:
+            ASCredentialProviderExtensionCapabilities:
+              ProvidesTextToInsert: true
     entitlements:
       path: Generated/VELAAutoFill.entitlements
       properties:

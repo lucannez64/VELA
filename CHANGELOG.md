@@ -9,6 +9,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Credit-card autofill (fill-only). The browser extension detects card number,
+  expiry (combined or split month + year), CVV and cardholder fields and offers
+  stored cards after an explicit click on a payment field; the desktop keys the
+  release to the page (per-unlock cap + activity-log entry) rather than to the
+  card. Android's `AutofillService` fills the same payment group, including the
+  unlock-then-fill flow. iOS 18+'s AutoFill extension declares
+  `ProvidesTextToInsert` and offers each card value (number, expiry, CVV,
+  cardholder) as an individually insertable text, since a credential-provider
+  extension cannot return a credit-card credential.
 - Instant cross-device sync: a local save is pushed immediately, and an
   authenticated `GET /vault/events` SSE stream tells open clients when another
   device wrote. Events are content-free (writer device, epoch, revision,
