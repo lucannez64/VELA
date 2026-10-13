@@ -80,7 +80,9 @@ deny_one() {
   if [ "$rc" -eq 0 ]; then
     echo "  clean (bans + licenses ok)"
   else
-    echo "$out" | grep -E "^error\[" | head -10
+    # Preserve complete diagnostics, including ANSI-colored errors and
+    # setup failures that do not contain an error[...] prefix.
+    printf '%s\n' "$out"
     fail=1
   fi
 }
