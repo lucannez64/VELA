@@ -64,6 +64,13 @@ section = "utils"
 priority = "optional"
 assets = [
     ["target/release/vela-desktop", "usr/bin/vela-desktop", "755"],
+    ["target/release/vela-native-messaging-host", "usr/bin/vela-native-messaging-host", "755"],
+    ["../../extension/native-messaging/firefox/manifest.json", "usr/lib/mozilla/native-messaging-hosts/com.vela.desktop.json", "644"],
+    ["../../extension/native-messaging/firefox/manifest.json", "usr/lib/zen/native-messaging-hosts/com.vela.desktop.json", "644"],
+    ["../../extension/native-messaging/firefox/manifest.json", "usr/lib/waterfox/native-messaging-hosts/com.vela.desktop.json", "644"],
+    ["../../extension/native-messaging/firefox/manifest.json", "usr/lib/floorp/native-messaging-hosts/com.vela.desktop.json", "644"],
+    ["../../extension/native-messaging/firefox/manifest.json", "usr/lib/librewolf/native-messaging-hosts/com.vela.desktop.json", "644"],
+    ["../../extension/native-messaging/firefox/manifest.json", "usr/lib/thunderbird/native-messaging-hosts/com.vela.desktop.json", "644"],
     ["../src-tauri/assets/com.vela.vault.desktop", "usr/share/applications/com.vela.vault.desktop", "644"],
     ["../src-tauri/icons/icon.png", "usr/share/icons/hicolor/512x512/apps/vela-desktop.png", "644"],
 ]
@@ -76,6 +83,13 @@ assets = [
     # dir to the repository root, and cargo-generate-rpm resolves sources
     # relative to the invocation cwd — this crate dir, two levels below it.
     { source = "../../target/release/vela-desktop", dest = "/usr/bin/vela-desktop", mode = "755" },
+    { source = "../../target/release/vela-native-messaging-host", dest = "/usr/bin/vela-native-messaging-host", mode = "755" },
+    { source = "../../extension/native-messaging/firefox/manifest.json", dest = "/usr/lib/mozilla/native-messaging-hosts/com.vela.desktop.json", mode = "644" },
+    { source = "../../extension/native-messaging/firefox/manifest.json", dest = "/usr/lib/zen/native-messaging-hosts/com.vela.desktop.json", mode = "644" },
+    { source = "../../extension/native-messaging/firefox/manifest.json", dest = "/usr/lib/waterfox/native-messaging-hosts/com.vela.desktop.json", mode = "644" },
+    { source = "../../extension/native-messaging/firefox/manifest.json", dest = "/usr/lib/floorp/native-messaging-hosts/com.vela.desktop.json", mode = "644" },
+    { source = "../../extension/native-messaging/firefox/manifest.json", dest = "/usr/lib/librewolf/native-messaging-hosts/com.vela.desktop.json", mode = "644" },
+    { source = "../../extension/native-messaging/firefox/manifest.json", dest = "/usr/lib/thunderbird/native-messaging-hosts/com.vela.desktop.json", mode = "644" },
     { source = "../src-tauri/assets/com.vela.vault.desktop", dest = "/usr/share/applications/com.vela.vault.desktop", mode = "644" },
     { source = "../src-tauri/icons/icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/vela-desktop.png", mode = "644" },
 ]

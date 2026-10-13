@@ -276,7 +276,7 @@ jobs:
 
       - name: Build (release)
         working-directory: desktopVELA
-        run: cargo build --release -p vela-desktop-gpui
+        run: cargo build --release -p vela-desktop-gpui -p vela-nm-host
 
       - name: sccache stats
         if: always()
@@ -304,6 +304,21 @@ jobs:
           cp "$(ls target/debian/*.deb | head -1)" "dist/VELA_${V}_amd64.deb"
           cp "$(ls target/generate-rpm/*.rpm | head -1)" "dist/VELA-${V}-1.x86_64.rpm"
           ls -l dist
+
+      - name: Verify packaged extension bridge
+        working-directory: desktopVELA
+        run: |
+          set -euo pipefail
+          package_check_dir=$(mktemp -d)
+          trap 'rm -rf "$package_check_dir"' EXIT
+          dpkg-deb -x dist/*.deb "$package_check_dir"
+          test -x "$package_check_dir/usr/bin/vela-native-messaging-host"
+          cmp ../extension/native-messaging/firefox/manifest.json \
+            "$package_check_dir/usr/lib/mozilla/native-messaging-hosts/com.vela.desktop.json"
+          for browser in zen waterfox floorp librewolf thunderbird; do
+            cmp ../extension/native-messaging/firefox/manifest.json \
+              "$package_check_dir/usr/lib/$browser/native-messaging-hosts/com.vela.desktop.json"
+          done
 
       # Dry run: prove the .deb/.rpm build and are inspectable, publish nothing.
       - name: Upload packages as build artifacts (PR dry run)
@@ -450,6 +465,9 @@ jobs:
           package() {
             ar x "VELA_\${pkgver}_amd64.deb"
             tar -xf data.tar.* -C "\${pkgdir}"
+            # Fail rather than publish an app with a missing extension bridge.
+            test -x "\${pkgdir}/usr/bin/vela-native-messaging-host"
+            test -f "\${pkgdir}/usr/lib/mozilla/native-messaging-hosts/com.vela.desktop.json"
           }
           EOF
 

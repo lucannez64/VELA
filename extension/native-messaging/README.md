@@ -135,3 +135,16 @@ which means the gate could not find a browser in the host's ancestry (common
 with Flatpak/Snap browsers, whose host parent is the sandbox launcher rather
 than `chrome`/`firefox`). The escape hatch is `VELA_NM_BROWSER_NAMES=<launcher>`
 on the **desktop** process.
+
+### Linux packages and AUR
+
+The Linux `.deb` and `.rpm` packages include `vela-native-messaging-host` and
+system-wide Gecko manifests. `vela-desktop-bin` on the AUR extracts that same
+`.deb`, so Firefox, Zen, Waterfox, Floorp, LibreWolf, and Thunderbird are
+registered during installation, including for users who install a browser
+later. Start VELA and reload the extension after upgrading. No root-run
+script writes into users' home directories.
+
+For older packages, build the bridge and run `register-firefox-host.sh` as
+your normal user. Zen registration covers Mozilla's shared host directory,
+`~/.zen`, and `${XDG_CONFIG_HOME:-~/.config}/zen`.

@@ -104,8 +104,7 @@ detect_nm_dir() {
 
 register_browser() {
 	local browser=$1
-	local nm_dir
-	nm_dir=$(detect_nm_dir "$browser")
+	local nm_dir=${2:-$(detect_nm_dir "$browser")}
 
 	mkdir -p "$nm_dir"
 
@@ -127,8 +126,21 @@ EOF
 BROWSERS=(firefox zen waterfox floorp librewolf thunderbird)
 
 for browser in "${BROWSERS[@]}"; do
+	# Creating ~/.zen can make an XDG-based Zen installation switch to a
+	# fresh profile on its next launch. Only register the legacy path when
+	# it already belongs to an existing installation.
+	if [ "$browser" = "zen" ] && [ "$(uname)" != "Darwin" ] && [ ! -d "$HOME/.zen" ]; then
+		continue
+	fi
 	register_browser "$browser"
 done
+
+# Current Zen packages store their profiles under XDG_CONFIG_HOME; some
+# releases still resolve native hosts through Mozilla's shared directory
+# (registered above). Cover both layouts without inspecting profiles.
+if [ "$(uname)" != "Darwin" ] && [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/zen" ]; then
+	register_browser zen "${XDG_CONFIG_HOME:-$HOME/.config}/zen/native-messaging-hosts"
+fi
 
 echo ""
 echo "Done. Restart your browser(s) and reload the VELA extension."
