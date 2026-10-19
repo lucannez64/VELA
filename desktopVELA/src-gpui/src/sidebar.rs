@@ -56,11 +56,6 @@ impl NavView {
     }
 }
 
-/// Below this viewport width the sidebar collapses to icon-only, matching
-/// the original's `lg:` breakpoint (1024px) minus a little slack for gpui
-/// windows that don't reserve as much OS-chrome width as a browser tab.
-const COLLAPSE_BELOW_WIDTH: f32 = 900.;
-
 pub enum SidebarEvent {
     Navigate(NavView),
     AddItem,
@@ -74,8 +69,11 @@ pub struct Sidebar {
 
 impl Sidebar {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
-        Self { active: NavView::Vault }
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
+        Self {
+            active: NavView::Vault,
+        }
     }
 
     pub fn set_active(&mut self, view: NavView, cx: &mut Context<Self>) {
@@ -88,18 +86,26 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
         let active = self.active;
-        let collapsed = window.viewport_size().width < px(COLLAPSE_BELOW_WIDTH);
+        let collapsed = window.viewport_size().width < px(crate::layout::SIDEBAR_BREAKPOINT);
 
         let mut root = div()
-            .w(if collapsed { px(72.) } else { px(240.) })
+            .id("sidebar-scroll")
+            .w(px(crate::layout::sidebar_width(
+                window.viewport_size().width.into(),
+            )))
+            .flex_shrink_0()
+            .overflow_y_scroll()
             .h_full()
             .flex()
             .flex_col()
             .bg(palette.surface_container_low)
             .border_r_1()
-            .border_color(gpui::Hsla { a: 0.05, ..palette.outline_variant });
+            .border_color(gpui::Hsla {
+                a: 0.05,
+                ..palette.outline_variant
+            });
 
-        let mut top = div().flex().flex_col().py_6().gap_1();
+        let mut top = div().flex().flex_col().flex_shrink_0().py_4().gap_1();
         if !collapsed {
             top = top.child(
                 div()
@@ -121,8 +127,16 @@ impl Render for Sidebar {
         }
         top = top.children(NavView::ALL.iter().map(|&view| {
             let selected = view == active;
-            let base_bg = if selected { palette.surface_container } else { palette.surface_container_low };
-            let base_text = if selected { palette.primary } else { palette.on_surface_variant };
+            let base_bg = if selected {
+                palette.surface_container
+            } else {
+                palette.surface_container_low
+            };
+            let base_text = if selected {
+                palette.primary
+            } else {
+                palette.on_surface_variant
+            };
             let hover_t = (!selected)
                 .then(|| animation::hover_transition(format!("nav-{}", view.label()), window, cx));
             let (bg, text_color) = if let Some(hover_t) = &hover_t {
@@ -143,7 +157,11 @@ impl Render for Sidebar {
                 .font_family(fonts::BODY)
                 .cursor_pointer()
                 .border_l_2()
-                .border_color(if selected { palette.primary } else { gpui::transparent_black() })
+                .border_color(if selected {
+                    palette.primary
+                } else {
+                    gpui::transparent_black()
+                })
                 .bg(bg)
                 .text_color(text_color)
                 .child(icon(view.icon_name(), px(18.), text_color));
@@ -163,18 +181,27 @@ impl Render for Sidebar {
                     });
                 });
             }
-            row.on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                this.set_active(view, cx);
-                cx.emit(SidebarEvent::Navigate(view));
-            }))
+            row.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.set_active(view, cx);
+                    cx.emit(SidebarEvent::Navigate(view));
+                }),
+            )
         }));
         root = root.child(top).child(div().flex_1());
 
         let add_item_hover_t = animation::hover_transition("sidebar-add-item", window, cx);
         let add_item_t = *add_item_hover_t.evaluate(window, cx);
         let add_item_bg = animation::lerp_hsla(
-            gpui::Hsla { a: 0.1, ..palette.primary },
-            gpui::Hsla { a: 0.2, ..palette.primary },
+            gpui::Hsla {
+                a: 0.1,
+                ..palette.primary
+            },
+            gpui::Hsla {
+                a: 0.2,
+                ..palette.primary
+            },
             add_item_t,
         );
         let mut add_item = div()
@@ -201,13 +228,20 @@ impl Render for Sidebar {
                     cx.notify();
                 });
             })
-            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _, cx| {
-                cx.emit(SidebarEvent::AddItem);
-            }));
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _, _, cx| {
+                    cx.emit(SidebarEvent::AddItem);
+                }),
+            );
 
         let lock_hover_t = animation::hover_transition("sidebar-lock", window, cx);
         let lock_t = *lock_hover_t.evaluate(window, cx);
-        let lock_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, lock_t);
+        let lock_bg = animation::lerp_hsla(
+            palette.surface_container_highest,
+            palette.surface_bright,
+            lock_t,
+        );
         let mut lock = div()
             .id("sidebar-lock")
             .py_3()
@@ -232,12 +266,16 @@ impl Render for Sidebar {
                     cx.notify();
                 });
             })
-            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _, cx| {
-                cx.emit(SidebarEvent::Lock);
-            }));
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _, _, cx| {
+                    cx.emit(SidebarEvent::Lock);
+                }),
+            );
 
         root.child(
             div()
+                .flex_shrink_0()
                 .p(if collapsed { px(12.) } else { px(24.) })
                 .flex()
                 .flex_col()

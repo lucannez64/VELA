@@ -38,6 +38,7 @@ function AppContent() {
   const [checkingVault, setCheckingVault] = useState(true);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<VaultItem | null>(null);
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const { session, setSession, items, setItems, toast, showToast, selectedItem, setSelectedItem, currentView, setCurrentView, settings, setSettings } = useApp();
   const { clearClipboard } = useClipboard();
@@ -223,6 +224,9 @@ function AppContent() {
   useEffect(() => {
     if (session?.active) {
       loadItems();
+    } else {
+      setShowAddModal(false);
+      setEditingItem(null);
     }
   }, [session?.active, loadItems]);
 
@@ -361,7 +365,7 @@ function AppContent() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-surface">
+    <div className="h-screen min-h-0 flex flex-col overflow-hidden bg-surface">
       <TitleBar />
       {/*
         Above the whole app, not tucked inside a view: setup can now be left
@@ -370,16 +374,17 @@ function AppContent() {
         set up.
       */}
       <RecoveryReminder onOpenSettings={() => setCurrentView('settings')} />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         <Sidebar 
-          onAddItem={() => setShowAddModal(true)} 
+          onAddItem={() => { setEditingItem(null); setShowAddModal(true); }}
         />
-        <main className="flex-1 flex overflow-hidden">
+        <main className="flex-1 min-h-0 min-w-0 flex overflow-hidden">
           {currentView === 'vault' && (
             selectedItem ? (
               <ItemDetail 
                 item={selectedItem} 
                 onEdit={() => {
+                  setEditingItem(selectedItem);
                   setShowAddModal(true);
                 }}
               />
@@ -387,7 +392,7 @@ function AppContent() {
               <VaultBrowser 
                 items={items} 
                 onRefresh={loadItems}
-                onAddItem={() => setShowAddModal(true)}
+                onAddItem={() => { setEditingItem(null); setShowAddModal(true); }}
               />
             )
           )}
@@ -404,10 +409,10 @@ function AppContent() {
       {toast && <Toast {...toast} />}
       {showAddModal && (
         <AddItemModal 
-          editItem={selectedItem}
+          editItem={editingItem}
           onClose={() => {
             setShowAddModal(false);
-            setSelectedItem(null);
+            setEditingItem(null);
           }} 
           onSave={loadItems}
         />

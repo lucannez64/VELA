@@ -26,6 +26,7 @@
 //! shortcut is only persisted, applying after a restart.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, Context, EventEmitter, IntoElement, MouseButton, Render, SharedString,
@@ -38,8 +39,8 @@ use vela_desktop_core::settings::Settings;
 use vela_desktop_core::vault::VaultItem;
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::fonts;
 use crate::icon::icon;
 use crate::theme::{Palette, ThemeId};
@@ -54,9 +55,40 @@ pub enum SettingsScreenEvent {
 }
 impl EventEmitter<SettingsScreenEvent> for SettingsScreen {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsCategory {
+    General,
+    Security,
+    Recovery,
+    Sync,
+    Data,
+    Account,
+}
+impl SettingsCategory {
+    const ALL: [Self; 6] = [
+        Self::General,
+        Self::Security,
+        Self::Recovery,
+        Self::Sync,
+        Self::Data,
+        Self::Account,
+    ];
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Security => "Security",
+            Self::Recovery => "Recovery",
+            Self::Sync => "Sync",
+            Self::Data => "Data",
+            Self::Account => "Account",
+        }
+    }
+}
+
 pub struct SettingsScreen {
     app_state: Arc<AppState>,
     settings: Option<Settings>,
+    category: SettingsCategory,
     error: Option<SharedString>,
     editing_server_url: bool,
     server_url_state: gpui::Entity<EditableTextState>,
@@ -109,6 +141,11 @@ pub struct SettingsScreen {
     archive_busy: bool,
     archive_error: Option<SharedString>,
     _pulse_task: Task<()>,
+    /// Polls the in-memory extension status while this screen is open. Held
+    /// (rather than detached) so dropping the screen stops it; tests replace
+    /// it with a ready task, since an endless periodic task would keep
+    /// `run_until_parked` from ever parking.
+    _extension_status_task: Task<()>,
 }
 
 /// What the open passphrase modal is for: creating a `.vela` backup, or
@@ -132,8 +169,14 @@ enum ConflictAction {
 }
 
 impl SettingsScreen {
+    pub fn show_recovery(&mut self, cx: &mut Context<Self>) {
+        self.category = SettingsCategory::Recovery;
+        cx.notify();
+    }
+
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         cx.spawn({
             let app_state = app_state.clone();
             async move |this, cx| {
@@ -159,9 +202,34 @@ impl SettingsScreen {
         Self::load_sync_status(&app_state, cx);
         Self::load_recovery_status(&app_state, cx);
 
+        // The extension connects only for the duration of a single request,
+        // so the core remembers that it has been seen this session. Poll the
+        // in-memory flag so the indicator turns green while Settings is open
+        // (e.g. right after opening the popup), without a disk read.
+        let extension_status_task = cx.spawn({
+            let app_state = app_state.clone();
+            async move |this, cx| loop {
+                cx.background_spawn(async { std::thread::sleep(Duration::from_secs(2)) })
+                    .await;
+                let connected = app_state.is_extension_connected();
+                let alive = this.update(cx, |this, cx| {
+                    if let Some(settings) = this.settings.as_mut() {
+                        if settings.extension_connected != connected {
+                            settings.extension_connected = connected;
+                            cx.notify();
+                        }
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
+
         Self {
             app_state,
             settings: None,
+            category: SettingsCategory::General,
             error: None,
             editing_server_url: false,
             server_url_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
@@ -182,11 +250,12 @@ impl SettingsScreen {
             exporting: false,
             importing: false,
             export_import_status: None,
-    passkey_message: None,
-    passkey_busy: false,
+            passkey_message: None,
+            passkey_busy: false,
             recovery_status: None,
             show_security_key_modal: false,
-            security_key_pin_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            security_key_pin_state: cx
+                .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             registering_security_key: false,
             security_key_error: None,
             show_cloud_backup_modal: false,
@@ -204,11 +273,14 @@ impl SettingsScreen {
             finalizing_recovery: false,
             show_archive_modal: false,
             archive_pending: None,
-            archive_passphrase_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
-            archive_confirm_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            archive_passphrase_state: cx
+                .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            archive_confirm_state: cx
+                .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             archive_busy: false,
             archive_error: None,
             _pulse_task: animation::spawn_pulse_ticker(cx),
+            _extension_status_task: extension_status_task,
         }
     }
 
@@ -233,7 +305,8 @@ impl SettingsScreen {
     }
 
     fn open_security_key_modal(&mut self, cx: &mut Context<Self>) {
-        self.security_key_pin_state.update(cx, |s, cx| s.emplace("", cx));
+        self.security_key_pin_state
+            .update(cx, |s, cx| s.emplace("", cx));
         self.security_key_error = None;
         self.show_security_key_modal = true;
         cx.notify();
@@ -324,7 +397,9 @@ impl SettingsScreen {
     }
 
     fn upload_cloud_backup(&mut self, cx: &mut Context<Self>) {
-        let Some(remote) = self.selected_cloud_remote.clone() else { return };
+        let Some(remote) = self.selected_cloud_remote.clone() else {
+            return;
+        };
         self.uploading_cloud_backup = true;
         self.cloud_backup_error = None;
         cx.notify();
@@ -342,13 +417,19 @@ impl SettingsScreen {
                     .await
                 })
                 .await
-                .unwrap_or_else(|| Err("Uploading the recovery share failed unexpectedly".to_string()));
+                .unwrap_or_else(|| {
+                    Err("Uploading the recovery share failed unexpectedly".to_string())
+                });
             this.update(cx, |this, cx| {
                 this.uploading_cloud_backup = false;
                 match result {
                     Ok(()) => {
                         this.show_cloud_backup_modal = false;
-                        crate::toast::show(cx, "Recovery share uploaded", crate::toast::ToastKind::Success);
+                        crate::toast::show(
+                            cx,
+                            "Recovery share uploaded",
+                            crate::toast::ToastKind::Success,
+                        );
                         let app_state = this.app_state.clone();
                         Self::load_recovery_status(&app_state, cx);
                     }
@@ -394,7 +475,9 @@ impl SettingsScreen {
                     .await
                 })
                 .await
-                .unwrap_or_else(|| Err("Sealing the recovery envelope failed unexpectedly".to_string()));
+                .unwrap_or_else(|| {
+                    Err("Sealing the recovery envelope failed unexpectedly".to_string())
+                });
             this.update(cx, |this, cx| {
                 this.loading_trusted_contact = false;
                 match result {
@@ -424,7 +507,9 @@ impl SettingsScreen {
     }
 
     fn copy_trusted_contact_share(&mut self, cx: &mut Context<Self>) {
-        let Some(share) = self.trusted_contact_share.clone() else { return };
+        let Some(share) = self.trusted_contact_share.clone() else {
+            return;
+        };
         // Key material: copied as a secret so it stays out of clipboard history.
         crate::clipboard::copy(cx, "Recovery share", share.as_ref());
     }
@@ -449,7 +534,11 @@ impl SettingsScreen {
                 }
                 this.show_trusted_contact_modal = false;
                 this.trusted_contact_share = None;
-                crate::toast::show(cx, "Trusted contact share delivered", crate::toast::ToastKind::Success);
+                crate::toast::show(
+                    cx,
+                    "Trusted contact share delivered",
+                    crate::toast::ToastKind::Success,
+                );
                 let app_state = this.app_state.clone();
                 Self::load_recovery_status(&app_state, cx);
                 cx.notify();
@@ -480,7 +569,11 @@ impl SettingsScreen {
                 this.finalizing_recovery = false;
                 match result {
                     Ok(()) => {
-                        crate::toast::show(cx, "Recovery setup finished", crate::toast::ToastKind::Success);
+                        crate::toast::show(
+                            cx,
+                            "Recovery setup finished",
+                            crate::toast::ToastKind::Success,
+                        );
                         let app_state = this.app_state.clone();
                         Self::load_recovery_status(&app_state, cx);
                     }
@@ -528,9 +621,10 @@ impl SettingsScreen {
             // run via gpui_tokio's bridge onto the actual tokio runtime, not
             // `cx.background_spawn` (a separate thread pool that never
             // entered that runtime and panics on real reactor I/O).
-            let result =
-                gpui_tokio::Tokio::spawn(cx, async move { vela_desktop_core::sync::trigger_sync(&app_state).await })
-                    .await;
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                vela_desktop_core::sync::trigger_sync(&app_state).await
+            })
+            .await;
             this.update(cx, |this, cx| {
                 this.syncing = false;
                 // Same toast text/type mapping as the original's `doSync`
@@ -543,7 +637,11 @@ impl SettingsScreen {
                         if let Some(err) = &status.error {
                             show(cx, err.clone(), ToastKind::Info);
                         } else if !status.conflicts.is_empty() {
-                            show(cx, format!("{} conflict(s) detected", status.conflicts.len()), ToastKind::Error);
+                            show(
+                                cx,
+                                format!("{} conflict(s) detected", status.conflicts.len()),
+                                ToastKind::Error,
+                            );
                         } else {
                             show(cx, "Vault synced", ToastKind::Success);
                         }
@@ -555,7 +653,11 @@ impl SettingsScreen {
                         this.sync_error = Some(e.into());
                     }
                     Err(e) => {
-                        show(cx, format!("Sync failed: Task failed: {e}"), ToastKind::Error);
+                        show(
+                            cx,
+                            format!("Sync failed: Task failed: {e}"),
+                            ToastKind::Error,
+                        );
                         this.sync_error = Some(format!("Task failed: {e}").into());
                     }
                 }
@@ -569,8 +671,10 @@ impl SettingsScreen {
     fn open_conflict_modal(&mut self, cx: &mut Context<Self>) {
         if let Some(status) = &self.sync_status {
             if !status.conflicts.is_empty() {
-                self.conflict_modal =
-                    Some(ConflictResolutionState { conflicts: status.conflicts.clone(), index: 0 });
+                self.conflict_modal = Some(ConflictResolutionState {
+                    conflicts: status.conflicts.clone(),
+                    index: 0,
+                });
                 self.resolve_error = None;
                 cx.notify();
             }
@@ -590,8 +694,12 @@ impl SettingsScreen {
     /// call fails; a stale "unresolved" marker is recoverable, a lost edit
     /// isn't).
     fn resolve_conflict_action(&mut self, action: ConflictAction, cx: &mut Context<Self>) {
-        let Some(modal) = &self.conflict_modal else { return };
-        let Some(conflict) = modal.conflicts.get(modal.index).cloned() else { return };
+        let Some(modal) = &self.conflict_modal else {
+            return;
+        };
+        let Some(conflict) = modal.conflicts.get(modal.index).cloned() else {
+            return;
+        };
 
         self.resolving = true;
         self.resolve_error = None;
@@ -603,22 +711,48 @@ impl SettingsScreen {
             let result: Result<(), String> = gpui_tokio::Tokio::spawn(cx, async move {
                 match action {
                     ConflictAction::KeepLocal => {
-                        vela_desktop_core::commands::vault::update_item(&app_state, conflict.local_version.clone())
-                            .await?;
-                        vela_desktop_core::sync::resolve_conflict(&app_state, conflict.item_id.clone(), true).await
+                        vela_desktop_core::commands::vault::update_item(
+                            &app_state,
+                            conflict.local_version.clone(),
+                        )
+                        .await?;
+                        vela_desktop_core::sync::resolve_conflict(
+                            &app_state,
+                            conflict.item_id.clone(),
+                            true,
+                        )
+                        .await
                     }
                     ConflictAction::KeepServer => {
-                        vela_desktop_core::commands::vault::update_item(&app_state, conflict.server_version.clone())
-                            .await?;
-                        vela_desktop_core::sync::resolve_conflict(&app_state, conflict.item_id.clone(), false).await
+                        vela_desktop_core::commands::vault::update_item(
+                            &app_state,
+                            conflict.server_version.clone(),
+                        )
+                        .await?;
+                        vela_desktop_core::sync::resolve_conflict(
+                            &app_state,
+                            conflict.item_id.clone(),
+                            false,
+                        )
+                        .await
                     }
                     ConflictAction::KeepBoth => {
-                        let duplicated = conflict
-                            .local_version
-                            .with_id(String::new())
-                            .with_name(format!("{} (conflict copy)", conflict.local_version.name()));
-                        vela_desktop_core::commands::vault::add_item(&app_state, duplicated).await?;
-                        vela_desktop_core::sync::resolve_conflict(&app_state, conflict.item_id.clone(), true).await
+                        let duplicated =
+                            conflict
+                                .local_version
+                                .with_id(String::new())
+                                .with_name(format!(
+                                    "{} (conflict copy)",
+                                    conflict.local_version.name()
+                                ));
+                        vela_desktop_core::commands::vault::add_item(&app_state, duplicated)
+                            .await?;
+                        vela_desktop_core::sync::resolve_conflict(
+                            &app_state,
+                            conflict.item_id.clone(),
+                            true,
+                        )
+                        .await
                     }
                 }
             })
@@ -645,7 +779,9 @@ impl SettingsScreen {
                             status.conflicts.retain(|c| c.item_id != item_id);
                         }
                     }
-                    Err(e) => this.resolve_error = Some(format!("Failed to resolve conflict: {e}").into()),
+                    Err(e) => {
+                        this.resolve_error = Some(format!("Failed to resolve conflict: {e}").into())
+                    }
                 }
                 cx.notify();
             })
@@ -665,21 +801,28 @@ impl SettingsScreen {
         cx.spawn(async move |this, cx| {
             let result: Result<Option<()>, String> = async {
                 let csv = cx
-                    .background_spawn_guarded("export vault csv", {
-                        let app_state = app_state.clone();
-                        async move { vela_desktop_core::commands::vault::export_vault_csv(&app_state) }
-                    })
-                    .await
-                    .unwrap_or_else(|| Err("Export failed unexpectedly".to_string()))?;
+                        .background_spawn_guarded("export vault csv", {
+                            let app_state = app_state.clone();
+                            async move {
+                                vela_desktop_core::commands::vault::export_vault_csv(&app_state)
+                            }
+                        })
+                        .await
+                        .unwrap_or_else(|| Err("Export failed unexpectedly".to_string()))?;
 
-                let default_name = format!("vela-export-{}.csv", chrono::Local::now().format("%Y-%m-%d"));
+                let default_name = format!(
+                    "vela-export-{}.csv",
+                    chrono::Local::now().format("%Y-%m-%d")
+                );
                 let file = rfd::AsyncFileDialog::new()
                     .set_file_name(&default_name)
                     .add_filter("CSV", &["csv"])
                     .save_file()
                     .await;
                 let Some(file) = file else { return Ok(None) };
-                file.write(csv.as_bytes()).await.map_err(|e| format!("Failed to write export file: {e}"))?;
+                file.write(csv.as_bytes())
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {e}"))?;
                 Ok(Some(()))
             }
             .await;
@@ -702,7 +845,8 @@ impl SettingsScreen {
     /// dialog`'s native save picker + `save_vault_export_file` become one
     /// native `rfd` save dialog (no separate renderer process, so no IPC
     /// round-trip needed to hand the path back).
-    fn export_vault(&mut self, cx: &mut Context<Self>) {        self.exporting = true;
+    fn export_vault(&mut self, cx: &mut Context<Self>) {
+        self.exporting = true;
         self.export_import_status = None;
         cx.notify();
 
@@ -712,19 +856,28 @@ impl SettingsScreen {
                 let json = cx
                     .background_spawn_guarded("export vault", {
                         let app_state = app_state.clone();
-                        async move { vela_desktop_core::commands::vault::export_vault_bitwarden_json(&app_state) }
+                        async move {
+                            vela_desktop_core::commands::vault::export_vault_bitwarden_json(
+                                &app_state,
+                            )
+                        }
                     })
                     .await
                     .unwrap_or_else(|| Err("Export failed unexpectedly".to_string()))?;
 
-                let default_name = format!("vela-export-{}.json", chrono::Local::now().format("%Y-%m-%d"));
+                let default_name = format!(
+                    "vela-export-{}.json",
+                    chrono::Local::now().format("%Y-%m-%d")
+                );
                 let file = rfd::AsyncFileDialog::new()
                     .set_file_name(&default_name)
                     .add_filter("JSON", &["json"])
                     .save_file()
                     .await;
                 let Some(file) = file else { return Ok(None) };
-                file.write(json.as_bytes()).await.map_err(|e| format!("Failed to write export file: {e}"))?;
+                file.write(json.as_bytes())
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {e}"))?;
                 Ok(Some(()))
             }
             .await;
@@ -753,25 +906,31 @@ impl SettingsScreen {
 
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
-            let result: Result<Option<vela_desktop_core::commands::vault::ImportResult>, String> = async {
-                let file = rfd::AsyncFileDialog::new()
-                    .add_filter("Password exports", &["json", "csv", "1pif"])
-                    .pick_file()
-                    .await;
-                let Some(file) = file else { return Ok(None) };
-                let data = file.read().await;
-                let text = String::from_utf8(data).map_err(|e| format!("Import file is not valid UTF-8: {e}"))?;
+            let result: Result<Option<vela_desktop_core::commands::vault::ImportResult>, String> =
+                async {
+                    let file = rfd::AsyncFileDialog::new()
+                        .add_filter("Password exports", &["json", "csv", "1pif"])
+                        .pick_file()
+                        .await;
+                    let Some(file) = file else { return Ok(None) };
+                    let data = file.read().await;
+                    let text = String::from_utf8(data)
+                        .map_err(|e| format!("Import file is not valid UTF-8: {e}"))?;
 
-                let imported = cx
-                    .background_spawn_guarded("import vault", {
-                        let app_state = app_state.clone();
-                        async move { vela_desktop_core::commands::vault::import_vault_file(&app_state, &text) }
-                    })
-                    .await
-                    .unwrap_or_else(|| Err("Import failed unexpectedly".to_string()))?;
-                Ok(Some(imported))
-            }
-            .await;
+                    let imported = cx
+                        .background_spawn_guarded("import vault", {
+                            let app_state = app_state.clone();
+                            async move {
+                                vela_desktop_core::commands::vault::import_vault_file(
+                                    &app_state, &text,
+                                )
+                            }
+                        })
+                        .await
+                        .unwrap_or_else(|| Err("Import failed unexpectedly".to_string()))?;
+                    Ok(Some(imported))
+                }
+                .await;
 
             this.update(cx, |this, cx| {
                 this.importing = false;
@@ -802,8 +961,10 @@ impl SettingsScreen {
         self.archive_pending = Some(ArchivePending::Export);
         self.show_archive_modal = true;
         self.archive_error = None;
-        self.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
-        self.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+        self.archive_passphrase_state
+            .update(cx, |s, cx| s.emplace("", cx));
+        self.archive_confirm_state
+            .update(cx, |s, cx| s.emplace("", cx));
         cx.notify();
     }
 
@@ -821,8 +982,10 @@ impl SettingsScreen {
             this.update(cx, |this, cx| {
                 this.archive_pending = Some(ArchivePending::Import { data, file_name });
                 this.show_archive_modal = true;
-                this.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
-                this.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+                this.archive_passphrase_state
+                    .update(cx, |s, cx| s.emplace("", cx));
+                this.archive_confirm_state
+                    .update(cx, |s, cx| s.emplace("", cx));
                 cx.notify();
             })
             .ok();
@@ -836,8 +999,10 @@ impl SettingsScreen {
         self.archive_error = None;
         // Don't leave a passphrase sitting in the input after the modal
         // closes.
-        self.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
-        self.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+        self.archive_passphrase_state
+            .update(cx, |s, cx| s.emplace("", cx));
+        self.archive_confirm_state
+            .update(cx, |s, cx| s.emplace("", cx));
         cx.notify();
     }
 
@@ -845,7 +1010,9 @@ impl SettingsScreen {
         if self.archive_busy {
             return;
         }
-        let Some(pending) = self.archive_pending.take() else { return };
+        let Some(pending) = self.archive_pending.take() else {
+            return;
+        };
 
         let passphrase = self.archive_passphrase_state.read(cx).as_str().to_string();
         let confirm = self.archive_confirm_state.read(cx).as_str().to_string();
@@ -878,15 +1045,18 @@ impl SettingsScreen {
                                 let passphrase = passphrase.clone();
                                 async move {
                                     vela_desktop_core::commands::vault::export_vault_encrypted(
-                                        &app_state, &passphrase,
+                                        &app_state,
+                                        &passphrase,
                                     )
                                 }
                             })
                             .await
                             .unwrap_or_else(|| Err("Export failed unexpectedly".to_string()))?;
 
-                        let default_name =
-                            format!("vela-backup-{}.vela", chrono::Local::now().format("%Y-%m-%d"));
+                        let default_name = format!(
+                            "vela-backup-{}.vela",
+                            chrono::Local::now().format("%Y-%m-%d")
+                        );
                         let file = rfd::AsyncFileDialog::new()
                             .set_file_name(&default_name)
                             .add_filter("VELA encrypted backup", &["vela"])
@@ -905,13 +1075,16 @@ impl SettingsScreen {
                                 let passphrase = passphrase.clone();
                                 async move {
                                     vela_desktop_core::commands::vault::import_vela_archive(
-                                        &app_state, &data, &passphrase,
+                                        &app_state,
+                                        &data,
+                                        &passphrase,
                                     )
                                 }
                             })
                             .await
                             .unwrap_or_else(|| Err("Restore failed unexpectedly".to_string()))?;
-                        let mut status = format!("Restored {} of {} items", result.added, result.total);
+                        let mut status =
+                            format!("Restored {} of {} items", result.added, result.total);
                         if result.duplicates > 0 {
                             status.push_str(&format!(", {} already present", result.duplicates));
                         }
@@ -926,8 +1099,10 @@ impl SettingsScreen {
                 this.archive_busy = false;
                 this.show_archive_modal = false;
                 this.archive_pending = None;
-                this.archive_passphrase_state.update(cx, |s, cx| s.emplace("", cx));
-                this.archive_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+                this.archive_passphrase_state
+                    .update(cx, |s, cx| s.emplace("", cx));
+                this.archive_confirm_state
+                    .update(cx, |s, cx| s.emplace("", cx));
                 this.export_import_status = match result {
                     Ok(Some(status)) => Some(status.into()),
                     Ok(None) => Some("Backup cancelled".into()), // path dialog cancelled
@@ -966,7 +1141,9 @@ impl SettingsScreen {
                     // copy instead of only after a restart.
                     crate::clipboard::set_clear_seconds(cx, new_settings.clipboard_clear_seconds);
                     if theme_changed {
-                        cx.emit(SettingsScreenEvent::ThemeChanged(ThemeId::from_setting(&new_settings.theme)));
+                        cx.emit(SettingsScreenEvent::ThemeChanged(ThemeId::from_setting(
+                            &new_settings.theme,
+                        )));
                     }
                     // Every settings change goes through this one function
                     // in the original too (`handleUpdateSettings`), which
@@ -976,7 +1153,11 @@ impl SettingsScreen {
                     cx.notify();
                 }
                 Err(e) => {
-                    crate::toast::show(cx, format!("Failed to save settings: {e}"), crate::toast::ToastKind::Error);
+                    crate::toast::show(
+                        cx,
+                        format!("Failed to save settings: {e}"),
+                        crate::toast::ToastKind::Error,
+                    );
                     this.error = Some(e.into());
                     cx.notify();
                 }
@@ -1075,7 +1256,9 @@ impl SettingsScreen {
                         this.show_delete_modal = false;
                         cx.emit(SettingsScreenEvent::VaultDeleted);
                     }
-                    Ok(Err(e)) => this.delete_error = Some(format!("Failed to delete vault: {e}").into()),
+                    Ok(Err(e)) => {
+                        this.delete_error = Some(format!("Failed to delete vault: {e}").into())
+                    }
                     Err(e) => this.delete_error = Some(format!("Task failed: {e}").into()),
                 }
                 cx.notify();
@@ -1097,82 +1280,215 @@ impl Render for SettingsScreen {
                 .items_center()
                 .justify_center()
                 .bg(palette.surface)
-                .child(icon("progress_activity", px(36.), palette.primary).opacity(animation::pulse_alpha(1.0)))
+                .child(
+                    icon("progress_activity", px(36.), palette.primary)
+                        .opacity(animation::pulse_alpha(1.0)),
+                )
                 .into_any_element();
         };
 
-        // The delete-vault modal must NOT be a child of the scrollable div
-        // below — its `.absolute().inset_0()` backdrop would otherwise
-        // resolve against the SCROLLABLE CONTENT's bounds (taller than the
-        // real viewport with all sections expanded) instead of the true
-        // window, letting clicks/scroll-wheel input reach the settings list
-        // right through the "backdrop". Keeping the modal as a sibling of
-        // this OUTER (non-scrolling) container fixes that.
+        let category = self.category;
+        let tab_columns =
+            if crate::layout::content_width(window.viewport_size().width.into()) >= 720. {
+                6
+            } else {
+                3
+            };
+        let content = match category {
+            SettingsCategory::General => div()
+                .child(appearance_section(&palette, &settings, window, cx))
+                .child(extension_section(&palette, &settings, window, cx))
+                .child(passkey_section(&palette, self, window, cx)),
+            SettingsCategory::Security => {
+                div().child(security_section(&palette, &settings, self, window, cx))
+            }
+            SettingsCategory::Recovery => div().child(recovery_section(&palette, self, window, cx)),
+            SettingsCategory::Sync => {
+                div().child(sync_section(&palette, &settings, self, window, cx))
+            }
+            SettingsCategory::Data => {
+                div().child(import_export_section(&palette, self, window, cx))
+            }
+            SettingsCategory::Account => {
+                div().child(account_section(&palette, &settings, window, cx))
+            }
+        };
         div()
             .relative()
             .size_full()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .bg(palette.surface)
+            .font_family(fonts::BODY)
             .child(
                 div()
-                    .id("settings-scroll")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .bg(palette.surface)
-                    .font_family(fonts::LABEL)
-                    .p_8()
+                    .w_full()
+                    .flex_shrink_0()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(palette.outline_variant)
                     .child(
                         div()
                             .font_family(fonts::HEADLINE)
                             .font_weight(gpui::FontWeight::BOLD)
-                    .text_3xl()
-                    .text_color(palette.on_surface)
-                    .mb_8()
-                    .child("Settings"),
+                            .text_2xl()
+                            .text_color(palette.on_surface)
+                            .mb_3()
+                            .child("Settings"),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(800.))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .children(SettingsCategory::ALL.chunks(tab_columns).map(|row| {
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .gap_2()
+                                    .children(row.iter().map(|&item| {
+                                        let focus = window
+                                            .use_keyed_state(
+                                                ("settings-tab-focus", item as usize),
+                                                cx,
+                                                |_, cx| cx.focus_handle().tab_stop(true),
+                                            )
+                                            .read(cx)
+                                            .clone();
+                                        div()
+                                            .track_focus(&focus)
+                                            .border_1()
+                                            .border_color(if item == category {
+                                                palette.primary
+                                            } else {
+                                                palette.surface_container
+                                            })
+                                            .focus(|el| el.border_color(palette.primary))
+                                            .on_key_down(cx.listener(
+                                                move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                                    if matches!(
+                                                        event.keystroke.key.as_str(),
+                                                        "enter" | "space"
+                                                    ) {
+                                                        this.category = item;
+                                                        cx.stop_propagation();
+                                                        cx.notify();
+                                                    }
+                                                },
+                                            ))
+                                            .id(item.label())
+                                            .debug_selector(move || item.label().into())
+                                            .flex_1()
+                                            .min_w_0()
+                                            .h(px(36.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_lg()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .bg(if item == category {
+                                                palette.primary
+                                            } else {
+                                                palette.surface_container
+                                            })
+                                            .text_color(if item == category {
+                                                palette.on_primary
+                                            } else {
+                                                palette.on_surface_variant
+                                            })
+                                            .cursor_pointer()
+                                            .child(item.label())
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.category = item;
+                                                    cx.notify();
+                                                }),
+                                            )
+                                    }))
+                            })),
+                    ),
             )
             .child(
                 div()
-                    .max_w(px(720.))
-                    .flex()
-                    .flex_col()
-                    .gap_8()
-                    .child(appearance_section(&palette, &settings, cx))
-                    .child(security_section(&palette, &settings, self, window, cx))
-                    .child(recovery_section(&palette, self, window, cx))
-                    .child(sync_section(&palette, &settings, self, window, cx))
-                    .child(import_export_section(&palette, self, window, cx))
-                    .child(extension_section(&palette, &settings, window, cx))
-                    .child(passkey_section(&palette, self, window, cx))
-                    .child(account_section(&palette, &settings, window, cx)),
-            )
+                    .id(("settings-scroll", category as usize))
+                    .debug_selector(|| "settings-scroll".into())
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_x_hidden()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(
+                        content
+                            .debug_selector(|| "settings-content".into())
+                            .w_full()
+                            .max_w(px(800.))
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_6(),
+                    )
                     .when_some(self.error.clone(), |el, error| {
                         el.child(div().text_sm().text_color(palette.error).child(error))
                     }),
             )
-            .when(self.show_delete_modal, |el| el.child(delete_modal(&palette, self, window, cx)))
-            .when(self.conflict_modal.is_some(), |el| el.child(conflict_resolution_modal(&palette, self, window, cx)))
-            .when(self.show_security_key_modal, |el| el.child(security_key_modal(&palette, self, window, cx)))
-            .when(self.show_cloud_backup_modal, |el| el.child(cloud_backup_modal(&palette, self, window, cx)))
+            .when(self.show_delete_modal, |el| {
+                el.child(delete_modal(&palette, self, window, cx))
+            })
+            .when(self.conflict_modal.is_some(), |el| {
+                el.child(conflict_resolution_modal(&palette, self, window, cx))
+            })
+            .when(self.show_security_key_modal, |el| {
+                el.child(security_key_modal(&palette, self, window, cx))
+            })
+            .when(self.show_cloud_backup_modal, |el| {
+                el.child(cloud_backup_modal(&palette, self, window, cx))
+            })
             .when(self.show_trusted_contact_modal, |el| {
                 el.child(trusted_contact_modal(&palette, self, window, cx))
             })
-            .when(self.show_archive_modal, |el| el.child(archive_passphrase_modal(&palette, self, window, cx)))
+            .when(self.show_archive_modal, |el| {
+                el.child(archive_passphrase_modal(&palette, self, window, cx))
+            })
             .into_any_element()
     }
 }
 
 fn section_label(palette: &Palette, label: &'static str) -> impl IntoElement {
-    fonts::tracked_text(label, px(12.), 0.1)
-        .font_family(fonts::LABEL)
-        .text_xs()
-        .text_color(palette.outline)
-        .mb_4()
+    div()
+        .font_family(fonts::HEADLINE)
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_lg()
+        .text_color(palette.on_surface)
+        .mb_3()
+        .child(label)
 }
 
 fn card(palette: &Palette) -> gpui::Div {
-    div().bg(palette.surface_container).rounded_xl().p_6().flex().flex_col().gap_6()
+    div()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
+        .bg(palette.surface_container)
+        .rounded_xl()
+        .p_4()
+        .flex()
+        .flex_col()
+        .items_stretch()
+        .gap_6()
 }
 
 fn field_label(palette: &Palette, title: &'static str, subtitle: &'static str) -> impl IntoElement {
     div()
+        .flex_1()
+        .min_w_0()
+        .gap_1()
         .flex()
         .flex_col()
         .child(
@@ -1199,16 +1515,27 @@ fn field_label(palette: &Palette, title: &'static str, subtitle: &'static str) -
 
 fn switch(palette: &Palette, checked: bool) -> impl IntoElement {
     div()
+        .flex_shrink_0()
         .w(px(48.))
         .h(px(28.))
         .rounded_full()
-        .bg(if checked { palette.primary } else { palette.surface_container_highest })
+        .bg(if checked {
+            palette.primary
+        } else {
+            palette.surface_container_highest
+        })
         .flex()
         .items_center()
         .px(px(2.))
         .when(checked, |el| el.justify_end())
         .when(!checked, |el| el.justify_start())
-        .child(div().w(px(20.)).h(px(20.)).rounded_full().bg(gpui::rgb(0xffffff)))
+        .child(
+            div()
+                .w(px(20.))
+                .h(px(20.))
+                .rounded_full()
+                .bg(gpui::rgb(0xffffff)),
+        )
 }
 
 fn action_button(
@@ -1220,9 +1547,16 @@ fn action_button(
 ) -> gpui::Stateful<gpui::Div> {
     let hover_t = crate::animation::hover_transition(id, window, cx);
     let t = *hover_t.evaluate(window, cx);
-    let bg = crate::animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
+    let bg =
+        crate::animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
     div()
         .id(id)
+        .debug_selector(move || id.into())
+        .flex_shrink_0()
+        .min_h(px(40.))
+        .flex()
+        .items_center()
+        .justify_center()
         .px_4()
         .py_2()
         .rounded_lg()
@@ -1241,30 +1575,40 @@ fn action_button(
 fn appearance_section(
     palette: &Palette,
     settings: &Settings,
+    window: &Window,
     cx: &mut Context<SettingsScreen>,
 ) -> impl IntoElement {
     let current = ThemeId::from_setting(&settings.theme);
+    let columns = if crate::layout::compact(window.viewport_size().width.into()) {
+        1
+    } else {
+        2
+    };
     // A manual 2-column grid (two explicit rows) rather than `flex_wrap` —
     // gpui's flex-wrap container didn't reserve height for the wrapped
     // second row, so it overlapped the section below it. Fixed row-based
     // layout sidesteps that entirely.
     div()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
         .child(section_label(palette, "Appearance"))
         .child(
             card(palette)
-                .child(field_label(palette, "Theme", "Choose how VELA looks on this device"))
+                .child(field_label(
+                    palette,
+                    "Theme",
+                    "Choose how VELA looks on this device",
+                ))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .children(ThemeId::ALL.chunks(2).map(|row| {
-                            div()
-                                .flex()
-                                .gap_3()
-                                .children(row.iter().map(|&theme_id| {
-                                    theme_card(palette, settings, theme_id, current, cx)
-                                }))
+                        .children(ThemeId::ALL.chunks(columns).map(|row| {
+                            div().flex().gap_3().children(row.iter().map(|&theme_id| {
+                                theme_card(palette, settings, theme_id, current, cx)
+                            }))
                         })),
                 ),
         )
@@ -1288,7 +1632,10 @@ fn theme_card(
         .rounded_xl()
         .cursor_pointer()
         .bg(if selected {
-            gpui::Hsla { a: 0.05, ..palette.primary }
+            gpui::Hsla {
+                a: 0.05,
+                ..palette.primary
+            }
         } else {
             palette.surface_container_low
         })
@@ -1296,7 +1643,10 @@ fn theme_card(
         .border_color(if selected {
             palette.primary
         } else {
-            gpui::Hsla { a: 0.2, ..palette.outline_variant }
+            gpui::Hsla {
+                a: 0.2,
+                ..palette.outline_variant
+            }
         })
         .flex()
         .flex_col()
@@ -1315,7 +1665,9 @@ fn theme_card(
                         .child(swatch(swatch_palette.primary))
                         .child(swatch(swatch_palette.accent_violet)),
                 )
-                .when(selected, |el| el.child(icon("check_circle", px(18.), palette.primary))),
+                .when(selected, |el| {
+                    el.child(icon("check_circle", px(18.), palette.primary))
+                }),
         )
         .child(
             div()
@@ -1331,18 +1683,33 @@ fn theme_card(
                 .text_color(palette.on_surface_variant)
                 .child(theme_id.description()),
         )
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-            this.save(new_settings.clone(), cx);
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                this.save(new_settings.clone(), cx);
+            }),
+        )
 }
 
 fn swatch(color: gpui::Hsla) -> impl IntoElement {
     div().w(px(18.)).h(px(18.)).rounded_md().bg(color)
 }
 
-const AUTO_LOCK_OPTIONS: &[(u32, &str)] = &[(1, "1 min"), (5, "5 min"), (15, "15 min"), (30, "30 min"), (60, "1 hr")];
-const CLIPBOARD_OPTIONS: &[(u32, &str)] = &[(15, "15 sec"), (30, "30 sec"), (60, "1 min"), (120, "2 min")];
-const SYNC_INTERVAL_OPTIONS: &[(u32, &str)] = &[(1, "1 min"), (5, "5 min"), (15, "15 min"), (30, "30 min")];
+const AUTO_LOCK_OPTIONS: &[(u32, &str)] = &[
+    (1, "1 min"),
+    (5, "5 min"),
+    (15, "15 min"),
+    (30, "30 min"),
+    (60, "1 hr"),
+];
+const CLIPBOARD_OPTIONS: &[(u32, &str)] = &[
+    (15, "15 sec"),
+    (30, "30 sec"),
+    (60, "1 min"),
+    (120, "2 min"),
+];
+const SYNC_INTERVAL_OPTIONS: &[(u32, &str)] =
+    &[(1, "1 min"), (5, "5 min"), (15, "15 min"), (30, "30 min")];
 
 fn pill_options(
     palette: &Palette,
@@ -1352,25 +1719,66 @@ fn pill_options(
     cx: &mut Context<SettingsScreen>,
 ) -> impl IntoElement {
     div()
+        .min_w_0()
+        .flex_shrink_0()
         .flex()
-        .flex_wrap()
+        .flex_col()
         .gap_2()
-        .children(options.iter().map(|&(value, label)| {
-            let selected = value == current;
+        .children(options.chunks(3).map(|row| {
             div()
-                .id(SharedString::from(format!("pill-{label}-{value}")))
-                .px_3()
-                .py_2()
-                .rounded_lg()
-                .text_sm()
-                .cursor_pointer()
-                .bg(if selected { palette.primary } else { palette.surface_container_highest })
-                .text_color(if selected { palette.on_primary } else { palette.on_surface })
-                .child(label)
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                    on_pick(this, value, cx);
+                .flex()
+                .gap_2()
+                .children(row.iter().map(|&(value, label)| {
+                    let selected = value == current;
+                    div()
+                        .id(SharedString::from(format!("pill-{label}-{value}")))
+                        .w(px(68.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .px_2()
+                        .py_2()
+                        .rounded_lg()
+                        .text_sm()
+                        .cursor_pointer()
+                        .bg(if selected {
+                            palette.primary
+                        } else {
+                            palette.surface_container_highest
+                        })
+                        .text_color(if selected {
+                            palette.on_primary
+                        } else {
+                            palette.on_surface
+                        })
+                        .child(label)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                on_pick(this, value, cx);
+                            }),
+                        )
                 }))
         }))
+}
+
+/// Wide rows share a right edge; narrow rows put controls below their labels.
+fn setting_row(window: &Window) -> gpui::Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
+        .flex()
+        .gap_3()
+        .when(
+            crate::layout::content_width(window.viewport_size().width.into()) < 720.,
+            |el| el.flex_col(),
+        )
+        .when(
+            crate::layout::content_width(window.viewport_size().width.into()) >= 720.,
+            |el| el.items_center().justify_between(),
+        )
 }
 
 fn security_section(
@@ -1386,16 +1794,12 @@ fn security_section(
     let editing_shortcut = screen.editing_shortcut;
     let shortcut = settings.quick_search_shortcut.clone();
 
-    div()
+    div().w_full().min_w_0().flex_shrink_0()
         .child(section_label(palette, "Security"))
         .child(
             card(palette)
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(palette, "Auto-lock after idle", "Automatically lock when inactive"))
                         .child(pill_options(palette, AUTO_LOCK_OPTIONS, auto_lock, |this, value, cx| {
                             if let Some(settings) = this.settings.clone() {
@@ -1406,11 +1810,7 @@ fn security_section(
                         }, cx)),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(palette, "Clipboard clear delay", "Time before copied data is cleared"))
                         .child(pill_options(palette, CLIPBOARD_OPTIONS, clipboard, |this, value, cx| {
                             if let Some(settings) = this.settings.clone() {
@@ -1444,10 +1844,7 @@ fn security_section(
                         .flex_col()
                         .gap_2()
                         .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
+                            setting_row(window)
                                 .child(field_label(palette, "Quick search shortcut", "Global shortcut for opening quick search"))
                                 .when(!editing_shortcut, |el| {
                                     el.child(action_button(palette, "edit-shortcut", "Change", window, cx).on_mouse_down(
@@ -1486,7 +1883,7 @@ fn security_section(
                                         .text_color(palette.on_surface)
                                         .rounded_lg()
                                         .p_3()
-                                        .flex_1()
+                                        .flex_1().min_w_0()
                                         .min_h_auto()
                                         .whitespace_nowrap()
                                         .overflow_x_scroll(),
@@ -1526,11 +1923,7 @@ fn security_section(
                 // session held, old recovery shares, anything leaked — stops
                 // working (docs/VAULT_REKEYING_DESIGN.md).
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(
                             palette,
                             "Rotate vault keys",
@@ -1569,15 +1962,29 @@ fn recovery_section(
     cx: &mut Context<SettingsScreen>,
 ) -> impl IntoElement {
     let status = screen.recovery_status.clone();
-    let cloud_backup_done = status.as_ref().map(|s| s.cloud_backup_delivered).unwrap_or(false);
-    let security_key_done = status.as_ref().map(|s| s.security_key_delivered).unwrap_or(false);
-    let trusted_contact_done = status.as_ref().map(|s| s.trusted_contact_acknowledged).unwrap_or(false);
-    let completed_count =
-        [cloud_backup_done, security_key_done, trusted_contact_done].iter().filter(|d| **d).count();
-    let setup_in_progress = status.as_ref().map(|s| s.setup_in_progress).unwrap_or(false);
+    let cloud_backup_done = status
+        .as_ref()
+        .map(|s| s.cloud_backup_delivered)
+        .unwrap_or(false);
+    let security_key_done = status
+        .as_ref()
+        .map(|s| s.security_key_delivered)
+        .unwrap_or(false);
+    let trusted_contact_done = status
+        .as_ref()
+        .map(|s| s.trusted_contact_acknowledged)
+        .unwrap_or(false);
+    let completed_count = [cloud_backup_done, security_key_done, trusted_contact_done]
+        .iter()
+        .filter(|d| **d)
+        .count();
+    let setup_in_progress = status
+        .as_ref()
+        .map(|s| s.setup_in_progress)
+        .unwrap_or(false);
     let finalizing = screen.finalizing_recovery;
 
-    div()
+    div().w_full().min_w_0().flex_shrink_0()
         .child(section_label(palette, "Recovery"))
         .child(
             card(palette)
@@ -1629,10 +2036,7 @@ fn recovery_section(
                     )
                     .into_any_element();
                     if !cloud_backup_done {
-                        row = div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
+                        row = setting_row(window)
                             .child(row)
                             .child(
                                 div().flex().justify_end().child(
@@ -1658,10 +2062,7 @@ fn recovery_section(
                     )
                     .into_any_element();
                     if !security_key_done {
-                        row = div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
+                        row = setting_row(window)
                             .child(row)
                             .child(
                                 div().flex().justify_end().child(
@@ -1686,10 +2087,7 @@ fn recovery_section(
                     )
                     .into_any_element();
                     if !trusted_contact_done {
-                        row = div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
+                        row = setting_row(window)
                             .child(row)
                             .child(
                                 div().flex().justify_end().child(
@@ -1755,6 +2153,8 @@ fn recovery_method_row(
     not_ported_note: &'static str,
 ) -> impl IntoElement {
     div()
+        .min_w_0()
+        .flex_1()
         .flex()
         .flex_col()
         .gap_1()
@@ -1766,10 +2166,16 @@ fn recovery_method_row(
                 .child(icon(
                     if done { "check_circle" } else { icon_name },
                     px(18.),
-                    if done { palette.primary } else { palette.on_surface_variant },
+                    if done {
+                        palette.primary
+                    } else {
+                        palette.on_surface_variant
+                    },
                 ))
                 .child(
                     div()
+                        .min_w_0()
+                        .flex_1()
                         .flex()
                         .flex_col()
                         .child(
@@ -1783,12 +2189,22 @@ fn recovery_method_row(
                             div()
                                 .text_sm()
                                 .text_color(palette.on_surface_variant)
-                                .child(if done { "Delivered".to_string() } else { todo_label.to_string() }),
+                                .child(if done {
+                                    "Delivered".to_string()
+                                } else {
+                                    todo_label.to_string()
+                                }),
                         ),
                 ),
         )
         .when(!done && !not_ported_note.is_empty(), |el| {
-            el.child(div().pl(px(30.)).text_xs().text_color(palette.outline).child(not_ported_note))
+            el.child(
+                div()
+                    .pl(px(30.))
+                    .text_xs()
+                    .text_color(palette.outline)
+                    .child(not_ported_note),
+            )
         })
 }
 
@@ -1802,23 +2218,42 @@ fn security_key_modal(
 
     let cancel_hover = animation::hover_transition("security-key-cancel", window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     let confirm_hover = animation::hover_transition("security-key-confirm", window, cx);
     let confirm_t = *confirm_hover.evaluate(window, cx);
-    let confirm_bg = animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, confirm_t);
+    let confirm_bg = animation::lerp_hsla(
+        palette.primary,
+        gpui::Hsla {
+            a: 0.9,
+            ..palette.primary
+        },
+        confirm_t,
+    );
 
     div()
         .id("security-key-modal-backdrop")
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_security_key_modal(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close_security_key_modal(cx)),
+        )
         .child(
             div()
                 .id("security-key-modal-body")
@@ -1828,7 +2263,10 @@ fn security_key_modal(
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1851,11 +2289,15 @@ fn security_key_modal(
                         .text_sm()
                         .text_color(palette.on_surface_variant)
                         .child(
-                            "Insert your FIDO2 security key, enter its PIN, then continue. You'll be \
+                        "Insert your FIDO2 security key, enter its PIN, then continue. You'll be \
                              prompted to touch the key to complete registration.",
-                        ),
+                    ),
                 )
-                .child(fonts::tracked_text("SECURITY KEY PIN", px(10.), 0.15).text_xs().text_color(palette.outline))
+                .child(
+                    fonts::tracked_text("SECURITY KEY PIN", px(10.), 0.15)
+                        .text_xs()
+                        .text_color(palette.outline),
+                )
                 .child(
                     text_input("security-key-pin-input")
                         .state(screen.security_key_pin_state.downgrade())
@@ -1881,7 +2323,10 @@ fn security_key_modal(
                             .gap_2()
                             .text_sm()
                             .text_color(palette.primary)
-                            .child(icon("progress_activity", px(14.), palette.primary).opacity(animation::pulse_alpha(1.0)))
+                            .child(
+                                icon("progress_activity", px(14.), palette.primary)
+                                    .opacity(animation::pulse_alpha(1.0)),
+                            )
                             .child("Waiting for the key to be touched…"),
                     )
                 })
@@ -1912,9 +2357,12 @@ fn security_key_modal(
                                         cx.notify();
                                     });
                                 })
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.close_security_key_modal(cx);
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.close_security_key_modal(cx);
+                                    }),
+                                ),
                         )
                         .child(
                             div()
@@ -1930,7 +2378,11 @@ fn security_key_modal(
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .when(!registering, |el| el.cursor_pointer())
                                 .opacity(if registering { 0.6 } else { 1.0 })
-                                .child(if registering { "Registering…" } else { "Continue" })
+                                .child(if registering {
+                                    "Registering…"
+                                } else {
+                                    "Continue"
+                                })
                                 .on_hover(move |is_hovered, _, cx| {
                                     confirm_hover.update(cx, |v, cx| {
                                         *v = *is_hovered as u8 as f32;
@@ -1938,9 +2390,12 @@ fn security_key_modal(
                                     });
                                 })
                                 .when(!registering, |el| {
-                                    el.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.register_security_key(cx);
-                                    }))
+                                    el.on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.register_security_key(cx);
+                                        }),
+                                    )
                                 }),
                         ),
                 ),
@@ -1963,12 +2418,23 @@ fn sync_section(
         .sync_status
         .as_ref()
         .and_then(|s| s.last_synced)
-        .map(|dt| dt.with_timezone(&chrono::Local).format("%b %-d, %Y %-I:%M %p").to_string())
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%b %-d, %Y %-I:%M %p")
+                .to_string()
+        })
         .unwrap_or_else(|| "Never".to_string());
-    let conflict_count = screen.sync_status.as_ref().map(|s| s.conflicts.len()).unwrap_or(0);
+    let conflict_count = screen
+        .sync_status
+        .as_ref()
+        .map(|s| s.conflicts.len())
+        .unwrap_or(0);
     let sync_error = screen.sync_error.clone();
 
     div()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
         .child(section_label(palette, "Sync"))
         .child(
             card(palette)
@@ -1978,20 +2444,32 @@ fn sync_section(
                         .flex_col()
                         .gap_2()
                         .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(field_label(palette, "Server URL", "VELA server address for sync and auth"))
+                            setting_row(window)
+                                .child(field_label(
+                                    palette,
+                                    "Server URL",
+                                    "VELA server address for sync and auth",
+                                ))
                                 .when(!editing_server_url, |el| {
-                                    el.child(action_button(palette, "edit-server-url", "Edit", window, cx).on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.server_url_state.update(cx, |state, cx| state.emplace(&server_url, cx));
-                                            this.editing_server_url = true;
-                                            cx.notify();
-                                        }),
-                                    ))
+                                    el.child(
+                                        action_button(
+                                            palette,
+                                            "edit-server-url",
+                                            "Edit",
+                                            window,
+                                            cx,
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.server_url_state.update(cx, |state, cx| {
+                                                    state.emplace(&server_url, cx)
+                                                });
+                                                this.editing_server_url = true;
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
                                 }),
                         )
                         .child(if editing_server_url {
@@ -2000,16 +2478,24 @@ fn sync_section(
                                 .gap_2()
                                 // Enter saves the edited URL, same as the Save
                                 // button beside it.
-                                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
-                                    let draft = this.server_url_state.read(cx).as_str().trim().to_string();
-                                    if let Some(settings) = this.settings.clone() {
-                                        let mut updated = settings;
-                                        updated.server_url = draft;
-                                        this.save(updated, cx);
-                                    }
-                                    this.editing_server_url = false;
-                                    cx.notify();
-                                }))
+                                .on_key_down(crate::keyboard::submit_on_enter(
+                                    cx,
+                                    |this, _window, cx| {
+                                        let draft = this
+                                            .server_url_state
+                                            .read(cx)
+                                            .as_str()
+                                            .trim()
+                                            .to_string();
+                                        if let Some(settings) = this.settings.clone() {
+                                            let mut updated = settings;
+                                            updated.server_url = draft;
+                                            this.save(updated, cx);
+                                        }
+                                        this.editing_server_url = false;
+                                        cx.notify();
+                                    },
+                                ))
                                 .child(
                                     text_input("server-url-input")
                                         .state(screen.server_url_state.downgrade())
@@ -2021,30 +2507,48 @@ fn sync_section(
                                         .rounded_lg()
                                         .p_3()
                                         .flex_1()
+                                        .min_w_0()
                                         .min_h_auto()
                                         .whitespace_nowrap()
                                         .overflow_x_scroll(),
                                 )
-                                .child(action_button(palette, "save-server-url", "Save", window, cx).on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        let draft = this.server_url_state.read(cx).as_str().trim().to_string();
-                                        if let Some(settings) = this.settings.clone() {
-                                            let mut updated = settings;
-                                            updated.server_url = draft;
-                                            this.save(updated, cx);
-                                        }
-                                        this.editing_server_url = false;
-                                        cx.notify();
-                                    }),
-                                ))
-                                .child(action_button(palette, "cancel-server-url", "Cancel", window, cx).on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.editing_server_url = false;
-                                        cx.notify();
-                                    }),
-                                ))
+                                .child(
+                                    action_button(palette, "save-server-url", "Save", window, cx)
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| {
+                                                let draft = this
+                                                    .server_url_state
+                                                    .read(cx)
+                                                    .as_str()
+                                                    .trim()
+                                                    .to_string();
+                                                if let Some(settings) = this.settings.clone() {
+                                                    let mut updated = settings;
+                                                    updated.server_url = draft;
+                                                    this.save(updated, cx);
+                                                }
+                                                this.editing_server_url = false;
+                                                cx.notify();
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    action_button(
+                                        palette,
+                                        "cancel-server-url",
+                                        "Cancel",
+                                        window,
+                                        cx,
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.editing_server_url = false;
+                                            cx.notify();
+                                        }),
+                                    ),
+                                )
                                 .into_any_element()
                         } else {
                             let display = if settings.server_url.is_empty() {
@@ -2056,6 +2560,9 @@ fn sync_section(
                                 .font_family(fonts::MONO)
                                 .text_sm()
                                 .text_color(palette.on_surface_variant)
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
                                 .child(display)
                                 .into_any_element()
                         }),
@@ -2068,39 +2575,50 @@ fn sync_section(
                         .justify_between()
                         .gap_4()
                         .cursor_pointer()
-                        .child(field_label(palette, "Sync on startup", "Automatically sync when app opens"))
+                        .child(field_label(
+                            palette,
+                            "Sync on startup",
+                            "Automatically sync when app opens",
+                        ))
                         .child(switch(palette, sync_on_startup))
-                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                            if let Some(settings) = this.settings.clone() {
-                                let mut updated = settings;
-                                updated.sync_on_startup = !updated.sync_on_startup;
-                                this.save(updated, cx);
-                            }
-                        })),
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if let Some(settings) = this.settings.clone() {
+                                    let mut updated = settings;
+                                    updated.sync_on_startup = !updated.sync_on_startup;
+                                    this.save(updated, cx);
+                                }
+                            }),
+                        ),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
-                        .child(field_label(palette, "Background sync interval", "How often to sync in the background"))
-                        .child(pill_options(palette, SYNC_INTERVAL_OPTIONS, background_sync, |this, value, cx| {
-                            if let Some(settings) = this.settings.clone() {
-                                let mut updated = settings;
-                                updated.background_sync_minutes = value;
-                                this.save(updated, cx);
-                            }
-                        }, cx)),
+                    setting_row(window)
+                        .child(field_label(
+                            palette,
+                            "Background sync interval",
+                            "How often to sync in the background",
+                        ))
+                        .child(pill_options(
+                            palette,
+                            SYNC_INTERVAL_OPTIONS,
+                            background_sync,
+                            |this, value, cx| {
+                                if let Some(settings) = this.settings.clone() {
+                                    let mut updated = settings;
+                                    updated.background_sync_minutes = value;
+                                    this.save(updated, cx);
+                                }
+                            },
+                            cx,
+                        )),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(
                             div()
+                                .min_w_0()
+                                .flex_1()
                                 .flex()
                                 .flex_col()
                                 .child(
@@ -2136,24 +2654,24 @@ fn sync_section(
                 })
                 .when(conflict_count > 0, |el| {
                     el.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_4()
+                        setting_row(window)
+                            .child(div().text_sm().text_color(palette.error).child(format!(
+                                "{conflict_count} unresolved conflict{}",
+                                if conflict_count != 1 { "s" } else { "" }
+                            )))
                             .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(palette.error)
-                                    .child(format!(
-                                        "{conflict_count} unresolved conflict{}",
-                                        if conflict_count != 1 { "s" } else { "" }
-                                    )),
-                            )
-                            .child(action_button(palette, "resolve-conflicts", "Resolve conflicts", window, cx).on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| this.open_conflict_modal(cx)),
-                            )),
+                                action_button(
+                                    palette,
+                                    "resolve-conflicts",
+                                    "Resolve conflicts",
+                                    window,
+                                    cx,
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| this.open_conflict_modal(cx)),
+                                ),
+                            ),
                     )
                 }),
         )
@@ -2170,16 +2688,12 @@ fn import_export_section(
     let archive_busy = screen.archive_busy;
     let status = screen.export_import_status.clone();
 
-    div()
+    div().w_full().min_w_0().flex_shrink_0()
         .child(section_label(palette, "Import / Export"))
         .child(
             card(palette)
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(palette, "Export vault", "Download as Bitwarden-compatible JSON"))
                         .child(
                             action_button(palette, "export-vault", if exporting { "Exporting…" } else { "Export" }, window, cx)
@@ -2187,11 +2701,7 @@ fn import_export_section(
                         ),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(palette, "Export CSV", "Logins as Bitwarden-schema CSV — imports into every other manager"))
                         .child(
                             action_button(palette, "export-vault-csv", "Export", window, cx)
@@ -2199,11 +2709,7 @@ fn import_export_section(
                         ),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(
                             palette,
                             "Encrypted backup (.vela)",
@@ -2215,11 +2721,7 @@ fn import_export_section(
                         ),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(palette, "Import vault", "Bitwarden, 1Password, KeePass, Chrome/Edge/Safari, Proton Pass — detected automatically"))
                         .child(
                             action_button(palette, "import-vault", if importing { "Importing…" } else { "Import" }, window, cx)
@@ -2227,11 +2729,7 @@ fn import_export_section(
                         ),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(field_label(palette, "Restore backup (.vela)", "Restores an encrypted backup created by VELA — idempotent, by item id"))
                         .child(
                             action_button(palette, "import-vault-archive", "Restore", window, cx)
@@ -2260,46 +2758,61 @@ fn passkey_section(
         let _ = (this, window, cx);
         div()
             .child(section_label(palette, "System passkeys"))
-            .child(
-                card(palette).child(field_label(
-                    palette,
-                    "System-wide passkeys require the Windows desktop build.",
-                    "",
-                )),
-            )
+            .child(card(palette).child(field_label(
+                palette,
+                "System-wide passkeys require the Windows desktop build.",
+                "",
+            )))
     }
 
     #[cfg(windows)]
     {
         let status = this.passkey_message.clone();
         let busy = this.passkey_busy;
-        let mut row = card(palette).flex_row().items_center().justify_between().child(
-            div().flex().items_center().gap_3().child(field_label(
+        let mut row = card(palette)
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .child(div().flex().items_center().gap_3().child(field_label(
                 palette,
                 "Use VELA for passkeys system-wide (all browsers and apps)",
                 "",
-            )),
-        );
+            )));
         let buttons = div()
             .flex()
             .gap_2()
             .child(
                 action_button(palette, "passkey-provider-enable", "Enable", window, cx)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.passkey_provider_action(ProviderAction::Enable, cx)
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.passkey_provider_action(ProviderAction::Enable, cx)
+                        }),
+                    ),
             )
             .child(
-                action_button(palette, "passkey-provider-sync", "Sync passkeys", window, cx)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                action_button(
+                    palette,
+                    "passkey-provider-sync",
+                    "Sync passkeys",
+                    window,
+                    cx,
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
                         this.passkey_provider_action(ProviderAction::Sync, cx)
-                    })),
+                    }),
+                ),
             )
             .child(
                 action_button(palette, "passkey-provider-disable", "Disable", window, cx)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.passkey_provider_action(ProviderAction::Disable, cx)
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.passkey_provider_action(ProviderAction::Disable, cx)
+                        }),
+                    ),
             );
         row = row.child(buttons);
         div()
@@ -2375,34 +2888,51 @@ impl SettingsScreen {
     }
 }
 
-fn extension_section(palette: &Palette, settings: &Settings, window: &mut Window, cx: &mut Context<SettingsScreen>) -> impl IntoElement {
+fn extension_section(
+    palette: &Palette,
+    settings: &Settings,
+    window: &mut Window,
+    cx: &mut Context<SettingsScreen>,
+) -> impl IntoElement {
     let connected = settings.extension_connected;
     div()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
         .child(section_label(palette, "Browser Extension"))
         .child(
-            card(palette)
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(
-                            div()
-                                .w(px(10.))
-                                .h(px(10.))
-                                .rounded_full()
-                                .bg(if connected { palette.primary } else { gpui::rgb(0xf59e0b).into() }),
-                        )
-                        .child(field_label(
-                            palette,
-                            if connected { "Extension connected" } else { "Extension not found" },
-                            "",
-                        )),
-                )
-                .child(action_button(palette, "manage-extension", "Manage extension", window, cx)),
+            card(palette).child(
+                setting_row(window)
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(div().w(px(10.)).h(px(10.)).rounded_full().bg(if connected {
+                                palette.primary
+                            } else {
+                                gpui::rgb(0xf59e0b).into()
+                            }))
+                            .child(field_label(
+                                palette,
+                                if connected {
+                                    "Extension connected"
+                                } else {
+                                    "Extension not detected yet"
+                                },
+                                "",
+                            )),
+                    )
+                    .child(action_button(
+                        palette,
+                        "manage-extension",
+                        "Manage extension",
+                        window,
+                        cx,
+                    )),
+            ),
         )
 }
 
@@ -2414,17 +2944,18 @@ fn account_section(
 ) -> impl IntoElement {
     let user_id = settings.user_id.clone();
     div()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
         .child(section_label(palette, "Account"))
         .child(
             card(palette)
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
+                    setting_row(window)
                         .child(
                             div()
+                                .min_w_0()
+                                .flex_1()
                                 .flex()
                                 .flex_col()
                                 .child(
@@ -2439,17 +2970,24 @@ fn account_section(
                                         .font_family(fonts::MONO)
                                         .text_xs()
                                         .text_color(palette.on_surface_variant)
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
                                         .child(user_id),
                                 ),
                         )
-                        .child(action_button(palette, "copy-user-id", "Copy", window, cx).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| this.copy_user_id(cx)),
-                        )),
+                        .child(
+                            action_button(palette, "copy-user-id", "Copy", window, cx)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| this.copy_user_id(cx)),
+                                ),
+                        ),
                 )
                 .child(
                     div()
                         .flex()
+                        .flex_col()
                         .gap_4()
                         .child(
                             div()
@@ -2465,9 +3003,12 @@ fn account_section(
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .cursor_pointer()
                                 .child("Sign out and lock")
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.sign_out(cx);
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.sign_out(cx);
+                                    }),
+                                ),
                         )
                         .child(
                             div()
@@ -2478,15 +3019,21 @@ fn account_section(
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .bg(gpui::Hsla { a: 0.1, ..palette.error })
+                                .bg(gpui::Hsla {
+                                    a: 0.1,
+                                    ..palette.error
+                                })
                                 .text_color(palette.error)
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .cursor_pointer()
                                 .child("Delete vault")
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.show_delete_modal = true;
-                                    cx.notify();
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.show_delete_modal = true;
+                                        cx.notify();
+                                    }),
+                                ),
                         ),
                 ),
         )
@@ -2626,12 +3173,27 @@ fn delete_modal(
 /// note content) are masked as "[changed]" rather than displayed, same as
 /// the original; non-sensitive identifying fields (username/URL/title/
 /// cardholder name/email) are shown plainly.
-fn conflict_changed_fields(local: &VaultItem, server: &VaultItem) -> Vec<(&'static str, String, String)> {
+fn conflict_changed_fields(
+    local: &VaultItem,
+    server: &VaultItem,
+) -> Vec<(&'static str, String, String)> {
     let mut out = Vec::new();
     match (local, server) {
         (
-            VaultItem::Login { url: lu, username: luser, pass: lp, totp: ltotp, .. },
-            VaultItem::Login { url: su, username: suser, pass: sp, totp: stotp, .. },
+            VaultItem::Login {
+                url: lu,
+                username: luser,
+                pass: lp,
+                totp: ltotp,
+                ..
+            },
+            VaultItem::Login {
+                url: su,
+                username: suser,
+                pass: sp,
+                totp: stotp,
+                ..
+            },
         ) => {
             if luser != suser {
                 out.push(("Username", luser.clone(), suser.clone()));
@@ -2647,8 +3209,22 @@ fn conflict_changed_fields(local: &VaultItem, server: &VaultItem) -> Vec<(&'stat
             }
         }
         (
-            VaultItem::CreditCard { number: ln, exp: le, cvv: lc, pin: lp, cardholder_name: lcn, .. },
-            VaultItem::CreditCard { number: sn, exp: se, cvv: sc, pin: sp, cardholder_name: scn, .. },
+            VaultItem::CreditCard {
+                number: ln,
+                exp: le,
+                cvv: lc,
+                pin: lp,
+                cardholder_name: lcn,
+                ..
+            },
+            VaultItem::CreditCard {
+                number: sn,
+                exp: se,
+                cvv: sc,
+                pin: sp,
+                cardholder_name: scn,
+                ..
+            },
         ) => {
             if lcn != scn {
                 out.push((
@@ -2658,7 +3234,11 @@ fn conflict_changed_fields(local: &VaultItem, server: &VaultItem) -> Vec<(&'stat
                 ));
             }
             if ln != sn {
-                out.push(("Card number", "[changed]".to_string(), "[changed]".to_string()));
+                out.push((
+                    "Card number",
+                    "[changed]".to_string(),
+                    "[changed]".to_string(),
+                ));
             }
             if le != se {
                 out.push(("Expiration", le.clone(), se.clone()));
@@ -2670,17 +3250,42 @@ fn conflict_changed_fields(local: &VaultItem, server: &VaultItem) -> Vec<(&'stat
                 out.push(("PIN", "[changed]".to_string(), "[changed]".to_string()));
             }
         }
-        (VaultItem::SecureNote { title: lt, content: lc, .. }, VaultItem::SecureNote { title: st, content: sc, .. }) => {
+        (
+            VaultItem::SecureNote {
+                title: lt,
+                content: lc,
+                ..
+            },
+            VaultItem::SecureNote {
+                title: st,
+                content: sc,
+                ..
+            },
+        ) => {
             if lt != st {
                 out.push(("Title", lt.clone(), st.clone()));
             }
             if lc != sc {
-                out.push(("Note content", "[changed]".to_string(), "[changed]".to_string()));
+                out.push((
+                    "Note content",
+                    "[changed]".to_string(),
+                    "[changed]".to_string(),
+                ));
             }
         }
         (
-            VaultItem::Identity { first_name: lf, last_name: ll, ssn: ls, .. },
-            VaultItem::Identity { first_name: sf, last_name: sl, ssn: ss, .. },
+            VaultItem::Identity {
+                first_name: lf,
+                last_name: ll,
+                ssn: ls,
+                ..
+            },
+            VaultItem::Identity {
+                first_name: sf,
+                last_name: sl,
+                ssn: ss,
+                ..
+            },
         ) => {
             if lf != sf || ll != sl {
                 out.push(("Name", format!("{lf} {ll}"), format!("{sf} {sl}")));
@@ -2689,13 +3294,20 @@ fn conflict_changed_fields(local: &VaultItem, server: &VaultItem) -> Vec<(&'stat
                 out.push(("SSN", "[changed]".to_string(), "[changed]".to_string()));
             }
         }
-        (VaultItem::BreachMonitor { email: le, .. }, VaultItem::BreachMonitor { email: se, .. }) => {
+        (
+            VaultItem::BreachMonitor { email: le, .. },
+            VaultItem::BreachMonitor { email: se, .. },
+        ) => {
             if le != se {
                 out.push(("Email", le.clone(), se.clone()));
             }
         }
         _ => {
-            out.push(("Item type", format!("{:?}", local.item_type()), format!("{:?}", server.item_type())));
+            out.push((
+                "Item type",
+                format!("{:?}", local.item_type()),
+                format!("{:?}", server.item_type()),
+            ));
         }
     }
     out
@@ -2723,54 +3335,93 @@ fn conflict_resolution_modal(
     let changed = conflict_changed_fields(&conflict.local_version, &conflict.server_version);
     let resolving = screen.resolving;
 
-    let local_updated = conflict.local_version.updated_at().with_timezone(&chrono::Local).format("%b %-d, %-I:%M %p").to_string();
-    let server_updated = conflict.server_version.updated_at().with_timezone(&chrono::Local).format("%b %-d, %-I:%M %p").to_string();
+    let local_updated = conflict
+        .local_version
+        .updated_at()
+        .with_timezone(&chrono::Local)
+        .format("%b %-d, %-I:%M %p")
+        .to_string();
+    let server_updated = conflict
+        .server_version
+        .updated_at()
+        .with_timezone(&chrono::Local)
+        .format("%b %-d, %-I:%M %p")
+        .to_string();
 
-    let side_card = |label: &'static str, updated: String, values: Box<dyn Fn(&(&'static str, String, String)) -> String>| {
-        div()
-            .flex_1()
-            .p_6()
-            .rounded_xl()
-            .bg(palette.surface_container_high)
-            .border_1()
-            .border_color(gpui::Hsla { a: 0.05, ..palette.outline_variant })
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .font_family(fonts::HEADLINE)
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(palette.on_surface)
-                            .child(label),
-                    )
-                    .child(div().text_xs().font_family(fonts::MONO).text_color(palette.on_surface_variant).child(updated)),
-            )
-            .children(changed.iter().map(move |field| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(fonts::tracked_text(field.0, px(10.), 0.15).text_xs().text_color(gpui::rgb(0xf59e0b)))
-                    .child(div().text_sm().text_color(palette.on_surface).child(values(field)))
-            }))
-    };
+    let side_card =
+        |label: &'static str,
+         updated: String,
+         values: Box<dyn Fn(&(&'static str, String, String)) -> String>| {
+            div()
+                .flex_1()
+                .p_6()
+                .rounded_xl()
+                .bg(palette.surface_container_high)
+                .border_1()
+                .border_color(gpui::Hsla {
+                    a: 0.05,
+                    ..palette.outline_variant
+                })
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .font_family(fonts::HEADLINE)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(palette.on_surface)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family(fonts::MONO)
+                                .text_color(palette.on_surface_variant)
+                                .child(updated),
+                        ),
+                )
+                .children(changed.iter().map(move |field| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            fonts::tracked_text(field.0, px(10.), 0.15)
+                                .text_xs()
+                                .text_color(gpui::rgb(0xf59e0b)),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(palette.on_surface)
+                                .child(values(field)),
+                        )
+                }))
+        };
 
     div()
         .id("conflict-modal-backdrop")
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_conflict_modal(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close_conflict_modal(cx)),
+        )
         .child(
             div()
                 .id("conflict-modal-body")
@@ -2781,7 +3432,12 @@ fn conflict_resolution_modal(
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.3, h: 0.11, s: 0.9, l: 0.5 })
+                .border_color(gpui::Hsla {
+                    a: 0.3,
+                    h: 0.11,
+                    s: 0.9,
+                    l: 0.5,
+                })
                 .flex()
                 .flex_col()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -2789,7 +3445,10 @@ fn conflict_resolution_modal(
                     div()
                         .p_6()
                         .border_b_1()
-                        .border_color(gpui::Hsla { a: 0.1, ..palette.outline_variant })
+                        .border_color(gpui::Hsla {
+                            a: 0.1,
+                            ..palette.outline_variant
+                        })
                         .flex()
                         .flex_col()
                         .gap_2()
@@ -2805,7 +3464,10 @@ fn conflict_resolution_modal(
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_2xl()
                                         .text_color(palette.on_surface)
-                                        .child(format!("Sync Conflict — {}", conflict.local_version.name())),
+                                        .child(format!(
+                                            "Sync Conflict — {}",
+                                            conflict.local_version.name()
+                                        )),
                                 ),
                         )
                         .child(
@@ -2819,40 +3481,80 @@ fn conflict_resolution_modal(
                                 .text_xs()
                                 .font_family(fonts::LABEL)
                                 .text_color(gpui::rgb(0xf59e0b))
-                                .child(format!("{} of {total} conflict{}", index + 1, if total != 1 { "s" } else { "" })),
+                                .child(format!(
+                                    "{} of {total} conflict{}",
+                                    index + 1,
+                                    if total != 1 { "s" } else { "" }
+                                )),
                         ),
                 )
                 .when_some(screen.resolve_error.clone(), |el, error| {
-                    el.child(div().px_6().pt_4().text_sm().text_color(palette.error).child(error))
+                    el.child(
+                        div()
+                            .px_6()
+                            .pt_4()
+                            .text_sm()
+                            .text_color(palette.error)
+                            .child(error),
+                    )
                 })
                 .child(
                     div()
                         .p_6()
                         .flex()
                         .gap_6()
-                        .child(side_card("This device", local_updated, Box::new(|f: &(&'static str, String, String)| f.1.clone())))
-                        .child(side_card("Server version", server_updated, Box::new(|f: &(&'static str, String, String)| f.2.clone()))),
+                        .child(side_card(
+                            "This device",
+                            local_updated,
+                            Box::new(|f: &(&'static str, String, String)| f.1.clone()),
+                        ))
+                        .child(side_card(
+                            "Server version",
+                            server_updated,
+                            Box::new(|f: &(&'static str, String, String)| f.2.clone()),
+                        )),
                 )
                 .child({
-                    let keep_local_hover = animation::hover_transition("conflict-keep-local", window, cx);
+                    let keep_local_hover =
+                        animation::hover_transition("conflict-keep-local", window, cx);
                     let keep_local_t = *keep_local_hover.evaluate(window, cx);
-                    let keep_local_bg =
-                        animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, keep_local_t);
+                    let keep_local_bg = animation::lerp_hsla(
+                        palette.surface_container_highest,
+                        palette.surface_bright,
+                        keep_local_t,
+                    );
 
-                    let keep_server_hover = animation::hover_transition("conflict-keep-server", window, cx);
+                    let keep_server_hover =
+                        animation::hover_transition("conflict-keep-server", window, cx);
                     let keep_server_t = *keep_server_hover.evaluate(window, cx);
-                    let keep_server_bg =
-                        animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, keep_server_t);
+                    let keep_server_bg = animation::lerp_hsla(
+                        palette.surface_container_highest,
+                        palette.surface_bright,
+                        keep_server_t,
+                    );
 
-                    let keep_both_hover = animation::hover_transition("conflict-keep-both", window, cx);
+                    let keep_both_hover =
+                        animation::hover_transition("conflict-keep-both", window, cx);
                     let keep_both_t = *keep_both_hover.evaluate(window, cx);
-                    let keep_both_bg =
-                        animation::lerp_hsla(gpui::Hsla { a: 0.2, ..palette.primary }, gpui::Hsla { a: 0.3, ..palette.primary }, keep_both_t);
+                    let keep_both_bg = animation::lerp_hsla(
+                        gpui::Hsla {
+                            a: 0.2,
+                            ..palette.primary
+                        },
+                        gpui::Hsla {
+                            a: 0.3,
+                            ..palette.primary
+                        },
+                        keep_both_t,
+                    );
 
                     div()
                         .p_6()
                         .border_t_1()
-                        .border_color(gpui::Hsla { a: 0.1, ..palette.outline_variant })
+                        .border_color(gpui::Hsla {
+                            a: 0.1,
+                            ..palette.outline_variant
+                        })
                         .flex()
                         .gap_4()
                         .child(
@@ -2877,9 +3579,15 @@ fn conflict_resolution_modal(
                                     });
                                 })
                                 .when(!resolving, |el| {
-                                    el.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.resolve_conflict_action(ConflictAction::KeepLocal, cx);
-                                    }))
+                                    el.on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.resolve_conflict_action(
+                                                ConflictAction::KeepLocal,
+                                                cx,
+                                            );
+                                        }),
+                                    )
                                 }),
                         )
                         .child(
@@ -2904,9 +3612,15 @@ fn conflict_resolution_modal(
                                     });
                                 })
                                 .when(!resolving, |el| {
-                                    el.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.resolve_conflict_action(ConflictAction::KeepServer, cx);
-                                    }))
+                                    el.on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.resolve_conflict_action(
+                                                ConflictAction::KeepServer,
+                                                cx,
+                                            );
+                                        }),
+                                    )
                                 }),
                         )
                         .child(
@@ -2923,7 +3637,11 @@ fn conflict_resolution_modal(
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .when(!resolving, |el| el.cursor_pointer())
                                 .opacity(if resolving { 0.6 } else { 1.0 })
-                                .child(if resolving { "Resolving…" } else { "Keep both" })
+                                .child(if resolving {
+                                    "Resolving…"
+                                } else {
+                                    "Keep both"
+                                })
                                 .on_hover(move |is_hovered, _, cx| {
                                     keep_both_hover.update(cx, |v, cx| {
                                         *v = *is_hovered as u8 as f32;
@@ -2931,12 +3649,18 @@ fn conflict_resolution_modal(
                                     });
                                 })
                                 .when(!resolving, |el| {
-                                    el.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.resolve_conflict_action(ConflictAction::KeepBoth, cx);
-                                    }))
+                                    el.on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.resolve_conflict_action(
+                                                ConflictAction::KeepBoth,
+                                                cx,
+                                            );
+                                        }),
+                                    )
                                 }),
                         )
-                })
+                }),
         )
         .into_any_element()
 }
@@ -2958,12 +3682,20 @@ fn recovery_modal_shell(
         // Block the hit-test at the backdrop so the scrollable content behind
         // it doesn't keep handling `ScrollWheelEvent` (see add_item_modal).
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_dismiss(this, cx)));
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_dismiss(this, cx)),
+        );
 
     let body = div()
         .id(body_id)
@@ -2973,7 +3705,10 @@ fn recovery_modal_shell(
         .rounded_2xl()
         .bg(palette.surface_container)
         .border_1()
-        .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+        .border_color(gpui::Hsla {
+            a: 0.2,
+            ..palette.outline_variant
+        })
         .flex()
         .flex_col()
         .gap_4()
@@ -3004,11 +3739,22 @@ fn modal_action_row(
 ) -> impl IntoElement {
     let cancel_hover = animation::hover_transition(cancel_id, window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     let confirm_hover = animation::hover_transition(confirm_id, window, cx);
     let confirm_t = *confirm_hover.evaluate(window, cx);
-    let confirm_bg = animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, confirm_t);
+    let confirm_bg = animation::lerp_hsla(
+        palette.primary,
+        gpui::Hsla {
+            a: 0.9,
+            ..palette.primary
+        },
+        confirm_t,
+    );
 
     div()
         .flex()
@@ -3033,7 +3779,10 @@ fn modal_action_row(
                         cx.notify();
                     });
                 })
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_cancel(this, cx))),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| on_cancel(this, cx)),
+                ),
         )
         .child(
             div()
@@ -3057,7 +3806,10 @@ fn modal_action_row(
                     });
                 })
                 .when(confirm_enabled, |el| {
-                    el.on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_confirm(this, cx)))
+                    el.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| on_confirm(this, cx)),
+                    )
                 }),
         )
 }
@@ -3183,36 +3935,51 @@ fn trusted_contact_modal(
 
     backdrop.child(
         body.child(modal_title(palette, "Trusted contact"))
-            .child(div().text_sm().text_color(palette.on_surface_variant).child(
-                "One of three recovery pieces. Paste your contact's public key to seal this \
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .child(
+                    "One of three recovery pieces. Paste your contact's public key to seal this \
                  recovery share into an envelope only they can open — they only need to hand \
                  it back if you lose every device.",
-            ))
+                ),
+            )
             .when(screen.trusted_contact_share.is_none(), |el| {
-                el.child(fonts::tracked_text("CONTACT PUBLIC KEY", px(10.), 0.15).text_xs().text_color(palette.outline))
-                    .child(
-                        text_input("contact-public-key-input")
-                            .state(screen.contact_key_state.downgrade())
-                            .placeholder("Base64 contact public key")
-                            .caret_blink_interval_500ms()
-                            .font_family(fonts::MONO)
-                            .bg(palette.surface_container_highest)
-                            .text_color(palette.on_surface)
-                            .caret_color(palette.on_surface)
-                            .rounded_lg()
-                            .p_3()
-                            .w_full()
-                            .min_h_auto(),
-                    )
-                    .child(
-                        div().flex().justify_end().child(
-                            action_button(palette, "seal-contact-envelope", "Seal envelope", window, cx)
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| this.seal_trusted_contact_envelope(cx)),
-                                ),
+                el.child(
+                    fonts::tracked_text("CONTACT PUBLIC KEY", px(10.), 0.15)
+                        .text_xs()
+                        .text_color(palette.outline),
+                )
+                .child(
+                    text_input("contact-public-key-input")
+                        .state(screen.contact_key_state.downgrade())
+                        .placeholder("Base64 contact public key")
+                        .caret_blink_interval_500ms()
+                        .font_family(fonts::MONO)
+                        .bg(palette.surface_container_highest)
+                        .text_color(palette.on_surface)
+                        .caret_color(palette.on_surface)
+                        .rounded_lg()
+                        .p_3()
+                        .w_full()
+                        .min_h_auto(),
+                )
+                .child(
+                    div().flex().justify_end().child(
+                        action_button(
+                            palette,
+                            "seal-contact-envelope",
+                            "Seal envelope",
+                            window,
+                            cx,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| this.seal_trusted_contact_envelope(cx)),
                         ),
-                    )
+                    ),
+                )
             })
             .map(|el| {
                 if screen.loading_trusted_contact {
@@ -3232,7 +3999,10 @@ fn trusted_contact_modal(
                             .p_3()
                             .rounded_xl()
                             .border_1()
-                            .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                            .border_color(gpui::Hsla {
+                                a: 0.3,
+                                ..palette.outline_variant
+                            })
                             .bg(palette.surface_bright)
                             .font_family(fonts::MONO)
                             .text_xs()
@@ -3248,11 +4018,17 @@ fn trusted_contact_modal(
             .when(has_share, |el| {
                 el.child(
                     div().flex().justify_end().child(
-                        action_button(palette, "copy-trusted-contact-share", "Copy envelope", window, cx)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| this.copy_trusted_contact_share(cx)),
-                            ),
+                        action_button(
+                            palette,
+                            "copy-trusted-contact-share",
+                            "Copy envelope",
+                            window,
+                            cx,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| this.copy_trusted_contact_share(cx)),
+                        ),
                     ),
                 )
             })
@@ -3260,7 +4036,11 @@ fn trusted_contact_modal(
                 palette,
                 "trusted-contact-cancel",
                 "trusted-contact-confirm",
-                if acknowledging { "Saving…".into() } else { SharedString::from("I've sent it") },
+                if acknowledging {
+                    "Saving…".into()
+                } else {
+                    SharedString::from("I've sent it")
+                },
                 has_share && !acknowledging,
                 window,
                 cx,
@@ -3295,7 +4075,10 @@ fn archive_passphrase_modal(
     let confirm_t = *confirm_hover.evaluate(window, cx);
     let confirm_bg = animation::lerp_hsla(
         palette.primary,
-        gpui::Hsla { a: 0.9, ..palette.primary },
+        gpui::Hsla {
+            a: 0.9,
+            ..palette.primary
+        },
         confirm_t,
     );
 
@@ -3450,4 +4233,113 @@ fn archive_passphrase_modal(
                         ),
                 ),
         )
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use crate::modal_test_support as ui;
+    use gpui::{point, size, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext};
+
+    struct SettingsHost {
+        child: gpui::Entity<SettingsScreen>,
+    }
+    impl Render for SettingsHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .pl(px(64.))
+                .pt(px(126.))
+                .child(self.child.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn settings_categories_stay_reachable_and_controls_align(cx: &mut TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let directory = tempfile::tempdir().unwrap();
+        for (width, height) in [(945., 508.), (640., 480.), (360., 480.), (1280., 720.)] {
+            let state = ui::state(&directory);
+            let (host, cx) = cx.add_window_view(|_, cx| {
+                ui::fonts(cx);
+                let child = cx.new(|cx| {
+                    let mut screen = SettingsScreen::new(state, cx);
+                    let mut settings = Settings::default();
+                    settings.user_id = "long-user-id-".repeat(20);
+                    settings.server_url =
+                        format!("https://{}.example.invalid", "long-host-".repeat(20));
+                    screen.settings = Some(settings);
+                    screen._pulse_task = Task::ready(());
+                    screen._extension_status_task = Task::ready(());
+                    screen
+                });
+                SettingsHost { child }
+            });
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            let navigation = ui::bounds(cx, "Data");
+            for category in SettingsCategory::ALL {
+                let tab = ui::bounds(cx, category.label());
+                cx.simulate_click(tab.center(), Modifiers::default());
+                cx.run_until_parked();
+                assert_eq!(
+                    host.read_with(cx, |host, cx| host.child.read(cx).category),
+                    category
+                );
+                let body = ui::bounds(cx, "settings-scroll");
+                let content = ui::bounds(cx, "settings-content");
+                assert!(
+                    body.size.height > px(100.),
+                    "No room for settings at {width}×{height}"
+                );
+                assert!(content.right() <= px(width) && content.left() >= px(64.));
+                if category == SettingsCategory::Data {
+                    let mut right = None;
+                    let mut previous_bottom = None;
+                    for selector in [
+                        "export-vault",
+                        "export-vault-csv",
+                        "export-vault-encrypted",
+                        "import-vault",
+                        "import-vault-archive",
+                    ] {
+                        let button = ui::bounds(cx, selector);
+                        assert!(
+                            button.left() >= content.left() && button.right() <= content.right()
+                        );
+                        if let Some(edge) = right {
+                            assert_eq!(button.right(), edge, "Action columns drift");
+                        }
+                        if let Some(bottom) = previous_bottom {
+                            assert!(button.top() > bottom, "Setting rows overlap");
+                        }
+                        right = Some(button.right());
+                        previous_bottom = Some(button.bottom());
+                    }
+                }
+                cx.simulate_event(ScrollWheelEvent {
+                    position: body.center(),
+                    delta: ScrollDelta::Pixels(point(px(0.), px(-3000.))),
+                    ..Default::default()
+                });
+                cx.run_until_parked();
+                assert_eq!(
+                    ui::bounds(cx, "Data"),
+                    navigation,
+                    "Categories scrolled out of reach"
+                );
+            }
+            // Changing category after scrolling starts its content at the top.
+            let tab = ui::bounds(cx, "Sync");
+            cx.simulate_click(tab.center(), Modifiers::default());
+            cx.run_until_parked();
+            assert!(
+                ui::bounds(cx, "edit-server-url").top() >= ui::bounds(cx, "settings-scroll").top()
+            );
+        }
+    }
 }

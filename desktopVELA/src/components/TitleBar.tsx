@@ -45,7 +45,7 @@ export default function TitleBar() {
 
   return (
     <header
-      className="h-14 bg-surface border-b border-outline-variant/10 flex justify-between items-center px-4 drag-region"
+      className="h-14 shrink-0 bg-surface border-b border-outline-variant/10 flex justify-between items-center px-4 drag-region"
       onDoubleClick={(e) => {
         // Only toggle maximize when the drag region itself is double-clicked,
         // not the interactive controls inside the title bar.

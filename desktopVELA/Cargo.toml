@@ -44,6 +44,10 @@ debug = false
 #     field, and `enter` was swallowed before any enclosing form could treat it
 #     as submit. See `src-gpui/src/keyboard.rs` for the consuming side.
 #
+#  3. Editable text mouse-down dispatch uses its hitbox (including ancestor
+#     clipping and occlusion), rather than its raw bounds. Otherwise a field
+#     scrolled behind a modal header can steal clicks from the close button.
+#
 # All four crates from this git source must be patched together (not just
 # gpui_elements) since they're one cohesive workspace with internal path deps —
 # patching only one would produce two incompatible copies of `gpui`'s types in

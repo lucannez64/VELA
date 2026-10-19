@@ -105,6 +105,11 @@ pub struct AppState {
     pub rate_limiter: RwLock<HashMap<String, RateLimitState>>,
     pub token_store: RwLock<token::TokenStore>,
     pub secret_key: token::SecretKey,
+    /// True once a browser-extension request has been admitted during this
+    /// app session. The extension's native-messaging host is short-lived
+    /// (Chrome starts one per message), so this is deliberately *not* cleared
+    /// when a connection closes — doing that reported a healthy, idle
+    /// extension as missing whenever the user opened Settings.
     pub extension_connected: Arc<AtomicBool>,
     /// Serializes sync runs so local edits and merges cannot interleave.
     pub sync_mutex: tokio::sync::Mutex<()>,
@@ -200,6 +205,13 @@ impl AppState {
 
     pub fn is_extension_connected(&self) -> bool {
         self.extension_connected.load(Ordering::Relaxed)
+    }
+
+    /// Note that the browser extension reached this desktop. Sticky for the
+    /// lifetime of `AppState` (one app session): the IPC connection itself is
+    /// short-lived, so clearing it on disconnect would flap the status.
+    pub fn mark_extension_connected(&self) {
+        self.extension_connected.store(true, Ordering::Relaxed);
     }
 
     pub fn bump_session_generation(&self) {

@@ -6,7 +6,10 @@
 
 use std::sync::Arc;
 
-use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, IntoElement, MouseButton, Render, Subscription, Window};
+use gpui::{
+    div, prelude::*, px, Context, Entity, EventEmitter, IntoElement, MouseButton, Render,
+    Subscription, Window,
+};
 
 use vela_desktop_core::recovery::RecoveryStatus;
 use vela_desktop_core::AppState;
@@ -16,10 +19,10 @@ use crate::fonts;
 use crate::icon::icon;
 use crate::sidebar::{NavView, Sidebar, SidebarEvent};
 use crate::theme::{Palette, ThemeId};
+use crate::views::add_item_modal::{AddItemModal, AddItemModalEvent};
 use crate::views::audit_log_screen::AuditLogScreen;
 use crate::views::breach_monitor_screen::BreachMonitorScreen;
 use crate::views::devices_screen::DevicesScreen;
-use crate::views::add_item_modal::{AddItemModal, AddItemModalEvent};
 use crate::views::item_detail::{ItemDetail, ItemDetailEvent};
 use crate::views::settings_screen::{SettingsScreen, SettingsScreenEvent};
 use crate::views::sharing_screen::SharingScreen;
@@ -73,7 +76,8 @@ pub struct AppShell {
 
 impl AppShell {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         let sidebar = cx.new(Sidebar::new);
         let sync_scheduler = crate::sync_scheduler::start(app_state.clone(), cx);
         let recovery_reminder = Self::start_recovery_reminder(app_state.clone(), cx);
@@ -94,7 +98,11 @@ impl AppShell {
         this
     }
 
-    fn show_edit_modal(&mut self, item: vela_desktop_core::vault::VaultItem, cx: &mut Context<Self>) {
+    fn show_edit_modal(
+        &mut self,
+        item: vela_desktop_core::vault::VaultItem,
+        cx: &mut Context<Self>,
+    ) {
         // The edit modal renders on top of ItemDetail; stop its TOTP loop so
         // it isn't re-rendering every second behind the form (the source of
         // the selection freeze/lag while editing a TOTP URL).
@@ -136,16 +144,12 @@ impl AppShell {
     ///
     /// The "keep asking" half of the deferral: skipping is allowed, forgetting
     /// is not. See `desktopVELA/src/components/RecoveryReminder.tsx`.
-    fn start_recovery_reminder(
-        app_state: Arc<AppState>,
-        cx: &mut Context<Self>,
-    ) -> gpui::Task<()> {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(15))
-                    .await;
-                let result = cx
+    fn start_recovery_reminder(app_state: Arc<AppState>, cx: &mut Context<Self>) -> gpui::Task<()> {
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(15))
+                .await;
+            let result = cx
                     .background_spawn_guarded("recovery reminder", {
                         let app_state = app_state.clone();
                         async move {
@@ -154,12 +158,11 @@ impl AppShell {
                     })
                     .await
                     .unwrap_or_else(|| Err("Recovery reminder check failed".to_string()));
-                this.update(cx, |this, cx| {
-                    this.recovery_status = result.ok();
-                    cx.notify();
-                })
-                .ok();
-            }
+            this.update(cx, |this, cx| {
+                this.recovery_status = result.ok();
+                cx.notify();
+            })
+            .ok();
         })
     }
 
@@ -209,7 +212,9 @@ impl AppShell {
         let subscription = cx.subscribe(&browser, |this, _browser, event, cx| match event {
             VaultBrowserEvent::ItemSelected(id) => this.show_item_detail(id.clone(), cx),
             VaultBrowserEvent::NavigateToBreachMonitor => {
-                this.sidebar.update(cx, |sidebar, cx| sidebar.set_active(NavView::BreachMonitor, cx));
+                this.sidebar.update(cx, |sidebar, cx| {
+                    sidebar.set_active(NavView::BreachMonitor, cx)
+                });
                 this.show_breach_monitor(cx);
             }
         });
@@ -223,7 +228,8 @@ impl AppShell {
     /// event, which `App.tsx` listens for and turns into `setSelectedItem`.
     pub fn open_item(&mut self, id: String, cx: &mut Context<Self>) {
         if self.nav != NavView::Vault {
-            self.sidebar.update(cx, |sidebar, cx| sidebar.set_active(NavView::Vault, cx));
+            self.sidebar
+                .update(cx, |sidebar, cx| sidebar.set_active(NavView::Vault, cx));
             self.nav = NavView::Vault;
         }
         self.show_item_detail(id, cx);
@@ -266,7 +272,9 @@ impl AppShell {
                     })
                     .ok();
                 }
-                Ok(None) => tracing::warn!("Selected item vanished before ItemDetail could load it"),
+                Ok(None) => {
+                    tracing::warn!("Selected item vanished before ItemDetail could load it")
+                }
                 Err(e) => tracing::warn!("Failed to load item: {e}"),
             }
         })
@@ -333,18 +341,23 @@ impl AppShell {
             let app_state = self.app_state.clone();
             move |cx| SharingScreen::new(app_state, cx)
         });
-        sharing.update(cx, |sharing, cx| sharing.open_share_modal_for_item(item_id, cx));
+        sharing.update(cx, |sharing, cx| {
+            sharing.open_share_modal_for_item(item_id, cx)
+        });
         self.content = Content::Sharing(sharing);
         cx.notify();
     }
 
     fn add_item(&mut self, cx: &mut Context<Self>) {
         if self.nav != NavView::Vault {
-            self.sidebar.update(cx, |sidebar, cx| sidebar.set_active(NavView::Vault, cx));
+            self.sidebar
+                .update(cx, |sidebar, cx| sidebar.set_active(NavView::Vault, cx));
             self.navigate(NavView::Vault, cx);
         }
         if let Content::Vault(browser) = &self.content {
-            browser.clone().update(cx, |vb, cx| vb.open_add_item_modal(cx));
+            browser
+                .clone()
+                .update(cx, |vb, cx| vb.open_add_item_modal(cx));
         }
     }
 }
@@ -372,9 +385,12 @@ impl Render for AppShell {
             // Auto-lock is idle-based: any pointer/key interaction resets the
             // idle deadline, so `auto_lock_minutes` means "minutes of
             // inactivity", not "minutes since unlock".
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, _| {
-                vela_desktop_core::commands::session::notify_user_activity(&this.app_state);
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    vela_desktop_core::commands::session::notify_user_activity(&this.app_state);
+                }),
+            )
             .on_key_down(cx.listener(|this, _, _, _| {
                 vela_desktop_core::commands::session::notify_user_activity(&this.app_state);
             }))
@@ -382,11 +398,20 @@ impl Render for AppShell {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
+                    .min_h_0()
                     .h_full()
                     .flex()
                     .flex_col()
                     .child(self.recovery_reminder_banner(&palette, cx))
-                    .child(div().flex_1().overflow_hidden().child(content)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(content),
+                    ),
             )
             .when_some(self.edit_modal.clone(), |el, modal| el.child(modal))
     }
@@ -397,7 +422,11 @@ impl AppShell {
     /// `RecoveryReminder.tsx`. Deliberately not dismissable: a banner you can
     /// close is one you close, and the failure it warns about is
     /// unrecoverable. It goes away by being fixed.
-    fn recovery_reminder_banner(&self, palette: &Palette, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn recovery_reminder_banner(
+        &self,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let Some(status) = &self.recovery_status else {
             return div().into_any_element();
         };
@@ -421,6 +450,8 @@ impl AppShell {
 
         div()
             .w_full()
+            .flex_shrink_0()
+            .flex_wrap()
             .px_4()
             .py_3()
             .bg(palette.surface_container)
@@ -454,10 +485,16 @@ impl AppShell {
                     .bg(palette.error)
                     .text_color(palette.surface)
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.navigate(NavView::Settings, cx);
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.navigate(NavView::Settings, cx);
+                            if let Content::Settings(settings) = &this.content {
+                                settings.update(cx, |settings, cx| settings.show_recovery(cx));
+                            }
+                            cx.notify();
+                        }),
+                    )
                     .child("Set up recovery"),
             )
             .into_any_element()

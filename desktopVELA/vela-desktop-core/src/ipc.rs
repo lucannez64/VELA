@@ -131,7 +131,7 @@ pub mod server {
     //! browser spawned — see [`crate::ipc_gate`] for what that means exactly.
 
     use super::*;
-    use crate::ipc_gate::{OsProcessTable, authorize_host};
+    use crate::ipc_gate::{authorize_host, is_provider, OsProcessTable};
 
     pub struct IpcServer;
 
@@ -221,6 +221,19 @@ pub mod server {
             return Ok(());
         }
         info!("IPC connection accepted from {}", peer.describe());
+
+        // Remember that the extension is installed and talking to us for the
+        // rest of this session. The connection is only alive for a single
+        // message (the browser starts a fresh native-messaging host each
+        // time), so the flag must not be tied to it. The passkey provider is
+        // a separate, browser-independent caller and does not count.
+        if !peer
+            .exe
+            .as_deref()
+            .is_some_and(crate::ipc_gate::is_provider)
+        {
+            host.state().mark_extension_connected();
+        }
 
         let message = read_frame(&mut stream).await?;
         let response = match serde_json::from_slice::<IpcMessage>(&message) {
@@ -1418,15 +1431,9 @@ pub mod server {
             let host = host.clone();
             let peer = crate::ipc_peer::identify_named_pipe(&server);
             tokio::spawn(async move {
-                host.state()
-                    .extension_connected
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Err(e) = handle_connection(server, host.clone(), peer).await {
                     error!("IPC connection error: {}", e);
                 }
-                host.state()
-                    .extension_connected
-                    .store(false, std::sync::atomic::Ordering::Relaxed);
             });
         }
     }
@@ -1487,15 +1494,9 @@ pub mod server {
             }
             let host = host.clone();
             tokio::spawn(async move {
-                host.state()
-                    .extension_connected
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Err(e) = handle_connection(stream, host.clone(), peer).await {
                     error!("IPC connection error: {}", e);
                 }
-                host.state()
-                    .extension_connected
-                    .store(false, std::sync::atomic::Ordering::Relaxed);
             });
         }
     }
@@ -1734,6 +1735,10 @@ pub mod server {
             assert!(
                 read_frame(&mut client).await.is_err(),
                 "a refused connection must answer nothing"
+            );
+            assert!(
+                !mock.state.is_extension_connected(),
+                "a refused connection must not mark the extension as connected"
             );
         }
 

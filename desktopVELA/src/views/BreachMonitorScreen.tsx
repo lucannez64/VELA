@@ -115,7 +115,7 @@ export default function BreachMonitorScreen() {
   };
 
   return (
-    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+    <div className="flex-1 min-w-0 min-h-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
           <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface">Breach Monitor</h1>

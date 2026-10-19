@@ -25,6 +25,10 @@ mod clipboard;
 mod favicon_ui;
 mod fonts;
 mod host;
+mod layout;
+mod modal;
+#[cfg(test)]
+mod modal_test_support;
 // Windows global shortcut (RegisterHotKey via `global-hotkey`, see the
 // module doc); Linux binds through the Wayland portal client in
 // `vela_desktop_core::wayland_shortcut` instead.
@@ -75,11 +79,14 @@ struct RootView {
 
 impl RootView {
     fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<ActiveTheme>(|_, cx| cx.notify()).detach();
-        cx.observe_global::<toast::ToastGlobal>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<ActiveTheme>(|_, cx| cx.notify())
+            .detach();
+        cx.observe_global::<toast::ToastGlobal>(|_, cx| cx.notify())
+            .detach();
         // A presence confirmation (in-core login, passkey use) arrives from a
         // background thread and is parked in a global; render it as a modal.
-        cx.observe_global::<host::PresencePromptGlobal>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<host::PresencePromptGlobal>(|_, cx| cx.notify())
+            .detach();
         // The quick-search popup lives in its own window, so it can't reach
         // this view through `cx.subscribe` (that needs both entities in one
         // window's tree). It publishes the picked item as a global instead,
@@ -116,12 +123,13 @@ impl RootView {
             title_bar,
             _subscriptions: Vec::new(),
         };
-        let title_bar_sub = cx.subscribe(&this.title_bar, |this, _title_bar, event, cx| match event {
-            TitleBarEvent::Locked => {
-                tracing::info!("Locked via titlebar — showing BiometricGate");
-                this.show_biometric_gate(cx);
-            }
-        });
+        let title_bar_sub =
+            cx.subscribe(&this.title_bar, |this, _title_bar, event, cx| match event {
+                TitleBarEvent::Locked => {
+                    tracing::info!("Locked via titlebar — showing BiometricGate");
+                    this.show_biometric_gate(cx);
+                }
+            });
         this._subscriptions.push(title_bar_sub);
         // Mirrors App.tsx's `isFirstLaunch` check: an existing on-disk vault
         // means we're a returning user (show the unlock gate), otherwise
@@ -253,7 +261,12 @@ impl Render for RootView {
                 // chain, an overflowing content area silently stretches the
                 // sidebar too, pushing its footer (Add Item / Lock Session)
                 // below the visible viewport.
-                div().flex_1().overflow_hidden().child(content),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(content),
             )
             .children(toast::render(&palette, cx))
             .when_some(
@@ -356,25 +369,25 @@ fn presence_modal(palette: &Palette, prompt: host::PresencePrompt) -> gpui::AnyE
                 )
                 .when(is_sign_in, |el| {
                     el.child(
-                    div()
-                        .rounded_lg()
-                        .bg(palette.surface_container_highest)
-                        .px_4()
-                        .py_3()
-                        .child(
-                            div()
-                                .font_family(fonts::BODY)
-                                .text_color(palette.on_surface_variant)
-                                .text_size(px(12.))
-                                .child("VELA would sign you in to"),
-                        )
-                        .child(
-                            div()
-                                .font_family(fonts::BODY)
-                                .text_color(palette.on_surface)
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(site),
-                        ),
+                        div()
+                            .rounded_lg()
+                            .bg(palette.surface_container_highest)
+                            .px_4()
+                            .py_3()
+                            .child(
+                                div()
+                                    .font_family(fonts::BODY)
+                                    .text_color(palette.on_surface_variant)
+                                    .text_size(px(12.))
+                                    .child("VELA would sign you in to"),
+                            )
+                            .child(
+                                div()
+                                    .font_family(fonts::BODY)
+                                    .text_color(palette.on_surface)
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child(site),
+                            ),
                     )
                 })
                 .child(
@@ -489,7 +502,8 @@ fn main() {
         .as_ref()
         .map(|s| ThemeId::from_setting(&s.theme))
         .unwrap_or(ThemeId::Vela);
-    let initial_clipboard_clear_seconds = initial_settings.as_ref().map(|s| s.clipboard_clear_seconds);
+    let initial_clipboard_clear_seconds =
+        initial_settings.as_ref().map(|s| s.clipboard_clear_seconds);
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let quick_search_shortcut = initial_settings
         .as_ref()
@@ -516,8 +530,9 @@ fn main() {
         }
 
         cx.bind_keys(
-            gpui_elements::editable_text::actions::default_bindings()
-                .as_keybindings(Some(gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT)),
+            gpui_elements::editable_text::actions::default_bindings().as_keybindings(Some(
+                gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT,
+            )),
         );
 
         for (font_file, font_bytes) in fonts::FONT_FILES {
@@ -538,6 +553,7 @@ fn main() {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(360.), px(480.))),
                     titlebar: Some(TitlebarOptions {
                         title: Some("VELA".into()),
                         appears_transparent: true,
@@ -590,7 +606,9 @@ fn main() {
                     tracing::info!("System tray registered");
                     std::mem::forget(handle);
                 }
-                Err(e) => tracing::warn!("Failed to register system tray (continuing without it): {e}"),
+                Err(e) => {
+                    tracing::warn!("Failed to register system tray (continuing without it): {e}")
+                }
             }
         })
         .detach();
@@ -600,8 +618,10 @@ fn main() {
         // their own threads, so they reach the UI through the same
         // channel-plus-poll-loop hop the tray uses — see `host.rs`.
         let (host_tx, host_rx) = std::sync::mpsc::channel::<host::HostCommand>();
-        let ipc_host: Arc<dyn vela_desktop_core::host::Host> =
-            Arc::new(host::GpuiHost::new(app_state_for_ipc.clone(), host_tx.clone()));
+        let ipc_host: Arc<dyn vela_desktop_core::host::Host> = Arc::new(host::GpuiHost::new(
+            app_state_for_ipc.clone(),
+            host_tx.clone(),
+        ));
         // Register the host on core state so toolkit-agnostic code (the
         // destructive-action presence gates) can put a question to the human
         // through the same modal channel.
@@ -666,7 +686,9 @@ fn main() {
             while let Ok(cmd) = tray_rx.try_recv() {
                 match cmd {
                     tray::TrayCommand::Activate => {
-                        window_handle.update(cx, |_, window, _| window.activate_window()).ok();
+                        window_handle
+                            .update(cx, |_, window, _| window.activate_window())
+                            .ok();
                     }
                     tray::TrayCommand::SyncFinished { message, kind } => {
                         cx.update(|cx| toast::show(cx, message, kind));
@@ -685,10 +707,14 @@ fn main() {
             while let Ok(cmd) = host_rx.try_recv() {
                 match cmd {
                     host::HostCommand::FocusMainWindow => {
-                        window_handle.update(cx, |_, window, _| window.activate_window()).ok();
+                        window_handle
+                            .update(cx, |_, window, _| window.activate_window())
+                            .ok();
                     }
                     host::HostCommand::OpenQuickSearch => {
-                        cx.update(|cx| quick_search::toggle(cx, app_state_for_quick_search.clone()));
+                        cx.update(|cx| {
+                            quick_search::toggle(cx, app_state_for_quick_search.clone())
+                        });
                     }
                     host::HostCommand::VaultItemsChanged => {
                         cx.update(host::notify_vault_items_changed);
@@ -713,7 +739,9 @@ fn main() {
                     }
                 }
             }
-            cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(200))
+                .await;
         })
         .detach();
     });

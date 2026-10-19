@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem, toBackendItem } from '../context/AppContext';
 import PasswordGenerator from './PasswordGenerator';
@@ -6,11 +6,24 @@ import PasswordGenerator from './PasswordGenerator';
 interface Props {
   editItem?: VaultItem | null;
   onClose: () => void;
-  onSave: () => void;
+  onSave: () => void | Promise<void>;
 }
 
 export default function AddItemModal({ editItem, onClose, onSave }: Props) {
   const { showToast } = useApp();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialogRef.current?.querySelector<HTMLInputElement>('input')?.focus();
+    return () => { previousFocus?.focus(); };
+  }, []);
+
+  const handleClose = () => {
+    if (!savingRef.current) onClose();
+  };
   const [itemType, setItemType] = useState<'login' | 'creditCard' | 'secureNote'>(
     (editItem?.item_type === 'login' || editItem?.item_type === 'creditCard' || editItem?.item_type === 'secureNote') 
       ? editItem.item_type 
@@ -35,11 +48,14 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
   });
 
   const handleSubmit = async () => {
+    if (savingRef.current) return;
     if (!form.name.trim()) {
       showToast('Name is required', 'error');
       return;
     }
 
+    savingRef.current = true;
+    setSaving(true);
     try {
       const now = new Date().toISOString();
       const baseItem: VaultItem = {
@@ -81,11 +97,14 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
         await invoke('add_item', { item: backendItem });
         showToast('Item created', 'success');
       }
-      onSave();
+      await onSave();
       onClose();
     } catch (e) {
       console.error('Failed to save item:', e);
       showToast('Failed to save item', 'error');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -94,39 +113,61 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={handleClose}>
       <div
-        className="bg-surface-container w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden flex flex-col"
+        ref={dialogRef}
+        role="dialog" aria-modal="true" aria-labelledby="item-editor-title" aria-busy={saving}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            handleClose();
+          }
+          if (event.key === 'Tab') {
+            const controls = [...event.currentTarget.querySelectorAll<HTMLElement>(
+              'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]',
+            )].filter(control => control.getClientRects().length > 0);
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+        }}
+        className="bg-surface-container w-full max-w-2xl max-h-[calc(100dvh-2rem)] rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between p-6 border-b border-outline-variant/10">
-          <h2 className="font-headline text-2xl font-bold text-on-surface">
+        <div className="flex shrink-0 items-center justify-between gap-2 p-4 sm:p-6 border-b border-outline-variant/10">
+          <h2 id="item-editor-title" className="font-headline text-2xl font-bold text-on-surface">
             {editItem ? 'Edit Item' : 'Add New Item'}
           </h2>
-          <button onClick={onClose} className="p-2 hover:bg-surface-container-high rounded-lg">
+          <button disabled={saving} aria-label="Close item editor" onClick={handleClose} className="shrink-0 p-2 hover:bg-surface-container-high rounded-lg">
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
 
         {!editItem && (
-          <div className="flex gap-2 p-4 border-b border-outline-variant/10">
+          <div className="flex shrink-0 gap-2 p-4 border-b border-outline-variant/10">
             {(['login', 'creditCard', 'secureNote'] as const).map(type => (
               <button
                 key={type}
                 onClick={() => setItemType(type)}
-                className={`flex-1 py-3 px-4 rounded-xl font-label text-sm capitalize transition-colors ${
+                className={`flex-1 min-w-0 py-3 px-2 sm:px-4 rounded-xl font-label text-sm capitalize transition-colors ${
                   itemType === type 
                     ? 'bg-primary/10 text-primary border border-primary' 
                     : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
                 }`}
               >
-                {type === 'creditCard' ? 'Card' : type}
+                {type === 'creditCard' ? 'Card' : type === 'secureNote' ? 'Secure Note' : 'Login'}
               </button>
             ))}
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6">
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Name *</label>
@@ -355,18 +396,20 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
           </div>
         </div>
 
-        <div className="flex gap-4 p-6 border-t border-outline-variant/10">
+        <div className="flex shrink-0 gap-4 p-4 sm:p-6 border-t border-outline-variant/10">
           <button
-            onClick={onClose}
+            disabled={saving}
+            onClick={handleClose}
             className="flex-1 py-3 bg-surface-container-highest text-on-surface rounded-xl font-medium hover:bg-surface-bright transition-colors"
           >
             Cancel
           </button>
           <button
+            disabled={saving}
             onClick={handleSubmit}
-            className="flex-1 py-3 bg-primary text-on-primary rounded-xl font-bold hover:bg-primary/90 transition-colors"
+            className="flex-1 py-3 bg-primary text-on-primary rounded-xl font-bold hover:bg-primary/90 transition-colors disabled:opacity-60 disabled:cursor-wait"
           >
-            {editItem ? 'Save Changes' : 'Create Item'}
+            {saving ? 'Saving…' : editItem ? 'Save Changes' : 'Create Item'}
           </button>
         </div>
       </div>

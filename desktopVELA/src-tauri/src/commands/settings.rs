@@ -63,6 +63,16 @@ pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<Settings, S
     vela_desktop_core::commands::settings::get_settings(&state)
 }
 
+/// Lightweight poll target for the Settings screen's "Browser Extension"
+/// indicator. Full `get_settings` re-reads disk; this just checks the
+/// in-memory session flag.
+#[command]
+pub async fn get_extension_status(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(vela_desktop_core::commands::settings::get_extension_status(
+        &state,
+    ))
+}
+
 /// Persist settings, re-grabbing the global shortcut if it changed.
 ///
 /// Order matters and is preserved from before the split: the URL is validated

@@ -30,6 +30,16 @@ pub fn get_settings(state: &Arc<AppState>) -> Result<Settings, String> {
     Ok(settings)
 }
 
+/// Whether the browser extension has reached this desktop at least once
+/// during the current app session.
+///
+/// Deliberately separate from [`get_settings`]: the settings screen polls this
+/// so the indicator can turn green while it is open, without re-reading
+/// settings from disk on every tick.
+pub fn get_extension_status(state: &Arc<AppState>) -> bool {
+    state.is_extension_connected()
+}
+
 pub fn update_settings(state: &Arc<AppState>, mut settings: Settings) -> Result<(), String> {
     settings.server_url = validate_server_url(&settings.server_url)?;
     settings.quick_search_shortcut =
@@ -105,6 +115,18 @@ mod tests {
         assert_eq!(settings.user_id, "test-user", "session user wins");
         assert_eq!(settings.server_url, "");
         assert!(!settings.extension_connected);
+    }
+
+    #[test]
+    fn extension_status_is_sticky_for_the_session() {
+        let (_dir, state) = state();
+        assert!(!get_extension_status(&state));
+        state.mark_extension_connected();
+        assert!(get_extension_status(&state));
+        // A closed native-messaging connection must not clear it: the
+        // extension's host is short-lived, the status is not.
+        assert!(get_extension_status(&state));
+        assert!(get_settings(&state).unwrap().extension_connected);
     }
 
     #[test]

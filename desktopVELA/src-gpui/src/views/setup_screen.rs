@@ -30,8 +30,8 @@ use vela_desktop_core::biometric::BiometricProvider;
 use vela_desktop_core::commands::session;
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::fonts;
 use crate::icon::icon;
 use crate::theme::Palette;
@@ -88,7 +88,8 @@ pub struct SetupScreen {
 
 impl SetupScreen {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         cx.spawn(async move |this, cx| {
             let status = cx
                 .background_spawn_guarded("setup enrollment check", async {
@@ -121,7 +122,8 @@ impl SetupScreen {
             security_key_done: false,
             trusted_contact_done: false,
             show_security_key_modal: false,
-            security_key_pin_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            security_key_pin_state: cx
+                .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             registering_security_key: false,
             security_key_error: None,
             show_cloud_backup_modal: false,
@@ -140,7 +142,8 @@ impl SetupScreen {
     }
 
     fn open_security_key_modal(&mut self, cx: &mut Context<Self>) {
-        self.security_key_pin_state.update(cx, |s, cx| s.emplace("", cx));
+        self.security_key_pin_state
+            .update(cx, |s, cx| s.emplace("", cx));
         self.security_key_error = None;
         self.show_security_key_modal = true;
         cx.notify();
@@ -226,7 +229,9 @@ impl SetupScreen {
     }
 
     fn upload_cloud_backup(&mut self, cx: &mut Context<Self>) {
-        let Some(remote) = self.selected_cloud_remote.clone() else { return };
+        let Some(remote) = self.selected_cloud_remote.clone() else {
+            return;
+        };
         self.uploading_cloud_backup = true;
         self.cloud_backup_error = None;
         cx.notify();
@@ -244,7 +249,9 @@ impl SetupScreen {
                     .await
                 })
                 .await
-                .unwrap_or_else(|| Err("Uploading the recovery share failed unexpectedly".to_string()));
+                .unwrap_or_else(|| {
+                    Err("Uploading the recovery share failed unexpectedly".to_string())
+                });
             this.update(cx, |this, cx| {
                 this.uploading_cloud_backup = false;
                 match result {
@@ -300,7 +307,9 @@ impl SetupScreen {
                     .await
                 })
                 .await
-                .unwrap_or_else(|| Err("Sealing the recovery envelope failed unexpectedly".to_string()));
+                .unwrap_or_else(|| {
+                    Err("Sealing the recovery envelope failed unexpectedly".to_string())
+                });
             this.update(cx, |this, cx| {
                 this.loading_trusted_contact = false;
                 match result {
@@ -328,7 +337,9 @@ impl SetupScreen {
     }
 
     fn copy_trusted_contact_share(&mut self, cx: &mut Context<Self>) {
-        let Some(share) = self.trusted_contact_share.clone() else { return };
+        let Some(share) = self.trusted_contact_share.clone() else {
+            return;
+        };
         // A share is key material: copy it as a secret so it stays out of
         // clipboard history, exactly like the enrollment code.
         crate::clipboard::copy(cx, "Recovery share", share.as_ref());
@@ -356,7 +367,11 @@ impl SetupScreen {
                 this.trusted_contact_done = true;
                 this.show_trusted_contact_modal = false;
                 this.trusted_contact_share = None;
-                crate::toast::show(cx, "Trusted contact share delivered", crate::toast::ToastKind::Success);
+                crate::toast::show(
+                    cx,
+                    "Trusted contact share delivered",
+                    crate::toast::ToastKind::Success,
+                );
                 cx.notify();
             })
             .ok();
@@ -391,9 +406,7 @@ impl SetupScreen {
     }
 
     fn discard_recovery(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) =
-            vela_desktop_core::recovery::discard_recovery_setup(&self._app_state)
-        {
+        if let Err(e) = vela_desktop_core::recovery::discard_recovery_setup(&self._app_state) {
             tracing::warn!("Could not discard incomplete recovery setup: {e}");
         }
         self.step = Step::Complete;
@@ -420,8 +433,10 @@ impl SetupScreen {
         // that. Refuse rather than trust the wizard to never be reachable
         // with a vault present.
         if session::check_vault_exists(&self._app_state) {
-            self.password_error =
-                Some("A vault already exists on this device. Unlock it instead of creating a new one.".into());
+            self.password_error = Some(
+                "A vault already exists on this device. Unlock it instead of creating a new one."
+                    .into(),
+            );
             cx.notify();
             return;
         }
@@ -446,7 +461,9 @@ impl SetupScreen {
                         this.step = Step::Recovery;
                     }
                     Ok(Err(e)) => this.password_error = Some(e.into()),
-                    Err(e) => this.password_error = Some(format!("Vault creation failed: {e}").into()),
+                    Err(e) => {
+                        this.password_error = Some(format!("Vault creation failed: {e}").into())
+                    }
                 }
                 cx.notify();
             })
@@ -578,9 +595,7 @@ impl Render for SetupScreen {
                             .child(content),
                     ),
             )
-            .when_some(back_target, |el, target| {
-                el.child(back_button(target, cx))
-            })
+            .when_some(back_target, |el, target| el.child(back_button(target, cx)))
             // Modals mount at the top level, not inside `recovery_step` —
             // the same fix already applied across the other screens, so an
             // `.absolute().inset_0()` backdrop resolves against the real
@@ -618,11 +633,14 @@ fn trusted_contact_modal(
     let body = modal_body(palette, "setup-trusted-contact")
         .child(modal_header(palette, "person_add", "Trusted contact"))
         .child(
-            div().text_sm().text_color(palette.on_surface_variant).child(
-                "One of three recovery pieces. Paste your contact's public key to seal this \
+            div()
+                .text_sm()
+                .text_color(palette.on_surface_variant)
+                .child(
+                    "One of three recovery pieces. Paste your contact's public key to seal this \
                  recovery share into an envelope only they can open — they only need to hand \
                  it back if you lose every device.",
-            ),
+                ),
         )
         .when(screen.trusted_contact_share.is_none(), |el| {
             el.child(
@@ -665,7 +683,10 @@ fn trusted_contact_modal(
                         .p_3()
                         .rounded_xl()
                         .border_1()
-                        .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                        .border_color(gpui::Hsla {
+                            a: 0.3,
+                            ..palette.outline_variant
+                        })
                         .bg(palette.surface_bright)
                         .font_family(fonts::MONO)
                         .text_xs()
@@ -690,7 +711,11 @@ fn trusted_contact_modal(
         .child(modal_primary_button(
             palette,
             "setup-trusted-contact-done",
-            if acknowledging { "Saving…" } else { "I've sent it" },
+            if acknowledging {
+                "Saving…"
+            } else {
+                "I've sent it"
+            },
             has_share && !acknowledging,
             cx.listener(|this, _, _, cx| this.acknowledge_trusted_contact(cx)),
         ))
@@ -702,8 +727,10 @@ fn trusted_contact_modal(
             cx.listener(|this, _, _, cx| this.close_trusted_contact_modal(cx)),
         ));
 
-    modal_backdrop("setup-trusted-contact", cx, |this, cx| this.close_trusted_contact_modal(cx))
-        .child(body)
+    modal_backdrop("setup-trusted-contact", cx, |this, cx| {
+        this.close_trusted_contact_modal(cx)
+    })
+    .child(body)
 }
 
 fn security_key_modal(
@@ -714,7 +741,10 @@ fn security_key_modal(
 ) -> impl IntoElement {
     let registering = screen.registering_security_key;
 
-    modal_backdrop("setup-security-key", cx, |this, cx| this.close_security_key_modal(cx)).child(
+    modal_backdrop("setup-security-key", cx, |this, cx| {
+        this.close_security_key_modal(cx)
+    })
+    .child(
         modal_body(palette, "setup-security-key")
             .map(|el| crate::keyboard::trap_tab(el, "setup-security-key-trap", window, cx))
             .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
@@ -724,10 +754,13 @@ fn security_key_modal(
             }))
             .child(modal_header(palette, "key", "Register security key"))
             .child(
-                div().text_sm().text_color(palette.on_surface_variant).child(
-                    "Insert your FIDO2 security key and enter its PIN. VELA will register a \
+                div()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .child(
+                        "Insert your FIDO2 security key and enter its PIN. VELA will register a \
                      passkey and hand the server your recovery share, gated behind that key.",
-                ),
+                    ),
             )
             .child(
                 text_input("setup-security-key-pin")
@@ -750,7 +783,11 @@ fn security_key_modal(
             .child(modal_primary_button(
                 palette,
                 "setup-security-key-submit",
-                if registering { "Waiting for security key…" } else { "Register" },
+                if registering {
+                    "Waiting for security key…"
+                } else {
+                    "Register"
+                },
                 !registering,
                 cx.listener(|this, _, _, cx| this.register_security_key(cx)),
             ))
@@ -780,21 +817,24 @@ fn cloud_backup_modal(
     let body = modal_body(palette, "setup-cloud-backup")
         .child(modal_header(palette, "cloud_upload", "Cloud backup"))
         .child(
-            div().text_sm().text_color(palette.on_surface_variant).child(
-                "Pick the rclone remote to upload recovery Share 1 to. You'll need this same \
+            div()
+                .text_sm()
+                .text_color(palette.on_surface_variant)
+                .child(
+                    "Pick the rclone remote to upload recovery Share 1 to. You'll need this same \
                  remote configured on any device you later recover onto.",
-            ),
+                ),
         )
         .map(|el| {
-        if screen.loading_cloud_remotes {
-            return el.child(
-                div()
-                    .text_sm()
-                    .text_color(palette.on_surface_variant)
-                    .child("Checking configured rclone remotes…"),
-            );
-        }
-        match screen.cloud_remotes.as_ref() {
+            if screen.loading_cloud_remotes {
+                return el.child(
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child("Checking configured rclone remotes…"),
+                );
+            }
+            match screen.cloud_remotes.as_ref() {
             Some(remotes) if !remotes.is_empty() => el.child(
                 div()
                     .id("setup-cloud-remotes")
@@ -851,14 +891,18 @@ fn cloud_backup_modal(
                 ),
             ),
         }
-    })
+        })
         .when_some(screen.cloud_backup_error.clone(), |el, error| {
             el.child(div().text_sm().text_color(palette.error).child(error))
         })
         .child(modal_primary_button(
             palette,
             "setup-cloud-backup-submit",
-            if uploading { "Uploading…" } else { "Upload share" },
+            if uploading {
+                "Uploading…"
+            } else {
+                "Upload share"
+            },
             has_remote && !uploading,
             cx.listener(|this, _, _, cx| this.upload_cloud_backup(cx)),
         ))
@@ -870,8 +914,10 @@ fn cloud_backup_modal(
             cx.listener(|this, _, _, cx| this.close_cloud_backup_modal(cx)),
         ));
 
-    modal_backdrop("setup-cloud-backup", cx, |this, cx| this.close_cloud_backup_modal(cx))
-        .child(body)
+    modal_backdrop("setup-cloud-backup", cx, |this, cx| {
+        this.close_cloud_backup_modal(cx)
+    })
+    .child(body)
 }
 
 // ── Shared modal chrome for this screen's two recovery modals ──────────────
@@ -888,12 +934,20 @@ fn modal_backdrop(
         // Block the hit-test at the backdrop so the scrollable content behind
         // it doesn't keep handling `ScrollWheelEvent` (see add_item_modal).
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_dismiss(this, cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_dismiss(this, cx)),
+        )
 }
 
 fn modal_body(palette: &Palette, id: &'static str) -> gpui::Stateful<gpui::Div> {
@@ -906,7 +960,10 @@ fn modal_body(palette: &Palette, id: &'static str) -> gpui::Stateful<gpui::Div> 
         .rounded_2xl()
         .bg(palette.surface_container)
         .border_1()
-        .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+        .border_color(gpui::Hsla {
+            a: 0.2,
+            ..palette.outline_variant
+        })
         .flex()
         .flex_col()
         .gap_4()
@@ -914,7 +971,11 @@ fn modal_body(palette: &Palette, id: &'static str) -> gpui::Stateful<gpui::Div> 
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
-fn modal_header(palette: &Palette, icon_name: &'static str, title: &'static str) -> impl IntoElement {
+fn modal_header(
+    palette: &Palette,
+    icon_name: &'static str,
+    title: &'static str,
+) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -945,7 +1006,14 @@ fn modal_primary_button(
         .flex()
         .items_center()
         .justify_center()
-        .bg(if enabled { palette.primary } else { gpui::Hsla { a: 0.5, ..palette.primary } })
+        .bg(if enabled {
+            palette.primary
+        } else {
+            gpui::Hsla {
+                a: 0.5,
+                ..palette.primary
+            }
+        })
         .text_color(palette.on_primary)
         .font_weight(gpui::FontWeight::MEDIUM)
         .when(enabled, |el| el.cursor_pointer())
@@ -1003,10 +1071,13 @@ fn back_button(target: Step, cx: &mut Context<SetupScreen>) -> impl IntoElement 
         .cursor_pointer()
         .child(icon("arrow_back", px(16.), palette.on_surface_variant))
         .child("Back")
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-            this.step = target;
-            cx.notify();
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                this.step = target;
+                cx.notify();
+            }),
+        )
 }
 
 fn step_icon(palette: &Palette, name: &'static str) -> impl IntoElement {
@@ -1052,7 +1123,11 @@ fn welcome_step(
     cx: &mut Context<SetupScreen>,
 ) -> gpui::AnyElement {
     let checking = screen.biometric_available.is_none();
-    let label: SharedString = if checking { "Checking…".into() } else { "Create new vault".into() };
+    let label: SharedString = if checking {
+        "Checking…".into()
+    } else {
+        "Create new vault".into()
+    };
 
     div()
         .flex()
@@ -1071,18 +1146,31 @@ fn welcome_step(
                 .flex()
                 .flex_col()
                 .gap_3()
-                .child(primary_button("create-vault", label, !checking, window, cx, |this, cx| {
-                    this.step = if this.biometric_available == Some(true) {
-                        Step::Biometric
-                    } else {
-                        Step::Password
-                    };
-                    cx.notify();
-                }))
-                .child(secondary_button("existing-vault", "I have an existing vault", !checking, cx, |this, cx| {
-                    this.step = Step::Password;
-                    cx.notify();
-                })),
+                .child(primary_button(
+                    "create-vault",
+                    label,
+                    !checking,
+                    window,
+                    cx,
+                    |this, cx| {
+                        this.step = if this.biometric_available == Some(true) {
+                            Step::Biometric
+                        } else {
+                            Step::Password
+                        };
+                        cx.notify();
+                    },
+                ))
+                .child(secondary_button(
+                    "existing-vault",
+                    "I have an existing vault",
+                    !checking,
+                    cx,
+                    |this, cx| {
+                        this.step = Step::Password;
+                        cx.notify();
+                    },
+                )),
         )
         .into_any_element()
 }
@@ -1106,7 +1194,11 @@ fn biometric_step(
         ))
         .child(primary_button(
             "enroll",
-            if working { "Setting up…" } else { "Enable biometric unlock" },
+            if working {
+                "Setting up…"
+            } else {
+                "Enable biometric unlock"
+            },
             !working,
             window,
             cx,
@@ -1126,7 +1218,9 @@ fn biometric_step(
                         .font_family(fonts::BODY)
                         .text_sm()
                         .text_color(palette.on_surface_variant)
-                        .child("You'll also set up a master password as a backup in the next step."),
+                        .child(
+                            "You'll also set up a master password as a backup in the next step.",
+                        ),
                 ),
         )
         .into_any_element()
@@ -1179,9 +1273,16 @@ fn password_step(
                     .child(error),
             )
         })
-        .child(primary_button("submit-password", "Create Vault", true, window, cx, |this, cx| {
-            this.submit_password(cx);
-        }))
+        .child(primary_button(
+            "submit-password",
+            "Create Vault",
+            true,
+            window,
+            cx,
+            |this, cx| {
+                this.submit_password(cx);
+            },
+        ))
         .into_any_element()
 }
 
@@ -1198,43 +1299,58 @@ fn masked_password_field(
     cx: &mut Context<SetupScreen>,
 ) -> impl IntoElement {
     div()
-        .relative()
+        .flex()
+        .w_full()
+        .rounded_lg()
+        .bg(palette.surface_container)
+        .overflow_hidden()
         .child(
-            text_input(id)
-                .state(state.downgrade())
-                .placeholder(placeholder)
-                .caret_blink_interval_500ms()
-                // Single-byte ASCII mask char — see biometric_gate.rs's
-                // `mask_char` comment for why '•' (multi-byte in UTF-8)
-                // misplaces the caret against ordinary ASCII passwords.
-                .mask_char((!visible).then_some('*'))
-                .font_family(fonts::MONO)
-                .bg(palette.surface_container)
-                .text_color(palette.on_surface)
-                .caret_color(palette.on_surface)
-                .rounded_lg()
-                .p_3()
-                .pr(px(44.))
-                .w_full()
-                .min_h_auto()
-                .whitespace_nowrap()
-                .overflow_x_scroll(),
+            div().flex_1().min_w_0().overflow_hidden().child(
+                text_input(id)
+                    .state(state.downgrade())
+                    .placeholder(placeholder)
+                    .caret_blink_interval_500ms()
+                    // Single-byte ASCII mask char — see biometric_gate.rs's
+                    // `mask_char` comment for why '•' (multi-byte in UTF-8)
+                    // misplaces the caret against ordinary ASCII passwords.
+                    .mask_char((!visible).then_some('*'))
+                    .font_family(fonts::MONO)
+                    .bg(palette.surface_container)
+                    .text_color(palette.on_surface)
+                    .caret_color(palette.on_surface)
+                    .rounded_lg()
+                    .p_3()
+                    .w_full()
+                    .min_h_auto()
+                    .whitespace_nowrap()
+                    .overflow_x_scroll(),
+            ),
         )
         .child(
             div()
                 .id(SharedString::from(format!("{id}-toggle-visible")))
-                .absolute()
-                .right_3()
-                .top_0()
-                .bottom_0()
+                .w(px(44.))
+                .flex_shrink_0()
                 .flex()
                 .items_center()
+                .justify_center()
                 .cursor_pointer()
-                .child(icon(if visible { "visibility_off" } else { "visibility" }, px(18.), palette.on_surface_variant))
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                    this.password_visible = !this.password_visible;
-                    cx.notify();
-                })),
+                .child(icon(
+                    if visible {
+                        "visibility_off"
+                    } else {
+                        "visibility"
+                    },
+                    px(18.),
+                    palette.on_surface_variant,
+                ))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.password_visible = !this.password_visible;
+                        cx.notify();
+                    }),
+                ),
         )
 }
 
@@ -1350,13 +1466,20 @@ fn skip_recovery_button(palette: &Palette, cx: &mut Context<SetupScreen>) -> imp
                 .opacity(0.7)
                 .child("You can set recovery up later in Settings"),
         )
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-            tracing::info!("Recovery setup skipped during vault creation");
-            this.discard_recovery(cx);
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                tracing::info!("Recovery setup skipped during vault creation");
+                this.discard_recovery(cx);
+            }),
+        )
 }
 
-fn complete_step(palette: &Palette, window: &mut Window, cx: &mut Context<SetupScreen>) -> gpui::AnyElement {
+fn complete_step(
+    palette: &Palette,
+    window: &mut Window,
+    cx: &mut Context<SetupScreen>,
+) -> gpui::AnyElement {
     div()
         .flex()
         .flex_col()
@@ -1367,7 +1490,10 @@ fn complete_step(palette: &Palette, window: &mut Window, cx: &mut Context<SetupS
                 .w(px(96.))
                 .h(px(96.))
                 .rounded_full()
-                .bg(gpui::Hsla { a: 0.2, ..palette.primary })
+                .bg(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.primary
+                })
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1383,9 +1509,16 @@ fn complete_step(palette: &Palette, window: &mut Window, cx: &mut Context<SetupS
                 .child(check_row(palette, "Vault created"))
                 .child(check_row(palette, "Recovery configured")),
         )
-        .child(primary_button("open-vault", "Open my vault", true, window, cx, |_this, cx| {
-            cx.emit(SetupScreenEvent::Complete);
-        }))
+        .child(primary_button(
+            "open-vault",
+            "Open my vault",
+            true,
+            window,
+            cx,
+            |_this, cx| {
+                cx.emit(SetupScreenEvent::Complete);
+            },
+        ))
         .into_any_element()
 }
 
@@ -1419,8 +1552,16 @@ fn recovery_row(
     cx: &mut Context<SetupScreen>,
     on_enable: impl Fn(&mut SetupScreen, &mut Context<SetupScreen>) + 'static,
 ) -> impl IntoElement {
-    let border = if done { palette.primary } else { palette.outline_variant };
-    let badge_bg = if done { palette.primary } else { palette.surface_container_highest };
+    let border = if done {
+        palette.primary
+    } else {
+        palette.outline_variant
+    };
+    let badge_bg = if done {
+        palette.primary
+    } else {
+        palette.surface_container_highest
+    };
 
     div()
         .p_4()
@@ -1446,7 +1587,9 @@ fn recovery_row(
                         .items_center()
                         .justify_center()
                         .text_sm()
-                        .when(done, |el| el.child(icon("check", px(14.), palette.on_primary)))
+                        .when(done, |el| {
+                            el.child(icon("check", px(14.), palette.on_primary))
+                        })
                         .when(!done, |el| el.child(number)),
                 )
                 .child(
@@ -1479,9 +1622,12 @@ fn recovery_row(
                     .text_sm()
                     .cursor_pointer()
                     .child("Enable")
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                        on_enable(this, cx);
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            on_enable(this, cx);
+                        }),
+                    ),
             )
         })
         .when(!done && !available, |el| {
@@ -1539,7 +1685,10 @@ fn primary_button(
                     cx.notify();
                 });
             })
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_click(this, cx)));
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| on_click(this, cx)),
+            );
     } else {
         el = el.opacity(opacity * 0.5);
     }
@@ -1571,9 +1720,10 @@ fn secondary_button(
         .font_weight(gpui::FontWeight::BOLD)
         .child(label.into());
     if enabled {
-        el = el
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_click(this, cx)));
+        el = el.cursor_pointer().on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_click(this, cx)),
+        );
     } else {
         el = el.opacity(0.5);
     }
