@@ -141,6 +141,11 @@ pub struct SettingsScreen {
     archive_busy: bool,
     archive_error: Option<SharedString>,
     _pulse_task: Task<()>,
+    /// Polls the in-memory extension status while this screen is open. Held
+    /// (rather than detached) so dropping the screen stops it; tests replace
+    /// it with a ready task, since an endless periodic task would keep
+    /// `run_until_parked` from ever parking.
+    _extension_status_task: Task<()>,
 }
 
 /// What the open passphrase modal is for: creating a `.vela` backup, or
@@ -201,7 +206,7 @@ impl SettingsScreen {
         // so the core remembers that it has been seen this session. Poll the
         // in-memory flag so the indicator turns green while Settings is open
         // (e.g. right after opening the popup), without a disk read.
-        cx.spawn({
+        let extension_status_task = cx.spawn({
             let app_state = app_state.clone();
             async move |this, cx| loop {
                 cx.background_spawn(async { std::thread::sleep(Duration::from_secs(2)) })
@@ -219,8 +224,7 @@ impl SettingsScreen {
                     break;
                 }
             }
-        })
-        .detach();
+        });
 
         Self {
             app_state,
@@ -276,6 +280,7 @@ impl SettingsScreen {
             archive_busy: false,
             archive_error: None,
             _pulse_task: animation::spawn_pulse_ticker(cx),
+            _extension_status_task: extension_status_task,
         }
     }
 
@@ -4269,6 +4274,7 @@ mod layout_tests {
                         format!("https://{}.example.invalid", "long-host-".repeat(20));
                     screen.settings = Some(settings);
                     screen._pulse_task = Task::ready(());
+                    screen._extension_status_task = Task::ready(());
                     screen
                 });
                 SettingsHost { child }
