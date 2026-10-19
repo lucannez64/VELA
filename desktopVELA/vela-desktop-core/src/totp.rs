@@ -2,19 +2,41 @@ use data_encoding::BASE32;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha1::Sha1;
+use sha2::{Sha256, Sha512};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-type HmacSha1 = Hmac<Sha1>;
+/// HMAC hash backing the HOTP construction. RFC 6238 defines SHA-1, SHA-256
+/// and SHA-512 variants, and authenticator apps in the wild use all three, so
+/// an otpauth URI's `algorithm` parameter has to be honored rather than
+/// assumed to be SHA-1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Algorithm {
+    Sha1,
+    Sha256,
+    Sha512,
+}
+
+impl Algorithm {
+    fn from_label(label: &str) -> Self {
+        match label.trim().to_ascii_uppercase().as_str() {
+            "SHA256" | "SHA-256" => Algorithm::Sha256,
+            "SHA512" | "SHA-512" => Algorithm::Sha512,
+            _ => Algorithm::Sha1,
+        }
+    }
+}
 
 const DEFAULT_PERIOD: u64 = 30;
 const DEFAULT_DIGITS: u32 = 6;
-// RFC 6238/4226 practical bounds: 6–8 digits, 15–120 s period. Values outside
-// these ranges are rejected rather than computed (10^digits overflows u32-era
-// assumptions and huge allocations/format widths are a DoS vector).
-const MIN_PERIOD: u64 = 15;
-const MAX_PERIOD: u64 = 120;
+// Practical bounds, matching the browser extension's otpauth parser so the
+// code is identical whichever side computes it: 6–10 digits, 5–300 s period.
+// Values outside these ranges are rejected rather than computed (10^digits
+// overflows u64-era assumptions and huge allocations/format widths are a DoS
+// vector).
+const MIN_PERIOD: u64 = 5;
+const MAX_PERIOD: u64 = 300;
 const MIN_DIGITS: u32 = 6;
-const MAX_DIGITS: u32 = 8;
+const MAX_DIGITS: u32 = 10;
 
 #[derive(Serialize)]
 pub struct TotpCode {
@@ -28,6 +50,7 @@ struct TotpParams {
     secret: String,
     period: u64,
     digits: u32,
+    algorithm: Algorithm,
 }
 
 impl TotpParams {
@@ -49,6 +72,7 @@ impl TotpParams {
 fn parse_otpauth(input: &str) -> TotpParams {
     let mut period = DEFAULT_PERIOD;
     let mut digits = DEFAULT_DIGITS;
+    let mut algorithm = Algorithm::Sha1;
 
     if input.starts_with("otpauth://") {
         if let Some(query_start) = input.find('?') {
@@ -60,6 +84,7 @@ fn parse_otpauth(input: &str) -> TotpParams {
                     match key {
                         "period" => period = value.parse().unwrap_or(DEFAULT_PERIOD),
                         "digits" => digits = value.parse().unwrap_or(DEFAULT_DIGITS),
+                        "algorithm" => algorithm = Algorithm::from_label(value),
                         _ => {}
                     }
                 }
@@ -71,6 +96,7 @@ fn parse_otpauth(input: &str) -> TotpParams {
         secret: extract_secret(input),
         period,
         digits,
+        algorithm,
     }
 }
 
@@ -80,7 +106,7 @@ pub fn generate_totp_code(secret: &str) -> Option<String> {
     let secret_bytes = base32_decode(&params.secret)?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
     let counter = now.as_secs() / params.period;
-    Some(compute_hotp(&secret_bytes, counter, params.digits))
+    Some(compute_hotp(&secret_bytes, counter, params.digits, params.algorithm))
 }
 
 fn extract_secret(input: &str) -> String {
@@ -105,13 +131,30 @@ fn base32_decode(secret: &str) -> Option<Vec<u8>> {
     BASE32.decode(padded.as_bytes()).ok()
 }
 
-fn compute_hotp(secret: &[u8], counter: u64, digits: u32) -> String {
+fn compute_hotp(secret: &[u8], counter: u64, digits: u32, algorithm: Algorithm) -> String {
     let counter_bytes = counter.to_be_bytes();
 
-    let mut mac = HmacSha1::new_from_slice(secret).expect("HMAC initialization failed");
-    mac.update(&counter_bytes);
-    let result = mac.finalize();
-    let hash = result.into_bytes();
+    // One arm per hash: the HMAC key is the decoded shared secret, and the
+    // message is always the 8-byte big-endian counter.
+    let hash: Vec<u8> = match algorithm {
+        Algorithm::Sha1 => {
+            let mut mac = Hmac::<Sha1>::new_from_slice(secret).expect("HMAC initialization failed");
+            mac.update(&counter_bytes);
+            mac.finalize().into_bytes().to_vec()
+        }
+        Algorithm::Sha256 => {
+            let mut mac =
+                Hmac::<Sha256>::new_from_slice(secret).expect("HMAC initialization failed");
+            mac.update(&counter_bytes);
+            mac.finalize().into_bytes().to_vec()
+        }
+        Algorithm::Sha512 => {
+            let mut mac =
+                Hmac::<Sha512>::new_from_slice(secret).expect("HMAC initialization failed");
+            mac.update(&counter_bytes);
+            mac.finalize().into_bytes().to_vec()
+        }
+    };
 
     let offset = (hash[hash.len() - 1] & 0x0f) as usize;
 
@@ -140,7 +183,7 @@ pub fn generate_totp(secret: String) -> Result<TotpCode, String> {
     let remaining = period - (now % period);
     let digits = params.digits;
 
-    let code = compute_hotp(&secret_bytes, counter, digits);
+    let code = compute_hotp(&secret_bytes, counter, digits, params.algorithm);
 
     Ok(TotpCode {
         code,
@@ -179,7 +222,7 @@ fn verify_totp_at(secret: &str, code: &str, now: u64) -> Result<bool, String> {
     use subtle::ConstantTimeEq;
     let matched = [current.wrapping_sub(1), current, current + 1]
         .into_iter()
-        .map(|counter| compute_hotp(&secret_bytes, counter, params.digits))
+        .map(|counter| compute_hotp(&secret_bytes, counter, params.digits, params.algorithm))
         .any(|expected| bool::from(expected.as_bytes().ct_eq(code_trimmed.as_bytes())));
     Ok(matched)
 }
@@ -203,7 +246,7 @@ mod tests {
         ];
         for (counter, code) in expected.iter().enumerate() {
             assert_eq!(
-                compute_hotp(&rfc_secret_bytes(), counter as u64, 6),
+                compute_hotp(&rfc_secret_bytes(), counter as u64, 6, Algorithm::Sha1),
                 *code,
                 "counter {counter}"
             );
@@ -214,9 +257,53 @@ mod tests {
     fn hotp_matches_rfc6238_sha1_8digit_vectors() {
         // RFC 6238 Appendix B (SHA-1): T=59 → counter 1, T=1111111109 →
         // counter 0x23523EC, T=1234567890 → counter 0x273EF07.
-        assert_eq!(compute_hotp(&rfc_secret_bytes(), 1, 8), "94287082");
-        assert_eq!(compute_hotp(&rfc_secret_bytes(), 0x23523EC, 8), "07081804");
-        assert_eq!(compute_hotp(&rfc_secret_bytes(), 0x273EF07, 8), "89005924");
+        assert_eq!(compute_hotp(&rfc_secret_bytes(), 1, 8, Algorithm::Sha1), "94287082");
+        assert_eq!(compute_hotp(&rfc_secret_bytes(), 0x23523EC, 8, Algorithm::Sha1), "07081804");
+        assert_eq!(compute_hotp(&rfc_secret_bytes(), 0x273EF07, 8, Algorithm::Sha1), "89005924");
+    }
+
+    #[test]
+    fn hotp_matches_rfc6238_sha256_and_sha512_vectors() {
+        // RFC 6238 Appendix B uses a longer seed for the SHA-2 variants:
+        // 32 bytes for SHA-256 and 64 bytes for SHA-512.
+        let sha256_secret = b"12345678901234567890123456789012";
+        let sha512_secret =
+            b"1234567890123456789012345678901234567890123456789012345678901234";
+
+        // (counter, SHA-256 8-digit, SHA-512 8-digit)
+        let vectors = [
+            (1u64, "46119246", "90693936"),
+            (0x23523EC, "68084774", "25091201"),
+            (0x23523ED, "67062674", "99943326"),
+            (0x273EF07, "91819424", "93441116"),
+            (0x3F940AA, "90698825", "38618901"),
+            (0x27BC86AA, "77737706", "47863826"),
+        ];
+        for (counter, sha256_code, sha512_code) in vectors {
+            assert_eq!(
+                compute_hotp(sha256_secret, counter, 8, Algorithm::Sha256),
+                sha256_code,
+                "SHA-256 counter {counter}"
+            );
+            assert_eq!(
+                compute_hotp(sha512_secret, counter, 8, Algorithm::Sha512),
+                sha512_code,
+                "SHA-512 counter {counter}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_otpauth_honors_algorithm_parameter() {
+        let params = parse_otpauth("otpauth://totp/A?secret=ABC&algorithm=SHA256");
+        assert_eq!(params.algorithm, Algorithm::Sha256);
+        let params = parse_otpauth("otpauth://totp/A?secret=ABC&algorithm=SHA512");
+        assert_eq!(params.algorithm, Algorithm::Sha512);
+        // Unknown or absent algorithm falls back to SHA-1, never an error.
+        let params = parse_otpauth("otpauth://totp/A?secret=ABC&algorithm=MD5");
+        assert_eq!(params.algorithm, Algorithm::Sha1);
+        let params = parse_otpauth("otpauth://totp/A?secret=ABC");
+        assert_eq!(params.algorithm, Algorithm::Sha1);
     }
 
     #[test]
@@ -259,23 +346,23 @@ mod tests {
 
     #[test]
     fn params_validate_enforces_rfc_bounds() {
-        let ok = TotpParams { secret: String::new(), period: 30, digits: 6 };
+        let ok = TotpParams { secret: String::new(), period: 30, digits: 6, algorithm: Algorithm::Sha1 };
         assert!(ok.validate().is_ok());
 
-        for digits in [5, 9] {
-            let p = TotpParams { secret: String::new(), period: 30, digits };
+        for digits in [5, 11] {
+            let p = TotpParams { secret: String::new(), period: 30, digits, algorithm: Algorithm::Sha1 };
             assert!(p.validate().is_err(), "digits {digits} must be rejected");
         }
-        for digits in [6, 7, 8] {
-            let p = TotpParams { secret: String::new(), period: 30, digits };
+        for digits in [6, 7, 8, 9, 10] {
+            let p = TotpParams { secret: String::new(), period: 30, digits, algorithm: Algorithm::Sha1 };
             assert!(p.validate().is_ok(), "digits {digits} must be accepted");
         }
-        for period in [14, 121] {
-            let p = TotpParams { secret: String::new(), period, digits: 6 };
+        for period in [4, 301] {
+            let p = TotpParams { secret: String::new(), period, digits: 6, algorithm: Algorithm::Sha1 };
             assert!(p.validate().is_err(), "period {period} must be rejected");
         }
-        for period in [15, 30, 120] {
-            let p = TotpParams { secret: String::new(), period, digits: 6 };
+        for period in [5, 30, 120, 300] {
+            let p = TotpParams { secret: String::new(), period, digits: 6, algorithm: Algorithm::Sha1 };
             assert!(p.validate().is_ok(), "period {period} must be accepted");
         }
     }
@@ -283,7 +370,7 @@ mod tests {
     #[test]
     fn generate_totp_rejects_out_of_bounds_params() {
         let err = generate_totp(
-            "otpauth://totp/A?secret=GEZDGNBVGY3TQOJQ&digits=10".to_string(),
+            "otpauth://totp/A?secret=GEZDGNBVGY3TQOJQ&digits=11".to_string(),
         );
         assert!(err.is_err());
         let err = generate_totp(
@@ -307,16 +394,16 @@ mod tests {
         params.validate().expect("RFC secret is valid");
         let secret_bytes = base32_decode(&params.secret).unwrap();
 
-        let code_prev = compute_hotp(&secret_bytes, now / 30 - 1, 6);
-        let code_cur = compute_hotp(&secret_bytes, now / 30, 6);
-        let code_next = compute_hotp(&secret_bytes, now / 30 + 1, 6);
+        let code_prev = compute_hotp(&secret_bytes, now / 30 - 1, 6, Algorithm::Sha1);
+        let code_cur = compute_hotp(&secret_bytes, now / 30, 6, Algorithm::Sha1);
+        let code_next = compute_hotp(&secret_bytes, now / 30 + 1, 6, Algorithm::Sha1);
 
         assert!(verify_totp_at(RFC_SECRET_B32, &code_prev, now).unwrap());
         assert!(verify_totp_at(RFC_SECRET_B32, &code_cur, now).unwrap());
         assert!(verify_totp_at(RFC_SECRET_B32, &code_next, now).unwrap());
 
         // Two steps away must still be rejected.
-        let code_far = compute_hotp(&secret_bytes, now / 30 + 2, 6);
+        let code_far = compute_hotp(&secret_bytes, now / 30 + 2, 6, Algorithm::Sha1);
         assert!(!verify_totp_at(RFC_SECRET_B32, &code_far, now).unwrap());
         assert!(!verify_totp_at(RFC_SECRET_B32, &code_prev, now - 90).unwrap());
     }

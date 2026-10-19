@@ -340,6 +340,46 @@ pub fn handle_get_cards(message: &Value) -> Value {
     json!({ "success": true, "cards": cards })
 }
 
+pub fn handle_get_totp_code(message: &Value) -> Value {
+    // A fresh one-time code for a specific login, keyed to the page the caller
+    // is on. The desktop releases the code (never the standing secret) and
+    // records a release entry; the extension uses it on the OTP step and in
+    // the popup.
+    let response = send_to_desktop(
+        json!({
+            "msg_type": "totp_code",
+            "payload": {
+                "item_id": message
+                    .get("itemId")
+                    .or_else(|| message.get("item_id"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                "url": message.get("url").cloned().unwrap_or(Value::Null),
+            },
+        }),
+        false,
+    );
+
+    let Some(response) = response else {
+        return json!({ "success": false, "error": "Could not reach VELA Desktop" });
+    };
+    if !matches!(
+        response.get("msg_type").and_then(Value::as_str),
+        Some("TotpCodeResponse") | Some("totp_code_response")
+    ) {
+        return json!({ "success": false, "error": error_of(Some(&response)) });
+    }
+
+    let payload = response.get("payload").cloned().unwrap_or(Value::Null);
+    json!({
+        "success": payload.get("success").and_then(Value::as_bool).unwrap_or(false),
+        "code": payload.get("code").cloned().unwrap_or(Value::Null),
+        "remainingSecs": payload.get("remaining_secs").cloned().unwrap_or(Value::Null),
+        "period": payload.get("period").cloned().unwrap_or(Value::Null),
+        "error": payload.get("error").cloned().unwrap_or(Value::Null),
+    })
+}
+
 pub fn handle_save_credentials(message: &Value) -> Value {
     let response = send_to_desktop(
         json!({
@@ -582,6 +622,7 @@ pub fn handle_message(message: &Value) -> Value {
         "openVault" | "openSettings" => handle_open_vault,
         "getLogins" | "getAvailableLogins" => handle_get_logins,
         "getCards" => handle_get_cards,
+        "getTotpCode" => handle_get_totp_code,
         "saveCredentials" => handle_save_credentials,
         "passkeyCreate" => handle_passkey_create,
         "passkeyGet" => handle_passkey_get,

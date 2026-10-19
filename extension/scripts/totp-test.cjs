@@ -20,7 +20,11 @@ function stub() {
       onMessageExternal: on,
       id: "test",
     },
-    tabs: { onUpdated: on, sendMessage() {} },
+    tabs: { onUpdated: on, onRemoved: on, sendMessage() {} },
+    storage: {
+      session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
+      local: { get: async () => ({}), set: async () => {}, remove: async () => {} },
+    },
     contextMenus: { onClicked: on, create() {}, removeAll() {} },
     commands: { onCommand: on },
     action: {},

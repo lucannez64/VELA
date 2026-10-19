@@ -19,6 +19,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the WASM bridge. New UI in both desktop front ends (Tauri/React Sharing →
   Links, and gpui); the owner's link records — including the key — are kept in
   an encrypted local file so the URL can be re-copied.
+- Browser-extension authenticator autofill and popup password generator.
+  After a VELA-initiated login fill, the extension fills the one-time code on
+  the site's second step automatically: the desktop releases a fresh code
+  (never the standing secret), scoped to the login's own domain, with an audit
+  entry per release (`TotpCode` IPC type, `vela-nm-host` `getTotpCode`). The
+  popup shows a live code with countdown and copy. The popup also gains a
+  password generator — random or Diceware passphrase over the bundled EFF word
+  list, with look-alike exclusion, a strength estimate, session history, and
+  persisted options. Desktop TOTP now honors the otpauth `algorithm` parameter
+  (SHA-1/256/512) instead of assuming SHA-1.
+- Browser-extension per-site autofill settings and lookalike warning. The
+  popup gains a "This site" panel (auto-fill on page load, never autofill,
+  never save) stored in `storage.local` and applied by the content script.
+  Opt-in auto-fill on page load fills the single unambiguous match and never
+  fires on a lookalike domain. A shared IDN/homograph detector decodes
+  punycode labels (RFC 3492) and warns when a host mixes writing systems, in
+  both the inline dropdown and the popup; single-script internationalized
+  domains are left alone. The dead `generateDomainMatchPatterns` helper (wrong
+  for multi-label suffixes, never called) is removed.
 - Credit-card autofill (fill-only). The browser extension detects card number,
   expiry (combined or split month + year), CVV and cardholder fields and offers
   stored cards after an explicit click on a payment field; the desktop keys the

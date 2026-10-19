@@ -227,6 +227,18 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "getCards":
       handleGetCards(data, sender, sendResponse);
       return true;
+    case "getTotpCode":
+      handleGetTotpCode(data, sender, sendResponse);
+      return true;
+    case "setTotpPending":
+      handleSetTotpPending(data, sender, sendResponse);
+      return true;
+    case "getTotpPending":
+      handleGetTotpPending(data, sender, sendResponse);
+      return true;
+    case "clearTotpPending":
+      handleClearTotpPending(sender, sendResponse);
+      return true;
     case "checkDesktopConnection":
       checkDesktopConnection(sendResponse);
       return true;
@@ -1081,6 +1093,17 @@ async function handleTriggerAutofillWithLogin(data, sender, sendResponse) {
     return;
   }
 
+  // Record the pending context here, on the durable side, before the page can
+  // navigate away: the content script's own set can lose the race with an
+  // immediate OTP redirect (issue: auto TOTP on the second step).
+  if (login.id && login.totp) {
+    await savePendingTotp(tabId, {
+      loginId: String(login.id),
+      url: active?.url || login.url || "",
+      at: Date.now()
+    });
+  }
+
   try {
     const response = await tabs.sendMessage(tabId, { command: "fillWithLogin", login });
     sendResponse(response || { success: true });
@@ -1221,6 +1244,141 @@ async function handleClearPendingCapture(sender, sendResponse) {
       await clearPendingCapture(sender.tab.id);
     }
     sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+// ── Pending authenticator code (auto-fill on the OTP step) ───────────────────
+//
+// After a VELA-initiated login fill, the site usually navigates to a second
+// page that asks for a one-time code. The content script's JS context dies on
+// that navigation, so the fact that *this tab* just filled login X is parked
+// in extension-private session storage. The next page checks it, asks the
+// desktop for a fresh code (never the standing secret), and fills it. Bounded
+// to a short window and the same site, so it is not a general "release codes"
+// channel.
+
+const PENDING_TOTP_PREFIX = "velaPendingTotp:";
+const PENDING_TOTP_MAX_AGE_MS = 300000;
+const pendingTotpFallback = new Map();
+
+function pendingTotpKey(tabId) {
+  return `${PENDING_TOTP_PREFIX}${tabId}`;
+}
+
+async function savePendingTotp(tabId, pending) {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.set({ [pendingTotpKey(tabId)]: pending });
+      return;
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, parking TOTP in memory:", error.message);
+    }
+  }
+  pendingTotpFallback.set(tabId, pending);
+}
+
+async function loadPendingTotp(tabId) {
+  if (browser.storage?.session) {
+    try {
+      const saved = await browser.storage.session.get(pendingTotpKey(tabId));
+      if (saved[pendingTotpKey(tabId)]) {
+        return saved[pendingTotpKey(tabId)];
+      }
+    } catch (error) {
+      console.warn("VELA: session storage unavailable, reading TOTP from memory:", error.message);
+    }
+  }
+  return pendingTotpFallback.get(tabId);
+}
+
+async function clearPendingTotp(tabId) {
+  if (browser.storage?.session) {
+    try {
+      await browser.storage.session.remove(pendingTotpKey(tabId));
+    } catch (error) {
+      // The in-memory fallback is cleared below either way.
+    }
+  }
+  pendingTotpFallback.delete(tabId);
+}
+
+async function handleSetTotpPending(data, sender, sendResponse) {
+  try {
+    if (!sender?.tab || !data?.loginId) {
+      sendResponse({ success: false });
+      return;
+    }
+    await savePendingTotp(sender.tab.id, {
+      loginId: String(data.loginId),
+      url: data.url || sender.url || "",
+      at: Date.now()
+    });
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleGetTotpPending(data, sender, sendResponse) {
+  try {
+    if (!sender?.tab) {
+      sendResponse({ success: false });
+      return;
+    }
+    const pending = await loadPendingTotp(sender.tab.id);
+    if (!pending?.loginId) {
+      sendResponse({ success: false });
+      return;
+    }
+    // Only the same site the fill happened on: a navigation to an unrelated
+    // origin must not inherit the pending context.
+    const storedOrigin = safeUrlOrigin(pending.url);
+    const currentOrigin = safeUrlOrigin(sender.url || data?.url || "");
+    if (!storedOrigin || !currentOrigin || storedOrigin !== currentOrigin) {
+      sendResponse({ success: false });
+      return;
+    }
+    if (Date.now() - (pending.at || 0) > PENDING_TOTP_MAX_AGE_MS) {
+      await clearPendingTotp(sender.tab.id);
+      sendResponse({ success: false });
+      return;
+    }
+    sendResponse({ success: true, loginId: pending.loginId });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleClearTotpPending(sender, sendResponse) {
+  try {
+    if (sender?.tab) {
+      await clearPendingTotp(sender.tab.id);
+    }
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleGetTotpCode(data, sender, sendResponse) {
+  try {
+    // Same authorization as every other credential path: only the active,
+    // top-frame page (or the popup on its behalf) may ask, and the desktop
+    // still scopes the code to the login's own domain.
+    const auth = await authorizeCredentialRequest(data, sender);
+    if (!auth.ok) {
+      sendResponse({ success: false, error: auth.error });
+      return;
+    }
+    const response = await sendNativeMessage({
+      action: "getTotpCode",
+      itemId: data.loginId,
+      item_id: data.loginId,
+      url: data.url,
+    });
+    sendResponse(response || { success: false });
   } catch (error) {
     sendResponse({ success: false, error: error.message });
   }

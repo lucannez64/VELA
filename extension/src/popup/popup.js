@@ -1,4 +1,5 @@
 const { runtime, tabs } = browser;
+const { siteKey, hostRisk } = globalThis.VelaAutofill || {};
 
 const mainContent = document.getElementById("mainContent");
 const statusIndicator = document.getElementById("statusIndicator");
@@ -22,9 +23,49 @@ const aliasSave = document.getElementById("aliasSave");
 const aliasDisconnect = document.getElementById("aliasDisconnect");
 const aliasStatus = document.getElementById("aliasStatus");
 
+const genSection = document.getElementById("genSection");
+const genToggle = document.getElementById("genToggle");
+const genBadge = document.getElementById("genBadge");
+const genBody = document.getElementById("genBody");
+const genOutput = document.getElementById("genOutput");
+const genStrengthFill = document.getElementById("genStrengthFill");
+const genStrengthLabel = document.getElementById("genStrengthLabel");
+const genModeRandom = document.getElementById("genModeRandom");
+const genModePassphrase = document.getElementById("genModePassphrase");
+const genRegenerate = document.getElementById("genRegenerate");
+const genCopy = document.getElementById("genCopy");
+const genLength = document.getElementById("genLength");
+const genLengthVal = document.getElementById("genLengthVal");
+const genWords = document.getElementById("genWords");
+const genWordsVal = document.getElementById("genWordsVal");
+const genSeparator = document.getElementById("genSeparator");
+const genUpper = document.getElementById("genUpper");
+const genLower = document.getElementById("genLower");
+const genNumbers = document.getElementById("genNumbers");
+const genSymbols = document.getElementById("genSymbols");
+const genAvoidAmbiguous = document.getElementById("genAvoidAmbiguous");
+const genCapitalize = document.getElementById("genCapitalize");
+const genIncludeNumber = document.getElementById("genIncludeNumber");
+const genRandomOptions = document.getElementById("genRandomOptions");
+const genPassphraseOptions = document.getElementById("genPassphraseOptions");
+const genHistoryEl = document.getElementById("genHistory");
+const genHistoryList = document.getElementById("genHistoryList");
+
+const siteSection = document.getElementById("siteSection");
+const siteToggle = document.getElementById("siteToggle");
+const siteBadge = document.getElementById("siteBadge");
+const siteBody = document.getElementById("siteBody");
+const siteAutoFill = document.getElementById("siteAutoFill");
+const siteNeverAutofill = document.getElementById("siteNeverAutofill");
+const siteNeverSave = document.getElementById("siteNeverSave");
+const siteStatus = document.getElementById("siteStatus");
+const phishWarning = document.getElementById("phishWarning");
+const phishWarningText = document.getElementById("phishWarningText");
+
 let currentTabUrl = null;
 let availableLogins = [];
 let inCoreLoginCandidates = [];
+let totpPopupTimer = null;
 
 async function init() {
   await checkDesktopConnection();
@@ -32,6 +73,8 @@ async function init() {
   await loadInCoreLoginCandidates();
   await loadLogins();
   setupEventListeners();
+  setupSiteSettings();
+  renderPhishWarning();
 }
 
 function setupEventListeners() {
@@ -44,6 +87,7 @@ function setupEventListeners() {
   });
 
   setupAliasSettings();
+  setupGenerator();
 }
 
 // ── Email alias settings ────────────────────────────────────────────────────
@@ -167,6 +211,402 @@ async function clearAliasProvider() {
 function setAliasStatus(message, kind = "") {
   aliasStatus.textContent = message;
   aliasStatus.className = `alias-status${kind ? ` ${kind}` : ""}`;
+}
+
+// ── Password generator ──────────────────────────────────────────────────────
+//
+// Two modes: a random string (charset/length controls, optional look-alike
+// exclusion) and a Diceware-style passphrase over the bundled EFF word list.
+// Options persist in `storage.local`; the recent values live only for the
+// browser session. Generation runs entirely here — nothing is sent anywhere.
+
+const GENERATOR_OPTIONS_KEY = "velaGeneratorOptions";
+const GENERATOR_HISTORY_KEY = "velaGeneratorHistory";
+const GENERATOR_HISTORY_MAX = 5;
+
+const GEN_SETS = {
+  upper: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  lower: "abcdefghijklmnopqrstuvwxyz",
+  numbers: "0123456789",
+  symbols: "!@#$%^&*()-_=+[]{}|;:,.<>?"
+};
+const GEN_AMBIGUOUS = /[O0oIl1|`'"~;:.,]/g;
+
+let genOptions = {
+  mode: "random",
+  length: 20,
+  upper: true,
+  lower: true,
+  numbers: true,
+  symbols: true,
+  avoidAmbiguous: false,
+  words: 5,
+  separator: "-",
+  capitalize: false,
+  includeNumber: false
+};
+let genHistory = [];
+
+function setupGenerator() {
+  genToggle.addEventListener("click", () => {
+    const open = genBody.hidden;
+    genBody.hidden = !open;
+    genSection.classList.toggle("open", open);
+  });
+
+  genModeRandom.addEventListener("click", () => setGenMode("random"));
+  genModePassphrase.addEventListener("click", () => setGenMode("passphrase"));
+  genRegenerate.addEventListener("click", regenerate);
+  genCopy.addEventListener("click", () => {
+    if (genOutput.textContent) {
+      copyToClipboard(genOutput.textContent);
+      showNotification("Password copied!");
+    }
+  });
+
+  genLength.addEventListener("input", () => {
+    genOptions.length = Number(genLength.value);
+    genLengthVal.textContent = String(genOptions.length);
+    regenerate();
+  });
+  genWords.addEventListener("input", () => {
+    genOptions.words = Number(genWords.value);
+    genWordsVal.textContent = String(genOptions.words);
+    regenerate();
+  });
+  genSeparator.addEventListener("change", () => {
+    genOptions.separator = genSeparator.value;
+    regenerate();
+  });
+  for (const [element, key] of [
+    [genUpper, "upper"],
+    [genLower, "lower"],
+    [genNumbers, "numbers"],
+    [genSymbols, "symbols"],
+    [genAvoidAmbiguous, "avoidAmbiguous"],
+    [genCapitalize, "capitalize"],
+    [genIncludeNumber, "includeNumber"]
+  ]) {
+    element.addEventListener("change", () => {
+      genOptions[key] = element.checked;
+      regenerate();
+    });
+  }
+
+  loadGeneratorState();
+}
+
+async function loadGeneratorState() {
+  try {
+    const data = await browser.storage.local.get(GENERATOR_OPTIONS_KEY);
+    if (data[GENERATOR_OPTIONS_KEY]) {
+      genOptions = { ...genOptions, ...data[GENERATOR_OPTIONS_KEY] };
+    }
+  } catch (e) {}
+  try {
+    const saved = await browser.storage.session?.get(GENERATOR_HISTORY_KEY);
+    if (saved && Array.isArray(saved[GENERATOR_HISTORY_KEY])) {
+      genHistory = saved[GENERATOR_HISTORY_KEY];
+    }
+  } catch (e) {}
+  applyGeneratorOptionsToUI();
+  regenerate();
+}
+
+function persistGeneratorOptions() {
+  try {
+    browser.storage.local.set({ [GENERATOR_OPTIONS_KEY]: genOptions });
+  } catch (e) {}
+}
+
+function applyGeneratorOptionsToUI() {
+  genLength.value = String(genOptions.length);
+  genLengthVal.textContent = String(genOptions.length);
+  genWords.value = String(genOptions.words);
+  genWordsVal.textContent = String(genOptions.words);
+  genUpper.checked = genOptions.upper;
+  genLower.checked = genOptions.lower;
+  genNumbers.checked = genOptions.numbers;
+  genSymbols.checked = genOptions.symbols;
+  genAvoidAmbiguous.checked = genOptions.avoidAmbiguous;
+  genCapitalize.checked = genOptions.capitalize;
+  genIncludeNumber.checked = genOptions.includeNumber;
+  genSeparator.value = genOptions.separator;
+  setGenMode(genOptions.mode, false);
+}
+
+function setGenMode(mode, regenerateNow = true) {
+  genOptions.mode = mode === "passphrase" ? "passphrase" : "random";
+  genModeRandom.classList.toggle("active", genOptions.mode === "random");
+  genModePassphrase.classList.toggle("active", genOptions.mode === "passphrase");
+  genRandomOptions.hidden = genOptions.mode !== "random";
+  genPassphraseOptions.hidden = genOptions.mode !== "passphrase";
+  genBadge.textContent = genOptions.mode === "passphrase" ? "Passphrase" : "Random";
+  if (regenerateNow) {
+    persistGeneratorOptions();
+    regenerate();
+  }
+}
+
+// Uniform index in [0, max) via 32-bit rejection sampling, so no modulo bias.
+function randomIndex(max) {
+  const limit = Math.floor(0x100000000 / max) * max;
+  const buffer = new Uint32Array(1);
+  let value;
+  do {
+    crypto.getRandomValues(buffer);
+    value = buffer[0];
+  } while (value >= limit);
+  return value % max;
+}
+
+function pickFrom(characters) {
+  return characters.charAt(randomIndex(characters.length));
+}
+
+function generateRandom() {
+  const enabled = [];
+  if (genOptions.upper) enabled.push(GEN_SETS.upper);
+  if (genOptions.lower) enabled.push(GEN_SETS.lower);
+  if (genOptions.numbers) enabled.push(GEN_SETS.numbers);
+  if (genOptions.symbols) enabled.push(GEN_SETS.symbols);
+  if (!enabled.length) enabled.push(GEN_SETS.lower);
+
+  const pools = enabled
+    .map((set) => (genOptions.avoidAmbiguous ? set.replace(GEN_AMBIGUOUS, "") : set))
+    .filter((set) => set.length > 0);
+  const pool = pools.join("");
+  const length = Math.max(4, genOptions.length);
+
+  const characters = [];
+  // Guarantee at least one character from each enabled set, then fill.
+  for (const set of pools) characters.push(pickFrom(set));
+  while (characters.length < length) characters.push(pickFrom(pool));
+  // Fisher-Yates with crypto randomness so the guaranteed characters are not
+  // always at the front.
+  for (let i = characters.length - 1; i > 0; i--) {
+    const j = randomIndex(i + 1);
+    [characters[i], characters[j]] = [characters[j], characters[i]];
+  }
+
+  const value = characters.slice(0, length).join("");
+  return { value, bits: length * Math.log2(pool.length) };
+}
+
+function generatePassphrase() {
+  const list = globalThis.VELA_WORDLIST || [];
+  if (!list.length) return { value: "", bits: 0 };
+  const count = Math.max(2, genOptions.words);
+  const separator = genOptions.separator || "-";
+
+  const words = [];
+  for (let i = 0; i < count; i++) {
+    let word = list[randomIndex(list.length)];
+    if (genOptions.capitalize) {
+      word = word.charAt(0).toUpperCase() + word.slice(1);
+    }
+    words.push(word);
+  }
+  if (genOptions.includeNumber) {
+    const index = randomIndex(words.length);
+    words[index] += String(randomIndex(10));
+  }
+
+  let bits = count * Math.log2(list.length);
+  if (genOptions.includeNumber) bits += Math.log2(10 * count);
+  return { value: words.join(separator), bits };
+}
+
+function regenerate() {
+  const result = genOptions.mode === "passphrase" ? generatePassphrase() : generateRandom();
+  genOutput.textContent = result.value;
+  updateStrength(result.bits);
+  persistGeneratorOptions();
+  pushHistory(result.value);
+}
+
+function updateStrength(bits) {
+  let percent;
+  let label;
+  let color;
+  if (bits < 40) {
+    percent = 25;
+    label = "Weak";
+    color = "#ffb4ab";
+  } else if (bits < 60) {
+    percent = 50;
+    label = "Fair";
+    color = "#ffd28a";
+  } else if (bits < 80) {
+    percent = 75;
+    label = "Good";
+    color = "#73db9a";
+  } else {
+    percent = 100;
+    label = "Strong";
+    color = "#73db9a";
+  }
+  genStrengthFill.style.width = `${percent}%`;
+  genStrengthFill.style.background = color;
+  genStrengthLabel.textContent = `${label} · ${Math.round(bits)} bits`;
+}
+
+function pushHistory(value) {
+  if (!value) return;
+  genHistory = [value, ...genHistory.filter((entry) => entry !== value)].slice(
+    0,
+    GENERATOR_HISTORY_MAX
+  );
+  try {
+    browser.storage.session?.set({ [GENERATOR_HISTORY_KEY]: genHistory });
+  } catch (e) {}
+  renderHistory();
+}
+
+function renderHistory() {
+  if (!genHistory.length) {
+    genHistoryEl.hidden = true;
+    return;
+  }
+  genHistoryEl.hidden = false;
+  genHistoryList.innerHTML = genHistory
+    .map(
+      (value) => `
+        <div class="gen-history-item" data-value="${escapeHtml(value)}" title="Copy">
+          <span>${escapeHtml(value)}</span>
+          <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path d="M8 3a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2V5a2 2 0 00-2-2H8z"/><path d="M4 7a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2v-1H8a3 3 0 01-3-3V7H4z"/></svg>
+        </div>`
+    )
+    .join("");
+  genHistoryList.querySelectorAll(".gen-history-item").forEach((element) => {
+    element.addEventListener("click", () => {
+      copyToClipboard(element.dataset.value);
+      showNotification("Password copied!");
+    });
+  });
+}
+
+// ── Per-site autofill settings + lookalike warning ──────────────────────────
+//
+// Autofill preferences are keyed by the normalized host (no `www.`) so they
+// match the content script's `siteKey`. The never-save blocklist keeps the
+// raw hostname, which is what the content script has always used.
+
+const SITE_SETTINGS_KEY = "velaSiteSettings";
+const NEVER_SAVE_KEY = "velaNeverSaveDomains";
+let currentSiteKey = "";
+
+function currentHostname() {
+  if (!currentTabUrl) return "";
+  try {
+    return new URL(currentTabUrl).hostname;
+  } catch (e) {
+    return "";
+  }
+}
+
+function setupSiteSettings() {
+  siteToggle.addEventListener("click", () => {
+    const open = siteBody.hidden;
+    siteBody.hidden = !open;
+    siteSection.classList.toggle("open", open);
+  });
+  siteAutoFill.addEventListener("change", () =>
+    updateSiteSettings({ autoFillOnLoad: siteAutoFill.checked })
+  );
+  siteNeverAutofill.addEventListener("change", () =>
+    updateSiteSettings({ neverAutofill: siteNeverAutofill.checked })
+  );
+  siteNeverSave.addEventListener("change", updateNeverSave);
+  loadSiteSettings();
+}
+
+function renderPhishWarning() {
+  if (!hostRisk) {
+    phishWarning.hidden = true;
+    return;
+  }
+  const host = currentHostname();
+  const risk = host ? hostRisk(host) : { level: "none" };
+  if (risk.level !== "warn") {
+    phishWarning.hidden = true;
+    return;
+  }
+  phishWarningText.textContent =
+    risk.unicode && risk.unicode !== host
+      ? `This site's address mixes writing systems and may be impersonating another. It decodes to ${risk.unicode}.`
+      : "This site's address mixes writing systems and may be impersonating another.";
+  phishWarning.hidden = false;
+}
+
+async function loadSiteSettings() {
+  currentSiteKey = siteKey ? siteKey(currentTabUrl) : "";
+  if (!currentSiteKey) {
+    siteSection.hidden = true;
+    return;
+  }
+  siteSection.hidden = false;
+  siteBadge.textContent = currentSiteKey;
+  try {
+    const data = await browser.storage.local.get([SITE_SETTINGS_KEY, NEVER_SAVE_KEY]);
+    const all = data[SITE_SETTINGS_KEY] || {};
+    const site = all[currentSiteKey] || {};
+    siteAutoFill.checked = site.autoFillOnLoad === true;
+    siteNeverAutofill.checked = site.neverAutofill === true;
+    const neverSave = data[NEVER_SAVE_KEY] || [];
+    siteNeverSave.checked = Array.isArray(neverSave) && neverSave.includes(currentHostname());
+  } catch (e) {
+    setSiteStatus("Could not load site settings.", "err");
+  }
+}
+
+async function updateSiteSettings(patch) {
+  if (!currentSiteKey) return;
+  try {
+    const data = await browser.storage.local.get(SITE_SETTINGS_KEY);
+    const all = data[SITE_SETTINGS_KEY] || {};
+    all[currentSiteKey] = { ...(all[currentSiteKey] || {}), ...patch };
+    await browser.storage.local.set({ [SITE_SETTINGS_KEY]: all });
+    notifyActiveTab();
+    setSiteStatus(patch.neverAutofill ? "Autofill disabled for this site." : "Saved.", "ok");
+  } catch (e) {
+    setSiteStatus("Could not save.", "err");
+  }
+}
+
+async function updateNeverSave() {
+  const host = currentHostname();
+  if (!host) return;
+  try {
+    const data = await browser.storage.local.get(NEVER_SAVE_KEY);
+    let list = Array.isArray(data[NEVER_SAVE_KEY]) ? data[NEVER_SAVE_KEY] : [];
+    if (siteNeverSave.checked) {
+      if (!list.includes(host)) list = [...list, host];
+    } else {
+      list = list.filter((domain) => domain !== host);
+    }
+    await browser.storage.local.set({ [NEVER_SAVE_KEY]: list });
+    notifyActiveTab();
+    setSiteStatus(siteNeverSave.checked ? "Will not prompt to save here." : "Saved.", "ok");
+  } catch (e) {
+    setSiteStatus("Could not save.", "err");
+  }
+}
+
+function notifyActiveTab() {
+  tabs
+    .query({ active: true, currentWindow: true })
+    .then((found) => {
+      if (found && found[0] && found[0].id) {
+        tabs.sendMessage(found[0].id, { command: "siteSettingsChanged" }).catch(() => {});
+      }
+    })
+    .catch(() => {});
+}
+
+function setSiteStatus(message, kind = "") {
+  siteStatus.textContent = message;
+  siteStatus.className = `alias-status${kind ? ` ${kind}` : ""}`;
 }
 
 async function checkDesktopConnection() {
@@ -308,6 +748,13 @@ function renderLogins() {
     const name = login.name || extractDomain(login.url) || "Unknown";
     const initial = name.charAt(0).toUpperCase();
     const domain = login.url ? extractDomain(login.url) : "";
+    const totpButton = login.totp
+      ? `<button class="icon-btn" title="Authenticator code" data-action="totp" data-login-id="${escapeHtml(login.id || "")}">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path fill-rule="evenodd" d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 6a1 1 0 112 0v4a1 1 0 01-.293.707l-2.5 2.5a1 1 0 01-1.414-1.414L9 9.586V6z" clip-rule="evenodd" />
+            </svg>
+          </button>`
+      : "";
 
     return `
       <li class="login-item" data-login-id="${escapeHtml(login.id || "")}">
@@ -327,6 +774,7 @@ function renderLogins() {
               <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
             </svg>
           </button>
+          ${totpButton}
           <button class="icon-btn" title="Auto-fill" data-action="autofill" data-login-id="${escapeHtml(login.id || "")}">
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
@@ -545,7 +993,88 @@ function handleLoginAction(action, loginId) {
     case "autofill":
       triggerAutofill(login);
       break;
+    case "totp":
+      showTotpCode(login);
+      break;
   }
+}
+
+// The code is fetched from the desktop (never derived here), so the popup
+// shows the same value the desktop would use and never sees the seed. The
+// panel lives as a sibling of the login row and refreshes each second until
+// the popup closes.
+function showTotpCode(login) {
+  const item = Array.from(document.querySelectorAll(".login-item")).find(
+    (el) => el.dataset.loginId === String(login.id || "")
+  );
+  if (!item) return;
+
+  const existing = item.nextElementSibling;
+  if (existing && existing.classList.contains("totp-panel")) {
+    existing.remove();
+    return;
+  }
+
+  const panel = document.createElement("div");
+  panel.className = "totp-panel";
+  panel.innerHTML = `
+    <span class="totp-code">······</span>
+    <span class="totp-count"></span>
+    <button class="totp-copy" type="button">Copy</button>
+  `;
+  item.parentNode.insertBefore(panel, item.nextSibling);
+
+  const codeEl = panel.querySelector(".totp-code");
+  const countEl = panel.querySelector(".totp-count");
+  const copyBtn = panel.querySelector(".totp-copy");
+
+  let current = "";
+  let remaining = 0;
+
+  const tick = async () => {
+    if (!document.body.contains(panel)) {
+      clearInterval(totpPopupTimer);
+      totpPopupTimer = null;
+      return;
+    }
+    if (remaining <= 0) {
+      const response = await sendMessage({
+        command: "getTotpCode",
+        loginId: login.id,
+        url: currentTabUrl
+      });
+      if (response && response.success && response.code) {
+        current = response.code;
+        remaining = Number(response.remainingSecs) || 30;
+        codeEl.textContent = formatTotpCode(current);
+      } else {
+        codeEl.textContent = "unavailable";
+        countEl.textContent = response?.error ? "—" : "";
+      }
+    } else {
+      remaining -= 1;
+    }
+    countEl.textContent = current ? `${remaining}s` : "";
+  };
+
+  copyBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (current) {
+      copyToClipboard(current);
+      showNotification("Authenticator code copied!");
+    }
+  });
+
+  if (totpPopupTimer) clearInterval(totpPopupTimer);
+  tick();
+  totpPopupTimer = setInterval(tick, 1000);
+}
+
+function formatTotpCode(code) {
+  const value = String(code || "");
+  if (value.length === 6) return `${value.slice(0, 3)} ${value.slice(3)}`;
+  if (value.length === 8) return `${value.slice(0, 4)} ${value.slice(4)}`;
+  return value;
 }
 
 async function triggerAutofill(login) {

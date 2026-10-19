@@ -8,6 +8,10 @@ A secure password manager browser extension with zero-knowledge architecture. Wo
 - **Biometric Authentication**: Unlock with Windows Hello, Touch ID, or Face ID
 - **Native Desktop Integration**: Communicates securely with the VELA desktop application
 - **Smart Autofill**: Automatically fills login credentials on websites
+- **Authenticator Codes**: After a login fill, automatically fills the one-time code on the site's second step, and shows a live code with a countdown in the popup. The desktop releases a fresh code — never the standing seed.
+- **Password Generator**: In the popup, random or Diceware passphrase (bundled EFF word list) with look-alike exclusion, strength estimate, session history, and persisted options; also available inline on registration fields
+- **Per-Site Controls**: Auto-fill on page load, never autofill, and never save, set per site from the popup
+- **Lookalike Warning**: Decodes punycode/IDN hosts and warns when a site mixes writing systems to imitate another address
 - **Capture Prompts**: Offers to save logins (including SPA logins without a form submit), prompts "Password changed — update item?" instead of creating duplicates, and puts a one-click password generator on registration fields
 - **Email Aliases**: The generator can mint a fresh email alias with addy.io, SimpleLogin, or Firefox Relay — register with a throwaway address and never hand a site your real one
 - **Cross-Platform**: Works on Chrome, Edge, Brave, Thorium, Helium, Firefox, Zen, Waterfox, and more
