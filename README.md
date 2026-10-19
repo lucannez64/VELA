@@ -55,6 +55,8 @@ Documentation map:
 - `CHANGELOG.md` — release history and security remediations.
 - `EPHEMERAL_WEB_ACCESS_DESIGN.md` — the web vault design cited throughout the code.
 - `SECURITY_AUDIT.md` / `SECURITY_REDTEAM.md` — audit findings; `security/exploits/` proves the fixes stay fixed in CI.
+- `SECURITY.md` — vulnerability disclosure policy; `.well-known/security.txt` is its machine-readable form.
+- `ROADMAP.md` — what stands between the current tree and a 1.0 release.
 
 ## Server
 

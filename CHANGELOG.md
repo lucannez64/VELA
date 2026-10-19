@@ -82,6 +82,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a Python exploit/regression suite proving audit fixes stay fixed.
 - CI: desktop release (deb/rpm/msi/nsis), Android release APK, iOS app,
   Firefox XPI signing, fuzzing, security scans, shared compilation cache.
+- Security disclosure policy: root `SECURITY.md` (scope, reporting,
+  safe harbor, response targets) and a machine-readable
+  `.well-known/security.txt` pointing at GitHub private vulnerability
+  reporting.
 
 ### Changed
 - Browser-extension IPC is OS-authenticated only (Windows named pipes / Unix

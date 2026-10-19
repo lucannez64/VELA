@@ -1,0 +1,12 @@
+# VELA security.txt
+# Machine-readable companion to SECURITY.md (RFC 9116, https://securitytxt.org).
+#
+# Contact: GitHub private vulnerability reporting works today and needs no
+# secret. Add a mailto: entry (comma-separated) once a canonical project
+# domain and security mailbox exist.
+# Encryption: add a PGP key URL/fingerprint once a maintainer key is published.
+Contact: https://github.com/lucannez64/VELA/security/advisories/new
+Expires: 2027-09-28T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://github.com/lucannez64/VELA/blob/main/.well-known/security.txt
+Policy: https://github.com/lucannez64/VELA/blob/main/SECURITY.md
