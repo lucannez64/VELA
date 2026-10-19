@@ -242,6 +242,12 @@ async fn serve() -> anyhow::Result<()> {
         });
     }
     {
+        let bg_sqldb = state.sqldb.clone();
+        tokio::spawn(async move {
+            vela_server::send::cleanup_task(bg_sqldb).await;
+        });
+    }
+    {
         let bg_store = state.store.clone();
         tokio::spawn(async move {
             loop {

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <!-- Strict CSP: first-party only. wasm-unsafe-eval is required to
+         instantiate WebAssembly; connect-src 'self' keeps the ciphertext fetch
+         same-origin. The decryption key is in the URL fragment, which this page
+         strips immediately and which is never sent to the server. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; worker-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <title>VELA — Shared secret</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/send.ts"></script>
+  </body>
+</html>

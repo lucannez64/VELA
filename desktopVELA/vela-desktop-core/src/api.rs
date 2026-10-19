@@ -1146,6 +1146,51 @@ impl ApiClient {
         Ok(extract_new_token(&resp))
     }
 
+    /// Create a one-off share link. Returns `(id, expires_at, new_token)`.
+    pub async fn create_send(
+        &self,
+        token: &str,
+        body: &serde_json::Value,
+    ) -> Result<(String, String, Option<String>)> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .post(format!("{}/send", self.base_url))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(body)
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Create share link failed: {}", resp.status());
+        }
+
+        let new_token = extract_new_token(&resp);
+        #[derive(serde::Deserialize)]
+        struct CreateSendResponse {
+            id: String,
+            expires_at: String,
+        }
+        let result: CreateSendResponse = resp.json().await?;
+        Ok((result.id, result.expires_at, new_token))
+    }
+
+    pub async fn delete_send(&self, token: &str, link_id: &str) -> Result<Option<String>> {
+        let resp = self
+            .send_request(false, |client| {
+                client
+                    .delete(format!("{}/send/{}", self.base_url, link_id))
+                    .header("Authorization", format!("Bearer {}", token))
+            })
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Delete share link failed: {}", resp.status());
+        }
+
+        Ok(extract_new_token(&resp))
+    }
+
     pub async fn get_recipient_share_ek(&self, token: &str, user_id: &str) -> Result<String> {
         let resp = self
             .send_request(false, |client| {

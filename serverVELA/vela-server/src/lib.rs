@@ -17,6 +17,7 @@ pub mod net;
 pub mod rate_limit;
 pub mod recovery;
 pub mod routes;
+pub mod send;
 pub mod share;
 pub mod sqldb;
 pub mod state;

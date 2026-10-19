@@ -333,6 +333,14 @@ CREATE TABLE IF NOT EXISTS web_sessions (
     expires_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_status ON web_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS sends (
+    id TEXT UNIQUE NOT NULL, owner_user_id TEXT NOT NULL, ciphertext TEXT NOT NULL,
+    has_passphrase INTEGER NOT NULL DEFAULT 0, kdf_salt TEXT, label TEXT,
+    view_once INTEGER NOT NULL DEFAULT 0, max_views INTEGER,
+    view_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_sends_owner ON sends(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_sends_expires ON sends(expires_at);
 ";
 
 /// Index changes which depend on columns added by `backfill_rekey_columns`.

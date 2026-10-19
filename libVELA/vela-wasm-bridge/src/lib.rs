@@ -74,6 +74,24 @@ struct OpenShareResponse {
 }
 
 #[derive(Deserialize)]
+struct OpenLinkRequest {
+    /// The link key from the URL fragment (base64url, no padding).
+    link_key_b64: String,
+    /// Optional passphrase for a protected link.
+    #[serde(default)]
+    passphrase: Option<String>,
+    /// Argon2id salt (base64 standard), present only for passphrase links.
+    #[serde(default)]
+    salt_b64: Option<String>,
+    ciphertext_b64: String,
+}
+
+#[derive(Serialize)]
+struct OpenLinkResponse {
+    secret_json: String,
+}
+
+#[derive(Deserialize)]
 struct EncryptChunkRequest {
     /// The per-chunk key granted for this chunk id — **not** the RMS. A web
     /// session never receives the root seed (audit D-2).
@@ -198,6 +216,37 @@ fn open_share_impl(request_json: &str) -> Result<OpenShareResponse, String> {
     })
 }
 
+/// Open a one-off link payload. The key came in the URL fragment, so the server
+/// never had it; a passphrase link additionally needs the passphrase.
+fn open_link_impl(request_json: &str) -> Result<OpenLinkResponse, String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let req: OpenLinkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let key_bytes = URL_SAFE_NO_PAD
+        .decode(req.link_key_b64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let link_key: [u8; vela_crypto::link::LINK_KEY_LEN] = key_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| "link key must be 32 bytes".to_string())?;
+    let salt = match req.salt_b64.as_deref() {
+        Some(salt) if !salt.is_empty() => B64.decode(salt.as_bytes()).map_err(|e| e.to_string())?,
+        _ => Vec::new(),
+    };
+    let ciphertext = B64
+        .decode(req.ciphertext_b64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let passphrase = req
+        .passphrase
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .map(|p| p.as_bytes());
+    let plaintext = vela_crypto::link::open_link(&link_key, passphrase, &salt, &ciphertext)
+        .map_err(|e| e.to_string())?;
+    Ok(OpenLinkResponse {
+        secret_json: String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?,
+    })
+}
+
 fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, String> {
     let req: EncryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
@@ -280,6 +329,14 @@ pub fn open_share_json(request_json: &str) -> String {
     respond(open_share_impl(request_json))
 }
 
+/// Open a one-off link payload. Request
+/// `{ link_key_b64, passphrase?, salt_b64?, ciphertext_b64 }` → `{ secret_json }`.
+/// The key travels in the URL fragment; the server only ever had ciphertext.
+#[wasm_bindgen]
+pub fn open_link_json(request_json: &str) -> String {
+    respond(open_link_impl(request_json))
+}
+
 /// Encrypt a vault chunk with the granted per-chunk key.
 /// Request `{ chunk_key_b64, vault_json }` → `{ ciphertext_b64 }`.
 #[wasm_bindgen]
@@ -336,6 +393,42 @@ mod tests {
         .to_string();
         let out = open_share_json(&req);
         assert_eq!(field(&out, "item_json").as_bytes(), item);
+    }
+
+    #[test]
+    fn open_link_roundtrip_matches_the_sender_seal() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let link_key = vela_crypto::link::generate_link_key();
+        let salt = vela_crypto::link::generate_salt();
+        let secret = b"{\"name\":\"GitHub\",\"password\":\"hunter2\"}";
+
+        let ciphertext = vela_crypto::link::seal_link(&link_key, None, &salt, secret).unwrap();
+        let req = serde_json::json!({
+            "link_key_b64": URL_SAFE_NO_PAD.encode(link_key),
+            "ciphertext_b64": B64.encode(&ciphertext),
+        })
+        .to_string();
+        assert_eq!(field(&open_link_json(&req), "secret_json").as_bytes(), secret);
+
+        // A passphrase link needs both halves.
+        let protected =
+            vela_crypto::link::seal_link(&link_key, Some(b"correct horse"), &salt, secret).unwrap();
+        let req = serde_json::json!({
+            "link_key_b64": URL_SAFE_NO_PAD.encode(link_key),
+            "passphrase": "correct horse",
+            "salt_b64": B64.encode(&salt),
+            "ciphertext_b64": B64.encode(&protected),
+        })
+        .to_string();
+        assert_eq!(field(&open_link_json(&req), "secret_json").as_bytes(), secret);
+
+        let missing_passphrase = serde_json::json!({
+            "link_key_b64": URL_SAFE_NO_PAD.encode(link_key),
+            "salt_b64": B64.encode(&salt),
+            "ciphertext_b64": B64.encode(&protected),
+        })
+        .to_string();
+        assert!(open_link_json(&missing_passphrase).contains("error"));
     }
 
     #[test]

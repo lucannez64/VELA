@@ -217,6 +217,23 @@ pub fn share_send_by_sender(store: &Store, sender: &str) -> Result<()> {
     check(store, &format!("rl:share:send:user:{sender}"), 120, HOUR_SECS)
 }
 
+/// 60 one-off share-link creations/hour per user.
+pub fn send_create_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(store, &format!("rl:send:create:user:{user_id}"), 60, HOUR_SECS)
+}
+
+/// 60 share-link fetches/min per IP. The id is a random 128-bit UUID, so this
+/// only bounds grinding/enumeration against an endpoint that is unauthenticated
+/// by design (the recipient has no account).
+pub fn send_fetch_by_ip(store: &Store, ip: &str) -> Result<()> {
+    check(store, &format!("rl:send:fetch:ip:{ip}"), 60, WINDOW_SECS)
+}
+
+/// 120 share-link list calls/min per user.
+pub fn send_list_by_user(store: &Store, user_id: &str) -> Result<()> {
+    check(store, &format!("rl:send:list:user:{user_id}"), 120, WINDOW_SECS)
+}
+
 /// 30 ephemeral-web-session starts/hour per IP (the endpoint is unauthenticated).
 pub fn web_session_start_by_ip(store: &Store, ip: &str) -> Result<()> {
     check(store, &format!("rl:websession:start:ip:{ip}"), 30, HOUR_SECS)

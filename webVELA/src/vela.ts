@@ -5,6 +5,7 @@ import init, {
   generate_signing_keypair,
   create_auth_signature_json,
   open_share_json,
+  open_link_json,
   encrypt_vault_chunk_json,
   decrypt_vault_chunk_json,
 } from './wasm/vela_wasm_bridge.js';
@@ -42,6 +43,30 @@ export function openShare(shareDkB64: string, capsuleB64: string): string {
   return parse<{ item_json: string }>(
     open_share_json(JSON.stringify({ share_dk_b64: shareDkB64, capsule_b64: capsuleB64 })),
   ).item_json;
+}
+
+/**
+ * Open a one-off share-link payload → the inner JSON string.
+ *
+ * The `linkKeyB64` came from the URL fragment, which the server never received;
+ * a passphrase-protected link additionally needs the passphrase.
+ */
+export function openLink(
+  linkKeyB64: string,
+  passphrase: string | null,
+  saltB64: string | null,
+  ciphertextB64: string,
+): string {
+  return parse<{ secret_json: string }>(
+    open_link_json(
+      JSON.stringify({
+        link_key_b64: linkKeyB64,
+        passphrase,
+        salt_b64: saltB64,
+        ciphertext_b64: ciphertextB64,
+      }),
+    ),
+  ).secret_json;
 }
 
 // The chunk key is the one the approver granted for that exact chunk id; this

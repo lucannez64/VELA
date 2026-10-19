@@ -212,6 +212,33 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at)",
         (),
     )?;
+    // One-off share links to recipients who have no VELA identity. The server
+    // stores only ciphertext; the decryption key travels in the URL fragment.
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS sends (
+            id                TEXT UNIQUE NOT NULL,
+            owner_user_id     TEXT NOT NULL,
+            ciphertext        TEXT NOT NULL,
+            has_passphrase    BOOLEAN NOT NULL DEFAULT FALSE,
+            kdf_salt          TEXT,
+            label             TEXT,
+            view_once         BOOLEAN NOT NULL DEFAULT FALSE,
+            max_views         INTEGER,
+            view_count        INTEGER NOT NULL DEFAULT 0,
+            created_at        TIMESTAMP NOT NULL,
+            expires_at        TIMESTAMP NOT NULL,
+            revoked           BOOLEAN NOT NULL DEFAULT FALSE
+        )",
+        (),
+    )?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sends_owner ON sends(owner_user_id)",
+        (),
+    )?;
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sends_expires ON sends(expires_at)",
+        (),
+    )?;
     migrate_vault_chunks_schema(db)?;
     migrate_rekey_schema(db)?;
     Ok(())

@@ -9,6 +9,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- One-off share links to recipients who do not use VELA (`/send`, `webVELA`
+  `send.html`). The sender seals a login or secure note under a random 256-bit
+  link key (`vela-crypto::link`) and hands out `…/send.html?id=<id>#<key>`; the
+  key lives in the URL fragment, so the server stores only ciphertext it cannot
+  open. Optional Argon2id passphrase, expiry (5 min–30 days), max-views, and
+  view-once are enforced server-side, and every fetch is one indistinguishable
+  `404` when the link is gone. The recipient page decrypts in the browser via
+  the WASM bridge. New UI in both desktop front ends (Tauri/React Sharing →
+  Links, and gpui); the owner's link records — including the key — are kept in
+  an encrypted local file so the URL can be re-copied.
 - Credit-card autofill (fill-only). The browser extension detects card number,
   expiry (combined or split month + year), CVV and cardholder fields and offers
   stored cards after an explicit click on a payment field; the desktop keys the

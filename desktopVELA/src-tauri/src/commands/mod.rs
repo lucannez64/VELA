@@ -8,6 +8,7 @@ pub mod recovery;
 pub mod rekey;
 pub mod session;
 pub mod settings;
+pub mod share_link;
 pub mod sharing;
 pub mod sync;
 pub mod totp;
