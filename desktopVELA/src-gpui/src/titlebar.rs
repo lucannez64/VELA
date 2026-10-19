@@ -39,8 +39,8 @@ use vela_desktop_core::commands::session::get_session_status;
 use vela_desktop_core::session::SessionStatus;
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::fonts;
 use crate::icon::icon;
 use crate::theme::Palette;
@@ -60,7 +60,8 @@ pub struct TitleBar {
 
 impl TitleBar {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
 
         let poll_task = cx.spawn({
             let app_state = app_state.clone();
@@ -88,9 +89,12 @@ impl TitleBar {
                             // BiometricGate. Detecting the active→inactive
                             // transition here and driving both for real
                             // closes that gap.
-                            let was_active = this.session.as_ref().map(|s| s.active).unwrap_or(false);
+                            let was_active =
+                                this.session.as_ref().map(|s| s.active).unwrap_or(false);
                             if was_active && !status.active {
-                                tracing::info!("Session auto-locked (idle timeout) — showing BiometricGate");
+                                tracing::info!(
+                                    "Session auto-locked (idle timeout) — showing BiometricGate"
+                                );
                                 vela_desktop_core::commands::session::lock_session(&this.app_state);
                                 crate::clipboard::clear(cx);
                                 crate::toast::show(
@@ -108,7 +112,8 @@ impl TitleBar {
                 if !alive {
                     break;
                 }
-                cx.background_spawn(async { std::thread::sleep(Duration::from_secs(1)) }).await;
+                cx.background_spawn(async { std::thread::sleep(Duration::from_secs(1)) })
+                    .await;
             }
         });
 
@@ -137,8 +142,14 @@ fn format_time(secs: u64) -> String {
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
+        let show_labels = window.viewport_size().width >= px(640.);
+        let show_badge = window.viewport_size().width >= px(900.);
         let active = self.session.as_ref().map(|s| s.active).unwrap_or(false);
-        let remaining = self.session.as_ref().map(|s| s.session_time_remaining_secs).unwrap_or(0);
+        let remaining = self
+            .session
+            .as_ref()
+            .map(|s| s.session_time_remaining_secs)
+            .unwrap_or(0);
 
         let (timer_color, timer_pulses) = if !active {
             (palette.outline, false)
@@ -149,14 +160,23 @@ impl Render for TitleBar {
         } else {
             (palette.on_surface_variant, false)
         };
-        let timer_opacity = if timer_pulses { animation::pulse_alpha(1.0) } else { 1.0 };
-        let timer_text = if active { format_time(remaining) } else { "--".to_string() };
+        let timer_opacity = if timer_pulses {
+            animation::pulse_alpha(1.0)
+        } else {
+            1.0
+        };
+        let timer_text = if active {
+            format_time(remaining)
+        } else {
+            "--".to_string()
+        };
 
         let always_on_top = self.always_on_top;
 
         div()
             .id("titlebar")
             .h(px(56.))
+            .flex_shrink_0()
             .w_full()
             .flex()
             .items_center()
@@ -164,7 +184,10 @@ impl Render for TitleBar {
             .px_4()
             .bg(palette.surface)
             .border_b_1()
-            .border_color(gpui::Hsla { a: 0.1, ..palette.outline_variant })
+            .border_color(gpui::Hsla {
+                a: 0.1,
+                ..palette.outline_variant
+            })
             .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _cx| {
                 if event.click_count >= 2 {
                     window.zoom_window();
@@ -184,42 +207,52 @@ impl Render for TitleBar {
                             .rounded_lg()
                             .bg(palette.surface_container)
                             .border_1()
-                            .border_color(gpui::Hsla { a: 0.2, ..palette.primary })
+                            .border_color(gpui::Hsla {
+                                a: 0.2,
+                                ..palette.primary
+                            })
                             .flex()
                             .items_center()
                             .justify_center()
                             .child(icon("shield_lock", px(18.), palette.primary)),
                     )
-                    .child(
-                        fonts::tracked_text("VELA", px(18.), 0.2)
-                            .font_family(fonts::HEADLINE)
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_lg()
-                            .text_color(palette.primary),
-                    )
-                    .child(
-                        // `.security-pulse` (`index.css`: 4s pulse, slower
-                        // than plain `animate-pulse`'s 2s) wraps the WHOLE
-                        // badge in the original — the dot itself carries no
-                        // animation class there.
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .ml_4()
-                            .px_3()
-                            .py_1()
-                            .rounded_full()
-                            .bg(gpui::Hsla { a: 0.1, ..palette.secondary })
-                            .opacity(animation::pulse_alpha(4.0))
-                            .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(palette.primary))
-                            .child(
-                                fonts::tracked_text("Zero-Knowledge Active", px(10.), 0.1)
-                                    .font_family(fonts::LABEL)
-                                    .text_size(px(10.))
-                                    .text_color(palette.primary),
-                            ),
-                    ),
+                    .when(show_labels, |el| {
+                        el.child(
+                            fonts::tracked_text("VELA", px(18.), 0.2)
+                                .font_family(fonts::HEADLINE)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_lg()
+                                .text_color(palette.primary),
+                        )
+                    })
+                    .when(show_badge, |el| {
+                        el.child(
+                            // `.security-pulse` (`index.css`: 4s pulse, slower
+                            // than plain `animate-pulse`'s 2s) wraps the WHOLE
+                            // badge in the original — the dot itself carries no
+                            // animation class there.
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .ml_4()
+                                .px_3()
+                                .py_1()
+                                .rounded_full()
+                                .bg(gpui::Hsla {
+                                    a: 0.1,
+                                    ..palette.secondary
+                                })
+                                .opacity(animation::pulse_alpha(4.0))
+                                .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(palette.primary))
+                                .child(
+                                    fonts::tracked_text("Zero-Knowledge Active", px(10.), 0.1)
+                                        .font_family(fonts::LABEL)
+                                        .text_size(px(10.))
+                                        .text_color(palette.primary),
+                                ),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -234,7 +267,7 @@ impl Render for TitleBar {
                             .font_family(fonts::LABEL)
                             .text_xs()
                             .text_color(palette.outline)
-                            .child("Session:")
+                            .when(show_labels, |el| el.child("Session:"))
                             .child(
                                 div()
                                     .font_family(fonts::MONO)
@@ -243,15 +276,27 @@ impl Render for TitleBar {
                                     .child(timer_text),
                             ),
                     )
-                    .child(icon_button(&palette, "lock-now", "lock_open", palette.outline, window, cx, |this, cx| {
-                        this.handle_lock(cx);
-                    }))
-                    .child(
-                        icon_button(
+                    .child(icon_button(
+                        &palette,
+                        "lock-now",
+                        "lock_open",
+                        palette.outline,
+                        window,
+                        cx,
+                        |this, cx| {
+                            this.handle_lock(cx);
+                        },
+                    ))
+                    .when(show_labels, |el| {
+                        el.child(icon_button(
                             &palette,
                             "always-on-top",
                             if always_on_top { "keep" } else { "push_pin" },
-                            if always_on_top { palette.primary } else { palette.outline },
+                            if always_on_top {
+                                palette.primary
+                            } else {
+                                palette.outline
+                            },
                             window,
                             cx,
                             |this, cx| {
@@ -262,23 +307,47 @@ impl Render for TitleBar {
                                 );
                                 cx.notify();
                             },
-                        ),
-                    )
+                        ))
+                    })
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_1()
                             .ml_2()
-                            .child(window_button(&palette, "minimize", "remove", window, cx, false, |window| {
-                                window.minimize_window();
-                            }))
-                            .child(window_button(&palette, "maximize", "crop_square", window, cx, false, |window| {
-                                window.zoom_window();
-                            }))
-                            .child(window_button(&palette, "close", "close", window, cx, true, |window| {
-                                window.remove_window();
-                            })),
+                            .child(window_button(
+                                &palette,
+                                "minimize",
+                                "remove",
+                                window,
+                                cx,
+                                false,
+                                |window| {
+                                    window.minimize_window();
+                                },
+                            ))
+                            .child(window_button(
+                                &palette,
+                                "maximize",
+                                "crop_square",
+                                window,
+                                cx,
+                                false,
+                                |window| {
+                                    window.zoom_window();
+                                },
+                            ))
+                            .child(window_button(
+                                &palette,
+                                "close",
+                                "close",
+                                window,
+                                cx,
+                                true,
+                                |window| {
+                                    window.remove_window();
+                                },
+                            )),
                     ),
             )
     }
@@ -314,10 +383,13 @@ fn icon_button(
         // drag/double-click-to-maximize handler (since that's registered on
         // the whole titlebar row these buttons live inside), so every
         // button click also attempted a window move.
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-            cx.stop_propagation();
-            on_click(this, cx);
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                on_click(this, cx);
+            }),
+        )
 }
 
 fn window_button(
@@ -330,15 +402,30 @@ fn window_button(
     action: impl Fn(&mut Window) + 'static,
 ) -> impl IntoElement {
     let text = palette.on_surface_variant;
-    let hover_target = if is_close { palette.error } else { palette.surface_container };
+    let hover_target = if is_close {
+        palette.error
+    } else {
+        palette.surface_container
+    };
     let hover_t = animation::hover_transition(id, window, cx);
     let t = *hover_t.evaluate(window, cx);
     let bg = if is_close {
-        animation::lerp_hsla(gpui::transparent_black(), gpui::Hsla { a: 0.2, ..hover_target }, t)
+        animation::lerp_hsla(
+            gpui::transparent_black(),
+            gpui::Hsla {
+                a: 0.2,
+                ..hover_target
+            },
+            t,
+        )
     } else {
         animation::lerp_hsla(gpui::transparent_black(), hover_target, t)
     };
-    let icon_color = if is_close { animation::lerp_hsla(text, palette.error, t) } else { text };
+    let icon_color = if is_close {
+        animation::lerp_hsla(text, palette.error, t)
+    } else {
+        text
+    };
 
     div()
         .id(id)

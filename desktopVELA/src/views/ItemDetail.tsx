@@ -148,25 +148,25 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
   const isReceivedShare = item.shared && !item.share_recipient;
 
   return (
-    <div className="flex-1 bg-surface-container-lowest overflow-y-auto">
+    <div className="flex-1 min-w-0 min-h-0 bg-surface-container-lowest overflow-y-auto">
       <div className="max-w-5xl mx-auto py-6 sm:py-10 px-4 sm:px-6 lg:px-10">
         <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-6 mb-10">
-          <div className="flex items-start gap-5 min-w-0">
-            <button onClick={() => setSelectedItem(null)} className="mt-7 shrink-0 text-on-surface-variant hover:text-primary transition-colors">
+          <div className="flex flex-1 items-start gap-3 sm:gap-5 min-w-0">
+            <button aria-label="Back to vault" onClick={() => setSelectedItem(null)} className="mt-7 shrink-0 text-on-surface-variant hover:text-primary transition-colors">
               <span className="material-symbols-outlined">arrow_back</span>
             </button>
-            <div className="relative">
+            <div className="relative shrink-0">
               <FaviconIcon
                 url={item.url}
                 itemType={item.item_type}
                 icon={getIcon()}
-                className="w-20 h-20 rounded-2xl bg-surface-bright shadow-2xl"
+                className="w-12 h-12 sm:w-20 sm:h-20 rounded-2xl bg-surface-bright shadow-2xl"
                 fallbackClassName="text-4xl text-primary"
               />
               <div className="absolute -bottom-2 -right-2 bg-secondary text-on-secondary px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase">SECURE</div>
             </div>
             <div className="min-w-0 pt-2">
-              <h1 className="font-headline text-3xl lg:text-4xl font-bold tracking-tight mb-1 break-words leading-tight">{item.name}</h1>
+              <h1 className="font-headline text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight mb-1 [overflow-wrap:anywhere] leading-tight">{item.name}</h1>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="w-2 h-2 shrink-0 rounded-full bg-primary"></span>
                 <p className="text-on-surface-variant font-label text-xs tracking-wider uppercase">Zero-Knowledge {item.item_type}</p>
@@ -177,11 +177,12 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
             </div>
           </div>
           <div className="flex flex-wrap gap-3 shrink-0 xl:justify-end">
-            <button onClick={handleToggleFavorite} className={`w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors ${favorite ? 'text-amber-400' : ''}`}>
+            <button aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'} onClick={handleToggleFavorite} className={`w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors ${favorite ? 'text-amber-400' : ''}`}>
               <span className="material-symbols-outlined text-xl text-amber-400" style={favorite ? { fontVariationSettings: "'FILL' 1" } : undefined}>star</span>
             </button>
             {!isReceivedShare && !isPasskey && (
               <button
+                aria-label="Edit item"
                 onClick={onEdit}
                 className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest hover:bg-surface-bright transition-colors">
                 <span className="material-symbols-outlined text-xl">edit</span>

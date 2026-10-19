@@ -9,16 +9,16 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
-    div, prelude::*, px, App, Context, EventEmitter, IntoElement, MouseButton, Render, SharedString,
-    Task, Window,
+    div, prelude::*, px, App, Context, EventEmitter, IntoElement, MouseButton, Render,
+    SharedString, Task, Window,
 };
 
 use chrono::{DateTime, Local};
 use vela_desktop_core::vault::{ItemType, VaultItem};
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::favicon_ui::{self, FaviconCache};
 use crate::fonts;
 use crate::icon::icon;
@@ -99,8 +99,12 @@ pub struct ItemDetail {
 
 impl ItemDetail {
     pub fn new(app_state: Arc<AppState>, item: VaultItem, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
-        let totp_secret = if let VaultItem::Login { totp: Some(secret), .. } = &item {
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
+        let totp_secret = if let VaultItem::Login {
+            totp: Some(secret), ..
+        } = &item
+        {
             Some(secret.clone())
         } else {
             None
@@ -155,7 +159,9 @@ impl ItemDetail {
                                 async move { vela_desktop_core::totp::generate_totp(secret) }
                             })
                             .await
-                            .unwrap_or_else(|| Err("TOTP generation failed unexpectedly".to_string()));
+                            .unwrap_or_else(|| {
+                                Err("TOTP generation failed unexpectedly".to_string())
+                            });
                         let alive = this
                             .update(cx, |this, cx| {
                                 match result {
@@ -293,34 +299,61 @@ impl Render for ItemDetail {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
         let item = self.item.clone();
-        // Matches the original's `flex flex-col xl:flex-row` on the header
-        // row (Tailwind's `xl:` = 1280px): below that width the title block
-        // and the favorite/edit/share button group stack vertically instead
-        // of being forced onto one row, which is what was pushing "Share
-        // Access" off the right edge of the window at more typical widths.
-        let stacked = window.viewport_size().width < px(1280.);
+        // Base the header layout on the space left beside navigation.
+        let stacked = crate::layout::content_width(window.viewport_size().width.into()) < 1000.;
 
-        let mut fields = div().flex().flex_col().gap_3();
+        let mut fields = div().flex().flex_col().flex_shrink_0().gap_3();
 
         if let Some(username) = item.username() {
-            fields = fields.child(field_card(&palette, "USERNAME", username, username, false, window, cx));
+            fields = fields.child(field_card(
+                &palette, "USERNAME", username, username, false, window, cx,
+            ));
         }
 
         if let Some(password) = item.password() {
-            let display = if self.show_password { password.to_string() } else { "••••••••••••".to_string() };
-            fields = fields.child(
-                field_card_with_reveal(&palette, "PASSWORD", &display, password, self.show_password, window, cx),
-            );
+            let display = if self.show_password {
+                password.to_string()
+            } else {
+                "••••••••••••".to_string()
+            };
+            fields = fields.child(field_card_with_reveal(
+                &palette,
+                "PASSWORD",
+                &display,
+                password,
+                self.show_password,
+                window,
+                cx,
+            ));
         }
 
-        if let VaultItem::CreditCard { number, exp, cvv, pin, cardholder_name, .. } = &item {
+        if let VaultItem::CreditCard {
+            number,
+            exp,
+            cvv,
+            pin,
+            cardholder_name,
+            ..
+        } = &item
+        {
             if let Some(name) = cardholder_name {
-                fields = fields.child(field_card(&palette, "CARDHOLDER NAME", name, name, false, window, cx));
+                fields = fields.child(field_card(
+                    &palette,
+                    "CARDHOLDER NAME",
+                    name,
+                    name,
+                    false,
+                    window,
+                    cx,
+                ));
             }
             let number_display = if self.show_card_number {
                 number.clone()
             } else {
-                format!("•••• •••• •••• {}", &number[number.len().saturating_sub(4)..])
+                format!(
+                    "•••• •••• •••• {}",
+                    &number[number.len().saturating_sub(4)..]
+                )
             };
             fields = fields.child(field_card_with_reveal(
                 &palette,
@@ -332,11 +365,35 @@ impl Render for ItemDetail {
                 cx,
             ));
             fields = fields.child(field_card(&palette, "EXPIRY", exp, exp, true, window, cx));
-            let cvv_display = if self.show_cvv { cvv.clone() } else { "•••".to_string() };
-            fields = fields.child(field_card_with_reveal(&palette, "CVV", &cvv_display, cvv, self.show_cvv, window, cx));
+            let cvv_display = if self.show_cvv {
+                cvv.clone()
+            } else {
+                "•••".to_string()
+            };
+            fields = fields.child(field_card_with_reveal(
+                &palette,
+                "CVV",
+                &cvv_display,
+                cvv,
+                self.show_cvv,
+                window,
+                cx,
+            ));
             if let Some(pin) = pin {
-                let pin_display = if self.show_pin { pin.clone() } else { "••••".to_string() };
-                fields = fields.child(field_card_with_reveal(&palette, "PIN", &pin_display, pin, self.show_pin, window, cx));
+                let pin_display = if self.show_pin {
+                    pin.clone()
+                } else {
+                    "••••".to_string()
+                };
+                fields = fields.child(field_card_with_reveal(
+                    &palette,
+                    "PIN",
+                    &pin_display,
+                    pin,
+                    self.show_pin,
+                    window,
+                    cx,
+                ));
             }
         }
 
@@ -347,7 +404,11 @@ impl Render for ItemDetail {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().child(field_card(&palette, "WEBSITE", url, url, false, window, cx)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(field_card(&palette, "WEBSITE", url, url, false, window, cx)),
+                    )
                     .when(!open_target.is_empty(), |el| {
                         el.child(
                             div()
@@ -393,7 +454,8 @@ impl Render for ItemDetail {
         }
 
         let totp_section = if matches!(&item, VaultItem::Login { totp: Some(_), .. }) {
-            let progress = (self.totp_remaining as f32 / self.totp_period.max(1) as f32).clamp(0., 1.);
+            let progress =
+                (self.totp_remaining as f32 / self.totp_period.max(1) as f32).clamp(0., 1.);
             Some(
                 div()
                     .p_4()
@@ -478,10 +540,10 @@ impl Render for ItemDetail {
                     .flex_col()
                     .bg(palette.surface_container_lowest)
                     .font_family(fonts::LABEL)
-                    .p_6()
+                    .p_4()
                     .gap_6()
                     .child({
-                let mut header = div().flex().gap_6();
+                let mut header = div().flex().flex_shrink_0().min_w_0().gap_6();
                 header = if stacked {
                     header.flex_col()
                 } else {
@@ -492,7 +554,8 @@ impl Render for ItemDetail {
                         div()
                             .flex()
                             .items_start()
-                            .gap_4()
+                            .gap_3()
+                            .flex_1()
                             .min_w(px(0.))
                             .child(
                                 div()
@@ -508,6 +571,7 @@ impl Render for ItemDetail {
                             .child(
                                 div()
                                     .relative()
+                                    .flex_shrink_0()
                                     .child({
                                         let icon_name = type_icon_name(item.item_type());
                                         match &item {
@@ -565,9 +629,11 @@ impl Render for ItemDetail {
                                     .flex()
                                     .flex_col()
                                     .gap_1()
+                                    .flex_1()
+                                    .min_w_0()
                                     .pt_2()
                                     .child(
-                                        fonts::tracked_text(item.name(), px(30.), -0.025)
+                                        div().child(item.name().to_string()).whitespace_normal()
                                             .font_family(fonts::HEADLINE)
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .text_3xl()
@@ -613,6 +679,7 @@ impl Render for ItemDetail {
                         div()
                             .flex()
                             .items_center()
+                            .flex_wrap()
                             .gap_3()
                             .child(
                                 div()
@@ -696,6 +763,7 @@ fn delete_confirm_modal(
 ) -> impl IntoElement {
     div()
         .id("delete-confirm-backdrop")
+        .p_4()
         .absolute()
         .inset_0()
         // Stop the hit-test at the backdrop, so the scroll container behind it
@@ -705,19 +773,28 @@ fn delete_confirm_modal(
         .flex()
         .items_center()
         .justify_center()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-            this.show_delete_confirm = false;
-            cx.notify();
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                this.show_delete_confirm = false;
+                cx.notify();
+            }),
+        )
         .child(
             div()
                 .id("delete-confirm-card")
-                .w(px(400.))
+                .w_full()
+                .max_w(px(400.))
+                .max_h_full()
+                .overflow_y_scroll()
                 .p_6()
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -756,10 +833,13 @@ fn delete_confirm_modal(
                                 .justify_center()
                                 .cursor_pointer()
                                 .child("Cancel")
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.show_delete_confirm = false;
-                                    cx.notify();
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.show_delete_confirm = false;
+                                        cx.notify();
+                                    }),
+                                ),
                         )
                         .child(
                             div()
@@ -775,9 +855,12 @@ fn delete_confirm_modal(
                                 .justify_center()
                                 .cursor_pointer()
                                 .child(if deleting { "Deleting…" } else { "Delete" })
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.delete(cx);
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.delete(cx);
+                                    }),
+                                ),
                         ),
                 ),
         )
@@ -796,9 +879,15 @@ fn footer(
         .mt_6()
         .pt_8()
         .border_t_1()
-        .border_color(gpui::Hsla { a: 0.1, ..palette.outline_variant })
+        .border_color(gpui::Hsla {
+            a: 0.1,
+            ..palette.outline_variant
+        })
         .flex()
         .items_center()
+        .flex_wrap()
+        .gap_4()
+        .flex_shrink_0()
         .justify_between()
         .child(if is_received_share {
             div().into_any_element()
@@ -814,18 +903,33 @@ fn footer(
                 .cursor_pointer()
                 .child(icon("delete", px(16.), palette.error))
                 .child(div().ml_2().child("Delete"))
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                    this.show_delete_confirm = true;
-                    cx.notify();
-                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.show_delete_confirm = true;
+                        cx.notify();
+                    }),
+                )
                 .into_any_element()
         })
         .child(
             div()
                 .flex()
                 .gap_8()
-                .child(footer_stat(palette, "LAST MODIFIED", updated_text, palette.on_surface, false))
-                .child(footer_stat(palette, "ENCRYPTION", "AES-256-GCM".to_string(), palette.secondary, true)),
+                .child(footer_stat(
+                    palette,
+                    "LAST MODIFIED",
+                    updated_text,
+                    palette.on_surface,
+                    false,
+                ))
+                .child(footer_stat(
+                    palette,
+                    "ENCRYPTION",
+                    "AES-256-GCM".to_string(),
+                    palette.secondary,
+                    true,
+                )),
         )
 }
 
@@ -879,7 +983,11 @@ fn note_card(
         let value = value.to_string();
         let hover_t = animation::hover_transition(format!("copy-{label}"), window, cx);
         let t = *hover_t.evaluate(window, cx);
-        let hover_bg = animation::lerp_hsla(gpui::transparent_black(), palette.surface_container_highest, t);
+        let hover_bg = animation::lerp_hsla(
+            gpui::transparent_black(),
+            palette.surface_container_highest,
+            t,
+        );
         label_row = label_row.child(
             div()
                 .id(SharedString::from(format!("copy-{label}")))
@@ -894,15 +1002,20 @@ fn note_card(
                     });
                 })
                 .child(icon("content_copy", px(18.), palette.primary))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                    this.copy(label, &value, cx);
-                    cx.notify();
-                })),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        this.copy(label, &value, cx);
+                        cx.notify();
+                    }),
+                ),
         );
     }
 
     let body = if mono {
-        div().font_family(fonts::MONO).text_color(palette.on_surface)
+        div()
+            .font_family(fonts::MONO)
+            .text_color(palette.on_surface)
     } else {
         div()
             .font_family(fonts::BODY)
@@ -912,6 +1025,8 @@ fn note_card(
 
     div()
         .p_4()
+        .min_w_0()
+        .flex_shrink_0()
         .rounded_xl()
         .bg(palette.surface_container_low)
         .flex()
@@ -945,7 +1060,16 @@ fn field_card_with_reveal(
     window: &mut Window,
     cx: &mut Context<ItemDetail>,
 ) -> impl IntoElement {
-    field_card_inner(palette, label, display_value, copy_value, Some(revealed), true, window, cx)
+    field_card_inner(
+        palette,
+        label,
+        display_value,
+        copy_value,
+        Some(revealed),
+        true,
+        window,
+        cx,
+    )
 }
 
 fn field_card_inner(
@@ -961,20 +1085,38 @@ fn field_card_inner(
     let copy_value = copy_value.to_string();
     let display_value = display_value.to_string();
 
-    let mut row = div().flex().items_center().justify_between().gap_3();
-    let mut value_el = div().text_color(palette.on_surface);
+    let mut row = div()
+        .flex()
+        .min_w_0()
+        .items_center()
+        .justify_between()
+        .gap_3();
+    let mut value_el = div()
+        .id(SharedString::from(format!("value-{label}")))
+        .flex_1()
+        .min_w_0()
+        .overflow_x_scroll()
+        .whitespace_nowrap()
+        .text_color(palette.on_surface);
     value_el = if mono {
         value_el.font_family(fonts::MONO).text_lg()
     } else {
-        value_el.font_family(fonts::BODY).text_lg().font_weight(gpui::FontWeight::MEDIUM)
+        value_el
+            .font_family(fonts::BODY)
+            .text_lg()
+            .font_weight(gpui::FontWeight::MEDIUM)
     };
     row = row.child(value_el.child(display_value));
 
-    let mut buttons = div().flex().gap_1();
+    let mut buttons = div().flex().flex_shrink_0().gap_1();
     if let Some(revealed) = revealed {
         let hover_t = animation::hover_transition(format!("reveal-{label}"), window, cx);
         let t = *hover_t.evaluate(window, cx);
-        let hover_bg = animation::lerp_hsla(gpui::transparent_black(), palette.surface_container_highest, t);
+        let hover_bg = animation::lerp_hsla(
+            gpui::transparent_black(),
+            palette.surface_container_highest,
+            t,
+        );
         buttons = buttons.child(
             div()
                 .id(SharedString::from(format!("reveal-{label}")))
@@ -989,26 +1131,37 @@ fn field_card_inner(
                     });
                 })
                 .child(icon(
-                    if revealed { "visibility_off" } else { "visibility" },
+                    if revealed {
+                        "visibility_off"
+                    } else {
+                        "visibility"
+                    },
                     px(18.),
                     palette.on_surface_variant,
                 ))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                    match label {
-                        "PASSWORD" => this.show_password = !this.show_password,
-                        "CARD NUMBER" => this.show_card_number = !this.show_card_number,
-                        "CVV" => this.show_cvv = !this.show_cvv,
-                        "PIN" => this.show_pin = !this.show_pin,
-                        _ => {}
-                    }
-                    cx.notify();
-                })),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        match label {
+                            "PASSWORD" => this.show_password = !this.show_password,
+                            "CARD NUMBER" => this.show_card_number = !this.show_card_number,
+                            "CVV" => this.show_cvv = !this.show_cvv,
+                            "PIN" => this.show_pin = !this.show_pin,
+                            _ => {}
+                        }
+                        cx.notify();
+                    }),
+                ),
         );
     }
     {
         let hover_t = animation::hover_transition(format!("copy-{label}"), window, cx);
         let t = *hover_t.evaluate(window, cx);
-        let hover_bg = animation::lerp_hsla(gpui::transparent_black(), palette.surface_container_highest, t);
+        let hover_bg = animation::lerp_hsla(
+            gpui::transparent_black(),
+            palette.surface_container_highest,
+            t,
+        );
         buttons = buttons.child(
             div()
                 .id(SharedString::from(format!("copy-{label}")))
@@ -1023,16 +1176,21 @@ fn field_card_inner(
                     });
                 })
                 .child(icon("content_copy", px(18.), palette.primary))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                    this.copy(label, &copy_value, cx);
-                    cx.notify();
-                })),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        this.copy(label, &copy_value, cx);
+                        cx.notify();
+                    }),
+                ),
         );
     }
     row = row.child(buttons);
 
     div()
         .p_4()
+        .min_w_0()
+        .flex_shrink_0()
         .rounded_xl()
         .bg(palette.surface_container_low)
         .flex()

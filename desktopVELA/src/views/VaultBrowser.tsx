@@ -49,9 +49,9 @@ const VaultItemRow = memo(function VaultItemRow({ item, onSelect, onCopy, onOpen
   return (
     <div
       onClick={() => onSelect(item)}
-      className="group flex items-center justify-between gap-4 p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
+      className="group flex items-center justify-between gap-2 sm:gap-4 p-3 sm:p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
     >
-      <div className="flex items-center gap-4 min-w-0">
+      <div className="flex flex-1 items-center gap-2 sm:gap-4 min-w-0">
         <FaviconIcon
           url={item.url}
           itemType={item.item_type}
@@ -64,21 +64,23 @@ const VaultItemRow = memo(function VaultItemRow({ item, onSelect, onCopy, onOpen
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-3 sm:gap-6 shrink-0">
+      <div className="flex items-center gap-1 sm:gap-4 shrink-0">
         {item.shared && (
           item.share_recipient
-            ? <div className="px-2 py-0.5 rounded bg-primary/10 text-[10px] text-primary font-label font-bold uppercase tracking-widest flex items-center gap-1">
-                <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>share</span>Shared
+            ? <div title="Shared" aria-label="Shared" className="px-2 py-0.5 rounded bg-primary/10 text-[10px] text-primary font-label font-bold uppercase tracking-widest flex items-center gap-1">
+                <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>share</span><span className="hidden sm:inline">Shared</span>
               </div>
-            : <div className="px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest flex items-center gap-1">
-                <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>download</span>Received
+            : <div title="Received" aria-label="Received" className="px-2 py-0.5 rounded bg-on-secondary-container/20 text-[10px] text-secondary font-label font-bold uppercase tracking-widest flex items-center gap-1">
+                <span className="material-symbols-outlined text-[10px]" style={{fontSize:'10px'}}>download</span><span className="hidden sm:inline">Received</span>
               </div>
         )}
-        <span className="hidden md:block font-mono text-xs text-outline-variant tracking-tighter">
+        <span className="hidden xl:block font-mono text-xs text-outline-variant tracking-tighter">
           {item.item_type === 'creditCard' ? `EXP: ${item.card_exp}` : '••••••••••••'}
         </span>
-        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-1 sm:gap-2 text-on-surface-variant transition-colors">
           <button
+            aria-label={`Copy ${item.name}`}
+            title="Copy"
             onClick={(e) => { e.stopPropagation(); onCopy(item); }}
             className="p-2 hover:text-primary transition-colors"
           >
@@ -86,6 +88,8 @@ const VaultItemRow = memo(function VaultItemRow({ item, onSelect, onCopy, onOpen
           </button>
           {item.url && (
             <button
+              aria-label={`Open website for ${item.name}`}
+              title="Open website"
               onClick={(e) => { e.stopPropagation(); onOpenUrl(item.url || ''); }}
               className="p-2 hover:text-primary transition-colors"
             >
@@ -221,9 +225,9 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
   }), [propItems]);
 
   return (
-    <div ref={scrollParentRef} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+    <div ref={scrollParentRef} className="flex-1 min-w-0 min-h-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-6 mb-8">
-        <div className="relative w-full max-w-xl">
+        <div className="relative w-full min-w-0 md:flex-1 max-w-xl">
           <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline-variant">search</span>
           <input
             value={searchQuery}
@@ -235,7 +239,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
         </div>
         <button
           onClick={onAddItem}
-          className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors"
+          className="flex shrink-0 items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors"
         >
           <span className="material-symbols-outlined">add</span>
           <span>Add Item</span>

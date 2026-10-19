@@ -396,6 +396,7 @@ fn main() {
             commands::audit::get_audit_log,
             commands::audit::clear_audit_log,
             commands::settings::get_settings,
+            commands::settings::get_extension_status,
             commands::settings::update_settings,
             commands::settings::get_shortcut_backend,
             commands::settings::get_auto_lock_minutes,

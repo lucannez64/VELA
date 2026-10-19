@@ -69,13 +69,15 @@ pub struct EnrollDeviceModal {
     qr_image: Option<Arc<Image>>,
     expires_at: Option<Instant>,
     copied: bool,
+    show_code: bool,
     _poll_task: Option<Task<()>>,
     _tick_task: Task<()>,
 }
 
 impl EnrollDeviceModal {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         let mut this = Self {
             app_state,
             phase: Phase::Opening,
@@ -84,6 +86,7 @@ impl EnrollDeviceModal {
             qr_image: None,
             expires_at: None,
             copied: false,
+            show_code: false,
             _poll_task: None,
             _tick_task: animation::spawn_pulse_ticker(cx),
         };
@@ -93,6 +96,7 @@ impl EnrollDeviceModal {
 
     fn start(&mut self, cx: &mut Context<Self>) {
         self.phase = Phase::Opening;
+        self.show_code = false;
         self.grant_id = None;
         self.code = None;
         self.qr_image = None;
@@ -102,10 +106,12 @@ impl EnrollDeviceModal {
 
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
-            let result = gpui_tokio::Tokio::spawn(cx, async move {
-                open_enrollment_invite(&app_state).await
-            })
-            .await;
+            let result =
+                gpui_tokio::Tokio::spawn(
+                    cx,
+                    async move { open_enrollment_invite(&app_state).await },
+                )
+                .await;
 
             this.update(cx, |this, cx| {
                 match result {
@@ -137,11 +143,14 @@ impl EnrollDeviceModal {
     /// fixed, and re-fetching it could only redraw the list while the user is
     /// reading it.
     fn spawn_poll(&mut self, cx: &mut Context<Self>) {
-        let Some(grant_id) = self.grant_id.clone() else { return };
+        let Some(grant_id) = self.grant_id.clone() else {
+            return;
+        };
         let app_state = self.app_state.clone();
 
         self._poll_task = Some(cx.spawn(async move |this, cx| loop {
-            cx.background_spawn(async { std::thread::sleep(POLL_INTERVAL) }).await;
+            cx.background_spawn(async { std::thread::sleep(POLL_INTERVAL) })
+                .await;
 
             let app_state = app_state.clone();
             let grant_id_inner = grant_id.clone();
@@ -153,7 +162,9 @@ impl EnrollDeviceModal {
             // A failed poll is not a failed enrollment — the grant is alive
             // until it expires, and the countdown is what tells the user when
             // to give up.
-            let Ok(Ok(Some(claim))) = result else { continue };
+            let Ok(Ok(Some(claim))) = result else {
+                continue;
+            };
 
             this.update(cx, |this, cx| {
                 this.phase = Phase::Claimed(claim);
@@ -165,7 +176,9 @@ impl EnrollDeviceModal {
     }
 
     fn pick(&mut self, choice: String, cx: &mut Context<Self>) {
-        let Some(grant_id) = self.grant_id.clone() else { return };
+        let Some(grant_id) = self.grant_id.clone() else {
+            return;
+        };
         let device_label = match &self.phase {
             Phase::Claimed(claim) => claim
                 .device_name
@@ -237,77 +250,113 @@ impl EnrollDeviceModal {
 impl Render for EnrollDeviceModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
-
-        div()
-            .id("enroll-v3-backdrop")
-            .absolute()
-            .inset_0()
-            .occlude()
-            .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
-            .child(
+        let close = crate::modal::close_button("enroll-v3-close", &palette).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close(cx)),
+        );
+        let header = crate::modal::header("Enroll a device", close, &palette);
+        let content = div().id("enroll-phase-content").flex().flex_col().gap_4();
+        let content = match &self.phase {
+            Phase::Opening => content.child(div().py_8().flex().justify_center().child(icon(
+                "progress_activity",
+                px(32.),
+                palette.primary,
+            ))),
+            Phase::Waiting => self.render_waiting(content, &palette, window, cx),
+            Phase::Claimed(claim) => {
+                self.render_choices(content, &palette, claim.clone(), window, cx)
+            }
+            Phase::Confirming => content.child(
                 div()
-                    .id("enroll-v3-body")
-                    .w(px(440.))
-                    .p_8()
-                    .rounded_2xl()
-                    .bg(palette.surface_container)
-                    .border_1()
-                    .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(icon("add_to_queue", px(24.), palette.primary))
-                            .child(
-                                div()
-                                    .font_family(fonts::HEADLINE)
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_xl()
-                                    .text_color(palette.on_surface)
-                                    .child("Enroll a new device"),
-                            ),
-                    )
-                    .map(|el| match &self.phase {
-                        Phase::Opening => el.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .py_16()
-                                .child(
-                                    icon("progress_activity", px(32.), palette.primary)
-                                        .opacity(animation::pulse_alpha(1.0)),
-                                ),
-                        ),
-                        Phase::Waiting => self.render_waiting(el, &palette, window, cx),
-                        Phase::Claimed(claim) => {
-                            self.render_choices(el, &palette, claim.clone(), window, cx)
-                        }
-                        Phase::Confirming => el.child(
-                            div()
-                                .py_16()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_color(palette.on_surface_variant)
-                                .child("Enrolling…"),
-                        ),
-                        Phase::Enrolled(name) => self.render_done(el, &palette, name.clone(), window, cx),
-                        Phase::Rejected => self.render_rejected(el, &palette, window, cx),
-                        Phase::Failed(error) => {
-                            self.render_failed(el, &palette, error.clone(), window, cx)
-                        }
-                    }),
+                    .py_8()
+                    .text_color(palette.on_surface_variant)
+                    .child("Enrolling…"),
+            ),
+            Phase::Enrolled(name) => self.render_done(content, &palette, name.clone(), window, cx),
+            Phase::Rejected => self.render_rejected(content, &palette, window, cx),
+            Phase::Failed(error) => {
+                self.render_failed(content, &palette, error.clone(), window, cx)
+            }
+        };
+        let mut footer = div().flex().gap_3();
+        footer = footer.child(modal_button(
+            &palette,
+            "enroll-v3-dismiss",
+            if matches!(self.phase, Phase::Enrolled(_)) {
+                "Done"
+            } else {
+                "Close"
+            },
+            ButtonKind::Neutral,
+            window,
+            cx,
+            |this, cx| this.close(cx),
+        ));
+        footer = match self.phase {
+            Phase::Waiting if self.seconds_left() == Some(0) => footer.child(modal_button(
+                &palette,
+                "enroll-v3-new-code",
+                "New code",
+                ButtonKind::Primary,
+                window,
+                cx,
+                |this, cx| this.start(cx),
+            )),
+            Phase::Waiting => footer.child(modal_button(
+                &palette,
+                "enroll-v3-copy",
+                if self.copied { "Copied!" } else { "Copy code" },
+                ButtonKind::Primary,
+                window,
+                cx,
+                |this, cx| this.copy_code(cx),
+            )),
+            Phase::Claimed(_) => footer.child(modal_button(
+                &palette,
+                "enroll-v3-cancel",
+                "Cancel enrollment",
+                ButtonKind::Neutral,
+                window,
+                cx,
+                |this, cx| this.cancel(cx),
+            )),
+            Phase::Rejected | Phase::Failed(_) => footer.child(modal_button(
+                &palette,
+                "enroll-v3-retry",
+                "Try again",
+                ButtonKind::Primary,
+                window,
+                cx,
+                |this, cx| this.start(cx),
+            )),
+            _ => footer,
+        };
+        let overlay = crate::modal::backdrop("enroll-v3-backdrop")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.close(cx)),
             )
+            .child(
+                crate::modal::frame(
+                    "enroll-v3-body",
+                    520.,
+                    720.,
+                    header,
+                    crate::modal::scroll_body("enroll-v3-scroll", content),
+                    footer,
+                    &palette,
+                )
+                .map(|el| crate::keyboard::trap_tab(el, "enroll-v3-trap", window, cx))
+                .on_key_down(cx.listener(
+                    |this, event: &gpui::KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            cx.stop_propagation();
+                            this.close(cx);
+                        }
+                    },
+                )),
+            );
+        crate::modal::present(window, overlay)
     }
 }
 
@@ -321,42 +370,35 @@ impl EnrollDeviceModal {
     ) -> gpui::Stateful<gpui::Div> {
         let secs = self.seconds_left();
         let expired = secs == Some(0);
-        let copied = self.copied;
 
-        el.child(
-            div()
-                .text_sm()
-                .text_color(palette.on_surface_variant)
-                .child("On the new device, choose \"Join existing account\" and scan this code. You will then be asked to confirm a short code shown on both screens."),
-        )
-        .when_some(self.qr_image.clone(), |el, image| {
+        let qr_edge = (f32::from(window.viewport_size().height) - 300.).clamp(144., 280.);
+        el        .when_some(self.qr_image.clone(), |el, image| {
             el.child(
                 div()
+                    .w_full().max_w(px(qr_edge + 24.)).self_center()
+                    .debug_selector(|| "enroll-v3-qr".into())
                     .p_3()
                     .rounded_xl()
                     .bg(gpui::white())
                     .flex()
                     .justify_center()
-                    .child(img(ImageSource::Image(image)).w(px(280.)).h(px(280.))),
+                    .child(img(ImageSource::Image(image)).w_full().max_w(px(qr_edge)).aspect_square().object_fit(gpui::ObjectFit::Contain)),
             )
         })
-        .when_some(self.code.clone(), |el, code| {
-            el.child(
-                div()
-                    .p_3()
-                    .rounded_xl()
-                    .bg(palette.surface_bright)
-                    .font_family(fonts::MONO)
-                    .text_xs()
-                    .text_color(palette.on_surface)
-                    .child(code),
-            )
-        })
+        .child(div().text_sm().text_color(palette.on_surface_variant)
+            .child("On your other device, choose Join existing account and scan this code. Then compare the short codes on both screens."))
+        .child(div().id("enroll-v3-show-code").text_sm().text_color(palette.primary).cursor_pointer()
+            .child(if self.show_code { "Hide manual enrollment code" } else { "Can’t scan? Show enrollment code" })
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| { this.show_code = !this.show_code; cx.notify(); })))
+        .when(self.show_code, |el| el.when_some(self.code.clone(), |el, code| el.child(
+            div().id("enroll-v3-manual-code").p_3().rounded_lg().bg(palette.surface_bright)
+                .font_family(fonts::MONO).text_xs().text_color(palette.on_surface)
+                .overflow_x_scroll().whitespace_nowrap().child(code))))
         .child(
             div()
                 .text_xs()
                 .text_color(palette.on_surface_variant)
-                .child("This code cannot unlock your vault on its own — it only lets one device ask to join, once. You still have to confirm which device that was. You can close this window and come back later; it will pick up where it left off until the code expires."),
+                .child("Only approve a device when the short codes match. You can close this dialog and resume until the invitation expires."),
         )
         .child(
             div()
@@ -373,43 +415,10 @@ impl EnrollDeviceModal {
                 .child(match (expired, secs) {
                     (true, _) => "This code has expired.".to_string(),
                     (false, Some(s)) => {
-                        format!("Waiting for a device to scan · expires in {}:{:02}", s / 60, s % 60)
+                        format!("Waiting for scan · {}:{:02} left", s / 60, s % 60)
                     }
                     (false, None) => "Waiting for a device to scan".to_string(),
                 }),
-        )
-        .child(
-            div().flex().gap_3().w_full()
-                .map(|el| if expired {
-                    el.child(modal_button(
-                        palette,
-                        "enroll-v3-new-code",
-                        "New code",
-                        ButtonKind::Primary,
-                        window,
-                        cx,
-                        |this, cx| this.start(cx),
-                    ))
-                } else {
-                    el.child(modal_button(
-                        palette,
-                        "enroll-v3-copy",
-                        if copied { "Copied!" } else { "Copy code" },
-                        ButtonKind::Primary,
-                        window,
-                        cx,
-                        |this, cx| this.copy_code(cx),
-                    ))
-                })
-                .child(modal_button(
-                    palette,
-                    "enroll-v3-cancel",
-                    "Close",
-                    ButtonKind::Neutral,
-                    window,
-                    cx,
-                    |this, cx| this.close(cx),
-                )),
         )
     }
 
@@ -446,7 +455,11 @@ impl EnrollDeviceModal {
             // No OS randomness, so no decoys. A guessable decoy set would look
             // like a check without being one, so the core returned the single
             // true value — this falls back to a plain comparison and says so.
-            let only = claim.fingerprint_choices.first().cloned().unwrap_or_default();
+            let only = claim
+                .fingerprint_choices
+                .first()
+                .cloned()
+                .unwrap_or_default();
             el.child(
                 div()
                     .p_4()
@@ -478,15 +491,6 @@ impl EnrollDeviceModal {
                 cx,
                 move |this, cx| this.pick(only.clone(), cx),
             ))
-            .child(modal_button(
-                palette,
-                "enroll-v3-nomatch",
-                "They do not match — cancel",
-                ButtonKind::Neutral,
-                window,
-                cx,
-                |this, cx| this.cancel(cx),
-            ))
         } else {
             el.child(
                 div()
@@ -508,15 +512,6 @@ impl EnrollDeviceModal {
                         },
                     )),
             )
-            .child(modal_button(
-                palette,
-                "enroll-v3-none-match",
-                "None of these match — cancel",
-                ButtonKind::Neutral,
-                window,
-                cx,
-                |this, cx| this.cancel(cx),
-            ))
         }
     }
 
@@ -525,14 +520,17 @@ impl EnrollDeviceModal {
         el: gpui::Stateful<gpui::Div>,
         palette: &Palette,
         name: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         el.child(
             div()
                 .p_4()
                 .rounded_xl()
-                .bg(gpui::Hsla { a: 0.1, ..palette.primary })
+                .bg(gpui::Hsla {
+                    a: 0.1,
+                    ..palette.primary
+                })
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -559,23 +557,14 @@ impl EnrollDeviceModal {
                         )),
                 ),
         )
-        .child(modal_button(
-            palette,
-            "enroll-v3-done",
-            "Done",
-            ButtonKind::Primary,
-            window,
-            cx,
-            |this, cx| this.close(cx),
-        ))
     }
 
     fn render_rejected(
         &self,
         el: gpui::Stateful<gpui::Div>,
         palette: &Palette,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         el.child(
             div()
@@ -606,30 +595,6 @@ impl EnrollDeviceModal {
                         .child("That was not the code the other device is showing, so nothing was enrolled. If you picked in a hurry, start again and compare the two screens carefully. If you are certain you picked the code your device displayed, stop: something else answered this enrollment, and it should not be retried on this network."),
                 ),
         )
-        .child(
-            div()
-                .flex()
-                .gap_3()
-                .w_full()
-                .child(modal_button(
-                    palette,
-                    "enroll-v3-restart",
-                    "Start again",
-                    ButtonKind::Neutral,
-                    window,
-                    cx,
-                    |this, cx| this.start(cx),
-                ))
-                .child(modal_button(
-                    palette,
-                    "enroll-v3-close",
-                    "Close",
-                    ButtonKind::Primary,
-                    window,
-                    cx,
-                    |this, cx| this.close(cx),
-                )),
-        )
     }
 
     fn render_failed(
@@ -637,34 +602,10 @@ impl EnrollDeviceModal {
         el: gpui::Stateful<gpui::Div>,
         palette: &Palette,
         error: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         el.child(div().text_sm().text_color(palette.error).child(error))
-            .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .w_full()
-                    .child(modal_button(
-                        palette,
-                        "enroll-v3-retry",
-                        "Try again",
-                        ButtonKind::Neutral,
-                        window,
-                        cx,
-                        |this, cx| this.start(cx),
-                    ))
-                    .child(modal_button(
-                        palette,
-                        "enroll-v3-fail-close",
-                        "Close",
-                        ButtonKind::Primary,
-                        window,
-                        cx,
-                        |this, cx| this.close(cx),
-                    )),
-            )
     }
 }
 
@@ -683,7 +624,10 @@ fn fingerprint_choice_button(
     let t = *hover_t.evaluate(window, cx);
     let bg = animation::lerp_hsla(palette.surface_bright, palette.surface_container_highest, t);
     let border = animation::lerp_hsla(
-        gpui::Hsla { a: 0.2, ..palette.outline_variant },
+        gpui::Hsla {
+            a: 0.2,
+            ..palette.outline_variant
+        },
         palette.primary,
         t,
     );
@@ -737,7 +681,14 @@ fn modal_button(
     let t = *hover_t.evaluate(window, cx);
     let (bg, fg) = match kind {
         ButtonKind::Primary => (
-            animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, t),
+            animation::lerp_hsla(
+                palette.primary,
+                gpui::Hsla {
+                    a: 0.9,
+                    ..palette.primary
+                },
+                t,
+            ),
             palette.on_primary,
         ),
         ButtonKind::Neutral => (
@@ -748,7 +699,10 @@ fn modal_button(
 
     div()
         .id(id)
+        .debug_selector(move || id.to_owned())
         .flex_1()
+        .min_w_0()
+        .min_h(px(44.))
         .py_3()
         .rounded_xl()
         .flex()
@@ -765,5 +719,120 @@ fn modal_button(
                 cx.notify();
             });
         })
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_click(this, cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_click(this, cx)),
+        )
+}
+
+#[cfg(test)]
+mod modal_tests {
+    use super::*;
+    use crate::modal_test_support as ui;
+    use gpui::{point, size, Entity, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext};
+    use std::{cell::Cell, rc::Rc};
+
+    struct Host {
+        child: Entity<EnrollDeviceModal>,
+        _subscription: gpui::Subscription,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().relative().size_full().child(self.child.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn enrollment_stages_fit_and_close_after_scrolling(cx: &mut TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let directory = tempfile::tempdir().unwrap();
+        for stage in 0..7 {
+            for (width, height) in [(945., 508.), (360., 480.)] {
+                let state = ui::state(&directory);
+                let closes = Rc::new(Cell::new(0));
+                let (host, cx) = cx.add_window_view(|_, cx| {
+                    ui::fonts(cx);
+                    let child = cx.new(|_| {
+                        let code = "VELA-ENROLL:v3:synthetic-layout-verification";
+                        EnrollDeviceModal {
+                            app_state: state,
+                            phase: match stage {
+                                0 => Phase::Opening,
+                                1 => Phase::Waiting,
+                                2 => Phase::Claimed(ClaimedDevice {
+                                    device_name: Some(
+                                        "A device with a long name for testing".into(),
+                                    ),
+                                    device_type: Some("desktop".into()),
+                                    fingerprint_choices: vec![
+                                        "123-456".into(),
+                                        "234-567".into(),
+                                        "345-678".into(),
+                                    ],
+                                    decoys_unavailable: false,
+                                }),
+                                3 => Phase::Confirming,
+                                4 => Phase::Enrolled("Example device".into()),
+                                5 => Phase::Rejected,
+                                _ => Phase::Failed("Synthetic network error".into()),
+                            },
+                            grant_id: Some("synthetic".into()),
+                            code: Some(code.into()),
+                            qr_image: crate::qr::render_qr_image(code, 6).map(Arc::new),
+                            expires_at: Some(Instant::now() + Duration::from_secs(300)),
+                            copied: false,
+                            show_code: true,
+                            _poll_task: None,
+                            _tick_task: Task::ready(()),
+                        }
+                    });
+                    let _subscription = cx.subscribe(&child, {
+                        let closes = closes.clone();
+                        move |_: &mut Host, _, event, _| {
+                            if matches!(event, EnrollDeviceModalEvent::Close) {
+                                closes.set(closes.get() + 1);
+                            }
+                        }
+                    });
+                    Host {
+                        child,
+                        _subscription,
+                    }
+                });
+                cx.simulate_resize(size(px(width), px(height)));
+                cx.run_until_parked();
+                let close = ui::bounds(cx, "enroll-v3-close");
+                let footer = ui::bounds(cx, "enroll-v3-body-footer");
+                let body = ui::bounds(cx, "enroll-v3-scroll");
+                assert!(close.top() >= px(56.) && footer.bottom() <= px(height));
+                if stage == 1 {
+                    let qr = ui::bounds(cx, "enroll-v3-qr");
+                    assert!(
+                        qr.size.height <= body.size.height - px(24.),
+                        "QR is taller than visible enrollment content"
+                    );
+                }
+                cx.simulate_event(ScrollWheelEvent {
+                    position: body.center(),
+                    delta: ScrollDelta::Pixels(point(px(0.), px(-3000.))),
+                    ..Default::default()
+                });
+                cx.run_until_parked();
+                assert_eq!(ui::bounds(cx, "enroll-v3-close"), close);
+                assert_eq!(ui::bounds(cx, "enroll-v3-body-footer"), footer);
+                cx.simulate_click(close.center(), Modifiers::default());
+                cx.run_until_parked();
+                assert_eq!(
+                    closes.get(),
+                    1,
+                    "enrollment stage {stage} cannot close at {width}×{height}"
+                );
+                drop(host);
+            }
+        }
+    }
 }

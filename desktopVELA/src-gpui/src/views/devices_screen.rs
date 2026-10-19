@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Local, Utc};
 use gpui::{
-    div, img, prelude::*, px, Context, Image, ImageSource, IntoElement, MouseButton, Render, SharedString, Task,
-    Window,
+    div, img, prelude::*, px, Context, Image, ImageSource, IntoElement, MouseButton, Render,
+    SharedString, Task, Window,
 };
 use gpui_elements::editable_text::{text_area, EditableTextState, StringStorage};
 
@@ -24,9 +24,9 @@ use vela_desktop_core::AppState;
 
 use crate::animation;
 use crate::fonts;
-use crate::views::enroll_device_modal::{EnrollDeviceModal, EnrollDeviceModalEvent};
 use crate::icon::icon;
 use crate::theme::Palette;
+use crate::views::enroll_device_modal::{EnrollDeviceModal, EnrollDeviceModalEvent};
 
 /// A generated-and-uploaded enrollment ceremony, ready to display. `code` is
 /// the full un-chunked locator string (used for the manual "Copy code"
@@ -87,12 +87,17 @@ impl WebAccessMode {
     }
 }
 
-const WEB_ACCESS_TTL_PRESETS: &[(&str, i64)] =
-    &[("30 minutes", 30 * 60), ("1 hour", 60 * 60), ("8 hours", 8 * 60 * 60), ("24 hours", 24 * 60 * 60)];
+const WEB_ACCESS_TTL_PRESETS: &[(&str, i64)] = &[
+    ("30 minutes", 30 * 60),
+    ("1 hour", 60 * 60),
+    ("8 hours", 8 * 60 * 60),
+    ("24 hours", 24 * 60 * 60),
+];
 
 impl DevicesScreen {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         Self::load_devices(&app_state, cx);
         Self::load_web_sessions(&app_state, cx);
 
@@ -112,7 +117,8 @@ impl DevicesScreen {
             confirm_legacy_enroll: false,
             enrollment: None,
             show_web_access_modal: false,
-            web_access_code_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            web_access_code_state: cx
+                .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             web_access_mode: WebAccessMode::ReadOnly,
             web_access_show_advanced: false,
             web_access_ttl_secs: WEB_ACCESS_TTL_PRESETS[0].1,
@@ -124,7 +130,8 @@ impl DevicesScreen {
     }
 
     fn open_web_access_modal(&mut self, cx: &mut Context<Self>) {
-        self.web_access_code_state.update(cx, |s, cx| s.emplace("", cx));
+        self.web_access_code_state
+            .update(cx, |s, cx| s.emplace("", cx));
         self.web_access_mode = WebAccessMode::ReadOnly;
         self.web_access_show_advanced = false;
         self.web_access_ttl_secs = WEB_ACCESS_TTL_PRESETS[0].1;
@@ -139,7 +146,12 @@ impl DevicesScreen {
     }
 
     fn approve_web_access(&mut self, cx: &mut Context<Self>) {
-        let code = self.web_access_code_state.read(cx).as_str().trim().to_string();
+        let code = self
+            .web_access_code_state
+            .read(cx)
+            .as_str()
+            .trim()
+            .to_string();
         if code.is_empty() {
             self.web_access_error = Some("Paste the web access code first".into());
             cx.notify();
@@ -155,8 +167,13 @@ impl DevicesScreen {
         let ttl_secs = self.web_access_ttl_secs;
         cx.spawn(async move |this, cx| {
             let result = gpui_tokio::Tokio::spawn(cx, async move {
-                vela_desktop_core::commands::web_session::grant_web_session(&app_state, &code, mode.as_str(), ttl_secs)
-                    .await
+                vela_desktop_core::commands::web_session::grant_web_session(
+                    &app_state,
+                    &code,
+                    mode.as_str(),
+                    ttl_secs,
+                )
+                .await
             })
             .await;
             this.update(cx, |this, cx| {
@@ -170,14 +187,21 @@ impl DevicesScreen {
                         this.web_access_success = Some(
                             format!(
                                 "Web access granted ({}) until {until}",
-                                if res.mode == "rw" { "read & write" } else { "read-only" }
+                                if res.mode == "rw" {
+                                    "read & write"
+                                } else {
+                                    "read-only"
+                                }
                             )
                             .into(),
                         );
                         let app_state = this.app_state.clone();
                         Self::load_web_sessions(&app_state, cx);
                     }
-                    Ok(Err(e)) => this.web_access_error = Some(format!("Could not grant web access: {e}").into()),
+                    Ok(Err(e)) => {
+                        this.web_access_error =
+                            Some(format!("Could not grant web access: {e}").into())
+                    }
                     Err(e) => this.web_access_error = Some(format!("Task failed: {e}").into()),
                 }
                 cx.notify();
@@ -231,12 +255,19 @@ impl DevicesScreen {
                 Ok(Ok(code)) => {
                     let verification_code =
                         vela_desktop_core::commands::devices::enrollment_verification_code(&code);
-                    let chunks = vela_desktop_core::commands::devices::create_enrollment_qr_chunks(&code);
+                    let chunks =
+                        vela_desktop_core::commands::devices::create_enrollment_qr_chunks(&code);
                     let qr_images: Vec<Arc<Image>> = chunks
                         .iter()
                         .filter_map(|chunk| crate::qr::render_qr_image(chunk, 6).map(Arc::new))
                         .collect();
-                    Ok(EnrollmentSession { code, verification_code, chunks, current_chunk: 0, qr_images })
+                    Ok(EnrollmentSession {
+                        code,
+                        verification_code,
+                        chunks,
+                        current_chunk: 0,
+                        qr_images,
+                    })
                 }
                 Ok(Err(e)) => Err(e),
                 Err(e) => Err(format!("Task failed: {e}")),
@@ -299,7 +330,8 @@ impl DevicesScreen {
             // gpui_tokio's bridge onto the actual tokio runtime, not
             // `cx.background_spawn` (a separate thread pool that never
             // entered that runtime and panics on real reactor I/O).
-            let result = gpui_tokio::Tokio::spawn(cx, async move { get_devices(&app_state).await }).await;
+            let result =
+                gpui_tokio::Tokio::spawn(cx, async move { get_devices(&app_state).await }).await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(devices)) => this.devices = Some(devices),
@@ -317,7 +349,8 @@ impl DevicesScreen {
         let app_state = app_state.clone();
         cx.spawn(async move |this, cx| {
             let result =
-                gpui_tokio::Tokio::spawn(cx, async move { list_web_sessions(&app_state).await }).await;
+                gpui_tokio::Tokio::spawn(cx, async move { list_web_sessions(&app_state).await })
+                    .await;
             this.update(cx, |this, cx| {
                 if let Ok(Ok(sessions)) = result {
                     this.web_sessions = Some(sessions);
@@ -342,7 +375,9 @@ fn format_date(dt: DateTime<Utc>) -> String {
 }
 
 fn format_last_active(dt: Option<DateTime<Utc>>) -> String {
-    let Some(dt) = dt else { return "Never".to_string() };
+    let Some(dt) = dt else {
+        return "Never".to_string();
+    };
     let hours = (Utc::now() - dt).num_hours();
     if hours < 1 {
         "Just now".to_string()
@@ -380,22 +415,10 @@ impl Render for DevicesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
         let hide_revoked = self.hide_revoked;
-        // Matches the original's `sm:` breakpoint (640px) for the device/
-        // web-session cards — below it they stack vertically instead of the
-        // row layout Tailwind only applies at/above `sm:`. gpui has no CSS
-        // media-query equivalent, so this is checked imperatively each
-        // render (same pattern already used for `Sidebar`'s icon-only
-        // collapse, just a different breakpoint/purpose).
-        let narrow = window.viewport_size().width < px(640.);
-        // The top "My Devices" + Web access/Enroll buttons row needs more
-        // room than a card does — Tailwind's `sm:` number doesn't transfer
-        // 1:1 here since a real browser rarely goes below ~700-800px wide,
-        // while this undecorated window can be resized much narrower and
-        // still needs to look right. 640px left "Enroll new device" clipped
-        // off the right edge with no horizontal scroll to reach it at a
-        // very ordinary ~945px window width, so this row gets its own,
-        // larger threshold instead of reusing `narrow`.
-        let header_stacked = window.viewport_size().width < px(1000.);
+        // Use the space left beside navigation, not the whole window.
+        let content_width = crate::layout::content_width(window.viewport_size().width.into());
+        let narrow = content_width < 640.;
+        let header_stacked = content_width < 900.;
 
         let mut display_devices: Vec<Device> = self
             .devices
@@ -405,8 +428,18 @@ impl Render for DevicesScreen {
             .filter(|d| !hide_revoked || !d.revoked)
             .collect();
         display_devices.sort_by(|a, b| {
-            let status = |d: &Device| if d.pending { 0 } else if d.revoked { 2 } else { 1 };
-            status(a).cmp(&status(b)).then(b.enrolled_at.cmp(&a.enrolled_at))
+            let status = |d: &Device| {
+                if d.pending {
+                    0
+                } else if d.revoked {
+                    2
+                } else {
+                    1
+                }
+            };
+            status(a)
+                .cmp(&status(b))
+                .then(b.enrolled_at.cmp(&a.enrolled_at))
         });
         let device_count = display_devices.len();
 
@@ -424,147 +457,225 @@ impl Render for DevicesScreen {
                 div()
                     .id("devices-scroll")
                     .size_full()
+                    .flex()
+                    .flex_col()
                     .overflow_y_scroll()
                     .bg(palette.surface)
                     .font_family(fonts::LABEL)
-                    .p_8()
+                    .p_4()
                     .child({
-                let mut header_row = div().flex().gap_4().mb_8();
-                header_row = if header_stacked {
-                    header_row.flex_col()
-                } else {
-                    header_row.flex_row().items_center().justify_between()
-                };
-                header_row
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
+                        let mut header_row = div().w_full().flex().flex_shrink_0().gap_4().mb_8();
+                        header_row = if header_stacked {
+                            header_row.flex_col()
+                        } else {
+                            header_row.flex_row().items_center().justify_between()
+                        };
+                        header_row
                             .child(
                                 div()
-                                    .font_family(fonts::HEADLINE)
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_3xl()
-                                    .text_color(palette.on_surface)
-                                    .child("My Devices"),
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .font_family(fonts::HEADLINE)
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_3xl()
+                                            .text_color(palette.on_surface)
+                                            .child("My Devices"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(palette.on_surface_variant)
+                                            .child("Manage devices that have access to your vault"),
+                                    )
+                                    // Reachable, not offered: an old-style code carries
+                                    // the new device's private key and the vault key,
+                                    // so anyone who reads it holds the vault (audit
+                                    // P-1). Only a device on a build too old to scan a
+                                    // v3 code needs it.
+                                    .child(
+                                        div()
+                                            .id("legacy-enroll-link")
+                                            .mt_2()
+                                            .text_xs()
+                                            .text_color(palette.on_surface_variant)
+                                            .cursor_pointer()
+                                            .child(
+                                                "Enrolling a device on an older version of VELA?",
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.confirm_legacy_enroll = true;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                    ),
                             )
                             .child(
                                 div()
-                                    .text_color(palette.on_surface_variant)
-                                    .child("Manage devices that have access to your vault"),
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_3()
+                                    .child(header_button(
+                                        &palette,
+                                        "web-access",
+                                        "public",
+                                        "Web access",
+                                        false,
+                                        window,
+                                        cx,
+                                        |this, cx| {
+                                            this.open_web_access_modal(cx);
+                                        },
+                                    ))
+                                    .child(header_button(
+                                        &palette,
+                                        "enroll-device",
+                                        "add",
+                                        "Enroll new device",
+                                        true,
+                                        window,
+                                        cx,
+                                        |this, cx| {
+                                            this.open_enroll_v3(cx);
+                                        },
+                                    )),
                             )
-                            // Reachable, not offered: an old-style code carries
-                            // the new device's private key and the vault key,
-                            // so anyone who reads it holds the vault (audit
-                            // P-1). Only a device on a build too old to scan a
-                            // v3 code needs it.
-                            .child(
-                                div()
-                                    .id("legacy-enroll-link")
-                                    .mt_2()
-                                    .text_xs()
-                                    .text_color(palette.on_surface_variant)
-                                    .cursor_pointer()
-                                    .child("Enrolling a device on an older version of VELA?")
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.confirm_legacy_enroll = true;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
+                    })
                     .child(
                         div()
-                            .flex()
-                            .gap_3()
-                            .child(header_button(&palette, "web-access", "public", "Web access", false, window, cx, |this, cx| {
-                                this.open_web_access_modal(cx);
-                            }))
-                            .child(header_button(&palette, "enroll-device", "add", "Enroll new device", true, window, cx, |this, cx| {
-                                this.open_enroll_v3(cx);
-                            })),
-                    )
-            })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .mb_4()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(palette.on_surface_variant)
-                            .child(format!("{device_count} device{}", if device_count != 1 { "s" } else { "" })),
-                    )
-                    .child(
-                        div()
-                            .id("hide-revoked")
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .cursor_pointer()
-                            .child(
-                                div()
-                                    .w(px(16.))
-                                    .h(px(16.))
-                                    .rounded_md()
-                                    .bg(if hide_revoked { palette.primary } else { palette.surface_container_highest })
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .when(hide_revoked, |el| el.child(icon("check", px(12.), palette.on_primary))),
-                            )
+                            .justify_between()
+                            .flex_shrink_0()
+                            .flex_wrap()
+                            .gap_3()
+                            .mb_4()
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(palette.on_surface_variant)
-                                    .child("Hide revoked"),
+                                    .child(format!(
+                                        "{device_count} device{}",
+                                        if device_count != 1 { "s" } else { "" }
+                                    )),
                             )
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                this.hide_revoked = !this.hide_revoked;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .map(|el| match &self.devices {
-                None => el.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .py_16()
-                        .child(icon("progress_activity", px(36.), palette.primary).opacity(animation::pulse_alpha(1.0))),
-                ),
-                Some(_) => el.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_4()
-                        .children(display_devices.into_iter().map(|d| device_card(&palette, d, narrow, window, cx))),
-                ),
-            })
+                            .child(
+                                div()
+                                    .id("hide-revoked")
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .cursor_pointer()
+                                    .child(
+                                        div()
+                                            .w(px(16.))
+                                            .h(px(16.))
+                                            .rounded_md()
+                                            .bg(if hide_revoked {
+                                                palette.primary
+                                            } else {
+                                                palette.surface_container_highest
+                                            })
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .when(hide_revoked, |el| {
+                                                el.child(icon("check", px(12.), palette.on_primary))
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(palette.on_surface_variant)
+                                            .child("Hide revoked"),
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.hide_revoked = !this.hide_revoked;
+                                            cx.notify();
+                                        }),
+                                    ),
+                            ),
+                    )
+                    .map(|el| match &self.devices {
+                        None => el.child(
+                            div().flex().items_center().justify_center().py_16().child(
+                                icon("progress_activity", px(36.), palette.primary)
+                                    .opacity(animation::pulse_alpha(1.0)),
+                            ),
+                        ),
+                        Some(_) => el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .flex_shrink_0()
+                                .gap_4()
+                                .children(
+                                    display_devices
+                                        .into_iter()
+                                        .map(|d| device_card(&palette, d, narrow, window, cx)),
+                                ),
+                        ),
+                    })
                     .when_some(self.error.clone(), |el, error| {
-                        el.child(div().text_sm().text_color(palette.error).child(error))
+                        el.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(palette.error)
+                                .child(error),
+                        )
                     })
                     .when_some(self.web_access_success.clone(), |el, msg| {
-                        el.child(div().text_sm().text_color(palette.primary).child(msg))
+                        el.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(palette.primary)
+                                .child(msg),
+                        )
                     })
-                    .child(web_sessions_section(&palette, self.web_sessions.as_deref(), narrow, window, cx)),
+                    .child(web_sessions_section(
+                        &palette,
+                        self.web_sessions.as_deref(),
+                        narrow,
+                        window,
+                        cx,
+                    )),
             )
             .when_some(self.revoke_confirm.clone(), |el, device| {
-                el.child(revoke_modal(&palette, device, self.revoking, self.revoke_error.clone(), window, cx))
+                el.child(revoke_modal(
+                    &palette,
+                    device,
+                    self.revoking,
+                    self.revoke_error.clone(),
+                    window,
+                    cx,
+                ))
             })
-            .when(self.enrolling, |el| el.child(enrollment_loading_modal(&palette)))
+            .when(self.enrolling, |el| {
+                el.child(enrollment_loading_modal(&palette))
+            })
             .when_some(
-                self.enroll_error.clone().filter(|_| !self.enrolling && self.enrollment.is_none()),
+                self.enroll_error
+                    .clone()
+                    .filter(|_| !self.enrolling && self.enrollment.is_none()),
                 |el, error| el.child(enrollment_error_modal(&palette, error, window, cx)),
             )
             .when_some(self.enrollment.clone(), |el, session| {
                 el.child(enrollment_modal(&palette, session, window, cx))
             })
-            .when(self.show_web_access_modal, |el| el.child(web_access_modal(&palette, self, window, cx)))
-            .when(self.confirm_legacy_enroll, |el| el.child(legacy_enroll_modal(&palette, self.enrolling, window, cx)))
+            .when(self.show_web_access_modal, |el| {
+                el.child(web_access_modal(&palette, self, window, cx))
+            })
+            .when(self.confirm_legacy_enroll, |el| {
+                el.child(legacy_enroll_modal(&palette, self.enrolling, window, cx))
+            })
             .when_some(self.enroll_v3.clone(), |el, modal| el.child(modal))
     }
 }
@@ -582,13 +693,21 @@ fn header_button(
     let hover_t = animation::hover_transition(id, window, cx);
     let t = *hover_t.evaluate(window, cx);
     let bg = if primary {
-        animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, t)
+        animation::lerp_hsla(
+            palette.primary,
+            gpui::Hsla {
+                a: 0.9,
+                ..palette.primary
+            },
+            t,
+        )
     } else {
         animation::lerp_hsla(palette.surface, palette.surface_container_high, t)
     };
 
     div()
         .id(id)
+        .flex_shrink_0()
         .flex()
         .items_center()
         .gap_2()
@@ -600,12 +719,22 @@ fn header_button(
         .bg(bg)
         .when(primary, |el| el.text_color(palette.on_primary))
         .when(!primary, |el| {
-            el.text_color(palette.on_surface).border_1().border_color(gpui::Hsla {
-                a: 0.2,
-                ..palette.outline_variant
-            })
+            el.text_color(palette.on_surface)
+                .border_1()
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
         })
-        .child(icon(icon_name, px(18.), if primary { palette.on_primary } else { palette.on_surface }))
+        .child(icon(
+            icon_name,
+            px(18.),
+            if primary {
+                palette.on_primary
+            } else {
+                palette.on_surface
+            },
+        ))
         .child(label)
         .on_hover(move |is_hovered, _, cx| {
             hover_t.update(cx, |v, cx| {
@@ -613,7 +742,10 @@ fn header_button(
                 cx.notify();
             });
         })
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_click(this, cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_click(this, cx)),
+        )
 }
 
 fn device_card(
@@ -625,9 +757,16 @@ fn device_card(
 ) -> impl IntoElement {
     let icon_name = device_icon(&device.device_type);
     let subtitle = if device.pending {
-        format!("Enrollment code generated · Last active: {}", format_last_active(device.last_active))
+        format!(
+            "Enrollment code generated · Last active: {}",
+            format_last_active(device.last_active)
+        )
     } else {
-        format!("Enrolled: {} · Last active: {}", format_date(device.enrolled_at), format_last_active(device.last_active))
+        format!(
+            "Enrolled: {} · Last active: {}",
+            format_date(device.enrolled_at),
+            format_last_active(device.last_active)
+        )
     };
     let revoke_label = if device.pending {
         "Cancel enrollment"
@@ -642,11 +781,23 @@ fn device_card(
     let this_device = device.this_device;
 
     let mut card = div()
-        .p_6()
+        .w_full()
+        .flex_shrink_0()
+        .p_4()
         .rounded_xl()
         .bg(palette.surface_container)
         .border_1()
-        .border_color(if revoked { gpui::Hsla { a: 0.3, ..palette.error } } else { gpui::Hsla { a: 0.05, ..palette.outline_variant } })
+        .border_color(if revoked {
+            gpui::Hsla {
+                a: 0.3,
+                ..palette.error
+            }
+        } else {
+            gpui::Hsla {
+                a: 0.05,
+                ..palette.outline_variant
+            }
+        })
         .when(revoked, |el| el.opacity(0.6))
         .flex()
         .gap_3();
@@ -655,111 +806,126 @@ fn device_card(
     } else {
         card.flex_row().items_center().justify_between()
     };
-    card
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_4()
-                .min_w(px(0.))
-                .child(
-                    div()
-                        .w(px(56.))
-                        .h(px(56.))
-                        .flex_shrink_0()
-                        .rounded_xl()
-                        .bg(palette.surface_bright)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(icon(icon_name, px(24.), palette.primary)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .min_w(px(0.))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .font_family(fonts::BODY)
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(palette.on_surface)
-                                        .child(name)
-                                        .when(this_device, |el| {
-                                            el.child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(palette.primary)
-                                                    .ml_2()
-                                                    .child("(this device)"),
-                                            )
-                                        }),
-                                )
-                                .when(revoked, |el| {
-                                    el.child(
-                                        div()
-                                            .px_2()
-                                            .py(px(1.))
-                                            .rounded_sm()
-                                            .bg(gpui::Hsla { a: 0.2, ..palette.error })
-                                            .text_color(palette.error)
-                                            .text_xs()
-                                            .child("Revoked"),
-                                    )
-                                })
-                                .when(pending && !revoked, |el| {
-                                    el.child(
-                                        div()
-                                            .px_2()
-                                            .py(px(1.))
-                                            .rounded_sm()
-                                            .bg(gpui::rgb(0x78350f))
-                                            .text_color(gpui::rgb(0xfcd34d))
-                                            .text_xs()
-                                            .child("Pending"),
-                                    )
-                                }),
-                        )
-                        .child(div().text_sm().text_color(palette.on_surface_variant).child(subtitle)),
-                ),
-        )
-        .when(!revoked, |el| {
-            let device_for_click = device.clone();
-            let id = SharedString::from(format!("revoke-{}", device.id));
-            let hover_t = animation::hover_transition(id.clone(), window, cx);
-            let t = *hover_t.evaluate(window, cx);
-            let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
-            el.child(
+    card.child(
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .w_full()
+            .when(!narrow, |el| el.flex_1())
+            .min_w(px(0.))
+            .child(
                 div()
-                    .id(id)
+                    .w(px(56.))
+                    .h(px(56.))
                     .flex_shrink_0()
-                    .px_4()
-                    .py_2()
-                    .rounded_lg()
-                    .bg(bg)
-                    .text_color(palette.error)
-                    .text_sm()
-                    .cursor_pointer()
-                    .child(revoke_label)
-                    .on_hover(move |is_hovered, _, cx| {
-                        hover_t.update(cx, |v, cx| {
-                            *v = *is_hovered as u8 as f32;
-                            cx.notify();
-                        });
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                    .rounded_xl()
+                    .bg(palette.surface_bright)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon(icon_name, px(24.), palette.primary)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .whitespace_normal()
+                                    .font_family(fonts::BODY)
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(palette.on_surface)
+                                    .child(name)
+                                    .when(this_device, |el| {
+                                        el.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(palette.primary)
+                                                .ml_2()
+                                                .child("(this device)"),
+                                        )
+                                    }),
+                            )
+                            .when(revoked, |el| {
+                                el.child(
+                                    div()
+                                        .px_2()
+                                        .py(px(1.))
+                                        .rounded_sm()
+                                        .bg(gpui::Hsla {
+                                            a: 0.2,
+                                            ..palette.error
+                                        })
+                                        .text_color(palette.error)
+                                        .text_xs()
+                                        .child("Revoked"),
+                                )
+                            })
+                            .when(pending && !revoked, |el| {
+                                el.child(
+                                    div()
+                                        .px_2()
+                                        .py(px(1.))
+                                        .rounded_sm()
+                                        .bg(gpui::rgb(0x78350f))
+                                        .text_color(gpui::rgb(0xfcd34d))
+                                        .text_xs()
+                                        .child("Pending"),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(palette.on_surface_variant)
+                            .child(subtitle),
+                    ),
+            ),
+    )
+    .when(!revoked, |el| {
+        let device_for_click = device.clone();
+        let id = SharedString::from(format!("revoke-{}", device.id));
+        let hover_t = animation::hover_transition(id.clone(), window, cx);
+        let t = *hover_t.evaluate(window, cx);
+        let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
+        el.child(
+            div()
+                .id(id)
+                .flex_shrink_0()
+                .px_4()
+                .py_2()
+                .rounded_lg()
+                .bg(bg)
+                .text_color(palette.error)
+                .text_sm()
+                .cursor_pointer()
+                .child(revoke_label)
+                .on_hover(move |is_hovered, _, cx| {
+                    hover_t.update(cx, |v, cx| {
+                        *v = *is_hovered as u8 as f32;
+                        cx.notify();
+                    });
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
                         this.revoke_confirm = Some(device_for_click.clone());
                         cx.notify();
-                    })),
-            )
-        })
+                    }),
+                ),
+        )
+    })
 }
 
 fn web_sessions_section(
@@ -771,18 +937,25 @@ fn web_sessions_section(
 ) -> impl IntoElement {
     let refresh_hover_t = animation::hover_transition("refresh-web-sessions", window, cx);
     let refresh_t = *refresh_hover_t.evaluate(window, cx);
-    let refresh_bg = animation::lerp_hsla(gpui::transparent_black(), palette.surface_container_high, refresh_t);
+    let refresh_bg = animation::lerp_hsla(
+        gpui::transparent_black(),
+        palette.surface_container_high,
+        refresh_t,
+    );
 
     div()
         .mt_10()
+        .w_full()
+        .flex_shrink_0()
         .child({
-            let mut header = div().flex().gap_3().mb_4();
+            let mut header = div().flex().flex_shrink_0().gap_3().mb_4();
             header = if narrow {
                 header.flex_col()
             } else {
                 header.flex_row().items_center().justify_between()
             };
-            header.child(
+            header
+                .child(
                     div()
                         .flex()
                         .flex_col()
@@ -812,7 +985,10 @@ fn web_sessions_section(
                         .py_2()
                         .rounded_xl()
                         .border_1()
-                        .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                        .border_color(gpui::Hsla {
+                            a: 0.2,
+                            ..palette.outline_variant
+                        })
                         .bg(refresh_bg)
                         .text_color(palette.on_surface)
                         .text_sm()
@@ -825,10 +1001,13 @@ fn web_sessions_section(
                                 cx.notify();
                             });
                         })
-                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                            let app_state = this.app_state.clone();
-                            DevicesScreen::load_web_sessions(&app_state, cx);
-                        })),
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                let app_state = this.app_state.clone();
+                                DevicesScreen::load_web_sessions(&app_state, cx);
+                            }),
+                        ),
                 )
         })
         .map(|el| match sessions {
@@ -838,17 +1017,21 @@ fn web_sessions_section(
                     .rounded_xl()
                     .bg(palette.surface_container)
                     .border_1()
-                    .border_color(gpui::Hsla { a: 0.05, ..palette.outline_variant })
+                    .border_color(gpui::Hsla {
+                        a: 0.05,
+                        ..palette.outline_variant
+                    })
                     .text_sm()
                     .text_color(palette.on_surface_variant)
                     .child("No active web sessions."),
             ),
             Some(sessions) => el.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .children(sessions.iter().cloned().map(|ws| web_session_row(palette, ws, narrow, window, cx))),
+                div().flex().flex_col().gap_3().children(
+                    sessions
+                        .iter()
+                        .cloned()
+                        .map(|ws| web_session_row(palette, ws, narrow, window, cx)),
+                ),
             ),
         })
 }
@@ -872,11 +1055,16 @@ fn web_session_row(
     let id = session.id.clone();
 
     let mut row = div()
-        .p_5()
+        .w_full()
+        .flex_shrink_0()
+        .p_4()
         .rounded_xl()
         .bg(palette.surface_container)
         .border_1()
-        .border_color(gpui::Hsla { a: 0.05, ..palette.outline_variant })
+        .border_color(gpui::Hsla {
+            a: 0.05,
+            ..palette.outline_variant
+        })
         .flex()
         .gap_3();
     row = if narrow {
@@ -884,97 +1072,116 @@ fn web_session_row(
     } else {
         row.flex_row().items_center().justify_between()
     };
-    row
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_4()
-                .min_w(px(0.))
-                .child(
-                    div()
-                        .w(px(44.))
-                        .h(px(44.))
-                        .flex_shrink_0()
-                        .rounded_xl()
-                        .bg(palette.surface_bright)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(icon("language", px(18.), palette.primary)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .font_family(fonts::BODY)
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(palette.on_surface)
-                                        .child("Web Browser"),
-                                )
-                                .child(
-                                    div()
-                                        .px_2()
-                                        .py(px(1.))
-                                        .rounded_sm()
-                                        .text_xs()
-                                        .font_family(fonts::LABEL)
-                                        .bg(if is_rw {
-                                            gpui::Hsla { a: 0.2, ..palette.accent_violet }
-                                        } else {
-                                            gpui::Hsla { a: 0.2, ..palette.primary }
-                                        })
-                                        .text_color(if is_rw { palette.accent_violet } else { palette.primary })
-                                        .child(if is_rw { "Read-Write" } else { "Read-Only" }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(palette.on_surface_variant)
-                                .child(match expiry {
-                                    Some(exp) => format!("Started {created} · Expires {exp}"),
-                                    None => format!("Started {created}"),
-                                }),
-                        ),
-                ),
-        )
-        .child({
-            let row_id = SharedString::from(format!("revoke-ws-{id}"));
-            let hover_t = animation::hover_transition(row_id.clone(), window, cx);
-            let t = *hover_t.evaluate(window, cx);
-            let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
-            div()
-                .id(row_id)
-                .flex_shrink_0()
-                .px_4()
-                .py_2()
-                .rounded_lg()
-                .bg(bg)
-                .text_color(palette.error)
-                .text_sm()
-                .cursor_pointer()
-                .child("Revoke")
-                .on_hover(move |is_hovered, _, cx| {
-                    hover_t.update(cx, |v, cx| {
-                        *v = *is_hovered as u8 as f32;
-                        cx.notify();
-                    });
-                })
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+    row.child(
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .w_full()
+            .when(!narrow, |el| el.flex_1())
+            .min_w(px(0.))
+            .child(
+                div()
+                    .w(px(44.))
+                    .h(px(44.))
+                    .flex_shrink_0()
+                    .rounded_xl()
+                    .bg(palette.surface_bright)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("language", px(18.), palette.primary)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_family(fonts::BODY)
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(palette.on_surface)
+                                    .child("Web Browser"),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py(px(1.))
+                                    .rounded_sm()
+                                    .text_xs()
+                                    .font_family(fonts::LABEL)
+                                    .bg(if is_rw {
+                                        gpui::Hsla {
+                                            a: 0.2,
+                                            ..palette.accent_violet
+                                        }
+                                    } else {
+                                        gpui::Hsla {
+                                            a: 0.2,
+                                            ..palette.primary
+                                        }
+                                    })
+                                    .text_color(if is_rw {
+                                        palette.accent_violet
+                                    } else {
+                                        palette.primary
+                                    })
+                                    .child(if is_rw { "Read-Write" } else { "Read-Only" }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(palette.on_surface_variant)
+                            .child(match expiry {
+                                Some(exp) => format!("Started {created} · Expires {exp}"),
+                                None => format!("Started {created}"),
+                            }),
+                    ),
+            ),
+    )
+    .child({
+        let row_id = SharedString::from(format!("revoke-ws-{id}"));
+        let hover_t = animation::hover_transition(row_id.clone(), window, cx);
+        let t = *hover_t.evaluate(window, cx);
+        let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
+        div()
+            .id(row_id)
+            .flex_shrink_0()
+            .px_4()
+            .py_2()
+            .rounded_lg()
+            .bg(bg)
+            .text_color(palette.error)
+            .text_sm()
+            .cursor_pointer()
+            .child("Revoke")
+            .on_hover(move |is_hovered, _, cx| {
+                hover_t.update(cx, |v, cx| {
+                    *v = *is_hovered as u8 as f32;
+                    cx.notify();
+                });
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
                     let app_state = this.app_state.clone();
                     let session_id = id.clone();
                     cx.spawn(async move |this, cx| {
                         let result = gpui_tokio::Tokio::spawn(cx, async move {
-                            vela_desktop_core::commands::web_session::revoke_web_session(&app_state, &session_id)
-                                .await
+                            vela_desktop_core::commands::web_session::revoke_web_session(
+                                &app_state,
+                                &session_id,
+                            )
+                            .await
                         })
                         .await;
                         this.update(cx, |this, cx| {
@@ -983,7 +1190,10 @@ fn web_session_row(
                                     let app_state = this.app_state.clone();
                                     DevicesScreen::load_web_sessions(&app_state, cx);
                                 }
-                                Ok(Err(e)) => this.error = Some(format!("Failed to revoke session: {e}").into()),
+                                Ok(Err(e)) => {
+                                    this.error =
+                                        Some(format!("Failed to revoke session: {e}").into())
+                                }
                                 Err(e) => this.error = Some(format!("Task failed: {e}").into()),
                             }
                             cx.notify();
@@ -991,8 +1201,9 @@ fn web_session_row(
                         .ok();
                     })
                     .detach();
-                }))
-        })
+                }),
+            )
+    })
 }
 
 fn revoke_modal(
@@ -1003,14 +1214,22 @@ fn revoke_modal(
     window: &mut Window,
     cx: &mut Context<DevicesScreen>,
 ) -> impl IntoElement {
-    let title = if device.pending { "Cancel pending enrollment?".to_string() } else { format!("Revoke {}?", device.name) };
+    let title = if device.pending {
+        "Cancel pending enrollment?".to_string()
+    } else {
+        format!("Revoke {}?", device.name)
+    };
     let body = if device.pending {
         "This deletes the unused enrollment slot. The code will no longer work."
     } else {
         "This will immediately sign out that device and prevent it from accessing your vault. \
          It cannot be undone — the device must be re-enrolled to regain access."
     };
-    let confirm_label = if device.pending { "Cancel enrollment" } else { "Revoke device" };
+    let confirm_label = if device.pending {
+        "Cancel enrollment"
+    } else {
+        "Revoke device"
+    };
     let device_id = device.id.clone();
 
     div()
@@ -1018,14 +1237,22 @@ fn revoke_modal(
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-            this.revoke_confirm = None;
-            cx.notify();
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                this.revoke_confirm = None;
+                cx.notify();
+            }),
+        )
         .child(
             div()
                 .id("revoke-modal-body")
@@ -1034,7 +1261,10 @@ fn revoke_modal(
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1047,9 +1277,20 @@ fn revoke_modal(
                         .text_color(palette.on_surface)
                         .child(title),
                 )
-                .child(div().text_sm().text_color(palette.on_surface_variant).child(body))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child(body),
+                )
                 .when_some(revoke_error, |el, error| {
-                    el.child(div().text_sm().text_color(palette.error).child(error))
+                    el.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(palette.error)
+                            .child(error),
+                    )
                 })
                 .child(
                     div()
@@ -1058,7 +1299,11 @@ fn revoke_modal(
                         .child({
                             let hover_t = animation::hover_transition("cancel-revoke", window, cx);
                             let t = *hover_t.evaluate(window, cx);
-                            let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
+                            let bg = animation::lerp_hsla(
+                                palette.surface_container_highest,
+                                palette.surface_bright,
+                                t,
+                            );
                             div()
                                 .id("cancel-revoke")
                                 .flex_1()
@@ -1078,15 +1323,25 @@ fn revoke_modal(
                                         cx.notify();
                                     });
                                 })
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.revoke_confirm = None;
-                                    cx.notify();
-                                }))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.revoke_confirm = None;
+                                        cx.notify();
+                                    }),
+                                )
                         })
                         .child({
                             let hover_t = animation::hover_transition("confirm-revoke", window, cx);
                             let t = *hover_t.evaluate(window, cx);
-                            let bg = animation::lerp_hsla(palette.error, gpui::Hsla { a: 0.85, ..palette.error }, t);
+                            let bg = animation::lerp_hsla(
+                                palette.error,
+                                gpui::Hsla {
+                                    a: 0.85,
+                                    ..palette.error
+                                },
+                                t,
+                            );
                             div()
                                 .id("confirm-revoke")
                                 .flex_1()
@@ -1099,16 +1354,23 @@ fn revoke_modal(
                                 .text_color(gpui::white())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .cursor_pointer()
-                                .child(if revoking { "Revoking…" } else { confirm_label })
+                                .child(if revoking {
+                                    "Revoking…"
+                                } else {
+                                    confirm_label
+                                })
                                 .on_hover(move |is_hovered, _, cx| {
                                     hover_t.update(cx, |v, cx| {
                                         *v = *is_hovered as u8 as f32;
                                         cx.notify();
                                     });
                                 })
-                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                    this.revoke_device(device_id.clone(), cx);
-                                }))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.revoke_device(device_id.clone(), cx);
+                                    }),
+                                )
                         }),
                 ),
         )
@@ -1253,7 +1515,12 @@ fn enrollment_loading_modal(palette: &Palette) -> impl IntoElement {
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
@@ -1264,12 +1531,18 @@ fn enrollment_loading_modal(palette: &Palette) -> impl IntoElement {
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .items_center()
                 .gap_4()
-                .child(icon("progress_activity", px(32.), palette.primary).opacity(animation::pulse_alpha(1.0)))
+                .child(
+                    icon("progress_activity", px(32.), palette.primary)
+                        .opacity(animation::pulse_alpha(1.0)),
+                )
                 .child(
                     div()
                         .text_color(palette.on_surface)
@@ -1294,14 +1567,22 @@ fn enrollment_error_modal(
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-            this.enroll_error = None;
-            cx.notify();
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                this.enroll_error = None;
+                cx.notify();
+            }),
+        )
         .child(
             div()
                 .id("enrollment-error-body")
@@ -1310,7 +1591,10 @@ fn enrollment_error_modal(
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1343,10 +1627,13 @@ fn enrollment_error_modal(
                                 cx.notify();
                             });
                         })
-                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                            this.enroll_error = None;
-                            cx.notify();
-                        })),
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.enroll_error = None;
+                                cx.notify();
+                            }),
+                        ),
                 ),
         )
 }
@@ -1372,11 +1659,22 @@ fn enrollment_modal(
 
     let copy_hover_t = animation::hover_transition("enroll-copy-code", window, cx);
     let copy_t = *copy_hover_t.evaluate(window, cx);
-    let copy_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, copy_t);
+    let copy_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        copy_t,
+    );
 
     let done_hover_t = animation::hover_transition("enroll-done", window, cx);
     let done_t = *done_hover_t.evaluate(window, cx);
-    let done_bg = animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, done_t);
+    let done_bg = animation::lerp_hsla(
+        palette.primary,
+        gpui::Hsla {
+            a: 0.9,
+            ..palette.primary
+        },
+        done_t,
+    );
 
     div()
         .id("enrollment-modal-backdrop")
@@ -1588,23 +1886,42 @@ fn web_access_modal(
 
     let cancel_hover = animation::hover_transition("web-access-cancel", window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     let approve_hover = animation::hover_transition("web-access-approve", window, cx);
     let approve_t = *approve_hover.evaluate(window, cx);
-    let approve_bg = animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, approve_t);
+    let approve_bg = animation::lerp_hsla(
+        palette.primary,
+        gpui::Hsla {
+            a: 0.9,
+            ..palette.primary
+        },
+        approve_t,
+    );
 
     div()
         .id("web-access-modal-backdrop")
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_web_access_modal(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close_web_access_modal(cx)),
+        )
         .child(
             div()
                 .id("web-access-modal-body")
@@ -1615,7 +1932,10 @@ fn web_access_modal(
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1639,7 +1959,11 @@ fn web_access_modal(
                              Account) — only this account can approve the code it then shows.",
                         ),
                 )
-                .child(fonts::tracked_text("WEB ACCESS CODE", px(10.), 0.15).text_xs().text_color(palette.outline))
+                .child(
+                    fonts::tracked_text("WEB ACCESS CODE", px(10.), 0.15)
+                        .text_xs()
+                        .text_color(palette.outline),
+                )
                 .child(
                     text_area("web-access-code-input")
                         .state(screen.web_access_code_state.downgrade())
@@ -1655,45 +1979,56 @@ fn web_access_modal(
                         .whitespace_normal()
                         .overflow_y_scroll(),
                 )
-                .child(fonts::tracked_text("DURATION", px(10.), 0.15).text_xs().text_color(palette.outline))
                 .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .children(WEB_ACCESS_TTL_PRESETS.iter().map(|(label, secs)| {
-                            let selected = *secs == ttl_secs;
-                            let id = SharedString::from(format!("web-access-ttl-{secs}"));
-                            let hover_t = animation::hover_transition(id.clone(), window, cx);
-                            let t = *hover_t.evaluate(window, cx);
-                            let bg = if selected {
-                                palette.primary
+                    fonts::tracked_text("DURATION", px(10.), 0.15)
+                        .text_xs()
+                        .text_color(palette.outline),
+                )
+                .child(div().flex().flex_wrap().gap_2().children(
+                    WEB_ACCESS_TTL_PRESETS.iter().map(|(label, secs)| {
+                        let selected = *secs == ttl_secs;
+                        let id = SharedString::from(format!("web-access-ttl-{secs}"));
+                        let hover_t = animation::hover_transition(id.clone(), window, cx);
+                        let t = *hover_t.evaluate(window, cx);
+                        let bg = if selected {
+                            palette.primary
+                        } else {
+                            animation::lerp_hsla(
+                                palette.surface_container_highest,
+                                palette.surface_bright,
+                                t,
+                            )
+                        };
+                        let secs = *secs;
+                        div()
+                            .id(id)
+                            .px_4()
+                            .py_2()
+                            .rounded_lg()
+                            .bg(bg)
+                            .text_sm()
+                            .cursor_pointer()
+                            .text_color(if selected {
+                                palette.on_primary
                             } else {
-                                animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t)
-                            };
-                            let secs = *secs;
-                            div()
-                                .id(id)
-                                .px_4()
-                                .py_2()
-                                .rounded_lg()
-                                .bg(bg)
-                                .text_sm()
-                                .cursor_pointer()
-                                .text_color(if selected { palette.on_primary } else { palette.on_surface })
-                                .child(*label)
-                                .on_hover(move |is_hovered, _, cx| {
-                                    hover_t.update(cx, |v, cx| {
-                                        *v = *is_hovered as u8 as f32;
-                                        cx.notify();
-                                    });
-                                })
-                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                palette.on_surface
+                            })
+                            .child(*label)
+                            .on_hover(move |is_hovered, _, cx| {
+                                hover_t.update(cx, |v, cx| {
+                                    *v = *is_hovered as u8 as f32;
+                                    cx.notify();
+                                });
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
                                     this.web_access_ttl_secs = secs;
                                     cx.notify();
-                                }))
-                        })),
-                )
+                                }),
+                            )
+                    }),
+                ))
                 .when(!show_advanced, |el| {
                     el.child(
                         div()
@@ -1702,16 +2037,24 @@ fn web_access_modal(
                             .text_color(palette.on_surface_variant)
                             .cursor_pointer()
                             .child("Advanced — I trust this device")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                this.web_access_show_advanced = true;
-                                cx.notify();
-                            })),
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.web_access_show_advanced = true;
+                                    cx.notify();
+                                }),
+                            ),
                     )
                 })
                 .when(show_advanced, |el| {
                     let ro_selected = mode == WebAccessMode::ReadOnly;
                     let rw_selected = mode == WebAccessMode::ReadWrite;
-                    el.child(fonts::tracked_text("MODE", px(10.), 0.15).text_xs().text_color(palette.outline)).child(
+                    el.child(
+                        fonts::tracked_text("MODE", px(10.), 0.15)
+                            .text_xs()
+                            .text_color(palette.outline),
+                    )
+                    .child(
                         div()
                             .flex()
                             .flex_col()
@@ -1720,21 +2063,41 @@ fn web_access_modal(
                                 div()
                                     .flex()
                                     .gap_3()
-                                    .child(mode_button(palette, "web-access-mode-ro", "Read-only (safer)", ro_selected, window, cx, WebAccessMode::ReadOnly))
-                                    .child(mode_button(palette, "web-access-mode-rw", "Read & write", rw_selected, window, cx, WebAccessMode::ReadWrite)),
+                                    .child(mode_button(
+                                        palette,
+                                        "web-access-mode-ro",
+                                        "Read-only (safer)",
+                                        ro_selected,
+                                        window,
+                                        cx,
+                                        WebAccessMode::ReadOnly,
+                                    ))
+                                    .child(mode_button(
+                                        palette,
+                                        "web-access-mode-rw",
+                                        "Read & write",
+                                        rw_selected,
+                                        window,
+                                        cx,
+                                        WebAccessMode::ReadWrite,
+                                    )),
                             )
                             .when(rw_selected, |el| {
-                                el.child(
-                                    div().text_xs().text_color(gpui::rgb(0xf59e0b)).child(
-                                        "Read & write sends this device's master key to the browser \
+                                el.child(div().text_xs().text_color(gpui::rgb(0xf59e0b)).child(
+                                    "Read & write sends this device's master key to the browser \
                                          for the session. Only use it on a device you trust.",
-                                    ),
-                                )
+                                ))
                             }),
                     )
                 })
                 .when_some(screen.web_access_error.clone(), |el, error| {
-                    el.child(div().text_sm().text_color(palette.error).child(error))
+                    el.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(palette.error)
+                            .child(error),
+                    )
                 })
                 .child(
                     div()
@@ -1758,9 +2121,12 @@ fn web_access_modal(
                                         cx.notify();
                                     });
                                 })
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.close_web_access_modal(cx);
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.close_web_access_modal(cx);
+                                    }),
+                                ),
                         )
                         .child(
                             div()
@@ -1781,9 +2147,12 @@ fn web_access_modal(
                                     });
                                 })
                                 .when(!granting, |el| {
-                                    el.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.approve_web_access(cx);
-                                    }))
+                                    el.on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.approve_web_access(cx);
+                                        }),
+                                    )
                                 }),
                         ),
                 ),
@@ -1817,10 +2186,21 @@ fn mode_button(
         .justify_center()
         .bg(bg)
         .border_1()
-        .border_color(if selected { palette.primary } else { gpui::Hsla { a: 0.2, ..palette.outline_variant } })
+        .border_color(if selected {
+            palette.primary
+        } else {
+            gpui::Hsla {
+                a: 0.2,
+                ..palette.outline_variant
+            }
+        })
         .text_sm()
         .font_family(fonts::LABEL)
-        .text_color(if selected { palette.on_primary } else { palette.on_surface })
+        .text_color(if selected {
+            palette.on_primary
+        } else {
+            palette.on_surface
+        })
         .cursor_pointer()
         .child(label)
         .on_hover(move |is_hovered, _, cx| {
@@ -1829,8 +2209,11 @@ fn mode_button(
                 cx.notify();
             });
         })
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-            this.web_access_mode = mode;
-            cx.notify();
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                this.web_access_mode = mode;
+                cx.notify();
+            }),
+        )
 }

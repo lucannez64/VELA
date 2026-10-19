@@ -15,15 +15,15 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, prelude::*, px, App, Context, EventEmitter, IntoElement, MouseButton, MouseDownEvent, Render,
-    SharedString, Task, Window,
+    div, prelude::*, px, App, Context, EventEmitter, IntoElement, MouseButton, MouseDownEvent,
+    Render, SharedString, Task, Window,
 };
 use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
 
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::fonts;
 use crate::icon::icon;
 use crate::theme::Palette;
@@ -138,7 +138,8 @@ struct RecoverState {
 
 impl WelcomeScreen {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         cx.spawn(async move |this, cx| {
             let status = cx
                 .background_spawn_guarded("welcome enrollment check", async {
@@ -179,7 +180,8 @@ impl WelcomeScreen {
             reset_error: None,
             show_import_modal: false,
             import_code_state,
-            import_password_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            import_password_state: cx
+                .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             import_password_visible: false,
             import_verification_code: None,
             import_code_confirmed: false,
@@ -200,9 +202,11 @@ impl WelcomeScreen {
                 verifying: false,
                 recover_response: None,
                 pin_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
-                device_name_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+                device_name_state: cx
+                    .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
                 password_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
-                confirm_password_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+                confirm_password_state: cx
+                    .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
                 finishing: false,
                 error: None,
             },
@@ -221,9 +225,15 @@ impl WelcomeScreen {
         self.recover.error = None;
         self.recover.loading_remotes = true;
         self.recover.pin_state.update(cx, |s, cx| s.emplace("", cx));
-        self.recover.device_name_state.update(cx, |s, cx| s.emplace("", cx));
-        self.recover.password_state.update(cx, |s, cx| s.emplace("", cx));
-        self.recover.confirm_password_state.update(cx, |s, cx| s.emplace("", cx));
+        self.recover
+            .device_name_state
+            .update(cx, |s, cx| s.emplace("", cx));
+        self.recover
+            .password_state
+            .update(cx, |s, cx| s.emplace("", cx));
+        self.recover
+            .confirm_password_state
+            .update(cx, |s, cx| s.emplace("", cx));
         self.show_recover_modal = true;
         cx.notify();
 
@@ -260,7 +270,9 @@ impl WelcomeScreen {
     }
 
     fn fetch_recovery_share(&mut self, cx: &mut Context<Self>) {
-        let Some(remote) = self.recover.selected_remote.clone() else { return };
+        let Some(remote) = self.recover.selected_remote.clone() else {
+            return;
+        };
         self.recover.fetching_share = true;
         self.recover.error = None;
         cx.notify();
@@ -268,13 +280,13 @@ impl WelcomeScreen {
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn_guarded("fetch cloud recovery share", async move {
-                    vela_desktop_core::recovery::fetch_cloud_recovery_shares(
-                        remote.to_string(),
-                    )
-                    .await
+                    vela_desktop_core::recovery::fetch_cloud_recovery_shares(remote.to_string())
+                        .await
                 })
                 .await
-                .unwrap_or_else(|| Err("Downloading the recovery share failed unexpectedly".to_string()));
+                .unwrap_or_else(|| {
+                    Err("Downloading the recovery share failed unexpectedly".to_string())
+                });
             this.update(cx, |this, cx| {
                 this.recover.fetching_share = false;
                 match result {
@@ -301,7 +313,9 @@ impl WelcomeScreen {
     }
 
     fn verify_with_security_key(&mut self, cx: &mut Context<Self>) {
-        let Some(share) = self.recover.share.clone() else { return };
+        let Some(share) = self.recover.share.clone() else {
+            return;
+        };
         let pin = self.recover.pin_state.read(cx).as_str().to_string();
         self.recover.verifying = true;
         self.recover.error = None;
@@ -339,11 +353,26 @@ impl WelcomeScreen {
     }
 
     fn finish_recovery(&mut self, cx: &mut Context<Self>) {
-        let Some(share) = self.recover.share.clone() else { return };
-        let Some(recover_response) = self.recover.recover_response.clone() else { return };
+        let Some(share) = self.recover.share.clone() else {
+            return;
+        };
+        let Some(recover_response) = self.recover.recover_response.clone() else {
+            return;
+        };
         let password = self.recover.password_state.read(cx).as_str().to_string();
-        let confirm = self.recover.confirm_password_state.read(cx).as_str().to_string();
-        let device_name = self.recover.device_name_state.read(cx).as_str().trim().to_string();
+        let confirm = self
+            .recover
+            .confirm_password_state
+            .read(cx)
+            .as_str()
+            .to_string();
+        let device_name = self
+            .recover
+            .device_name_state
+            .read(cx)
+            .as_str()
+            .trim()
+            .to_string();
 
         // Same two validations, same messages, as the original's `handleFinish`.
         if password.len() < 8 {
@@ -382,7 +411,11 @@ impl WelcomeScreen {
                 match result {
                     Ok(Ok(())) => {
                         this.show_recover_modal = false;
-                        crate::toast::show(cx, "Account recovered", crate::toast::ToastKind::Success);
+                        crate::toast::show(
+                            cx,
+                            "Account recovered",
+                            crate::toast::ToastKind::Success,
+                        );
                         cx.emit(WelcomeEvent::AccountRecovered);
                     }
                     Ok(Err(e)) => this.recover.error = Some(e.into()),
@@ -397,7 +430,8 @@ impl WelcomeScreen {
 
     fn open_import_modal(&mut self, cx: &mut Context<Self>) {
         self.import_code_state.update(cx, |s, cx| s.emplace("", cx));
-        self.import_password_state.update(cx, |s, cx| s.emplace("", cx));
+        self.import_password_state
+            .update(cx, |s, cx| s.emplace("", cx));
         self.import_password_visible = false;
         self.import_verification_code = None;
         self.import_code_confirmed = false;
@@ -426,9 +460,7 @@ impl WelcomeScreen {
         } else {
             // Pure local hash of the code — no network, no vault access — so
             // it's fine to compute inline per keystroke.
-            Some(
-                vela_desktop_core::commands::devices::enrollment_verification_code(&code).into(),
-            )
+            Some(vela_desktop_core::commands::devices::enrollment_verification_code(&code).into())
         };
         cx.notify();
     }
@@ -470,7 +502,9 @@ impl WelcomeScreen {
     }
 
     fn spawn_join_poll(&mut self, cx: &mut Context<Self>) {
-        let Some(join) = self.join_v3.clone() else { return };
+        let Some(join) = self.join_v3.clone() else {
+            return;
+        };
         let app_state = self.app_state.clone();
         let grant_id = join.grant_id.clone();
 
@@ -484,8 +518,10 @@ impl WelcomeScreen {
                 let app_state = app_state.clone();
                 let gid = grant_id.clone();
                 let result = gpui_tokio::Tokio::spawn(cx, async move {
-                    vela_desktop_core::commands::enrollment_v3::poll_enrollment_join(&app_state, &gid)
-                        .await
+                    vela_desktop_core::commands::enrollment_v3::poll_enrollment_join(
+                        &app_state, &gid,
+                    )
+                    .await
                 })
                 .await;
 
@@ -523,7 +559,9 @@ impl WelcomeScreen {
     }
 
     fn finish_join_v3(&mut self, cx: &mut Context<Self>) {
-        let Some(join) = self.join_v3.clone() else { return };
+        let Some(join) = self.join_v3.clone() else {
+            return;
+        };
         let password = self.import_password_state.read(cx).as_str().to_string();
         let grant_id = join.grant_id.clone();
 
@@ -646,7 +684,8 @@ impl WelcomeScreen {
     }
 
     fn open_reset_modal(&mut self, cx: &mut Context<Self>) {
-        self.reset_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+        self.reset_confirm_state
+            .update(cx, |s, cx| s.emplace("", cx));
         self.reset_error = None;
         self.show_reset_modal = true;
         cx.notify();
@@ -671,7 +710,12 @@ impl WelcomeScreen {
             // (a separate thread pool that never entered that runtime and
             // panics on real reactor I/O).
             let result = gpui_tokio::Tokio::spawn(cx, async move {
-                vela_desktop_core::commands::session::reset_vault(&app_state, Some(confirm_text), None).await
+                vela_desktop_core::commands::session::reset_vault(
+                    &app_state,
+                    Some(confirm_text),
+                    None,
+                )
+                .await
             })
             .await;
             this.update(cx, |this, cx| {
@@ -683,7 +727,9 @@ impl WelcomeScreen {
                         // proceed to vault creation.
                         cx.emit(WelcomeEvent::CreateVault);
                     }
-                    Ok(Err(e)) => this.reset_error = Some(format!("Failed to reset vault: {e}").into()),
+                    Ok(Err(e)) => {
+                        this.reset_error = Some(format!("Failed to reset vault: {e}").into())
+                    }
                     Err(e) => this.reset_error = Some(format!("Task failed: {e}").into()),
                 }
                 cx.notify();
@@ -996,7 +1042,11 @@ fn recover_account_modal(
 
     let cancel_hover = animation::hover_transition("welcome-recover-cancel", window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     let body = div()
         .id("welcome-recover-modal-body")
@@ -1008,7 +1058,10 @@ fn recover_account_modal(
         .rounded_2xl()
         .bg(palette.surface_container)
         .border_1()
-        .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+        .border_color(gpui::Hsla {
+            a: 0.2,
+            ..palette.outline_variant
+        })
         .flex()
         .flex_col()
         .gap_4()
@@ -1016,8 +1069,9 @@ fn recover_account_modal(
         // Enter runs whichever step's primary button is on screen. The Remote
         // step has no field to type Enter into (it's a remote picker), so it
         // can never reach here.
-        .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
-            match this.recover.step {
+        .on_key_down(crate::keyboard::submit_on_enter(
+            cx,
+            |this, _window, cx| match this.recover.step {
                 RecoverStep::Remote | RecoverStep::Account => {}
                 RecoverStep::Confirm => {
                     if !this.recover.verifying {
@@ -1029,8 +1083,8 @@ fn recover_account_modal(
                         this.finish_recovery(cx);
                     }
                 }
-            }
-        }))
+            },
+        ))
         .child(
             div()
                 .flex()
@@ -1050,9 +1104,12 @@ fn recover_account_modal(
     let body = match state.step {
         RecoverStep::Remote => body
             .child(
-                div().text_sm().text_color(palette.on_surface_variant).child(
-                    "Pick the cloud remote where Share 1 of your recovery backup was uploaded.",
-                ),
+                div()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .child(
+                        "Pick the cloud remote where Share 1 of your recovery backup was uploaded.",
+                    ),
             )
             .map(|el| {
                 if state.loading_remotes {
@@ -1075,12 +1132,16 @@ fn recover_account_modal(
                                 .overflow_y_scroll()
                                 .rounded_xl()
                                 .border_1()
-                                .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                                .border_color(gpui::Hsla {
+                                    a: 0.3,
+                                    ..palette.outline_variant
+                                })
                                 .bg(palette.surface_bright)
                                 .flex()
                                 .flex_col()
                                 .children(remotes.iter().enumerate().map(|(index, remote)| {
-                                    let is_selected = state.selected_remote.as_ref() == Some(remote);
+                                    let is_selected =
+                                        state.selected_remote.as_ref() == Some(remote);
                                     let remote_for_click = remote.clone();
                                     div()
                                         .id(("welcome-recover-remote", index))
@@ -1091,12 +1152,23 @@ fn recover_account_modal(
                                         .gap_3()
                                         .cursor_pointer()
                                         .when(is_selected, |el| {
-                                            el.bg(gpui::Hsla { a: 0.1, ..palette.primary })
+                                            el.bg(gpui::Hsla {
+                                                a: 0.1,
+                                                ..palette.primary
+                                            })
                                         })
                                         .child(icon(
-                                            if is_selected { "radio_button_checked" } else { "radio_button_unchecked" },
+                                            if is_selected {
+                                                "radio_button_checked"
+                                            } else {
+                                                "radio_button_unchecked"
+                                            },
                                             px(16.),
-                                            if is_selected { palette.primary } else { palette.outline },
+                                            if is_selected {
+                                                palette.primary
+                                            } else {
+                                                palette.outline
+                                            },
                                         ))
                                         .child(
                                             div()
@@ -1117,22 +1189,32 @@ fn recover_account_modal(
                         .child(primary_modal_button(
                             palette,
                             "welcome-recover-continue",
-                            if state.fetching_share { "Downloading..." } else { "Continue" },
+                            if state.fetching_share {
+                                "Downloading..."
+                            } else {
+                                "Continue"
+                            },
                             !state.fetching_share,
                             cx.listener(|this, _, _, cx| this.fetch_recovery_share(cx)),
                         )),
                     _ => el.child(
-                        div().text_sm().text_color(palette.on_surface_variant).child(
-                            "No configured rclone remotes found. Install rclone and configure \
+                        div()
+                            .text_sm()
+                            .text_color(palette.on_surface_variant)
+                            .child(
+                                "No configured rclone remotes found. Install rclone and configure \
                              the same remote used during recovery setup, then come back here.",
-                        ),
+                            ),
                     ),
                 }
             }),
 
         RecoverStep::Account => body
             .child(
-                div().text_sm().text_color(palette.on_surface_variant).child(
+                div()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .child(
                     "This remote holds recovery backups for more than one account. Pick the one \
                      you are recovering:",
                 ),
@@ -1144,7 +1226,10 @@ fn recover_account_modal(
                     .overflow_y_scroll()
                     .rounded_xl()
                     .border_1()
-                    .border_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                    .border_color(gpui::Hsla {
+                        a: 0.3,
+                        ..palette.outline_variant
+                    })
                     .bg(palette.surface_bright)
                     .flex()
                     .flex_col()
@@ -1161,7 +1246,12 @@ fn recover_account_modal(
                             .items_center()
                             .gap_3()
                             .cursor_pointer()
-                            .hover(|el| el.bg(gpui::Hsla { a: 0.06, ..palette.primary }))
+                            .hover(|el| {
+                                el.bg(gpui::Hsla {
+                                    a: 0.06,
+                                    ..palette.primary
+                                })
+                            })
                             .child(
                                 div()
                                     .font_family(fonts::MONO)
@@ -1201,9 +1291,12 @@ fn recover_account_modal(
                 )
             })
             .child(
-                div().text_sm().text_color(palette.on_surface_variant).child(
-                    "Next, verify with the security key (passkey) you registered for recovery.",
-                ),
+                div()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .child(
+                        "Next, verify with the security key (passkey) you registered for recovery.",
+                    ),
             )
             .child(field_label(palette, "Security key PIN"))
             .child(
@@ -1224,14 +1317,21 @@ fn recover_account_modal(
             .child(primary_modal_button(
                 palette,
                 "welcome-recover-verify",
-                if state.verifying { "Waiting for security key..." } else { "Verify with security key" },
+                if state.verifying {
+                    "Waiting for security key..."
+                } else {
+                    "Verify with security key"
+                },
                 !state.verifying,
                 cx.listener(|this, _, _, cx| this.verify_with_security_key(cx)),
             )),
 
         RecoverStep::Device => body
             .child(
-                div().text_sm().text_color(palette.on_surface_variant).child(
+                div()
+                    .text_sm()
+                    .text_color(palette.on_surface_variant)
+                    .child(
                     "Set a password to protect the vault on this device, and optionally name it.",
                 ),
             )
@@ -1285,7 +1385,11 @@ fn recover_account_modal(
             .child(primary_modal_button(
                 palette,
                 "welcome-recover-finish",
-                if state.finishing { "Recovering vault..." } else { "Recover vault" },
+                if state.finishing {
+                    "Recovering vault..."
+                } else {
+                    "Recover vault"
+                },
                 !state.finishing,
                 cx.listener(|this, _, _, cx| this.finish_recovery(cx)),
             )),
@@ -1326,12 +1430,20 @@ fn recover_account_modal(
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_recover_modal(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close_recover_modal(cx)),
+        )
         .child(body)
 }
 
@@ -1350,7 +1462,14 @@ fn primary_modal_button(
         .flex()
         .items_center()
         .justify_center()
-        .bg(if enabled { palette.primary } else { gpui::Hsla { a: 0.5, ..palette.primary } })
+        .bg(if enabled {
+            palette.primary
+        } else {
+            gpui::Hsla {
+                a: 0.5,
+                ..palette.primary
+            }
+        })
         .text_color(palette.on_primary)
         .font_weight(gpui::FontWeight::MEDIUM)
         .when(enabled, |el| el.cursor_pointer())
@@ -1393,19 +1512,31 @@ fn import_code_modal(
 
     let cancel_hover = animation::hover_transition("welcome-import-cancel", window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     div()
         .id("welcome-import-modal-backdrop")
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_import_modal(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close_import_modal(cx)),
+        )
         .child(
             div()
                 .id("welcome-import-modal-body")
@@ -1417,7 +1548,10 @@ fn import_code_modal(
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1446,10 +1580,13 @@ fn import_code_modal(
                         ),
                 )
                 .child(
-                    div().text_sm().text_color(palette.on_surface_variant).child(
-                        "Paste the enrollment code generated on your other device, then set a \
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child(
+                            "Paste the enrollment code generated on your other device, then set a \
                          password to protect the vault on this device.",
-                    ),
+                        ),
                 )
                 .child(field_label(palette, "Enrollment code"))
                 .child(
@@ -1494,12 +1631,15 @@ fn import_code_modal(
                                     ),
                             )
                             .child(
-                                div().text_xs().text_color(palette.on_surface_variant).child(
-                                    "Compare this against the verification code shown on your \
+                                div()
+                                    .text_xs()
+                                    .text_color(palette.on_surface_variant)
+                                    .child(
+                                        "Compare this against the verification code shown on your \
                                      other device's \"Enrollment Code\" dialog. If it doesn't \
                                      match, stop — do not proceed, the code may have been \
                                      tampered with.",
-                                ),
+                                    ),
                             )
                             .child(
                                 fonts::tracked_text(&code, px(20.), 0.15)
@@ -1548,7 +1688,8 @@ fn import_code_modal(
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _, _, cx| {
-                                            this.import_code_confirmed = !this.import_code_confirmed;
+                                            this.import_code_confirmed =
+                                                !this.import_code_confirmed;
                                             cx.notify();
                                         }),
                                     ),
@@ -1558,44 +1699,52 @@ fn import_code_modal(
                 .child(field_label(palette, "Vault password (this device)"))
                 .child(
                     div()
-                        .relative()
+                        .flex()
                         .w_full()
+                        .bg(palette.surface_bright)
+                        .rounded_xl()
+                        .overflow_hidden()
                         .child(
-                            text_input("welcome-import-password")
-                                .state(screen.import_password_state.downgrade())
-                                .placeholder("Set a password for this device")
-                                .caret_blink_interval_500ms()
-                                .mask_char((!password_visible).then_some('*'))
-                                .bg(palette.surface_bright)
-                                .text_color(palette.on_surface)
-                                .rounded_xl()
-                                .py_3()
-                                .pl_4()
-                                .pr(px(48.))
-                                .w_full()
-                                .min_h_auto()
-                                .whitespace_nowrap()
-                                .overflow_x_scroll(),
+                            div().flex_1().min_w_0().overflow_hidden().child(
+                                text_input("welcome-import-password")
+                                    .state(screen.import_password_state.downgrade())
+                                    .placeholder("Set a password for this device")
+                                    .caret_blink_interval_500ms()
+                                    .mask_char((!password_visible).then_some('*'))
+                                    .bg(palette.surface_bright)
+                                    .text_color(palette.on_surface)
+                                    .rounded_xl()
+                                    .py_3()
+                                    .pl_4()
+                                    .w_full()
+                                    .min_h_auto()
+                                    .whitespace_nowrap()
+                                    .overflow_x_scroll(),
+                            ),
                         )
                         .child(
                             div()
                                 .id("welcome-import-password-toggle")
-                                .absolute()
-                                .right_3()
-                                .top_0()
-                                .bottom_0()
+                                .w(px(44.))
+                                .flex_shrink_0()
                                 .flex()
                                 .items_center()
+                                .justify_center()
                                 .cursor_pointer()
                                 .child(icon(
-                                    if password_visible { "visibility_off" } else { "visibility" },
+                                    if password_visible {
+                                        "visibility_off"
+                                    } else {
+                                        "visibility"
+                                    },
                                     px(20.),
                                     palette.on_surface_variant,
                                 ))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, _, cx| {
-                                        this.import_password_visible = !this.import_password_visible;
+                                        this.import_password_visible =
+                                            !this.import_password_visible;
                                         cx.notify();
                                     }),
                                 ),
@@ -1645,7 +1794,10 @@ fn import_code_modal(
                                 .bg(if can_import {
                                     palette.primary
                                 } else {
-                                    gpui::Hsla { a: 0.4, ..palette.primary }
+                                    gpui::Hsla {
+                                        a: 0.4,
+                                        ..palette.primary
+                                    }
                                 })
                                 .text_color(palette.on_primary)
                                 .font_weight(gpui::FontWeight::MEDIUM)
@@ -1686,15 +1838,23 @@ fn join_waiting_modal(
     let finishing = join.finishing;
     let cancel_hover = animation::hover_transition("welcome-join-cancel", window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg =
-        animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     div()
         .id("welcome-join-modal-backdrop")
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
@@ -1707,7 +1867,10 @@ fn join_waiting_modal(
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.2, ..palette.outline_variant })
+                .border_color(gpui::Hsla {
+                    a: 0.2,
+                    ..palette.outline_variant
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1728,9 +1891,12 @@ fn join_waiting_modal(
                         ),
                 )
                 .child(
-                    div().text_sm().text_color(palette.on_surface_variant).child(
-                        "Your other device is now showing several codes. Pick this one on it:",
-                    ),
+                    div()
+                        .text_sm()
+                        .text_color(palette.on_surface_variant)
+                        .child(
+                            "Your other device is now showing several codes. Pick this one on it:",
+                        ),
                 )
                 .child(
                     div()
@@ -1747,7 +1913,10 @@ fn join_waiting_modal(
                         ),
                 )
                 .child(
-                    div().text_xs().text_color(palette.on_surface_variant).child(
+                    div()
+                        .text_xs()
+                        .text_color(palette.on_surface_variant)
+                        .child(
                         "This code is computed on this device from the key it just generated for \
                          itself. Nobody else can produce it, which is what makes picking it on \
                          your other device mean something.",
@@ -1821,26 +1990,43 @@ fn field_label(palette: &Palette, text: &'static str) -> impl IntoElement {
 /// generic component across these two independent view types — see this
 /// codebase's established per-screen-modal convention, e.g. `revoke_modal`/
 /// `delete_modal`).
-fn reset_confirm_modal(palette: &Palette, screen: &WelcomeScreen, window: &mut Window, cx: &mut Context<WelcomeScreen>) -> impl IntoElement {
+fn reset_confirm_modal(
+    palette: &Palette,
+    screen: &WelcomeScreen,
+    window: &mut Window,
+    cx: &mut Context<WelcomeScreen>,
+) -> impl IntoElement {
     let confirm_text = screen.reset_confirm_state.read(cx).as_str().to_string();
     let can_reset = confirm_text == "DELETE";
     let resetting = screen.resetting;
 
     let cancel_hover = animation::hover_transition("welcome-reset-cancel", window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     div()
         .id("welcome-reset-modal-backdrop")
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_reset_modal(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close_reset_modal(cx)),
+        )
         .child(
             div()
                 .id("welcome-reset-modal-body")
@@ -1850,7 +2036,10 @@ fn reset_confirm_modal(palette: &Palette, screen: &WelcomeScreen, window: &mut W
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.3, ..palette.error })
+                .border_color(gpui::Hsla {
+                    a: 0.3,
+                    ..palette.error
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1927,9 +2116,12 @@ fn reset_confirm_modal(palette: &Palette, screen: &WelcomeScreen, window: &mut W
                                         cx.notify();
                                     });
                                 })
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.close_reset_modal(cx);
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.close_reset_modal(cx);
+                                    }),
+                                ),
                         )
                         .child(
                             div()
@@ -1940,15 +2132,29 @@ fn reset_confirm_modal(palette: &Palette, screen: &WelcomeScreen, window: &mut W
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .bg(if can_reset { palette.error } else { gpui::Hsla { a: 0.4, ..palette.error } })
+                                .bg(if can_reset {
+                                    palette.error
+                                } else {
+                                    gpui::Hsla {
+                                        a: 0.4,
+                                        ..palette.error
+                                    }
+                                })
                                 .text_color(gpui::white())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .when(can_reset, |el| el.cursor_pointer())
-                                .child(if resetting { "Resetting…" } else { "Reset forever" })
+                                .child(if resetting {
+                                    "Resetting…"
+                                } else {
+                                    "Reset forever"
+                                })
                                 .when(can_reset, |el| {
-                                    el.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.confirm_reset(cx);
-                                    }))
+                                    el.on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.confirm_reset(cx);
+                                        }),
+                                    )
                                 }),
                         ),
                 ),
@@ -2076,7 +2282,11 @@ fn primary_action_button(
     let label = label.into();
     let hover_t = animation::hover_transition(format!("welcome-{id}"), window, cx);
     let t = *hover_t.evaluate(window, cx);
-    let inner_bg = animation::lerp_hsla(palette.surface_container_lowest, gpui::transparent_black(), t);
+    let inner_bg = animation::lerp_hsla(
+        palette.surface_container_lowest,
+        gpui::transparent_black(),
+        t,
+    );
     let icon_color = animation::lerp_hsla(palette.primary, palette.on_primary, t);
     let gradient = gpui::linear_gradient(
         90.,
@@ -2088,20 +2298,32 @@ fn primary_action_button(
     // resolved against this stretched parent falls back to the content size,
     // which leaves the gradient showing as a slab beside a shrink-wrapped
     // pill instead of reading as a 1px border.
-    let mut outer = div().id(id).w_full().flex().rounded_xl().p(px(1.)).bg(gradient).child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .bg(inner_bg)
-            .rounded(px(11.))
-            .py_4()
-            .px_6()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(fonts::tracked_text(&label, px(16.), 0.025).font_family(fonts::HEADLINE).font_weight(gpui::FontWeight::BOLD).text_color(palette.on_surface))
-            .child(icon(icon_name, px(20.), icon_color)),
-    );
+    let mut outer = div()
+        .id(id)
+        .w_full()
+        .flex()
+        .rounded_xl()
+        .p(px(1.))
+        .bg(gradient)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .bg(inner_bg)
+                .rounded(px(11.))
+                .py_4()
+                .px_6()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    fonts::tracked_text(&label, px(16.), 0.025)
+                        .font_family(fonts::HEADLINE)
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(palette.on_surface),
+                )
+                .child(icon(icon_name, px(20.), icon_color)),
+        );
 
     if enabled {
         outer = outer

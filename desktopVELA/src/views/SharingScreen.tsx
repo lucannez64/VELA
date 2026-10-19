@@ -140,7 +140,7 @@ export default function SharingScreen() {
   };
 
   return (
-    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+    <div className="flex-1 min-w-0 min-h-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-2">
         <div>
           <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface mb-2">Sharing</h1>
@@ -155,7 +155,7 @@ export default function SharingScreen() {
         </button>
       </div>
 
-      <div className="flex gap-4 mb-6">
+      <div className="flex flex-wrap gap-2 sm:gap-4 mb-6">
         <button
           onClick={() => setActiveTab('received')}
           className={`px-4 py-2 rounded-lg font-label text-sm transition-colors ${
@@ -407,7 +407,7 @@ function ShareModal({ items, initialItemId, onClose, onShared }: { items: VaultI
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={onClose}>
       <div 
-        className="bg-surface-container rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
+        className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-md w-full mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto shadow-2xl border border-outline-variant/20"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 mb-6">
@@ -514,7 +514,7 @@ function ShareLinkModal({ items, onClose, onCreated }: { items: VaultItem[]; onC
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={onClose}>
       <div
-        className="bg-surface-container rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-outline-variant/20"
+        className="bg-surface-container rounded-2xl p-4 sm:p-8 max-w-md w-full mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto shadow-2xl border border-outline-variant/20"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 mb-6">

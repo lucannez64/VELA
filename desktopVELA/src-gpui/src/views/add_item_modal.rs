@@ -17,10 +17,9 @@ use vela_desktop_core::commands::vault::add_item;
 use vela_desktop_core::vault::{VaultItem, VaultMeta};
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::fonts;
-use crate::icon::icon;
 use crate::theme::Palette;
 use crate::views::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 
@@ -76,8 +75,11 @@ pub struct AddItemModal {
 
 impl AddItemModal {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
-        let field = |cx: &mut Context<Self>| cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
+        let field = |cx: &mut Context<Self>| {
+            cx.new(|cx| EditableTextState::new(StringStorage::default(), cx))
+        };
         Self {
             app_state,
             kind: ItemKind::Login,
@@ -113,7 +115,15 @@ impl AddItemModal {
             this.notes.update(cx, |s, cx| s.emplace(notes, cx));
         }
         match &item {
-            VaultItem::Login { url, username, pass, totp, credential_change_needs_reauth, allow_second_factor_downgrade, .. } => {
+            VaultItem::Login {
+                url,
+                username,
+                pass,
+                totp,
+                credential_change_needs_reauth,
+                allow_second_factor_downgrade,
+                ..
+            } => {
                 this.kind = ItemKind::Login;
                 this.url.update(cx, |s, cx| s.emplace(url, cx));
                 this.username.update(cx, |s, cx| s.emplace(username, cx));
@@ -124,7 +134,14 @@ impl AddItemModal {
                 this.needs_reauth = credential_change_needs_reauth.unwrap_or(false);
                 this.allow_downgrade = allow_second_factor_downgrade.unwrap_or(false);
             }
-            VaultItem::CreditCard { number, exp, cvv, pin, cardholder_name, .. } => {
+            VaultItem::CreditCard {
+                number,
+                exp,
+                cvv,
+                pin,
+                cardholder_name,
+                ..
+            } => {
                 this.kind = ItemKind::CreditCard;
                 this.card_number.update(cx, |s, cx| s.emplace(number, cx));
                 this.card_exp.update(cx, |s, cx| s.emplace(exp, cx));
@@ -138,7 +155,8 @@ impl AddItemModal {
             }
             VaultItem::SecureNote { content, .. } => {
                 this.kind = ItemKind::SecureNote;
-                this.secure_note_content.update(cx, |s, cx| s.emplace(content, cx));
+                this.secure_note_content
+                    .update(cx, |s, cx| s.emplace(content, cx));
             }
             _ => {}
         }
@@ -260,7 +278,9 @@ impl AddItemModal {
             let result = cx
                 .background_spawn_guarded("save item", async move {
                     if is_edit {
-                        vela_desktop_core::commands::vault::update_item(&app_state, item).await.map(|_| ())
+                        vela_desktop_core::commands::vault::update_item(&app_state, item)
+                            .await
+                            .map(|_| ())
                     } else {
                         add_item(&app_state, item).await.map(|_| ())
                     }
@@ -270,9 +290,11 @@ impl AddItemModal {
             this.update(cx, |this, cx| {
                 this.saving = false;
                 match result {
-                    Ok(()) => {
-                        cx.emit(if is_edit { AddItemModalEvent::Updated } else { AddItemModalEvent::Created })
-                    }
+                    Ok(()) => cx.emit(if is_edit {
+                        AddItemModalEvent::Updated
+                    } else {
+                        AddItemModalEvent::Created
+                    }),
                     Err(e) => this.error = Some(format!("Failed to save item: {e}").into()),
                 }
                 cx.notify();
@@ -589,194 +611,194 @@ impl Render for AddItemModal {
             )),
         };
 
-        div()
-            .id("add-item-backdrop")
-            .absolute()
-            .inset_0()
-            // `occlude()` sets this hitbox to `HitboxBehavior::BlockMouse`, so
-            // the window's hit-test loop stops here. Without it the backlog of
-            // hitboxes keeps including the vault's scroll container behind the
-            // backdrop, which then handles `ScrollWheelEvent` —
-            // `should_handle_scroll()` is a hitbox check, not a hover check, so
-            // the backdrop's own handler does not stop it. Result: the list
-            // scrolled behind the open modal.
-            .occlude()
-            .bg(gpui::black().opacity(0.6))
-            .flex()
-            .items_center()
-            .justify_center()
-            .font_family(fonts::LABEL)
-            // Matches the original's backdrop `onClick={onClose}` — without
-            // an explicit handler here, gpui doesn't insert a hitbox for a
-            // plain styled div, so clicks silently fell through to whatever
-            // vault content was underneath instead of being caught (let
-            // alone closing the modal) — a real, confirmed bug, not just a
-            // missing nicety.
-            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _, cx| {
+        let close = crate::modal::close_button("close-modal", &palette).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_this, _, _, cx| {
                 cx.emit(AddItemModalEvent::Close);
-            }))
-            .child(
+            }),
+        );
+        let header = crate::modal::header(
+            if self.editing.is_some() {
+                "Edit Item"
+            } else {
+                "Add New Item"
+            },
+            close,
+            &palette,
+        );
+        let tabs = div()
+            .flex()
+            .gap_2()
+            .flex_shrink_0()
+            .pb_4()
+            .child(kind_tab(
+                &palette,
+                "Login",
+                self.kind == ItemKind::Login,
+                window,
+                cx,
+                |this, cx| {
+                    this.kind = ItemKind::Login;
+                    cx.notify();
+                },
+            ))
+            .child(kind_tab(
+                &palette,
+                "Card",
+                self.kind == ItemKind::CreditCard,
+                window,
+                cx,
+                |this, cx| {
+                    this.kind = ItemKind::CreditCard;
+                    cx.notify();
+                },
+            ))
+            .child(kind_tab(
+                &palette,
+                "Secure Note",
+                self.kind == ItemKind::SecureNote,
+                window,
+                cx,
+                |this, cx| {
+                    this.kind = ItemKind::SecureNote;
+                    cx.notify();
+                },
+            ));
+        let content = div()
+            .child(tabs)
+            .child(body)
+            .when_some(self.error.clone(), |el, error| {
+                el.child(
+                    div()
+                        .mt_3()
+                        .text_sm()
+                        .text_color(palette.error)
+                        .child(error),
+                )
+            });
+        let footer = div()
+            .flex()
+            .gap_4()
+            .flex_shrink_0()
+            .child({
+                let hover_t = animation::hover_transition("cancel", window, cx);
+                let t = *hover_t.evaluate(window, cx);
+                let bg = animation::lerp_hsla(
+                    palette.surface_container_highest,
+                    palette.surface_bright,
+                    t,
+                );
                 div()
-                    .id("add-item-card")
-                    .map(|el| crate::keyboard::trap_tab(el, "add-item-card-trap", window, cx))
-                    .w(px(560.))
-                    .max_h(px(640.))
-                    .rounded_2xl()
-                    .bg(palette.surface_container)
+                    .id("cancel")
+                    .flex_1()
+                    .py_3()
+                    .rounded_xl()
+                    .bg(bg)
+                    .text_color(palette.on_surface)
+                    .font_family(fonts::BODY)
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .flex()
-                    .flex_col()
-                    // Stops the card's own clicks from bubbling to the
-                    // backdrop above and closing the modal underneath them.
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child("Cancel")
+                    .on_hover(move |is_hovered, _, cx| {
+                        hover_t.update(cx, |v, cx| {
+                            *v = *is_hovered as u8 as f32;
+                            cx.notify();
+                        });
                     })
-                    // Enter saves from any single-line field. The Notes and
-                    // Secure-note bodies are `text_area`s, where Enter inserts
-                    // a newline and never reaches here.
-                    .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _window, cx| {
-                        if !this.saving {
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, _, cx| {
+                            cx.emit(AddItemModalEvent::Close);
+                        }),
+                    )
+            })
+            .child({
+                let hover_t = animation::hover_transition("submit", window, cx);
+                let t = *hover_t.evaluate(window, cx);
+                let bg = animation::lerp_hsla(
+                    palette.primary,
+                    gpui::Hsla {
+                        a: 0.9,
+                        ..palette.primary
+                    },
+                    t,
+                );
+                div()
+                    .id("submit")
+                    .flex_1()
+                    .py_3()
+                    .rounded_xl()
+                    .bg(bg)
+                    .text_color(palette.on_primary)
+                    .font_family(fonts::BODY)
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child(if self.saving {
+                        "Saving…"
+                    } else if self.editing.is_some() {
+                        "Save Changes"
+                    } else {
+                        "Create Item"
+                    })
+                    .on_hover(move |is_hovered, _, cx| {
+                        hover_t.update(cx, |v, cx| {
+                            *v = *is_hovered as u8 as f32;
+                            cx.notify();
+                        });
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
                             this.submit(cx);
-                        }
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .p_6()
-                            .child(
-                                div()
-                                    .font_family(fonts::HEADLINE)
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_2xl()
-                                    .text_color(palette.on_surface)
-                                    .child(if self.editing.is_some() { "Edit Item" } else { "Add New Item" }),
-                            )
-                            .child({
-                                let hover_t = animation::hover_transition("close-modal", window, cx);
-                                let t = *hover_t.evaluate(window, cx);
-                                let bg = animation::lerp_hsla(gpui::transparent_black(), palette.surface_container_high, t);
-                                div()
-                                    .id("close-modal")
-                                    .p_2()
-                                    .rounded_lg()
-                                    .bg(bg)
-                                    .cursor_pointer()
-                                    .child(icon("close", px(20.), palette.on_surface_variant))
-                                    .on_hover(move |is_hovered, _, cx| {
-                                        hover_t.update(cx, |v, cx| {
-                                            *v = *is_hovered as u8 as f32;
-                                            cx.notify();
-                                        });
-                                    })
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _, cx| {
-                                        cx.emit(AddItemModalEvent::Close);
-                                    }))
-                            }),
+                        }),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .px_6()
-                            .pb_4()
-                            .child(kind_tab(&palette, "Login", self.kind == ItemKind::Login, window, cx, |this, cx| {
-                                this.kind = ItemKind::Login;
-                                cx.notify();
-                            }))
-                            .child(kind_tab(&palette, "Card", self.kind == ItemKind::CreditCard, window, cx, |this, cx| {
-                                this.kind = ItemKind::CreditCard;
-                                cx.notify();
-                            }))
-                            .child(kind_tab(&palette, "Secure Note", self.kind == ItemKind::SecureNote, window, cx, |this, cx| {
-                                this.kind = ItemKind::SecureNote;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("modal-body-scroll")
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .px_6()
-                            .child(body),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_4()
-                            .p_6()
-                            .child({
-                                let hover_t = animation::hover_transition("cancel", window, cx);
-                                let t = *hover_t.evaluate(window, cx);
-                                let bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, t);
-                                div()
-                                    .id("cancel")
-                                    .flex_1()
-                                    .py_3()
-                                    .rounded_xl()
-                                    .bg(bg)
-                                    .text_color(palette.on_surface)
-                                    .font_family(fonts::BODY)
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .child("Cancel")
-                                    .on_hover(move |is_hovered, _, cx| {
-                                        hover_t.update(cx, |v, cx| {
-                                            *v = *is_hovered as u8 as f32;
-                                            cx.notify();
-                                        });
-                                    })
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _, cx| {
-                                        cx.emit(AddItemModalEvent::Close);
-                                    }))
-                            })
-                            .child({
-                                let hover_t = animation::hover_transition("submit", window, cx);
-                                let t = *hover_t.evaluate(window, cx);
-                                let bg = animation::lerp_hsla(palette.primary, gpui::Hsla { a: 0.9, ..palette.primary }, t);
-                                div()
-                                    .id("submit")
-                                    .flex_1()
-                                    .py_3()
-                                    .rounded_xl()
-                                    .bg(bg)
-                                    .text_color(palette.on_primary)
-                                    .font_family(fonts::BODY)
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .child(if self.saving {
-                                        "Saving…"
-                                    } else if self.editing.is_some() {
-                                        "Save Changes"
-                                    } else {
-                                        "Create Item"
-                                    })
-                                    .on_hover(move |is_hovered, _, cx| {
-                                        hover_t.update(cx, |v, cx| {
-                                            *v = *is_hovered as u8 as f32;
-                                            cx.notify();
-                                        });
-                                    })
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.submit(cx);
-                                    }))
-                            }),
-                    )
-                    .when_some(self.error.clone(), |el, error| {
-                        el.child(div().text_sm().text_color(palette.error).child(error))
-                    }),
+            });
+        let overlay = crate::modal::backdrop("add-item-backdrop")
+            .font_family(fonts::LABEL)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.emit(AddItemModalEvent::Close)),
             )
+            .child(
+                crate::modal::frame(
+                    "add-item-card",
+                    560.,
+                    640.,
+                    header,
+                    crate::modal::scroll_body("add-item-content", content),
+                    footer,
+                    &palette,
+                )
+                .map(|el| crate::keyboard::trap_tab(el, "add-item-card-trap", window, cx))
+                .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _, cx| {
+                    if !this.saving {
+                        this.submit(cx);
+                    }
+                }))
+                .on_key_down(cx.listener(
+                    |_, event: &gpui::KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            cx.stop_propagation();
+                            cx.emit(AddItemModalEvent::Close);
+                        }
+                    },
+                )),
+            );
+        crate::modal::present(window, overlay)
     }
 }
 
-fn labeled_field(palette: &Palette, label: &'static str, field: impl IntoElement) -> impl IntoElement {
+fn labeled_field(
+    palette: &Palette,
+    label: &'static str,
+    field: impl IntoElement,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -809,12 +831,17 @@ fn toggle_row(
         .py_2()
         .cursor_pointer()
         .child(
-            div().flex().flex_col().gap_0p5().flex_1()
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .flex_1()
+                .child(div().text_sm().text_color(palette.on_surface).child(label))
                 .child(
-                    div().text_sm().text_color(palette.on_surface).child(label),
-                )
-                .child(
-                    div().text_xs().text_color(palette.on_surface_variant).child(subtitle),
+                    div()
+                        .text_xs()
+                        .text_color(palette.on_surface_variant)
+                        .child(subtitle),
                 ),
         )
         .child(switch_thumb(palette, checked))
@@ -826,13 +853,23 @@ fn switch_thumb(palette: &Palette, checked: bool) -> impl IntoElement {
         .w(px(40.))
         .h(px(24.))
         .rounded_full()
-        .bg(if checked { palette.primary } else { palette.surface_container_highest })
+        .bg(if checked {
+            palette.primary
+        } else {
+            palette.surface_container_highest
+        })
         .flex()
         .items_center()
         .px(px(2.))
         .when(checked, |el| el.justify_end())
         .when(!checked, |el| el.justify_start())
-        .child(div().w(px(16.)).h(px(16.)).rounded_full().bg(gpui::rgb(0xffffff)))
+        .child(
+            div()
+                .w(px(16.))
+                .h(px(16.))
+                .rounded_full()
+                .bg(gpui::rgb(0xffffff)),
+        )
 }
 
 fn kind_tab(
@@ -879,6 +916,89 @@ fn kind_tab(
             });
         });
     }
-    el
-        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| on_click(this, cx)))
+    el.on_mouse_down(
+        MouseButton::Left,
+        cx.listener(move |this, _, _, cx| on_click(this, cx)),
+    )
+}
+
+#[cfg(test)]
+mod modal_tests {
+    use super::*;
+    use crate::modal_test_support as ui;
+    use gpui::{point, size, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext};
+    use std::{cell::Cell, rc::Rc};
+
+    struct Host {
+        child: Entity<AddItemModal>,
+        _subscription: gpui::Subscription,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().relative().size_full().child(
+                div()
+                    .relative()
+                    .ml(px(64.))
+                    .mt(px(70.))
+                    .w(px(160.))
+                    .h(px(100.))
+                    .overflow_hidden()
+                    .child(self.child.clone()),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn editor_close_works_after_scrolling_real_fields(cx: &mut TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let directory = tempfile::tempdir().unwrap();
+        let state = ui::state(&directory);
+        let closes = Rc::new(Cell::new(0));
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            let child = cx.new(|cx| AddItemModal::new(state, cx));
+            let _subscription = cx.subscribe(&child, {
+                let closes = closes.clone();
+                move |_: &mut Host, _, event, _| {
+                    if matches!(event, AddItemModalEvent::Close) {
+                        closes.set(closes.get() + 1);
+                    }
+                }
+            });
+            Host {
+                child,
+                _subscription,
+            }
+        });
+        for (width, height) in [(945., 382.), (360., 260.)] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            let close = ui::bounds(cx, "close-modal");
+            let footer = ui::bounds(cx, "add-item-card-footer");
+            let body = ui::bounds(cx, "add-item-content");
+            assert!(close.top() >= px(0.) && footer.bottom() <= px(height));
+            cx.simulate_event(ScrollWheelEvent {
+                position: body.center(),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-3000.))),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            assert_eq!(ui::bounds(cx, "close-modal"), close);
+            let before = closes.get();
+            cx.simulate_mouse_move(close.center(), None, Modifiers::default());
+            cx.simulate_click(close.center(), Modifiers::default());
+            cx.run_until_parked();
+            assert_eq!(
+                closes.get(),
+                before + 1,
+                "close failed after scroll at {width}×{height}: {close:?}; body={body:?}"
+            );
+        }
+        assert_eq!(closes.get(), 2);
+        drop(host);
+    }
 }

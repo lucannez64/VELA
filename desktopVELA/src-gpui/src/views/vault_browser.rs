@@ -24,8 +24,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, list, prelude::*, px, Context, EventEmitter, IntoElement, ListAlignment, ListState,
-    MouseButton, Render, SharedString, Window,
+    div, list, prelude::*, px, Context, EventEmitter, Focusable, IntoElement, ListAlignment,
+    ListState, MouseButton, Render, SharedString, Window,
 };
 use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
 
@@ -33,8 +33,8 @@ use vela_desktop_core::commands::vault::{get_items_arc, get_vault_health, VaultH
 use vela_desktop_core::vault::{ItemType, VaultItem};
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::favicon_ui::{self, FaviconCache};
 use crate::fonts;
 use crate::icon::icon;
@@ -135,13 +135,17 @@ fn resolve_copy_value(
         (Some(CopySource::Password), _) => {
             item.password().map(|pass| ("Password", pass.to_string()))
         }
-        (Some(CopySource::CardNumber), VaultItem::CreditCard { number, .. }) if !number.is_empty() => {
+        (Some(CopySource::CardNumber), VaultItem::CreditCard { number, .. })
+            if !number.is_empty() =>
+        {
             Some(("Card number", number.clone()))
         }
         (Some(CopySource::Username), _) => {
             item.username().map(|user| ("Username", user.to_string()))
         }
-        (Some(CopySource::SecureNote), VaultItem::SecureNote { content, .. }) if !content.is_empty() => {
+        (Some(CopySource::SecureNote), VaultItem::SecureNote { content, .. })
+            if !content.is_empty() =>
+        {
             Some(("Secure note", content.clone()))
         }
         _ => None,
@@ -187,7 +191,8 @@ pub struct VaultBrowser {
 
 impl VaultBrowser {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         let search_state = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
 
         // Reload whenever items changed underneath us — an autofill save from
@@ -211,7 +216,7 @@ impl VaultBrowser {
             search_state,
             add_item_modal: None,
             _add_item_subscription: None,
-            list_state: ListState::new(0, ListAlignment::Top, px(400.)),
+            list_state: ListState::new(2, ListAlignment::Top, px(400.)),
             rows_key: None,
             cached_rows: Arc::new(Vec::new()),
             cached_type_counts: [0; 5],
@@ -327,7 +332,11 @@ impl VaultBrowser {
     /// computed from the actual inputs instead of by rebuilding the rows).
     fn refresh_rows(&mut self, cx: &Context<Self>) -> bool {
         let query = self.search_state.read(cx).as_str().to_lowercase();
-        let key = RowsKey { version: self.items_version, filter: self.filter, query: query.clone() };
+        let key = RowsKey {
+            version: self.items_version,
+            filter: self.filter,
+            query: query.clone(),
+        };
         if self.rows_key.as_ref() == Some(&key) {
             return false;
         }
@@ -399,67 +408,34 @@ impl VaultBrowser {
     }
 
     fn type_count(&self, filter: Filter) -> usize {
-        let index = Filter::ALL.iter().position(|&f| f == filter).expect("filter is in ALL");
+        let index = Filter::ALL
+            .iter()
+            .position(|&f| f == filter)
+            .expect("filter is in ALL");
         self.cached_type_counts[index]
     }
 }
 
-impl Render for VaultBrowser {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl VaultBrowser {
+    fn controls(&mut self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
-        // Recomputes the filtered/grouped rows only when the dataset, filter
-        // or query actually changed; every other `render` (hover frames,
-        // keystrokes, reloads) is a cheap cache hit. Resets the list (which
-        // invalidates cached measurements and drops the scroll position)
-        // exactly when the dataset swap happens — same-count swaps land at
-        // the top of the fresh results instead of reusing the old scroll
-        // position, while row *heights* never change for a given row kind so
-        // an identical key (pure re-render) is measured correctly without a
-        // reset.
-        let rows_changed = self.refresh_rows(cx);
-        let rows = self.cached_rows.clone();
-        if rows_changed {
-            self.list_state.reset(rows.len());
-        }
-        // `list`'s per-row render callback only gets `&mut App`, not
-        // `Context<Self>` — a weak entity handle plus `WeakEntity::update`
-        // is how a row's click handler reaches back into this view's state,
-        // matching what `cx.listener` does internally but without needing
-        // Context access from inside the callback.
-        let weak_view = cx.weak_entity();
-
-        // The add-item modal must NOT be a child of the scrollable div below
-        // — it previously was, which meant its `.absolute().inset_0()`
-        // backdrop resolved against the SCROLLABLE CONTENT's bounds (which
-        // can be much taller than the visible window with 200+ items) rather
-        // than the real viewport. That let clicks and scroll-wheel input
-        // reach the vault list right through the "backdrop", and the
-        // backdrop visibly drifted out of place while scrolling. Wrapping
-        // the scrollable content in its own div and keeping the modal as a
-        // sibling of this OUTER (non-scrolling) container fixes both.
         div()
-            .relative()
-            .size_full()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .pb_6()
             .child(
                 div()
-                    .id("vault-browser-scroll")
-                    .size_full()
                     .flex()
-                    .flex_col()
-                    .overflow_y_scroll()
-                    .bg(palette.surface)
-                    .font_family(fonts::LABEL)
-                    .p_6()
-                    .gap_6()
-                    .child(
-                        div()
-                            .flex()
-                    .items_center()
+                    .flex_shrink_0()
+                    .when(compact, |el| el.flex_col().items_stretch())
+                    .when(!compact, |el| el.items_center())
                     .gap_4()
                     .child(
                         div()
                             .relative()
-                            .flex_1()
+                            .min_w_0()
+                            .when(!compact, |el| el.flex_1())
                             .child(
                                 // `top_1_2()` alone (top: 50%) doesn't center
                                 // an absolutely-positioned element — gpui has
@@ -509,95 +485,131 @@ impl Render for VaultBrowser {
                             .cursor_pointer()
                             .child(icon("add", px(18.), palette.on_primary))
                             .child(div().font_weight(gpui::FontWeight::BOLD).child("Add Item"))
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                this.open_add_item_modal(cx);
-                            })),
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_add_item_modal(cx);
+                                }),
+                            ),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap_6()
-                    .children(Filter::ALL.iter().map(|&filter| {
-                        let active = filter == self.filter;
-                        let count = self.type_count(filter);
-                        let text_color = if active { palette.primary } else { palette.on_surface_variant };
-                        let chip_bg = if active {
-                            gpui::Hsla { a: 0.1, ..palette.primary }
+            .child(div().flex().flex_wrap().gap_3().flex_shrink_0().children(
+                Filter::ALL.iter().map(|&filter| {
+                    let active = filter == self.filter;
+                    let count = self.type_count(filter);
+                    let text_color = if active {
+                        palette.primary
+                    } else {
+                        palette.on_surface_variant
+                    };
+                    let chip_bg = if active {
+                        gpui::Hsla {
+                            a: 0.1,
+                            ..palette.primary
+                        }
+                    } else {
+                        palette.surface_container_highest
+                    };
+                    div()
+                        .id(SharedString::from(format!("filter-{}", filter.label())))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .pb_2()
+                        .border_b_2()
+                        .border_color(if active {
+                            palette.primary
                         } else {
-                            palette.surface_container_highest
-                        };
-                        div()
-                            .id(SharedString::from(format!("filter-{}", filter.label())))
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .pb_2()
-                            .border_b_2()
-                            .border_color(if active { palette.primary } else { gpui::transparent_black() })
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(text_color)
-                            .cursor_pointer()
-                            .child(filter.label())
-                            .child(
-                                div()
-                                    .px_2()
-                                    .py(px(1.))
-                                    .rounded_md()
-                                    .text_xs()
-                                    .bg(chip_bg)
-                                    .child(count.to_string()),
-                            )
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                            gpui::transparent_black()
+                        })
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(text_color)
+                        .cursor_pointer()
+                        .child(filter.label())
+                        .child(
+                            div()
+                                .px_2()
+                                .py(px(1.))
+                                .rounded_md()
+                                .text_xs()
+                                .bg(chip_bg)
+                                .child(count.to_string()),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
                                 this.filter = filter;
                                 cx.notify();
-                            }))
-                    })),
-            )
+                            }),
+                        )
+                }),
+            ))
             .when_some(self.error.clone(), |el, error| {
                 el.child(div().text_sm().text_color(palette.error).child(error))
             })
-            .child({
-                // `list` (unlike `uniform_list`) virtualizes within an
-                // explicit height, so it can't simply be `.flex_1()` inside
-                // this now-scrollable page — that would consume all
-                // remaining space and push the health panel / Dark Web
-                // Monitor card (which the original renders directly below
-                // the item grid, in the same scrolling page) out of reach
-                // entirely. Bound it to its own content height (capped)
-                // instead, matching the original's "whole page scrolls
-                // together" behavior. Uses the SAME per-row-kind heights the
-                // original's own `useVirtualizer` estimates with (48 for a
-                // header, 84 for an item) rather than a flat average — a
-                // flat average under-counted item-heavy lists (items are
-                // taller than headers), clipping the last row even when the
-                // page had visible room left below.
-                const HEADER_ROW_HEIGHT: f32 = 48.;
-                // 84 (the original's own per-item estimate) + 12 for the
-                // `.pb_3()` wrapper this port adds around each item_row —
-                // without accounting for that extra padding, the box was
-                // consistently a little short, clipping the bottom of the
-                // last row even when there was visibly empty space below it.
-                const ITEM_ROW_HEIGHT: f32 = 96.;
-                const MAX_LIST_HEIGHT: f32 = 600.;
-                let content_height: f32 = rows
-                    .iter()
-                    .map(|row| match row {
-                        Row::Header(_) => HEADER_ROW_HEIGHT,
-                        Row::Item(_) => ITEM_ROW_HEIGHT,
-                    })
-                    .sum();
-                let list_height = content_height.clamp(HEADER_ROW_HEIGHT, MAX_LIST_HEIGHT);
-                let favicon_cache = self.favicon_cache.clone();
-                // Same snapshot the cached rows were built from (a dataset
-                // swap bumps `items_version`, forcing `refresh_rows` to
-                // rebuild before this closure can run), so index lookups are
-                // always in bounds and consistent with the rendered rows.
-                let row_items = Arc::clone(&self.items);
-                list(
-                    self.list_state.clone(),
-                    move |ix, window, app| match &rows[ix] {
+    }
+}
+
+impl Render for VaultBrowser {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = crate::theme::current_palette(cx);
+        let compact = crate::layout::compact(window.viewport_size().width.into());
+        let rows_changed = self.refresh_rows(cx);
+        let rows = self.cached_rows.clone();
+        if rows_changed {
+            // Controls and health cards are rows in the SAME scroll surface as
+            // the items. A capped list inside an overflow_y_scroll container
+            // made wheel input switch between two independent scroll offsets.
+            self.list_state.reset(rows.len() + 2);
+            self.list_state
+                .splice_focusable(0..1, [Some(self.search_state.read(cx).focus_handle(cx))]);
+        }
+        let weak_view = cx.weak_entity();
+        let favicon_cache = self.favicon_cache.clone();
+        let row_items = Arc::clone(&self.items);
+
+        // Keep the modal outside the scrolling content so its backdrop covers
+        // the viewport and blocks wheel input to the list behind it.
+        div()
+            .relative()
+            .size_full()
+            .bg(palette.surface)
+            .font_family(fonts::LABEL)
+            .p_4()
+            .child(
+                list(self.list_state.clone(), move |ix, window, app| {
+                    if ix == 0 {
+                        return weak_view
+                            .update(app, |this, cx| {
+                                this.controls(compact, cx).into_any_element()
+                            })
+                            .unwrap_or_else(|_| div().into_any_element());
+                    }
+                    if ix == rows.len() + 1 {
+                        return weak_view
+                            .update(app, |this, cx| {
+                                div()
+                                    .flex()
+                                    .when(compact, |el| el.flex_col())
+                                    .gap_4()
+                                    .pt_6()
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .when(!compact, |el| el.flex_1())
+                                            .child(health_panel(&palette, this.health.as_ref())),
+                                    )
+                                    .child(
+                                        div()
+                                            .when(!compact, |el| el.w(px(260.)))
+                                            .child(dark_web_monitor_card(&palette, window, cx)),
+                                    )
+                                    .into_any_element()
+                            })
+                            .unwrap_or_else(|_| div().into_any_element());
+                    }
+                    match &rows[ix - 1] {
                         Row::Header(letter) => header_row(&palette, letter).into_any_element(),
                         Row::Item(item_ix) => div()
                             .pb_3()
@@ -610,18 +622,9 @@ impl Render for VaultBrowser {
                                 app,
                             ))
                             .into_any_element(),
-                    },
-                )
-                .h(px(list_height))
-                .w_full()
-            })
-                    .child(
-                        div()
-                            .flex()
-                            .gap_6()
-                            .child(div().flex_1().child(health_panel(&palette, self.health.as_ref())))
-                            .child(div().w(px(260.)).child(dark_web_monitor_card(&palette, window, cx))),
-                    ),
+                    }
+                })
+                .size_full(),
             )
             .when_some(self.add_item_modal.clone(), |el, modal| el.child(modal))
     }
@@ -641,15 +644,16 @@ fn header_row(palette: &Palette, letter: &SharedString) -> impl IntoElement {
                 .font_family(fonts::HEADLINE)
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_2xl()
-                .text_color(gpui::Hsla { a: 0.3, ..palette.outline_variant })
+                .text_color(gpui::Hsla {
+                    a: 0.3,
+                    ..palette.outline_variant
+                })
                 .child(letter.clone()),
         )
-        .child(
-            div()
-                .flex_1()
-                .h(px(1.))
-                .bg(gpui::Hsla { a: 0.1, ..palette.outline_variant }),
-        )
+        .child(div().flex_1().h(px(1.)).bg(gpui::Hsla {
+            a: 0.1,
+            ..palette.outline_variant
+        }))
 }
 
 fn item_row(
@@ -661,12 +665,14 @@ fn item_row(
     app: &mut gpui::App,
 ) -> impl IntoElement {
     let subtitle: SharedString = match item {
-        VaultItem::CreditCard { number, .. } => {
-            format!("Ending in •••• {}", &number[number.len().saturating_sub(4)..]).into()
-        }
-        VaultItem::Passkey { rp_id, user_name, .. } => {
-            format!("{user_name} · {rp_id}").into()
-        }
+        VaultItem::CreditCard { number, .. } => format!(
+            "Ending in •••• {}",
+            &number[number.len().saturating_sub(4)..]
+        )
+        .into(),
+        VaultItem::Passkey {
+            rp_id, user_name, ..
+        } => format!("{user_name} · {rp_id}").into(),
         _ => item
             .username()
             .or(item.url())
@@ -748,7 +754,7 @@ fn item_row(
     div()
         .id(SharedString::from(format!("item-{id}")))
         .w_full()
-        .p_4()
+        .p_3()
         .flex()
         .items_center()
         .justify_between()
@@ -766,9 +772,10 @@ fn item_row(
             div()
                 .flex()
                 .items_center()
-                .gap_4()
+                .gap_2()
+                .flex_1()
                 .min_w(px(0.))
-                .child(icon_box)
+                .child(div().flex_shrink_0().child(icon_box))
                 .child(
                     div()
                         .flex()
@@ -788,7 +795,10 @@ fn item_row(
                             div()
                                 .font_family(fonts::MONO)
                                 .text_xs()
-                                .text_color(gpui::Hsla { a: 0.6, ..palette.on_surface_variant })
+                                .text_color(gpui::Hsla {
+                                    a: 0.6,
+                                    ..palette.on_surface_variant
+                                })
                                 .text_ellipsis()
                                 .overflow_hidden()
                                 .whitespace_nowrap()
@@ -801,22 +811,27 @@ fn item_row(
                 .flex_shrink_0()
                 .flex()
                 .items_center()
-                .gap_4()
+                .gap_2()
                 .when(shared, |el| {
-                    el.child(shared_badge(palette, is_received))
+                    el.child(shared_badge(
+                        palette,
+                        is_received,
+                        crate::layout::compact(window.viewport_size().width.into()),
+                    ))
                 })
-                .child(
-                    fonts::tracked_text(&trailing, px(12.), -0.05)
-                        .font_family(fonts::MONO)
-                        .text_xs()
-                        .text_color(palette.outline_variant),
-                )
+                .when(window.viewport_size().width >= px(1280.), |el| {
+                    el.child(
+                        fonts::tracked_text(&trailing, px(12.), -0.05)
+                            .font_family(fonts::MONO)
+                            .text_xs()
+                            .text_color(palette.outline_variant),
+                    )
+                })
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap_1()
-                        .opacity(t)
                         .child(
                             div()
                                 .id(SharedString::from(format!("copy-{id}")))
@@ -871,11 +886,24 @@ fn item_row(
         })
 }
 
-fn shared_badge(palette: &Palette, is_received: bool) -> impl IntoElement {
+fn shared_badge(palette: &Palette, is_received: bool, compact: bool) -> impl IntoElement {
     let (icon_name, label, bg, text) = if is_received {
-        ("download", "Received", palette.surface_container_highest, palette.secondary)
+        (
+            "download",
+            "Received",
+            palette.surface_container_highest,
+            palette.secondary,
+        )
     } else {
-        ("share", "Shared", gpui::Hsla { a: 0.1, ..palette.primary }, palette.primary)
+        (
+            "share",
+            "Shared",
+            gpui::Hsla {
+                a: 0.1,
+                ..palette.primary
+            },
+            palette.primary,
+        )
     };
     div()
         .flex()
@@ -889,7 +917,9 @@ fn shared_badge(palette: &Palette, is_received: bool) -> impl IntoElement {
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .child(icon(icon_name, px(10.), text))
-        .child(fonts::tracked_text(label, px(10.), 0.1).text_size(px(10.)))
+        .when(!compact, |el| {
+            el.child(fonts::tracked_text(label, px(10.), 0.1).text_size(px(10.)))
+        })
 }
 
 fn health_panel(palette: &Palette, health: Option<&VaultHealth>) -> impl IntoElement {
@@ -939,7 +969,10 @@ fn health_panel(palette: &Palette, health: Option<&VaultHealth>) -> impl IntoEle
                         .rounded_full()
                         .text_xs()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .bg(gpui::Hsla { a: 0.2, ..palette.primary })
+                        .bg(gpui::Hsla {
+                            a: 0.2,
+                            ..palette.primary
+                        })
                         .text_color(palette.primary)
                         .child(status),
                 ),
@@ -957,7 +990,9 @@ fn health_panel(palette: &Palette, health: Option<&VaultHealth>) -> impl IntoEle
                         .font_family(fonts::LABEL)
                         .text_sm()
                         .child(
-                            div().text_color(palette.on_surface_variant).child("SECURITY SCORE"),
+                            div()
+                                .text_color(palette.on_surface_variant)
+                                .child("SECURITY SCORE"),
                         )
                         .child(
                             div()
@@ -989,13 +1024,21 @@ fn health_panel(palette: &Palette, health: Option<&VaultHealth>) -> impl IntoEle
                     palette,
                     "WEAK PASSWORDS",
                     weak.to_string(),
-                    if weak > 0 { gpui::rgb(0xfbbf24).into() } else { palette.on_surface },
+                    if weak > 0 {
+                        gpui::rgb(0xfbbf24).into()
+                    } else {
+                        palette.on_surface
+                    },
                 ))
                 .child(stat_tile(
                     palette,
                     "REUSED ITEMS",
                     reused.to_string(),
-                    if reused > 0 { palette.accent_violet } else { palette.on_surface },
+                    if reused > 0 {
+                        palette.accent_violet
+                    } else {
+                        palette.on_surface
+                    },
                 )),
         )
 }
@@ -1019,7 +1062,10 @@ fn dark_web_monitor_card(
         .rounded_2xl()
         .bg(gradient)
         .border_1()
-        .border_color(gpui::Hsla { a: 0.1, ..palette.outline_variant })
+        .border_color(gpui::Hsla {
+            a: 0.1,
+            ..palette.outline_variant
+        })
         .flex()
         .flex_col()
         .justify_between()
@@ -1040,7 +1086,9 @@ fn dark_web_monitor_card(
                     div()
                         .text_sm()
                         .text_color(palette.on_surface_variant)
-                        .child("We scan for leaked credentials in real-time across the obsidian network."),
+                        .child(
+                        "We scan for leaked credentials in real-time across the obsidian network.",
+                    ),
                 ),
         )
         .child(
@@ -1065,9 +1113,12 @@ fn dark_web_monitor_card(
                         cx.notify();
                     });
                 })
-                .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _, cx| {
-                    cx.emit(VaultBrowserEvent::NavigateToBreachMonitor);
-                })),
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_this, _, _, cx| {
+                        cx.emit(VaultBrowserEvent::NavigateToBreachMonitor);
+                    }),
+                ),
         )
 }
 
@@ -1085,7 +1136,12 @@ fn stat_tile(
         .p_4()
         .rounded_xl()
         .bg(palette.surface_container_high)
-        .child(fonts::tracked_text(label, px(10.), 0.1).text_size(px(10.)).font_family(fonts::LABEL).text_color(palette.outline_variant))
+        .child(
+            fonts::tracked_text(label, px(10.), 0.1)
+                .text_size(px(10.))
+                .font_family(fonts::LABEL)
+                .text_color(palette.outline_variant),
+        )
         .child(
             div()
                 .font_family(fonts::HEADLINE)
@@ -1139,12 +1195,18 @@ mod tests {
     #[test]
     fn empty_secure_note_has_nothing_to_copy() {
         let items = vec![secure_note("n1", "")];
-        assert_eq!(resolve_copy_value(&items, "n1", Some(CopySource::SecureNote)), None);
+        assert_eq!(
+            resolve_copy_value(&items, "n1", Some(CopySource::SecureNote)),
+            None
+        );
     }
 
     #[test]
     fn missing_item_has_nothing_to_copy() {
         let items: Vec<VaultItem> = Vec::new();
-        assert_eq!(resolve_copy_value(&items, "gone", Some(CopySource::SecureNote)), None);
+        assert_eq!(
+            resolve_copy_value(&items, "gone", Some(CopySource::SecureNote)),
+            None
+        );
     }
 }

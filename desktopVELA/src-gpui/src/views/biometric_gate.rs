@@ -26,8 +26,8 @@ use vela_desktop_core::biometric::BiometricProvider;
 use vela_desktop_core::commands::session;
 use vela_desktop_core::AppState;
 
-use crate::background::GuardedSpawn;
 use crate::animation;
+use crate::background::GuardedSpawn;
 use crate::fonts;
 use crate::icon::icon;
 use crate::theme::Palette;
@@ -71,7 +71,8 @@ pub struct BiometricGate {
 
 impl BiometricGate {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
         let password_state = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
 
         cx.spawn(async move |this, cx| {
@@ -119,7 +120,8 @@ impl BiometricGate {
     }
 
     fn open_reset_modal(&mut self, cx: &mut Context<Self>) {
-        self.reset_confirm_state.update(cx, |s, cx| s.emplace("", cx));
+        self.reset_confirm_state
+            .update(cx, |s, cx| s.emplace("", cx));
         self.reset_error = None;
         self.show_reset_modal = true;
         cx.notify();
@@ -144,7 +146,12 @@ impl BiometricGate {
             // (a separate thread pool that never entered that runtime and
             // panics on real reactor I/O).
             let result = gpui_tokio::Tokio::spawn(cx, async move {
-                vela_desktop_core::commands::session::reset_vault(&app_state, Some(confirm_text), None).await
+                vela_desktop_core::commands::session::reset_vault(
+                    &app_state,
+                    Some(confirm_text),
+                    None,
+                )
+                .await
             })
             .await;
             this.update(cx, |this, cx| {
@@ -154,7 +161,9 @@ impl BiometricGate {
                         this.show_reset_modal = false;
                         cx.emit(BiometricGateEvent::VaultReset);
                     }
-                    Ok(Err(e)) => this.reset_error = Some(format!("Failed to reset vault: {e}").into()),
+                    Ok(Err(e)) => {
+                        this.reset_error = Some(format!("Failed to reset vault: {e}").into())
+                    }
                     Err(e) => this.reset_error = Some(format!("Task failed: {e}").into()),
                 }
                 cx.notify();
@@ -228,7 +237,8 @@ impl BiometricGate {
                 let message = auth_result
                     .error_message
                     .unwrap_or_else(|| "Authentication failed".to_string());
-                this.update(cx, |this, cx| this.record_failure(message, cx)).ok();
+                this.update(cx, |this, cx| this.record_failure(message, cx))
+                    .ok();
                 return;
             }
 
@@ -280,7 +290,8 @@ impl Render for BiometricGate {
         let palette = crate::theme::current_palette(cx);
         let locked = self.is_locked();
 
-        let content: gpui::AnyElement = if self.mode == Mode::Password || !self.biometric_available {
+        let content: gpui::AnyElement = if self.mode == Mode::Password || !self.biometric_available
+        {
             password_view(self, &palette, locked, window, cx)
         } else {
             biometric_view(self, &palette, locked, window, cx)
@@ -290,7 +301,9 @@ impl Render for BiometricGate {
             .relative()
             .size_full()
             .child(content)
-            .when(self.show_reset_modal, |el| el.child(reset_confirm_modal(&palette, self, window, cx)))
+            .when(self.show_reset_modal, |el| {
+                el.child(reset_confirm_modal(&palette, self, window, cx))
+            })
             .into_any_element()
     }
 }
@@ -329,14 +342,20 @@ fn header(palette: &Palette) -> impl IntoElement {
             fonts::tracked_text("ZERO-KNOWLEDGE VAULT", px(12.), 0.4)
                 .font_family(fonts::LABEL)
                 .text_xs()
-                .text_color(gpui::Hsla { a: 0.6, ..palette.on_surface_variant }),
+                .text_color(gpui::Hsla {
+                    a: 0.6,
+                    ..palette.on_surface_variant
+                }),
         )
 }
 
 /// Divider row above the "Master Password" fallback button — port of the
 /// original's `── Alternative Access ──` row.
 fn alt_access_divider(palette: &Palette) -> impl IntoElement {
-    let line_color = gpui::Hsla { a: 0.2, ..palette.outline_variant };
+    let line_color = gpui::Hsla {
+        a: 0.2,
+        ..palette.outline_variant
+    };
     div()
         .w_full()
         .flex()
@@ -366,7 +385,10 @@ enum Corner {
 /// `border-t border-l rounded-tl-3xl` (and the bottom-right mirror), present
 /// in the original but missing from an earlier pass of this port.
 fn corner_bracket(palette: &Palette, corner: Corner) -> impl IntoElement {
-    let border_color = gpui::Hsla { a: 0.4, ..palette.accent_violet };
+    let border_color = gpui::Hsla {
+        a: 0.4,
+        ..palette.accent_violet
+    };
     let base = div().absolute().w(px(128.)).h(px(128.)).opacity(0.2);
     match corner {
         Corner::TopLeft => base
@@ -401,9 +423,15 @@ fn secure_session_badge(palette: &Palette, ping: f32) -> impl IntoElement {
         .px_4()
         .py_2()
         .rounded_full()
-        .bg(gpui::Hsla { a: 0.4, ..palette.surface_container_high })
+        .bg(gpui::Hsla {
+            a: 0.4,
+            ..palette.surface_container_high
+        })
         .border_1()
-        .border_color(gpui::Hsla { a: 0.1, ..palette.secondary })
+        .border_color(gpui::Hsla {
+            a: 0.1,
+            ..palette.secondary
+        })
         .child(
             div()
                 .relative()
@@ -419,7 +447,13 @@ fn secure_session_badge(palette: &Palette, ping: f32) -> impl IntoElement {
                         .w(px(8. * ring_scale))
                         .h(px(8. * ring_scale)),
                 )
-                .child(div().absolute().inset_0().rounded_full().bg(palette.secondary)),
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded_full()
+                        .bg(palette.secondary),
+                ),
         )
         .child(
             div()
@@ -539,7 +573,10 @@ fn render_obsidian_gradient_image(palette: &Palette) -> gpui::Image {
 
     let mut png_bytes = Vec::new();
     buffer
-        .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
         .expect("encoding a freshly-built in-memory RgbaImage to PNG cannot fail");
     gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes)
 }
@@ -584,12 +621,18 @@ fn reset_link(palette: &Palette, cx: &mut Context<BiometricGate>) -> impl IntoEl
     div()
         .id("reset-vault-link")
         .text_size(px(11.))
-        .text_color(gpui::Hsla { a: 0.4, ..palette.on_surface_variant })
+        .text_color(gpui::Hsla {
+            a: 0.4,
+            ..palette.on_surface_variant
+        })
         .cursor_pointer()
         .child("Can't access your vault? Reset")
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-            this.open_reset_modal(cx);
-        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                this.open_reset_modal(cx);
+            }),
+        )
 }
 
 fn biometric_view(
@@ -607,7 +650,11 @@ fn biometric_view(
     let remaining = MAX_ATTEMPTS.saturating_sub(gate.retry_count);
     let error = gate.error.clone();
     let disabled = gate.is_authenticating || locked;
-    let fingerprint_opacity = if gate.is_authenticating { animation::pulse_alpha(1.5) } else { 1.0 };
+    let fingerprint_opacity = if gate.is_authenticating {
+        animation::pulse_alpha(1.5)
+    } else {
+        1.0
+    };
     let ready_dot_opacity = animation::pulse_alpha(2.0);
     let ping = animation::ping_progress(1.5);
     let hover_t = animation::hover_transition("biometric-button", window, cx);
@@ -651,7 +698,10 @@ fn biometric_view(
                                 .h(px(220.))
                                 .rounded_full()
                                 .border_1()
-                                .border_color(gpui::Hsla { a: 0.1, ..palette.accent_violet }),
+                                .border_color(gpui::Hsla {
+                                    a: 0.1,
+                                    ..palette.accent_violet
+                                }),
                         )
                         .child(
                             div()
@@ -660,11 +710,17 @@ fn biometric_view(
                                 .h(px(170.))
                                 .rounded_full()
                                 .border_1()
-                                .border_color(gpui::Hsla { a: 0.2, ..palette.accent_violet }),
+                                .border_color(gpui::Hsla {
+                                    a: 0.2,
+                                    ..palette.accent_violet
+                                }),
                         )
                         .child({
                             let border_color = animation::lerp_hsla(
-                                gpui::Hsla { a: 0.3, ..palette.accent_violet },
+                                gpui::Hsla {
+                                    a: 0.3,
+                                    ..palette.accent_violet
+                                },
                                 palette.accent_violet,
                                 border_t,
                             );
@@ -683,7 +739,10 @@ fn biometric_view(
                                 .border_1()
                                 .border_color(border_color)
                                 .shadow(vec![gpui::BoxShadow {
-                                    color: gpui::Hsla { a: 0.3, ..palette.accent_violet },
+                                    color: gpui::Hsla {
+                                        a: 0.3,
+                                        ..palette.accent_violet
+                                    },
                                     offset: gpui::point(px(0.), px(0.)),
                                     blur_radius: px(60.),
                                     spread_radius: px(-15.),
@@ -705,9 +764,12 @@ fn biometric_view(
                                             cx.notify();
                                         });
                                     })
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.trigger_biometric_auth(cx);
-                                    }));
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.trigger_biometric_auth(cx);
+                                        }),
+                                    );
                             } else {
                                 circle = circle.opacity(0.6);
                             }
@@ -756,7 +818,9 @@ fn biometric_view(
                             .font_family(fonts::LABEL)
                             .text_sm()
                             .text_color(palette.error)
-                            .child(format!("{error} — try again ({remaining} attempts remaining)")),
+                            .child(format!(
+                                "{error} — try again ({remaining} attempts remaining)"
+                            )),
                     )
                 }),
         )
@@ -783,17 +847,23 @@ fn biometric_view(
                         .cursor_pointer()
                         .child(icon("password", px(18.), palette.on_surface))
                         .child(div().font_family(fonts::BODY).child("Master Password"))
-                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                            this.mode = Mode::Password;
-                            this.error = None;
-                            cx.notify();
-                        })),
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.mode = Mode::Password;
+                                this.error = None;
+                                cx.notify();
+                            }),
+                        ),
                 )
                 .child(
                     div()
                         .font_family(fonts::BODY)
                         .text_xs()
-                        .text_color(gpui::Hsla { a: 0.4, ..palette.on_surface_variant })
+                        .text_color(gpui::Hsla {
+                            a: 0.4,
+                            ..palette.on_surface_variant
+                        })
                         .child("Securely encrypted with Post-Quantum AES-256"),
                 )
                 .child(reset_link(palette, cx)),
@@ -853,6 +923,7 @@ fn password_view(
         .child(
             div()
                 .w(px(360.))
+                .max_w(gpui::relative(0.9))
                 .flex()
                 .flex_col()
                 .gap_3()
@@ -865,16 +936,13 @@ fn password_view(
                     }
                 }))
                 .child({
-                    // gpui has no CSS-`transform` equivalent, so an
-                    // absolutely-positioned `top_1_2()` (top: 50%) alone
-                    // cannot vertically center the eye icon the way
-                    // `top-1/2 -translate-y-1/2` does in the original — it
-                    // just pins the icon's own top edge to the midline.
-                    // Spanning the icon wrapper the full height of the
-                    // `.relative()` parent (`top_0().bottom_0()`) and
-                    // flex-centering it is the real gpui-native fix.
-                    let is_focused =
-                        gate.password_state.read(cx).focus_handle(cx).is_focused(window);
+                    // The reveal button owns its own flex column. Clipping
+                    // the editable region keeps long text out of that column.
+                    let is_focused = gate
+                        .password_state
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window);
                     let focus_t = animation::hover_transition("password-field-focus", window, cx);
                     focus_t.update(cx, |v, _cx| *v = is_focused as u8 as f32);
                     let t = *focus_t.evaluate(window, cx);
@@ -884,34 +952,42 @@ fn password_view(
                     let revealed = gate.password_revealed;
 
                     div()
-                        .relative()
+                        .flex()
+                        .w_full()
+                        .overflow_hidden()
+                        .border_1()
+                        .rounded_lg()
+                        .border_color(border_color)
+                        .bg(palette.surface_container)
                         .child(
-                            text_input("password-field")
-                                .state(gate.password_state.downgrade())
-                                .placeholder("Enter your master password")
-                                .caret_blink_interval_500ms()
-                                // A single-byte ASCII mask char (not '•',
-                                // which is 3 bytes in UTF-8): the underlying
-                                // widget's caret/selection positions are
-                                // byte offsets into the REAL text, reused
-                                // as-is against the MASKED shaped line — a
-                                // multi-byte mask char desyncs that mapping
-                                // for ordinary (1-byte-per-char) ASCII
-                                // passwords, visibly misplacing the caret.
-                                .mask_char((!revealed).then_some('*'))
-                                .border_1()
-                                .rounded_lg()
-                                .border_color(border_color)
-                                .bg(palette.surface_container)
-                                .font_family(fonts::MONO)
-                                .text_color(palette.on_surface)
-                                .caret_color(palette.on_surface)
-                                .p_3()
-                                .pr(px(44.))
-                                .w_full()
-                                .min_h_auto()
-                                .whitespace_nowrap()
-                                .overflow_x_scroll(),
+                            div()
+                                .id("password-text-clip")
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .child(
+                                    text_input("password-field")
+                                        .state(gate.password_state.downgrade())
+                                        .placeholder("Enter your master password")
+                                        .caret_blink_interval_500ms()
+                                        // A single-byte ASCII mask char (not '•',
+                                        // which is 3 bytes in UTF-8): the underlying
+                                        // widget's caret/selection positions are
+                                        // byte offsets into the REAL text, reused
+                                        // as-is against the MASKED shaped line — a
+                                        // multi-byte mask char desyncs that mapping
+                                        // for ordinary (1-byte-per-char) ASCII
+                                        // passwords, visibly misplacing the caret.
+                                        .mask_char((!revealed).then_some('*'))
+                                        .font_family(fonts::MONO)
+                                        .text_color(palette.on_surface)
+                                        .caret_color(palette.on_surface)
+                                        .p_3()
+                                        .w_full()
+                                        .min_h_auto()
+                                        .whitespace_nowrap()
+                                        .overflow_x_scroll(),
+                                ),
                         )
                         .child(
                             // Real masking via the vendored `gpui_elements`
@@ -922,22 +998,28 @@ fn password_view(
                             // attempt, which desynced on longer text).
                             div()
                                 .id("toggle-password-visible")
-                                .absolute()
-                                .right_3()
-                                .top_0()
-                                .bottom_0()
+                                .w(px(44.))
+                                .flex_shrink_0()
                                 .flex()
                                 .items_center()
+                                .justify_center()
                                 .cursor_pointer()
                                 .child(icon(
-                                    if revealed { "visibility_off" } else { "visibility" },
+                                    if revealed {
+                                        "visibility_off"
+                                    } else {
+                                        "visibility"
+                                    },
                                     px(18.),
                                     palette.on_surface_variant,
                                 ))
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.password_revealed = !this.password_revealed;
-                                    cx.notify();
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.password_revealed = !this.password_revealed;
+                                        cx.notify();
+                                    }),
+                                ),
                         )
                 })
                 .when_some(error, |el, error| {
@@ -973,11 +1055,12 @@ fn password_view(
                             "Unlock"
                         });
                     if !disabled {
-                        btn = btn
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        btn = btn.cursor_pointer().on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
                                 this.trigger_password_auth(cx);
-                            }));
+                            }),
+                        );
                     } else {
                         btn = btn.opacity(0.5);
                     }
@@ -997,11 +1080,14 @@ fn password_view(
                             .cursor_pointer()
                             .child(icon("fingerprint", px(16.), palette.primary))
                             .child("Use biometric instead")
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                this.mode = Mode::Biometric;
-                                this.error = None;
-                                cx.notify();
-                            })),
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.mode = Mode::Biometric;
+                                    this.error = None;
+                                    cx.notify();
+                                }),
+                            ),
                     )
                 })
                 .child(
@@ -1020,26 +1106,43 @@ fn password_view(
 /// on both views above. Same real backend call as `SettingsScreen`'s Delete
 /// Vault action, just reached from a locked-out/can't-unlock context rather
 /// than from within an already-unlocked vault.
-fn reset_confirm_modal(palette: &Palette, gate: &BiometricGate, window: &mut Window, cx: &mut Context<BiometricGate>) -> impl IntoElement {
+fn reset_confirm_modal(
+    palette: &Palette,
+    gate: &BiometricGate,
+    window: &mut Window,
+    cx: &mut Context<BiometricGate>,
+) -> impl IntoElement {
     let confirm_text = gate.reset_confirm_state.read(cx).as_str().to_string();
     let can_reset = confirm_text == "DELETE";
     let resetting = gate.resetting;
 
     let cancel_hover = animation::hover_transition("reset-cancel", window, cx);
     let cancel_t = *cancel_hover.evaluate(window, cx);
-    let cancel_bg = animation::lerp_hsla(palette.surface_container_highest, palette.surface_bright, cancel_t);
+    let cancel_bg = animation::lerp_hsla(
+        palette.surface_container_highest,
+        palette.surface_bright,
+        cancel_t,
+    );
 
     div()
         .id("reset-modal-backdrop")
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::Hsla { a: 0.6, h: 0., s: 0., l: 0. })
+        .bg(gpui::Hsla {
+            a: 0.6,
+            h: 0.,
+            s: 0.,
+            l: 0.,
+        })
         .flex()
         .items_center()
         .justify_center()
         .p_4()
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_reset_modal(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.close_reset_modal(cx)),
+        )
         .child(
             div()
                 .id("reset-modal-body")
@@ -1049,7 +1152,10 @@ fn reset_confirm_modal(palette: &Palette, gate: &BiometricGate, window: &mut Win
                 .rounded_2xl()
                 .bg(palette.surface_container)
                 .border_1()
-                .border_color(gpui::Hsla { a: 0.3, ..palette.error })
+                .border_color(gpui::Hsla {
+                    a: 0.3,
+                    ..palette.error
+                })
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -1126,9 +1232,12 @@ fn reset_confirm_modal(palette: &Palette, gate: &BiometricGate, window: &mut Win
                                         cx.notify();
                                     });
                                 })
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.close_reset_modal(cx);
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.close_reset_modal(cx);
+                                    }),
+                                ),
                         )
                         .child(
                             div()
@@ -1139,15 +1248,29 @@ fn reset_confirm_modal(palette: &Palette, gate: &BiometricGate, window: &mut Win
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .bg(if can_reset { palette.error } else { gpui::Hsla { a: 0.4, ..palette.error } })
+                                .bg(if can_reset {
+                                    palette.error
+                                } else {
+                                    gpui::Hsla {
+                                        a: 0.4,
+                                        ..palette.error
+                                    }
+                                })
                                 .text_color(gpui::white())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .when(can_reset, |el| el.cursor_pointer())
-                                .child(if resetting { "Resetting…" } else { "Reset forever" })
+                                .child(if resetting {
+                                    "Resetting…"
+                                } else {
+                                    "Reset forever"
+                                })
                                 .when(can_reset, |el| {
-                                    el.on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.confirm_reset(cx);
-                                    }))
+                                    el.on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.confirm_reset(cx);
+                                        }),
+                                    )
                                 }),
                         ),
                 ),

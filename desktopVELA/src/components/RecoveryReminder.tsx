@@ -65,7 +65,7 @@ export default function RecoveryReminder({ onOpenSettings }: Props) {
   }
 
   return (
-    <div className="px-4 py-3 bg-error-container/25 border-b border-error/30 flex items-center gap-3">
+    <div className="shrink-0 flex-wrap px-4 py-3 bg-error-container/25 border-b border-error/30 flex items-center gap-3">
       <span className="material-symbols-outlined text-error text-xl shrink-0">
         shield_question
       </span>

@@ -582,11 +582,15 @@ impl EditableTextElement {
         window.on_mouse_event({
             let focus_handle = prepaint.focus_handle.clone();
             let state = entity.clone();
+            let hitbox = prepaint.interactivity.hitbox.clone();
             move |event: &MouseDownEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
-                if !bounds.contains(&event.position) {
+                // Raw bounds include the part clipped by an ancestor scroller.
+                // Such an input must not steal clicks from a modal header,
+                // footer, or another occluding element above it.
+                if !hitbox.as_ref().is_some_and(|hitbox| hitbox.is_hovered(window)) {
                     return;
                 }
                 if event.button != MouseButton::Left {

@@ -164,6 +164,33 @@ export default function SettingsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The extension's native-messaging host is short-lived (one process per
+  // request), so the backend remembers "we have talked to it this session".
+  // Poll while this screen is open: opening the popup pings the desktop, and
+  // the indicator should turn green without leaving and re-entering Settings.
+  useEffect(() => {
+    let cancelled = false;
+    const refreshExtensionStatus = async () => {
+      try {
+        const connected = await invoke<boolean>('get_extension_status');
+        if (cancelled) return;
+        setSettings(prev =>
+          prev && prev.extension_connected !== connected
+            ? { ...prev, extension_connected: connected }
+            : prev
+        );
+      } catch {
+        // Older backend without the command: keep the value from get_settings.
+      }
+    };
+    void refreshExtensionStatus();
+    const timer = window.setInterval(refreshExtensionStatus, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const loadSettings = async () => {
     try {
       const result = await invoke<Settings>('get_settings');
@@ -222,14 +249,14 @@ export default function SettingsScreen() {
 
   if (!settings) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 min-w-0 min-h-0 flex items-center justify-center">
         <span className="material-symbols-outlined text-4xl text-primary animate-spin">progress_activity</span>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+    <div className="flex-1 min-w-0 min-h-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
       <h1 className="font-headline text-2xl sm:text-3xl font-bold text-on-surface mb-8">Settings</h1>
 
       <div className="max-w-2xl space-y-8">
@@ -238,7 +265,7 @@ export default function SettingsScreen() {
           <div className="bg-surface-container rounded-xl p-6">
             <label className="font-body font-medium text-on-surface">Theme</label>
             <p className="text-sm text-on-surface-variant mb-4">Choose how VELA looks on this device</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 min-[480px]:grid-cols-2 sm:grid-cols-3 gap-3">
               {[
                 {
                   id: 'system' as ThemeSetting,
@@ -689,7 +716,7 @@ export default function SettingsScreen() {
                 <span className={`w-3 h-3 rounded-full ${settings.extension_connected ? 'bg-primary' : 'bg-amber-500'}`}></span>
                 <div>
                   <label className="font-body font-medium text-on-surface">
-                    Extension {settings.extension_connected ? 'connected' : 'not found'}
+                    Extension {settings.extension_connected ? 'connected' : 'not detected yet'}
                   </label>
                   {settings.extension_version && (
                     <p className="text-sm text-on-surface-variant">{settings.extension_version}</p>

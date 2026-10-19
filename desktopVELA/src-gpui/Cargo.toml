@@ -126,3 +126,7 @@ resources = [
 # Match the static Chromium native-messaging manifests, whose host path is
 # C:\Program Files\VELA\native-messaging-host\vela-native-messaging-host.exe.
 installMode = "perMachine"
+
+[dev-dependencies]
+gpui = { path = "../vendor/gpui-ce/crates/gpui", features = ["test-support"] }
+tempfile = "3"

@@ -133,6 +133,43 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dev debuginfo (≈ −69% target-dir size). See `docs/BUILD_PERFORMANCE.md`.
 
 ### Fixed
+- Desktop Settings no longer reports the browser extension as "not found"
+  while it is installed and working. The extension's native-messaging host is
+  started per request, so "connected" is now remembered for the app session
+  instead of being cleared when the one-message connection closes; both
+  front ends also refresh the indicator while Settings is open.
+- GPUI settings use persistent category navigation instead of one long list.
+  Cards and action columns share consistent widths, narrow rows stack controls
+  below their labels, and interval choices reserve their full wrapped height.
+- GPUI dialogs now open above the full app body with pinned headers and action
+  buttons; only their content scrolls. Fixes clipped enrollment QR codes and
+  inaccessible controls in short windows. A native input-widget fix prevents
+  scrolled-out text fields from intercepting clicks on Close or footer actions.
+- Sharing now separates searchable item selection from recipient/link options,
+  virtualizes large item lists, supports keyboard selection, and shows a compact
+  selected-item summary with a Change action. Link creation has a clear ready
+  state and inline copy feedback. Enrollment keeps Close/Copy accessible in all
+  stages and offers the manual code as an optional fallback.
+- GPUI device cards retain their content height instead of shrinking into
+  overlapping text in short windows. Device names and actions use the space
+  available beside navigation, and long names wrap within their cards.
+- GPUI password reveal buttons have a separate fixed-width area in unlock,
+  setup, and device import. Long passwords scroll inside the input and
+  cannot paint underneath the eye button.
+- GPUI vault scrolling uses one virtualized page for search, filters, item
+  rows, and health cards. Removes the nested 600px item scroller that made
+  wheel input alternate between the page and item list in small windows.
+- Desktop layout at narrow widths and short window heights in both GPUI and
+  Tauri: navigation remains scrollable, item editors fit their available
+  space, and save/cancel controls stay reachable. GPUI stacks the vault
+  dashboard and wraps filters on narrow windows; long item names and values
+  no longer compete with their action buttons. Settings theme choices and
+  sharing dialogs also adapt to smaller windows.
+- Desktop item actions remain visible without hover. The Tauri editor now
+  focuses its first field, contains keyboard focus, supports Escape, and
+  shows a pending save state that prevents duplicate submissions. Adding an
+  item from its sidebar creates a new item even while viewing an existing
+  one; closing an editor preserves the detail view and saving refreshes it.
 - gpui modal backdrops now `occlude()`. gpui decides what handles a scroll
   wheel with `HitboxId::should_handle_scroll`, a hit-box check rather than a
   hover check, so a backdrop's click handler alone did not stop it — the list
