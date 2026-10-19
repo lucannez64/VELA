@@ -256,6 +256,50 @@
       background: var(--outline-var);
     }
 
+    /* ── Authenticator code panel ── */
+    .totp-panel {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 2px 0 6px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: var(--surface-low);
+      border: 1px solid var(--outline-var);
+    }
+
+    .totp-code {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 17px;
+      letter-spacing: 0.14em;
+      color: var(--primary);
+    }
+
+    .totp-count {
+      font-size: 11px;
+      color: var(--on-surface-var);
+      min-width: 26px;
+      text-align: right;
+    }
+
+    .totp-copy {
+      border: none;
+      border-radius: 7px;
+      padding: 4px 10px;
+      background: var(--surface-high);
+      color: var(--on-surface-var);
+      font-family: var(--font-body);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .totp-copy:hover {
+      background: var(--surface-highest);
+      color: var(--primary);
+    }
+
     /* ── Empty State ── */
     .empty-state {
       text-align: center;
@@ -428,6 +472,193 @@
     .alias-status.ok { color: var(--primary); }
     .alias-status.err { color: var(--error); }
 
+    /* ── Password generator ── */
+    .gen-mode {
+      display: flex;
+      gap: 6px;
+      background: var(--surface-container);
+      border-radius: 8px;
+      padding: 3px;
+    }
+
+    .gen-mode-btn {
+      flex: 1;
+      padding: 6px 8px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--on-surface-var);
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .gen-mode-btn.active {
+      background: var(--surface-high);
+      color: var(--primary);
+    }
+
+    .gen-output-row {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--surface-container);
+      border: 1px solid var(--outline-var);
+      min-height: 42px;
+    }
+
+    .gen-output {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--on-surface);
+      word-break: break-all;
+      line-height: 1.4;
+    }
+
+    .gen-strength {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .gen-strength-bar {
+      flex: 1;
+      height: 4px;
+      border-radius: 999px;
+      background: var(--surface-highest);
+      overflow: hidden;
+    }
+
+    .gen-strength-fill {
+      height: 100%;
+      width: 0;
+      border-radius: 999px;
+      background: var(--error);
+      transition: width 0.2s, background 0.2s;
+    }
+
+    .gen-strength-label {
+      font-size: 11px;
+      color: var(--on-surface-var);
+      min-width: 64px;
+      text-align: right;
+    }
+
+    .gen-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .gen-actions .alias-btn {
+      flex: 1;
+    }
+
+    .gen-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .gen-label {
+      font-size: 11px;
+      color: var(--on-surface-var);
+      min-width: 62px;
+    }
+
+    .gen-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--primary);
+    }
+
+    .gen-value {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--on-surface);
+      min-width: 24px;
+      text-align: right;
+    }
+
+    .gen-checks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+    }
+
+    .gen-checks label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--on-surface-var);
+      cursor: pointer;
+    }
+
+    .gen-checks input[type="checkbox"] {
+      accent-color: var(--primary);
+    }
+
+    .gen-history {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      border-top: 1px solid var(--outline-var);
+      padding-top: 8px;
+    }
+
+    .gen-history-title {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--on-surface-var);
+    }
+
+    .gen-history-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--on-surface-var);
+      cursor: pointer;
+    }
+
+    .gen-history-item:hover {
+      color: var(--primary);
+    }
+
+    .gen-history-item span {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Lookalike warning ── */
+    .phish-warning {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 20px;
+      background: rgba(255, 180, 171, 0.12);
+      border-bottom: 1px solid rgba(255, 180, 171, 0.4);
+      color: #ffb4ab;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .phish-warning[hidden] {
+      display: none;
+    }
+
+    .phish-warning-icon {
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+
     /* ── Footer ── */
     .footer {
       padding: 12px 16px;
@@ -493,6 +724,12 @@
     <span id="statusText">Checking connection…</span>
   </div>
 
+  <!-- Lookalike / homograph warning -->
+  <div class="phish-warning" id="phishWarning" hidden>
+    <span class="phish-warning-icon">⚠</span>
+    <span id="phishWarningText"></span>
+  </div>
+
   <!-- Main Content -->
   <div class="main-content" id="mainContent">
     <div class="loading-spinner" id="loadingSpinner">
@@ -537,6 +774,94 @@
     </div>
   </div>
 
+  <!-- Password generator -->
+  <div class="alias-section" id="genSection">
+    <div class="alias-header" id="genToggle">
+      <span>Password generator</span>
+      <span class="alias-badge" id="genBadge">Random</span>
+      <svg class="alias-header-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="alias-body" id="genBody" hidden>
+      <div class="gen-mode">
+        <button class="gen-mode-btn active" id="genModeRandom" type="button">Random</button>
+        <button class="gen-mode-btn" id="genModePassphrase" type="button">Passphrase</button>
+      </div>
+
+      <div class="gen-output-row">
+        <output class="gen-output" id="genOutput"></output>
+      </div>
+
+      <div class="gen-strength">
+        <div class="gen-strength-bar"><div class="gen-strength-fill" id="genStrengthFill"></div></div>
+        <span class="gen-strength-label" id="genStrengthLabel"></span>
+      </div>
+
+      <div class="gen-actions">
+        <button class="alias-btn alias-btn-ghost" id="genRegenerate" type="button">Regenerate</button>
+        <button class="alias-btn alias-btn-primary" id="genCopy" type="button">Copy</button>
+      </div>
+
+      <div id="genRandomOptions">
+        <div class="gen-row">
+          <label class="gen-label" for="genLength">Length</label>
+          <input type="range" id="genLength" min="8" max="64" value="20"/>
+          <span class="gen-value" id="genLengthVal">20</span>
+        </div>
+        <div class="gen-checks">
+          <label><input type="checkbox" id="genUpper" checked/> A-Z</label>
+          <label><input type="checkbox" id="genLower" checked/> a-z</label>
+          <label><input type="checkbox" id="genNumbers" checked/> 0-9</label>
+          <label><input type="checkbox" id="genSymbols" checked/> !@#</label>
+          <label><input type="checkbox" id="genAvoidAmbiguous"/> Avoid look-alikes</label>
+        </div>
+      </div>
+
+      <div id="genPassphraseOptions" hidden>
+        <div class="gen-row">
+          <label class="gen-label" for="genWords">Words</label>
+          <input type="range" id="genWords" min="3" max="8" value="5"/>
+          <span class="gen-value" id="genWordsVal">5</span>
+        </div>
+        <div class="gen-row">
+          <label class="gen-label" for="genSeparator">Separator</label>
+          <select class="alias-select" id="genSeparator">
+            <option value="-">-</option>
+            <option value=".">.</option>
+            <option value="_">_</option>
+            <option value=" ">space</option>
+          </select>
+        </div>
+        <div class="gen-checks">
+          <label><input type="checkbox" id="genCapitalize"/> Capitalize</label>
+          <label><input type="checkbox" id="genIncludeNumber"/> Add a number</label>
+        </div>
+      </div>
+
+      <div class="gen-history" id="genHistory" hidden>
+        <div class="gen-history-title">Recent</div>
+        <div id="genHistoryList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-site autofill settings -->
+  <div class="alias-section" id="siteSection">
+    <div class="alias-header" id="siteToggle">
+      <span>This site</span>
+      <span class="alias-badge" id="siteBadge"></span>
+      <svg class="alias-header-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="alias-body" id="siteBody" hidden>
+      <div class="alias-hint">These preferences apply only to this website.</div>
+      <div class="gen-checks">
+        <label><input type="checkbox" id="siteAutoFill"/> Auto-fill on page load</label>
+        <label><input type="checkbox" id="siteNeverAutofill"/> Never autofill here</label>
+        <label><input type="checkbox" id="siteNeverSave"/> Never save logins here</label>
+      </div>
+      <div class="alias-status" id="siteStatus"></div>
+    </div>
+  </div>
+
   <!-- Footer -->
   <div class="footer">
     <button class="footer-btn" id="openVaultBtn">
@@ -554,6 +879,8 @@
   </div>
 
   <script src="../shared/browser-polyfill.js"></script>
+  <script src="../shared/autofill-utils.js"></script>
+  <script src="wordlist.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

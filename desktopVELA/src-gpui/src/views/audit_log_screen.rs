@@ -108,6 +108,8 @@ fn action_label_icon(action: &AuditAction) -> (&'static str, &'static str) {
         AuditAction::DeviceRevoked { .. } => ("Device revoked", "device_unknown"),
         AuditAction::ShareSent { .. } => ("Share sent", "send"),
         AuditAction::ShareReceived { .. } => ("Share received", "inbox"),
+        AuditAction::ShareLinkCreated { .. } => ("Share link created", "link"),
+        AuditAction::ShareLinkRevoked { .. } => ("Share link revoked", "link_off"),
         AuditAction::ItemAdded { .. } => ("Item added", "add"),
         AuditAction::ItemUpdated { .. } => ("Item updated", "edit"),
         AuditAction::ItemDeleted { .. } => ("Item deleted", "delete"),

@@ -17,6 +17,7 @@ pub mod error;
 pub mod identity;
 pub mod kdf;
 pub mod kem;
+pub mod link;
 pub mod oram;
 pub mod password_kdf;
 pub mod recovery;

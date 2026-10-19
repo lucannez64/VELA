@@ -38,6 +38,8 @@ const actionLabels: Record<string, { label: string; icon: string; color: string 
   device_revoked: { label: 'Device revoked', icon: 'device_unknown', color: 'text-red-400' },
   share_sent: { label: 'Share sent', icon: 'send', color: 'text-primary' },
   share_received: { label: 'Share received', icon: 'inbox', color: 'text-secondary' },
+  share_link_created: { label: 'Share link created', icon: 'link', color: 'text-primary' },
+  share_link_revoked: { label: 'Share link revoked', icon: 'link_off', color: 'text-on-surface-variant' },
   item_added: { label: 'Item added', icon: 'add', color: 'text-primary' },
   item_updated: { label: 'Item updated', icon: 'edit', color: 'text-secondary' },
   item_deleted: { label: 'Item deleted', icon: 'delete', color: 'text-red-400' },

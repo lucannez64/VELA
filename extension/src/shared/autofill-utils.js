@@ -557,30 +557,166 @@
     return randomString;
   }
 
-  function generateDomainMatchPatterns(url) {
-    try {
-      const extensionUrlPattern = /^(chrome|chrome-extension|moz-extension|safari-web-extension):\/\/\/?/;
-      if (extensionUrlPattern.test(url)) {
-        return [];
+  /// Normalized site key: lowercase host with a leading `www.` and any
+  /// trailing dot removed. Used to key per-site settings. Not a registrable
+  /// domain (the extension has no public-suffix list); a subdomain simply has
+  /// its own row, which is predictable.
+  function siteKey(value) {
+    if (!value) return "";
+    let host = String(value).trim().toLowerCase();
+    if (host.includes("://")) {
+      try {
+        host = new URL(host).hostname;
+      } catch (e) {
+        return "";
       }
-
-      const urlPattern = /^https?:\/\/\/?/;
-      if (!urlPattern.test(url)) {
-        url = `https://${url}`;
-      }
-
-      let protocolGlob = "*://";
-      const parsedUrl = new URL(url);
-      const originMatchPattern = `${protocolGlob}${parsedUrl.hostname}/*`;
-
-      const splitHost = parsedUrl.hostname.split(".");
-      const domain = splitHost.slice(-2).join(".");
-      const subDomainMatchPattern = `${protocolGlob}*.${domain}/*`;
-
-      return [originMatchPattern, subDomainMatchPattern];
-    } catch {
-      return [];
     }
+    host = host.replace(/^\.+|\.+$/g, "");
+    if (host.startsWith("www.")) host = host.slice(4);
+    if (!host || /\s/.test(host)) return "";
+    return host;
+  }
+
+  // ── IDN / homograph detection ─────────────────────────────────────────────
+  //
+  // The classic lookalike attack is a punycode (`xn--`) label whose decoded
+  // form mixes scripts — `аpple.com` with a Cyrillic `а`. The desktop never
+  // autofills a domain that is not the registrable domain it stored, so a
+  // lookalike simply gets no matches; this only tells the user *why* nothing
+  // was offered, and warns on a site that pretends to be another.
+
+  const PUNYCODE_BASE = 36;
+  const PUNYCODE_TMIN = 1;
+  const PUNYCODE_TMAX = 26;
+  const PUNYCODE_SKEW = 38;
+  const PUNYCODE_DAMP = 700;
+  const PUNYCODE_INITIAL_BIAS = 72;
+  const PUNYCODE_INITIAL_N = 128;
+
+  function punycodeBasicToDigit(code) {
+    if (code >= 48 && code <= 57) return code - 22; // 0-9 → 26-35
+    if (code >= 65 && code <= 90) return code - 65; // A-Z → 0-25
+    if (code >= 97 && code <= 122) return code - 97; // a-z → 0-25
+    return PUNYCODE_BASE;
+  }
+
+  function punycodeAdapt(delta, numPoints, firstTime) {
+    delta = firstTime ? Math.floor(delta / PUNYCODE_DAMP) : delta >> 1;
+    delta += Math.floor(delta / numPoints);
+    let k = 0;
+    for (
+      ;
+      delta > ((PUNYCODE_BASE - 1) * PUNYCODE_TMAX) >> 1;
+      k += PUNYCODE_BASE
+    ) {
+      delta = Math.floor(delta / (PUNYCODE_BASE - 1));
+    }
+    return Math.floor(
+      k + ((PUNYCODE_BASE - 1 + 1) * delta) / (delta + PUNYCODE_SKEW)
+    );
+  }
+
+  /// RFC 3492 decoder for one label (without the `xn--` prefix). Returns null
+  /// on malformed input rather than throwing.
+  function punycodeDecode(input) {
+    try {
+      const output = [];
+      const length = input.length;
+      let i = 0;
+      let n = PUNYCODE_INITIAL_N;
+      let bias = PUNYCODE_INITIAL_BIAS;
+      const basic = input.lastIndexOf("-");
+      let index = 0;
+      for (let j = 0; j < (basic < 0 ? 0 : basic); j++) {
+        if (input.charCodeAt(j) >= 0x80) return null;
+        output.push(input.charCodeAt(j));
+      }
+      index = basic < 0 ? 0 : basic + 1;
+      while (index < length) {
+        const oldi = i;
+        let w = 1;
+        for (let k = PUNYCODE_BASE; ; k += PUNYCODE_BASE) {
+          if (index >= length) return null;
+          const digit = punycodeBasicToDigit(input.charCodeAt(index++));
+          if (digit >= PUNYCODE_BASE) return null;
+          i += digit * w;
+          const t =
+            k <= bias
+              ? PUNYCODE_TMIN
+              : k >= bias + PUNYCODE_TMAX
+                ? PUNYCODE_TMAX
+                : k - bias;
+          if (digit < t) break;
+          w *= PUNYCODE_BASE - t;
+        }
+        const outLength = output.length + 1;
+        bias = punycodeAdapt(i - oldi, outLength, oldi === 0);
+        n += Math.floor(i / outLength);
+        i %= outLength;
+        output.splice(i++, 0, n);
+      }
+      return String.fromCodePoint.apply(null, output);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function charScript(codePoint) {
+    const ch = String.fromCodePoint(codePoint);
+    if (/\p{Script=Latin}/u.test(ch)) return "Latin";
+    if (/\p{Script=Cyrillic}/u.test(ch)) return "Cyrillic";
+    if (/\p{Script=Greek}/u.test(ch)) return "Greek";
+    if (/\p{Script=Hebrew}/u.test(ch)) return "Hebrew";
+    if (/\p{Script=Arabic}/u.test(ch)) return "Arabic";
+    if (/\p{Script=Han}/u.test(ch)) return "Han";
+    if (/\p{Script=Hiragana}/u.test(ch)) return "Hiragana";
+    if (/\p{Script=Katakana}/u.test(ch)) return "Katakana";
+    if (/\p{Script=Hangul}/u.test(ch)) return "Hangul";
+    return "Other";
+  }
+
+  /// Assess a hostname for lookalike risk. Returns
+  /// `{ level, reasons, unicode }` where level is "warn" when the host uses a
+  /// punycode label or mixes scripts.
+  function hostRisk(hostname) {
+    const host = String(hostname || "").toLowerCase();
+    const reasons = [];
+    let unicode = host;
+    if (!host) return { level: "none", reasons, unicode };
+
+    const labels = host.split(".");
+    const decodedLabels = [];
+    for (const label of labels) {
+      if (!label.startsWith("xn--")) {
+        decodedLabels.push(label);
+        continue;
+      }
+      reasons.push("punycode");
+      const decoded = punycodeDecode(label.slice(4));
+      decodedLabels.push(decoded || label);
+    }
+    unicode = decodedLabels.join(".");
+
+    // Mixed-script detection over the decoded host. A Latin base with any
+    // other letter script is the homograph signature.
+    const scripts = new Set();
+    for (const ch of unicode) {
+      if (/\p{L}/u.test(ch)) scripts.add(charScript(ch.codePointAt(0)));
+    }
+    const nonLatin = [...scripts].filter((s) => s !== "Latin" && s !== "Other");
+    if (scripts.has("Latin") && nonLatin.length > 0) {
+      reasons.push("mixed-script");
+    }
+
+    // Only mixed-script is a warning. A single-script punycode label is a
+    // legitimate internationalized domain (münchen.de, 日本.jp) and flagging
+    // every one would train users to ignore the warning.
+    const unique = [...new Set(reasons)];
+    return {
+      level: unique.includes("mixed-script") ? "warn" : "none",
+      reasons: unique,
+      unicode
+    };
   }
 
   function fieldIsFuzzyMatch(field, checkOptions) {
@@ -763,7 +899,8 @@
       SubmitChangePasswordButtonNames,
       generateRandomChars,
       generateRandomCustomElementName,
-      generateDomainMatchPatterns,
+      siteKey,
+      hostRisk,
       fieldIsFuzzyMatch,
       isFieldMatch,
       nodeIsElement,

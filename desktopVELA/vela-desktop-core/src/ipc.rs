@@ -67,6 +67,12 @@ pub enum IpcMessageType {
     #[serde(alias = "InCoreLoginCandidatesResponse")]
     #[serde(alias = "inCoreLoginCandidatesResponse")]
     InCoreLoginCandidatesResponse,
+    #[serde(alias = "TotpCode")]
+    #[serde(alias = "totpCode")]
+    TotpCode,
+    #[serde(alias = "TotpCodeResponse")]
+    #[serde(alias = "totpCodeResponse")]
+    TotpCodeResponse,
     // Windows system-wide passkey provider (vela-win-passkey). The COM
     // server asks the first one to answer GetLockStatus; the second returns
     // the vault's passkey metadata for the OS autofill cache.
@@ -280,6 +286,7 @@ pub mod server {
             IpcMessageType::InCoreLoginCandidates => {
                 handle_in_core_login_candidates(&message, host, peer)
             }
+            IpcMessageType::TotpCode => handle_totp_code(&message, host, peer).await,
             _ => IpcMessage::error("Unknown message type".to_string()),
         }
     }
@@ -1046,6 +1053,115 @@ pub mod server {
         autofill_value_response(serde_json::Value::Array(metadata), false)
     }
 
+    /// Release a single one-time authenticator code for a login.
+    ///
+    /// Deliberately returns the *code*, never the standing TOTP secret. The
+    /// extension needs a fresh code on the OTP step and in the popup, and
+    /// handing it the secret (as the plain user-initiated autofill path still
+    /// does) would widen the secret surface for a value that expires in
+    /// seconds. Scoping is the same as a password release: the login must be a
+    /// login that matches the caller's current domain, and the release leaves a
+    /// durable audit entry.
+    async fn handle_totp_code(
+        message: &IpcMessage,
+        host: &Arc<dyn Host>,
+        peer: &PeerIdentity,
+    ) -> IpcMessage {
+        let item_id = message
+            .payload
+            .get("item_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let base_domain = extract_base_domain(
+            message.payload.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        let state = host.state();
+
+        {
+            let session = state.session.read();
+            if !session.active || session.is_expired() {
+                return totp_code_response(None, Some("Vault is locked"));
+            }
+        }
+
+        // Match by domain first, exactly like `handle_autofill_request`: an id
+        // alone must not let a caller pull a code for a login that belongs to
+        // another site.
+        let secret = if base_domain.is_empty() {
+            None
+        } else {
+            let vault = state.vault.read();
+            vault
+                .search_by_domain(&base_domain)
+                .into_iter()
+                .find(|item| item.id() == item_id)
+                .and_then(|item| match item {
+                    VaultItem::Login { totp: Some(secret), .. } if !secret.is_empty() => {
+                        Some(secret.clone())
+                    }
+                    _ => None,
+                })
+        };
+
+        let Some(secret) = secret else {
+            return totp_code_response(None, Some("No authenticator code for this login"));
+        };
+
+        let totp = match crate::totp::generate_totp(secret) {
+            Ok(totp) => totp,
+            Err(_) => {
+                return totp_code_response(None, Some("Could not generate an authenticator code"))
+            }
+        };
+
+        // Same guarantee as a password release: if the evidence cannot be
+        // written, the value is not handed out.
+        let audit_domain = if base_domain.is_empty() {
+            "totp-code".to_string()
+        } else {
+            base_domain.clone()
+        };
+        if let Err(audit_error) = crate::audit::record_audit_event_checked(
+            &state,
+            crate::audit::AuditAction::CredentialReleased {
+                caller: peer.describe(),
+                domain: audit_domain,
+            },
+        ) {
+            warn!(
+                "Refused TOTP code for '{base_domain}' to {}: audit write failed: {audit_error}",
+                peer.describe()
+            );
+            return totp_code_response(
+                None,
+                Some("Authenticator code not released: the activity log could not be updated."),
+            );
+        }
+
+        totp_code_response(Some(totp), None)
+    }
+
+    fn totp_code_response(code: Option<crate::totp::TotpCode>, error: Option<&str>) -> IpcMessage {
+        let payload = match code {
+            Some(totp) => serde_json::json!({
+                "success": true,
+                "code": totp.code,
+                "remaining_secs": totp.remaining_secs,
+                "period": totp.period,
+            }),
+            None => serde_json::json!({
+                "success": false,
+                "error": error.unwrap_or("Could not generate an authenticator code"),
+            }),
+        };
+        IpcMessage {
+            msg_type: IpcMessageType::TotpCodeResponse,
+            payload,
+            capability: None,
+        }
+    }
+
     async fn handle_save_credentials(message: &IpcMessage, host: &Arc<dyn Host>) -> IpcMessage {
         let payload = &message.payload;
         let username = payload
@@ -1673,6 +1789,24 @@ pub mod server {
             for alias in ["\"providerStatus\"", "\"ProviderStatus\""] {
                 let parsed: IpcMessageType = serde_json::from_str(alias).unwrap();
                 assert_eq!(parsed, IpcMessageType::ProviderStatus, "alias {alias}");
+            }
+        }
+
+        /// TOTP code release wire names, matched by `vela-nm-host`'s
+        /// `handle_get_totp_code`.
+        #[test]
+        fn totp_message_types_have_the_wire_names_the_native_host_expects() {
+            let name = |t: IpcMessageType| serde_json::to_string(&t).unwrap();
+
+            assert_eq!(name(IpcMessageType::TotpCode), "\"totp_code\"");
+            assert_eq!(
+                name(IpcMessageType::TotpCodeResponse),
+                "\"totp_code_response\""
+            );
+
+            for alias in ["\"totpCode\"", "\"TotpCode\""] {
+                let parsed: IpcMessageType = serde_json::from_str(alias).unwrap();
+                assert_eq!(parsed, IpcMessageType::TotpCode, "alias {alias}");
             }
         }
 

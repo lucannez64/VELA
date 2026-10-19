@@ -278,6 +278,14 @@ Breach monitoring is a client feature and part of the protocol surface only thro
 
 ---
 
+### 5.6 One-Off Share Links (Anonymous Recipients)
+
+A user may share a single login or secure note with someone who has no VELA identity. There is no recipient `share_ek` to seal a KEM capsule to, so the sender generates a random 256-bit **link key**, seals the item with it (`vela-crypto::link`, XChaCha20-Poly1305 under a domain-separated AAD), and uploads only the ciphertext. The key travels in the URL **fragment** (`…/send.html?id=<id>#<key>`), which browsers never put on the wire; the server therefore stores and serves ciphertext it cannot open. An optional passphrase is stretched with Argon2id over a per-link salt the server stores and mixed into the AEAD key, so neither the link nor the passphrase opens the secret alone.
+
+Access is bounded server-side: every link has an expiry (5 minutes–30 days), and optionally a maximum view count, a view-once flag, and a passphrase. `GET /send/:id` consumes one view atomically and reports missing, expired, revoked, and exhausted links as the same `404`. The recipient page (`webVELA` `send.html`) decrypts in the browser through the WASM bridge; the RMS never enters the browser. The owner's copy of each link — including the key — is kept only in an encrypted local file (`share_links.enc`) so the URL can be re-copied, and is never uploaded.
+
+---
+
 ## 6. Hybrid Signature Authentication Protocol
 
 The client authenticates by signing a server-issued nonce with its hybrid ML-DSA-87 + Ed25519 signing key. The server stores the corresponding hybrid verification key at registration or enrollment. Both signature components must verify.
@@ -371,6 +379,10 @@ The server uses embedded sled TTL counters for rate limits, challenge nonces, to
 | `/share/linked` | GET | PASETO v4 | List linked shares (capsules retained after acceptance) where the caller is sender or recipient. |
 | `/share/linked/{id}` | PUT | PASETO v4 | Sender re-seals an updated item for every current recipient; the recipient applies only strictly newer capsules (C-2). Sender-only. |
 | `/share/linked/{id}` | DELETE | PASETO v4 | Sender revokes a share; the linked row becomes an immutable tombstone (§5.4). Sender-only. |
+| `/send` | POST | PASETO v4 | Create a one-off share link for an anonymous recipient (§5.6). Body carries ciphertext plus expiry/view/passphrase policy; returns the id. Device sessions only; an ephemeral web-session token is refused, because a link outlives the session. |
+| `/send/{id}` | GET | None | Fetch and atomically consume one view of a share link; returns ciphertext plus KDF metadata. Missing, expired, revoked, and exhausted links are one indistinguishable `404`. |
+| `/send/{id}` | DELETE | PASETO v4 | Revoke a share link. Owner-only, device sessions only. |
+| `/sends` | GET | PASETO v4 | List the caller's active share links (metadata only; never ciphertext). Device sessions only. |
 
 ---
 

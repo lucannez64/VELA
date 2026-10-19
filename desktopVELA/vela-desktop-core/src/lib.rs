@@ -26,6 +26,7 @@ pub mod rclone;
 pub mod recovery;
 pub mod session;
 pub mod settings;
+pub mod share_link;
 pub mod sharing;
 pub mod store;
 pub mod sync;

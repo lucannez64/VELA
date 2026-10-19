@@ -35,6 +35,15 @@ pub enum AuditAction {
     ShareReceived {
         sender_user_id: String,
     },
+    /// A one-off share link (to a recipient with no VELA account) was created.
+    ShareLinkCreated {
+        has_passphrase: bool,
+        view_once: bool,
+    },
+    /// A one-off share link was revoked by its owner.
+    ShareLinkRevoked {
+        link_id: String,
+    },
     VaultCreated,
     VaultUnlocked,
     VaultLocked,

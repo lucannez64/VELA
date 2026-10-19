@@ -9,6 +9,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- One-off share links to recipients who do not use VELA (`/send`, `webVELA`
+  `send.html`). The sender seals a login or secure note under a random 256-bit
+  link key (`vela-crypto::link`) and hands out `…/send.html?id=<id>#<key>`; the
+  key lives in the URL fragment, so the server stores only ciphertext it cannot
+  open. Optional Argon2id passphrase, expiry (5 min–30 days), max-views, and
+  view-once are enforced server-side, and every fetch is one indistinguishable
+  `404` when the link is gone. The recipient page decrypts in the browser via
+  the WASM bridge. New UI in both desktop front ends (Tauri/React Sharing →
+  Links, and gpui); the owner's link records — including the key — are kept in
+  an encrypted local file so the URL can be re-copied.
+- Browser-extension authenticator autofill and popup password generator.
+  After a VELA-initiated login fill, the extension fills the one-time code on
+  the site's second step automatically: the desktop releases a fresh code
+  (never the standing secret), scoped to the login's own domain, with an audit
+  entry per release (`TotpCode` IPC type, `vela-nm-host` `getTotpCode`). The
+  popup shows a live code with countdown and copy. The popup also gains a
+  password generator — random or Diceware passphrase over the bundled EFF word
+  list, with look-alike exclusion, a strength estimate, session history, and
+  persisted options. Desktop TOTP now honors the otpauth `algorithm` parameter
+  (SHA-1/256/512) instead of assuming SHA-1.
+- Browser-extension per-site autofill settings and lookalike warning. The
+  popup gains a "This site" panel (auto-fill on page load, never autofill,
+  never save) stored in `storage.local` and applied by the content script.
+  Opt-in auto-fill on page load fills the single unambiguous match and never
+  fires on a lookalike domain. A shared IDN/homograph detector decodes
+  punycode labels (RFC 3492) and warns when a host mixes writing systems, in
+  both the inline dropdown and the popup; single-script internationalized
+  domains are left alone. The dead `generateDomainMatchPatterns` helper (wrong
+  for multi-label suffixes, never called) is removed.
 - Credit-card autofill (fill-only). The browser extension detects card number,
   expiry (combined or split month + year), CVV and cardholder fields and offers
   stored cards after an explicit click on a payment field; the desktop keys the
@@ -82,6 +111,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a Python exploit/regression suite proving audit fixes stay fixed.
 - CI: desktop release (deb/rpm/msi/nsis), Android release APK, iOS app,
   Firefox XPI signing, fuzzing, security scans, shared compilation cache.
+- Security disclosure policy: root `SECURITY.md` (scope, reporting,
+  safe harbor, response targets) and a machine-readable
+  `.well-known/security.txt` pointing at GitHub private vulnerability
+  reporting.
 
 ### Changed
 - Browser-extension IPC is OS-authenticated only (Windows named pipes / Unix

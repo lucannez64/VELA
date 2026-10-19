@@ -30,7 +30,9 @@
     throttle,
     debounce,
     sendExtensionMessage,
-    generateRandomCustomElementName
+    generateRandomCustomElementName,
+    siteKey,
+    hostRisk
   } = VelaAutofill;
 
   const MAX_DEEP_QUERY_RECURSION_DEPTH = 15;
@@ -94,6 +96,11 @@
   let velaSaveModal = null;
   let velaGenIconEl = null;
   let velaGenOptions = { length: 20, uppercase: true, lowercase: true, numbers: true, symbols: true };
+  // Per-site autofill preferences, read from `storage.local`. Defaults allow
+  // the ordinary click-to-fill behavior.
+  let velaSiteSettings = { autoFillOnLoad: false, neverAutofill: false };
+  // Lookalike/homograph assessment for this document's hostname.
+  let velaHostRisk = { level: "none", reasons: [], unicode: "" };
   let velaSelectedIndex = -1;
   let velaHoveredField = null;
   // Credentials typed into password fields but not yet offered to the user.
@@ -114,6 +121,9 @@
     setupMessageListeners();
     setupDisconnectAction();
     initInlineAutofill();
+    velaLoadHostRisk();
+    velaLoadSiteSettings().then(() => velaAutoFillOnLoad());
+    velaStartTotpAutofillWatch();
   }
 
   function setupMutationObserver() {
@@ -132,6 +142,8 @@
       lastLocationHref = globalThis.location.href;
       pageDetails = null;
       velaCurrentLogins = null;
+      velaLoadHostRisk();
+      velaLoadSiteSettings();
     }
   }
 
@@ -241,6 +253,15 @@
           }
           sendResponse({ success: true });
           break;
+        case "siteSettingsChanged":
+          // The popup changed this site's preferences; drop any open inline
+          // UI and re-read them.
+          velaLoadSiteSettings().then(() => {
+            velaHideDropdown();
+            velaRemoveFieldIcon();
+          });
+          sendResponse({ success: true });
+          break;
         case "watchLoginArtifacts":
           // Tier A recipe login: the human solves the site's captcha in this
           // tab, and we lift the resulting token out of the DOM. If it is
@@ -346,7 +367,10 @@
     if (!logins || !logins.length) return;
     if (logins.length === 1) {
       const fillScript = generateFillScript(details, logins[0]);
-      if (fillScript) performFill(fillScript);
+      if (fillScript) {
+        performFill(fillScript);
+        velaRecordTotpPending(logins[0], details);
+      }
     } else {
       velaShowAccountPickerModal(logins);
     }
@@ -356,7 +380,103 @@
     const details = await collectPageDetails();
     if (!details) return;
     const fillScript = generateFillScript(details, login);
-    if (fillScript) performFill(fillScript);
+    if (fillScript) {
+      performFill(fillScript);
+      velaRecordTotpPending(login, details);
+    }
+  }
+
+  // Park "this tab just filled login X" so the site's next page (the OTP step)
+  // can offer to fill a code even though this script's context is gone by
+  // then. Only for logins that actually carry an authenticator seed; the code
+  // itself is fetched fresh from the desktop when it is needed.
+  function velaRecordTotpPending(login, details) {
+    if (!login || !login.id || !login.totp) return;
+    sendExtensionMessage("setTotpPending", {
+      loginId: login.id,
+      url: (details && details.url) || globalThis.location.href
+    }).catch(() => {});
+  }
+
+  // ── Auto TOTP on the second step ─────────────────────────────────────────
+  //
+  // Explicit autofill puts the password (and, when the login form already
+  // shows a code field, the code) into the page. A multi-step site then
+  // navigates to a page that asks only for the one-time code. If this tab just
+  // filled a login with an authenticator seed, fetch a fresh code from the
+  // desktop and fill it — but only on a page with a code field and no password
+  // field, so a password form is never mistaken for the OTP step.
+
+  let velaTotpAutofillDone = false;
+  let velaTotpWatchObserver = null;
+  let velaTotpWatchTimer = null;
+
+  async function velaStartTotpAutofillWatch() {
+    // Only watch pages where this tab actually just filled a login with an
+    // authenticator seed. Most pages have no pending context, and they should
+    // not pay for a mutation observer.
+    let pending = null;
+    try {
+      pending = await sendExtensionMessage("getTotpPending", { url: location.href });
+    } catch (e) {}
+    if (!pending || !pending.success) return;
+    velaMaybeAutofillTotp(pending);
+    try {
+      if (!velaTotpWatchObserver && document.documentElement) {
+        velaTotpWatchObserver = new MutationObserver(() => {
+          if (velaTotpWatchTimer) return;
+          velaTotpWatchTimer = setTimeout(() => {
+            velaTotpWatchTimer = null;
+            velaMaybeAutofillTotp();
+          }, 400);
+        });
+        velaTotpWatchObserver.observe(document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      }
+    } catch (e) {}
+    // Stop watching after the plausible window: a stale tab should not keep
+    // asking the desktop forever.
+    setTimeout(velaStopTotpAutofillWatch, 120000);
+  }
+
+  function velaStopTotpAutofillWatch() {
+    if (velaTotpWatchObserver) {
+      try { velaTotpWatchObserver.disconnect(); } catch (e) {}
+      velaTotpWatchObserver = null;
+    }
+    if (velaTotpWatchTimer) {
+      clearTimeout(velaTotpWatchTimer);
+      velaTotpWatchTimer = null;
+    }
+  }
+
+  async function velaMaybeAutofillTotp(pendingArg) {
+    if (velaTotpAutofillDone) return;
+    try {
+      const pending =
+        pendingArg || (await sendExtensionMessage("getTotpPending", { url: location.href }));
+      if (!pending || !pending.success || !pending.loginId) return;
+      // Force a fresh scan: an OTP form can be client-rendered without the
+      // document URL changing, and the cached details predate it.
+      pageDetails = null;
+      const details = await collectPageDetails();
+      if (!details || !details.fields) return;
+      const hasPassword = details.fields.some((f) => f.viewable && f.type === "password");
+      if (hasPassword) return;
+      const totpField = details.fields.find((f) => f.viewable && velaIsTotpField(f) && !f.value);
+      if (!totpField) return;
+      const code = await sendExtensionMessage("getTotpCode", {
+        loginId: pending.loginId,
+        url: location.href
+      });
+      if (!code || !code.success || !code.code) return;
+      velaTotpAutofillDone = true;
+      velaStopTotpAutofillWatch();
+      performFill({ script: [{ opid: totpField.opid, action: "fill", value: code.code }] });
+      sendExtensionMessage("clearTotpPending", {}).catch(() => {});
+    } catch (e) {}
   }
 
   async function collectPageDetails() {
@@ -401,6 +521,79 @@
     });
 
     return velaLoginRequestPromise;
+  }
+
+  // ── Per-site preferences and lookalike risk ──────────────────────────────
+
+  function velaLoadHostRisk() {
+    try {
+      velaHostRisk = hostRisk(globalThis.location.hostname) || {
+        level: "none",
+        reasons: [],
+        unicode: ""
+      };
+    } catch (e) {
+      velaHostRisk = { level: "none", reasons: [], unicode: "" };
+    }
+  }
+
+  async function velaLoadSiteSettings() {
+    try {
+      const api = getBrowserAPI();
+      const key = siteKey(globalThis.location.href);
+      if (!api || !api.storage?.local || !key) return;
+      const data = await api.storage.local.get("velaSiteSettings");
+      const all = (data && data.velaSiteSettings) || {};
+      const site = all[key] || {};
+      velaSiteSettings = {
+        autoFillOnLoad: site.autoFillOnLoad === true,
+        neverAutofill: site.neverAutofill === true
+      };
+    } catch (e) {
+      velaSiteSettings = { autoFillOnLoad: false, neverAutofill: false };
+    }
+  }
+
+  // Opt-in, per-site: fill the single matching login as soon as a password
+  // field is present, with no click. Never on a lookalike domain, never when
+  // the match is ambiguous, and never when the site is set to never autofill.
+  async function velaAutoFillOnLoad() {
+    if (!velaSiteSettings.autoFillOnLoad || velaSiteSettings.neverAutofill) return;
+    if (velaHostRisk.level === "warn") return;
+    try {
+      const details = await collectPageDetails();
+      if (!details || !details.fields) return;
+      const passwordField = details.fields.find(
+        (f) => f.viewable && f.type === "password" && !f.value
+      );
+      if (!passwordField) return;
+      // Metadata first: auto-fill must be unambiguous.
+      const passive = await velaRequestLogins(false);
+      if (passive.requiresBiometric) return;
+      if (!passive.logins || passive.logins.length !== 1) return;
+      const full = await getLoginsForPage(globalThis.location.href, true);
+      if (!full || full.length !== 1) return;
+      if (passwordField.value) return;
+      const fillScript = generateFillScript(details, full[0]);
+      if (fillScript) {
+        performFill(fillScript);
+        velaRecordTotpPending(full[0], details);
+      }
+    } catch (e) {}
+  }
+
+  function velaPhishingWarningHtml() {
+    if (velaHostRisk.level !== "warn") return "";
+    const detail = "It mixes writing systems to imitate another site's address.";
+    const shown =
+      velaHostRisk.unicode && velaHostRisk.unicode !== globalThis.location.hostname
+        ? ` It decodes to <strong>${velaEscapeHtml(velaHostRisk.unicode)}</strong>.`
+        : "";
+    return `
+      <div class="vela-dd-warning" data-vela-ui="true">
+        <span class="vela-dd-warning-icon">⚠</span>
+        <span>This site's address may be impersonating another site. ${detail}${shown} VELA did not autofill.</span>
+      </div>`;
   }
 
   function queryAutofillForms() {
@@ -931,6 +1124,8 @@
   async function velaOnFocusIn(e) {
     const el = e.target;
 
+    if (velaSiteSettings.neverAutofill) return;
+
     // Payment fields first: the card heuristics are deliberately narrow, but
     // they must win over the login ones so a cardholder field (which contains
     // "account") is not mistaken for a username.
@@ -985,6 +1180,7 @@
   }
 
   function velaOnMouseOver(e) {
+    if (velaSiteSettings.neverAutofill) return;
     const el = e.target;
     if (!velaIsAutofillable(el) && !velaIsCardField(el)) return;
     if (velaActiveField === el) return;
@@ -1238,6 +1434,11 @@
           <span class="vela-dd-action-icon">＋</span>
           Add to VELA vault
         </button>`;
+    }
+
+    const warningHtml = velaPhishingWarningHtml();
+    if (warningHtml) {
+      dd.innerHTML = warningHtml + dd.innerHTML;
     }
 
     document.documentElement.appendChild(dd);

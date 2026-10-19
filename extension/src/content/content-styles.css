@@ -229,6 +229,32 @@
   line-height: 1.5;
 }
 
+/* Lookalike / homograph warning, prepended to the dropdown. */
+.vela-dd-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 10px 4px;
+  padding: 8px 10px;
+  border-radius: var(--vela-radius-sm);
+  background: rgba(255, 180, 171, 0.12);
+  border: 1px solid rgba(255, 180, 171, 0.4);
+  color: #ffb4ab;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.vela-dd-warning-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.vela-dd-warning strong {
+  color: #ffd7d2;
+  word-break: break-all;
+}
+
 .vela-dd-action-btn {
   all: unset;
   box-sizing: border-box;
