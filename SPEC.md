@@ -379,10 +379,10 @@ The server uses embedded sled TTL counters for rate limits, challenge nonces, to
 | `/share/linked` | GET | PASETO v4 | List linked shares (capsules retained after acceptance) where the caller is sender or recipient. |
 | `/share/linked/{id}` | PUT | PASETO v4 | Sender re-seals an updated item for every current recipient; the recipient applies only strictly newer capsules (C-2). Sender-only. |
 | `/share/linked/{id}` | DELETE | PASETO v4 | Sender revokes a share; the linked row becomes an immutable tombstone (§5.4). Sender-only. |
-| `/send` | POST | PASETO v4 | Create a one-off share link for an anonymous recipient (§5.6). Body carries ciphertext plus expiry/view/passphrase policy; returns the id. |
+| `/send` | POST | PASETO v4 | Create a one-off share link for an anonymous recipient (§5.6). Body carries ciphertext plus expiry/view/passphrase policy; returns the id. Device sessions only; an ephemeral web-session token is refused, because a link outlives the session. |
 | `/send/{id}` | GET | None | Fetch and atomically consume one view of a share link; returns ciphertext plus KDF metadata. Missing, expired, revoked, and exhausted links are one indistinguishable `404`. |
-| `/send/{id}` | DELETE | PASETO v4 | Revoke a share link. Owner-only. |
-| `/sends` | GET | PASETO v4 | List the caller's active share links (metadata only; never ciphertext). |
+| `/send/{id}` | DELETE | PASETO v4 | Revoke a share link. Owner-only, device sessions only. |
+| `/sends` | GET | PASETO v4 | List the caller's active share links (metadata only; never ciphertext). Device sessions only. |
 
 ---
 

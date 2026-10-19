@@ -159,10 +159,10 @@ pub fn build(state: AppState) -> Router {
         // One-off share links to recipients with no VELA account. The owner
         // creates/lists/revokes; the recipient fetches by unguessable id and
         // decrypts with the key from the URL fragment the server never sees.
-        .route("/send", post(crate::send::post_send))
-        .route("/send/:id", get(crate::send::get_send))
-        .route("/send/:id", delete(crate::send::delete_send))
-        .route("/sends", get(crate::send::list_sends))
+        .route("/send", post(crate::send::post_share_link))
+        .route("/send/:id", get(crate::send::get_share_link))
+        .route("/send/:id", delete(crate::send::delete_share_link))
+        .route("/sends", get(crate::send::list_share_links))
         .route("/web-session/start", post(crate::web_session::post_start))
         .route("/web-sessions", get(crate::web_session::get_sessions_list))
         .route("/web-session/:id", get(crate::web_session::get_session))

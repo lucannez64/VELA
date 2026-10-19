@@ -28,7 +28,7 @@ use uuid::Uuid;
 use crate::{
     db,
     error::{AppError, Result},
-    middleware::{maybe_append_new_token, AuthSession},
+    middleware::{maybe_append_new_token, DeviceSession},
     net, rate_limit,
     sqldb::{Db as _, TursoDb, TursoValue},
     state::AppState,
@@ -88,9 +88,9 @@ pub struct CreateSendResponse {
     pub expires_at: DateTime<Utc>,
 }
 
-pub async fn post_send(
+pub async fn post_share_link(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Json(body): Json<CreateSendRequest>,
 ) -> Result<(HeaderMap, Json<CreateSendResponse>)> {
     rate_limit::send_create_by_user(&state.store, &session.user_id.to_string())?;
@@ -187,7 +187,7 @@ pub struct FetchSendResponse {
     pub expires_at: DateTime<Utc>,
 }
 
-pub async fn get_send(
+pub async fn get_share_link(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     addr: Option<ConnectInfo<SocketAddr>>,
@@ -284,9 +284,9 @@ pub struct SendMeta {
     pub expires_at: DateTime<Utc>,
 }
 
-pub async fn list_sends(
+pub async fn list_share_links(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     rate_limit::send_list_by_user(&state.store, &session.user_id.to_string())?;
 
@@ -328,9 +328,9 @@ pub async fn list_sends(
 
 // ── DELETE /send/:id (owner, authenticated) ──────────────────────────────────
 
-pub async fn delete_send(
+pub async fn delete_share_link(
     State(state): State<AppState>,
-    session: AuthSession,
+    session: DeviceSession,
     Path(id): Path<Uuid>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     let affected = state

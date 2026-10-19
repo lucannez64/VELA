@@ -59,3 +59,10 @@ get_inbox
 post_start
 get_session
 post_token
+
+# One-off share-link fetch (SPEC §5.6): the recipient has no VELA account by
+# design. The server only holds ciphertext; the key is in the URL fragment and
+# never reaches it. The handler consumes one view atomically, is rate-limited by
+# IP, and returns one indistinguishable 404 for missing/expired/revoked/used
+# links. Create, list and revoke are DeviceSession-only.
+get_share_link
