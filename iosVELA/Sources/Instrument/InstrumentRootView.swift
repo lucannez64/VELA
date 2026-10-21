@@ -64,7 +64,15 @@ struct InstrumentRootView: View {
                     .id(tab)
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
                 InstrumentDock(items: Self.dockItems, selection: $tab)
+                    .background(
+                        // Content fades out under the dock instead of showing below it.
+                        LinearGradient(colors: [ink.bg.opacity(0), ink.bg, ink.bg], startPoint: .top, endPoint: .bottom)
+                            .padding(.top, -24)
+                            .ignoresSafeArea(edges: .bottom)
+                            .allowsHitTesting(false)
+                    )
             }
+            .onAppear(perform: applyDebugLaunch)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: InstrumentRoute.self) { route in
                 destination(route)
@@ -135,6 +143,20 @@ struct InstrumentRootView: View {
         case .account:
             AccountView(vm: accountVM)
         }
+    }
+
+    /// Debug builds: `VELA_OPEN=<item name>` opens an item, `VELA_SHEET=add`
+    /// opens the editor, so CI can screenshot those surfaces.
+    private func applyDebugLaunch() {
+        #if DEBUG
+        let env = ProcessInfo.processInfo.environment
+        if let name = env["VELA_OPEN"], let item = vm.items.first(where: { $0.name == name }), path.isEmpty {
+            path.append(.item(item.id))
+        }
+        if env["VELA_SHEET"] == "add", addSheet == nil {
+            addSheet = AddRequest(password: nil)
+        }
+        #endif
     }
 
     private var accountLabel: String {

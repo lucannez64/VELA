@@ -96,6 +96,7 @@ jobs:
           # pick the surface so every Instrument screen is captured.
           shot() {
             SIMCTL_CHILD_VELA_DEMO=1 SIMCTL_CHILD_VELA_TAB="$2" SIMCTL_CHILD_VELA_THEME="$3" \
+              SIMCTL_CHILD_VELA_OPEN="${4:-}" SIMCTL_CHILD_VELA_SHEET="${5:-}" \
               xcrun simctl launch "$UDID" com.vela.vault
             sleep 7
             xcrun simctl io "$UDID" screenshot "screens/$1.png"
@@ -108,6 +109,9 @@ jobs:
           shot overview-paper overview paper
           shot vault-macchiato vault macchiato
           shot generate-latte generate latte
+          shot detail-login vault night Proton
+          shot detail-card vault night "Everyday Visa"
+          shot add-sheet vault night "" add
           cp screens/overview.png ios-app.png
           # Relaunch without the seed: the demo vault is now locked.
           xcrun simctl launch "$UDID" com.vela.vault
