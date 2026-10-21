@@ -31,6 +31,7 @@ let polling = false;
 // RW state
 let authed: AuthedSession | null = null;
 let items: Record<string, unknown>[] = [];
+let vaultEnvelope: Record<string, unknown> = {};
 let dirty = false;
 /** Expiry of the current RW grant, reused when the watcher re-renders. */
 let rwExpiresAt: string | undefined;
@@ -89,6 +90,7 @@ function wipeKeys() {
 function wipe() {
   wipeKeys();
   items = [];
+  vaultEnvelope = {};
 }
 // Clear the RW session blob on every navigation/close — prevents the Argon2-wrapped
 // RMS from lingering in sessionStorage on shared machines.
@@ -365,6 +367,7 @@ function wireItemEvents(node: HTMLElement, editable: boolean, onDirty: () => voi
 }
 
 function showVault(opts: { editable: boolean; expiresAt?: string }) {
+  if (Number(vaultEnvelope.schemaVersion ?? 1) >= 2) opts = {...opts,editable:false};
   const until = opts.expiresAt ? new Date(opts.expiresAt).toLocaleTimeString() : '';
   const node = el(`<div>${brand}
     <div class="banner ${opts.editable ? 'rw' : ''}">
@@ -375,6 +378,7 @@ function showVault(opts: { editable: boolean; expiresAt?: string }) {
       </span>
     </div>
     <h1>Your vault</h1>
+    ${Number(vaultEnvelope.schemaVersion ?? 1) >= 2 ? '<p class="muted">This richer vault is read-only in the browser during rollout. Use the updated desktop app to edit folders, tags and fields.</p>' : ''}
     <input class="search" id="search" placeholder="Search…" autocomplete="off" />
     <div class="card" id="list">${
       items.length ? items.map((it, i) => itemCard(it, i, opts.editable)).join('') : '<p class="muted">This vault has no items.</p>'
@@ -479,7 +483,8 @@ async function pullRemoteVault(): Promise<Record<string, unknown>[]> {
       authed.epoch,
     );
   }
-  return json ? ((JSON.parse(json) as { items?: Record<string, unknown>[] }).items ?? []) : [];
+  vaultEnvelope = json ? JSON.parse(json) : {};
+  return (vaultEnvelope.items as Record<string, unknown>[] | undefined) ?? [];
 }
 
 /**
@@ -557,7 +562,7 @@ async function refreshFromServer() {
 async function saveVault() {
   if (!authed) throw new Error('Session ended');
   const man = await authed.manifest(); // fresh versions for optimistic concurrency
-  const pieces = splitUtf8(JSON.stringify({ items, tombstones: [] }), VAULT_CHUNK_PLAINTEXT_SIZE);
+  const pieces = splitUtf8(JSON.stringify({ ...vaultEnvelope, items }), VAULT_CHUNK_PLAINTEXT_SIZE);
 
   let lamport = Math.max(0, ...[...man.values()].map((m) => m.lamport));
   for (let i = 0; i < pieces.length; i++) {
@@ -613,6 +618,7 @@ async function onGranted(res: PollResponse) {
       showError((e as Error).message);
     }
   } else {
+    vaultEnvelope = envelope.vault ?? {};
     items = (envelope.vault?.items ?? []) as Record<string, unknown>[];
     wipeKeys(); // RO snapshot is self-contained — drop keys but keep the items
     showVault({ editable: false, expiresAt: res.expires_at });

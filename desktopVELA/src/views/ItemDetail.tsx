@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem, toBackendItem } from '../context/AppContext';
 import { useClipboard } from '../hooks/useClipboard';
 import FaviconIcon from '../components/FaviconIcon';
+import RichItemDetails from '../components/RichItemDetails';
 
 interface Props {
   item: VaultItem;
@@ -456,6 +457,7 @@ export default function ItemDetail({ item, onEdit, paused = false }: Props) {
           </div>
         )}
 
+        <RichItemDetails item={item}/>
         {item.notes && (
           <div className="mt-6 p-6 rounded-2xl bg-surface-container-low border border-outline-variant/5">
             <label className="font-label text-[10px] tracking-[0.2em] uppercase text-outline block mb-4">Additional Notes</label>

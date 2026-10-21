@@ -37,7 +37,7 @@ fun <T> SegmentedControl(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(50))
             .background(VelaColors.SurfaceHighest)
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -47,18 +47,18 @@ fun <T> SegmentedControl(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(if (isSelected) VelaColors.Green.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (isSelected) VelaColors.TextPrimary else androidx.compose.ui.graphics.Color.Transparent)
                     .clickable { onSelect(value) },
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     label,
-                    color = if (isSelected) VelaColors.Green else VelaColors.TextSecondary,
+                    color = if (isSelected) VelaColors.SurfaceBase else VelaColors.TextSecondary,
                     fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center

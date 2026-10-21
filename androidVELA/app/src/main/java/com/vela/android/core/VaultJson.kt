@@ -5,14 +5,23 @@ import org.json.JSONObject
 import java.time.Instant
 
 object VaultJson {
-    fun encodeItem(item: VaultItem): ByteArray = item.toJson().toString().toByteArray(Charsets.UTF_8)
+    fun encodeItem(item: VaultItem): ByteArray = item.toJson().also { it.remove("folderId"); it.remove("tagIds") }.toString().toByteArray(Charsets.UTF_8)
+    private val richKeys = listOf("folderId", "tagIds", "customFields", "additionalUrls", "identityDetails", "credential_change_needs_reauth", "allow_second_factor_downgrade")
+    private val envelopeKeys = listOf("folders", "tags", "organizationTombstones")
+    private fun preserve(json: JSONObject, keys: List<String>) = PreservedJson(keys.filter { json.has(it) }.associateWith { JSONArray().put(json.get(it)).toString().let { value -> value.substring(1, value.length - 1) } })
+    private fun restore(json: JSONObject, preserved: PreservedJson): JSONObject {
+        preserved.values.forEach { (key, value) -> json.put(key, org.json.JSONTokener(value).nextValue()) }
+        return json
+    }
 
     fun decodeItem(bytes: ByteArray): VaultItem? = itemFromJson(JSONObject(bytes.toString(Charsets.UTF_8)))
 
     fun encode(store: VaultStore): ByteArray {
-        val root = JSONObject()
+        val root = restore(JSONObject(), store.richEnvelope)
+        if (store.schemaVersion > 1) root.put("schemaVersion", store.schemaVersion)
         val items = JSONArray()
         store.items.forEach { item -> items.put(item.toJson()) }
+        store.opaqueItems.forEach { items.put(JSONObject(it)) }
         root.put("items", items)
         root.put("tombstones", JSONArray().also { tombstones ->
             store.tombstones.forEach { tombstones.put(it.toJson()) }
@@ -23,10 +32,15 @@ object VaultJson {
     fun decode(bytes: ByteArray): VaultStore {
         if (bytes.isEmpty()) return VaultStore()
         val root = JSONObject(bytes.toString(Charsets.UTF_8))
+        val schemaVersion = root.optInt("schemaVersion", 1)
+        require(schemaVersion <= 2) { "Upgrade VELA to read this vault" }
+        val opaque = mutableListOf<String>()
         val itemsJson = root.optJSONArray("items") ?: JSONArray()
         val items = buildList {
             for (index in 0 until itemsJson.length()) {
-                itemFromJson(itemsJson.getJSONObject(index))?.let(::add)
+                val raw = itemsJson.getJSONObject(index)
+                val item = itemFromJson(raw)
+                if (item != null) add(item) else opaque.add(raw.toString())
             }
         }
         val tombstonesJson = root.optJSONArray("tombstones") ?: JSONArray()
@@ -35,11 +49,11 @@ object VaultJson {
                 add(tombstoneFromJson(tombstonesJson.getJSONObject(index)))
             }
         }
-        return VaultStore(items, tombstones)
+        return VaultStore(items, tombstones, schemaVersion, preserve(root, envelopeKeys), opaque)
     }
 
     private fun VaultItem.toJson(): JSONObject {
-        val json = metaToJson(meta, JSONObject())
+        val json = restore(metaToJson(meta, JSONObject()), meta.richFields)
 
         when (this) {
             is VaultItem.Login -> json
@@ -56,8 +70,9 @@ object VaultJson {
                 .put("exp", expiration)
                 .put("cvv", cvv)
                 .put("pin", pin)
-                .put("cardholderName", cardholderName)
+                .put("cardholder_name", cardholderName)
 
+            is VaultItem.Identity -> json.put("item_type", "identity").put("first_name", firstName).put("last_name", lastName).put("ssn", ssn)
             is VaultItem.SecureNote -> json
                 .put("item_type", "secureNote")
                 .put("title", meta.name)
@@ -179,6 +194,7 @@ object VaultJson {
                 },
             )
 
+            "identity" -> VaultItem.Identity(meta, json.firstString("firstName","first_name"), json.firstString("lastName","last_name"), json.optString("ssn"))
             "secureNote" -> VaultItem.SecureNote(
                 meta = meta,
                 content = json.firstString("content", "secure_note_content", "notes"),
@@ -218,6 +234,7 @@ object VaultJson {
         val createdAt = Instant.parse(json.optString("created_at", json.optString("createdAt", Instant.now().toString())))
         val updatedAt = Instant.parse(json.optString("updated_at", json.optString("updatedAt", createdAt.toString())))
         return VaultMeta(
+            richFields = preserve(json, richKeys),
             id = json.getString("id"),
             name = json.optString("name", json.optString("title", "Untitled")),
             notes = json.optNullableString("notes"),

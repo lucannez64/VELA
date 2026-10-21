@@ -12,3 +12,6 @@ pub mod setup_screen;
 pub mod sharing_screen;
 pub mod vault_browser;
 pub mod welcome;
+
+pub mod rich_editor;
+pub mod organization_panel;

@@ -916,6 +916,7 @@ class VaultSyncManager(
         manifest: SyncManifest,
         baseLamport: Long
     ): RemoteVaultUpload = coroutineScope {
+        val uploadToken = if (vault.snapshot().schemaVersion == 2) client.activateRichSchema(startToken) ?: startToken else startToken
         val chunks = splitUtf8Chunks(VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8))
         val manifestById = manifest.chunks.associateBy { it.chunkId }
 
@@ -927,7 +928,7 @@ class VaultSyncManager(
             lamport
         }
 
-        var tokenRef = startToken
+        var tokenRef = uploadToken
         val tokenMutex = Mutex()
 
         val results = chunks.mapIndexed { index, chunk ->
@@ -1111,7 +1112,12 @@ internal fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore
 
     return VaultStore(
         items = mergedItems.values.sortedBy { it.name.lowercase() },
-        tombstones = pruneTombstones(tombstones)
+        tombstones = pruneTombstones(tombstones),
+        schemaVersion = maxOf(local.schemaVersion, remote.schemaVersion),
+        richEnvelope = com.vela.android.core.VaultOrganization.merge(
+            com.vela.android.core.VaultOrganization(local.schemaVersion == 2,local.richEnvelope),
+            com.vela.android.core.VaultOrganization(remote.schemaVersion == 2,remote.richEnvelope)).data,
+        opaqueItems = mergeOpaqueItems(local.opaqueItems, remote.opaqueItems, tombstoneById)
     )
 }
 
@@ -1232,4 +1238,18 @@ data class V3EnrollmentLocator(val grantId: String, val serverUrl: String) {
             )
         }
     }
+}
+
+private fun mergeOpaqueItems(local: List<String>, remote: List<String>, deleted: Map<String, com.vela.android.core.Tombstone>): List<String> {
+    val values = linkedMapOf<String,String>()
+    (local + remote).forEach { raw ->
+        val record = org.json.JSONObject(raw); val id = record.getString("id")
+        fun stamp(value: org.json.JSONObject): java.time.Instant = java.time.Instant.parse(value.optString("updatedAt", value.optString("updated_at")))
+        val now = stamp(record)
+        if (deleted[id]?.deletedAt?.let { it >= now } != true) {
+            val old = values[id]
+            if (old == null || now >= stamp(org.json.JSONObject(old))) values[id] = raw
+        }
+    }
+    return values.values.toList()
 }

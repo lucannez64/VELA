@@ -95,7 +95,7 @@ pub enum VaultItem {
         cvv: String,
         #[serde(default)]
         pin: Option<String>,
-        #[serde(default, alias = "cardholder_name")]
+        #[serde(default, alias = "cardholderName")]
         cardholder_name: Option<String>,
     },
     SecureNote {
@@ -107,9 +107,9 @@ pub enum VaultItem {
     Identity {
         #[serde(flatten)]
         meta: VaultMeta,
-        #[serde(alias = "first_name")]
+        #[serde(alias = "firstName")]
         first_name: String,
-        #[serde(alias = "last_name")]
+        #[serde(alias = "lastName")]
         last_name: String,
         ssn: String,
     },

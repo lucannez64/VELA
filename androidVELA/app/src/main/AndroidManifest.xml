@@ -33,6 +33,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:theme="@style/Theme.VELA.Starting"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -49,6 +50,7 @@
 
         <service
             android:name=".autofill.VelaAutofillService"
+            android:icon="@drawable/instrument_credential"
             android:exported="true"
             android:label="@string/autofill_service_label"
             android:permission="android.permission.BIND_AUTOFILL_SERVICE">
@@ -69,6 +71,7 @@
         -->
         <service
             android:name=".security.passkey.VelaCredentialProviderService"
+            android:icon="@drawable/instrument_credential"
             android:exported="true"
             android:label="@string/passkey_provider_label"
             android:permission="android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE">

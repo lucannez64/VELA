@@ -154,6 +154,7 @@ mod tests {
         let mut vault = vela_desktop_core::vault::VaultStore::default();
         vault.add_item(VaultItem::Login {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: "item-1".into(),
                 name: "GitHub".into(),
                 notes: Some("work account".into()),

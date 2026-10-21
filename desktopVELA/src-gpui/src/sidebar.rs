@@ -65,6 +65,7 @@ impl EventEmitter<SidebarEvent> for Sidebar {}
 
 pub struct Sidebar {
     active: NavView,
+    collections: Option<gpui::Entity<crate::views::organization_panel::OrganizationPanel>>,
 }
 
 impl Sidebar {
@@ -73,7 +74,17 @@ impl Sidebar {
             .detach();
         Self {
             active: NavView::Vault,
+            collections: None,
         }
+    }
+
+    pub fn set_collections(
+        &mut self,
+        collections: gpui::Entity<crate::views::organization_panel::OrganizationPanel>,
+        cx: &mut Context<Self>,
+    ) {
+        self.collections = Some(collections);
+        cx.notify();
     }
 
     pub fn set_active(&mut self, view: NavView, cx: &mut Context<Self>) {
@@ -94,7 +105,7 @@ impl Render for Sidebar {
                 window.viewport_size().width.into(),
             )))
             .flex_shrink_0()
-            .overflow_y_scroll()
+            .overflow_hidden()
             .h_full()
             .flex()
             .flex_col()
@@ -147,21 +158,7 @@ impl Render for Sidebar {
             } else {
                 (base_bg, base_text)
             };
-            let mut row = div()
-                .id(view.label())
-                .py_3()
-                .flex()
-                .items_center()
-                .gap_3()
-                .text_sm()
-                .font_family(fonts::BODY)
-                .cursor_pointer()
-                .border_l_2()
-                .border_color(if selected {
-                    palette.primary
-                } else {
-                    gpui::transparent_black()
-                })
+            let mut row = crate::ui::navigation_row(view.label(), selected, &palette)
                 .bg(bg)
                 .text_color(text_color)
                 .child(icon(view.icon_name(), px(18.), text_color));
@@ -181,15 +178,30 @@ impl Render for Sidebar {
                     });
                 });
             }
-            row.on_mouse_down(
+            let item = row.on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
                     this.set_active(view, cx);
                     cx.emit(SidebarEvent::Navigate(view));
                 }),
+            );
+            div().flex().flex_col().child(item).when(
+                view == NavView::Vault && active == NavView::Vault && !collapsed,
+                |el| {
+                    el.when_some(self.collections.clone(), |el, collections| {
+                        el.child(collections)
+                    })
+                },
             )
         }));
-        root = root.child(top).child(div().flex_1());
+        root = root.child(
+            div()
+                .id("sidebar-navigation")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(top),
+        );
 
         let add_item_hover_t = animation::hover_transition("sidebar-add-item", window, cx);
         let add_item_t = *add_item_hover_t.evaluate(window, cx);
@@ -206,6 +218,7 @@ impl Render for Sidebar {
         );
         let mut add_item = div()
             .id("sidebar-add-item")
+            .debug_selector(|| "sidebar-add-item".into())
             .py_3()
             .rounded_xl()
             .flex()
@@ -244,6 +257,7 @@ impl Render for Sidebar {
         );
         let mut lock = div()
             .id("sidebar-lock")
+            .debug_selector(|| "sidebar-lock".into())
             .py_3()
             .rounded_lg()
             .flex()

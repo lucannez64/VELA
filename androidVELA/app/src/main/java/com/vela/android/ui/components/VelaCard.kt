@@ -57,9 +57,9 @@ fun VelaCard(
         VelaCardStyle.Warning -> androidx.compose.foundation.BorderStroke(1.dp, VelaColors.WarningAmber.copy(alpha = 0.3f))
         VelaCardStyle.Success -> androidx.compose.foundation.BorderStroke(1.dp, VelaColors.Green.copy(alpha = 0.3f))
         VelaCardStyle.Error -> androidx.compose.foundation.BorderStroke(1.dp, VelaColors.ErrorRed.copy(alpha = 0.3f))
-        else -> null
+        else -> BorderStroke(1.dp, VelaColors.Outline.copy(alpha = .32f))
     }
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(22.dp)
 
     Column(
         modifier = modifier
@@ -72,7 +72,7 @@ fun VelaCard(
             .then(
                 if (border != null) Modifier.border(border, shape) else Modifier
             )
-            .padding(20.dp),
+            .padding(18.dp),
         content = content
     )
 }
@@ -91,6 +91,7 @@ fun VelaListItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(VelaColors.SurfaceLow)
+            .border(1.dp, VelaColors.Outline.copy(alpha = .25f), RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -99,12 +100,12 @@ fun VelaListItem(
             Icon(
                 it, null,
                 modifier = Modifier.size(22.dp),
-                tint = VelaColors.Green
+                tint = VelaColors.Violet
             )
             Spacer(Modifier.width(14.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp)
             subtitle?.let {
                 Spacer(Modifier.height(2.dp))
                 Text(it, color = VelaColors.TextSecondary, fontSize = 13.sp)

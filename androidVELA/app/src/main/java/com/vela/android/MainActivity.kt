@@ -59,7 +59,17 @@ class MainActivity : FragmentActivity() {
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The OS owns the launch window; the app switches to its normal theme
+        // immediately. No timer keeps the splash up after content is ready.
+        setTheme(R.style.Theme_VELA)
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            splashScreen.setOnExitAnimationListener { splash ->
+                splash.animate().alpha(0f)
+                    .setDuration(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 160L else 0L)
+                    .withEndAction { splash.remove() }.start()
+            }
+        }
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         VelaRepositories.security.onLocked = { cancelBackgroundSync() }
         pendingAutofillFill = parseAutofillRequest(intent)
@@ -84,19 +94,31 @@ class MainActivity : FragmentActivity() {
                     itemCount = items.size,
                     items = items,
                     onAddItem = { item ->
+                        if (VelaRepositories.vault.richerVaultReadOnly) {
+                            android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                        } else {
                         VelaRepositories.vault.addItem(item)
                         VelaRepositories.audit.record("item_added", item.type.name.lowercase())
                         requestSync("after-save")
+                        }
                     },
                     onUpdateItem = { item ->
+                        if (VelaRepositories.vault.richerVaultReadOnly) {
+                            android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                        } else {
                         VelaRepositories.vault.updateItem(item)
                         VelaRepositories.audit.record("item_updated", item.type.name.lowercase())
                         requestSync("after-save")
+                        }
                     },
                     onDeleteItem = { id ->
+                        if (VelaRepositories.vault.richerVaultReadOnly) {
+                            android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                        } else {
                         VelaRepositories.vault.deleteItem(id)
                         VelaRepositories.audit.record("item_deleted", id.take(8))
                         requestSync("after-save")
+                        }
                     },
                     onLock = {
                         VelaRepositories.audit.record("vault_locked")

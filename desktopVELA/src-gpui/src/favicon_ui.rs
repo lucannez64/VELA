@@ -86,6 +86,7 @@ pub fn favicon_or_fallback(
     app: &mut App,
     on_loaded: impl FnOnce(&mut AsyncApp) + 'static,
 ) -> gpui::AnyElement {
+    if app.has_global::<crate::demo::DemoMode>() { return fallback_icon_box(palette, icon_name, size).into_any_element(); }
     let cached = favicon_cache.borrow().get(url).cloned();
     match cached {
         Some(FaviconState::Loaded(image)) => div()

@@ -12,13 +12,16 @@
 //! the modal (the search box was added after a real vault with 200+ items
 //! made an unsearchable scroll list genuinely unusable).
 
+#[path="sharing_instrument.rs"]
+mod instrument_view;
+
 use std::sync::Arc;
 
 use gpui::{
     div, prelude::*, px, Context, Focusable, IntoElement, MouseButton, Render, SharedString, Task,
     Window,
 };
-use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
+use gpui_elements::editable_text::{EditableTextState, StringStorage};
 
 use vela_desktop_core::commands::vault::get_items;
 use vela_desktop_core::share_link::{
@@ -44,6 +47,7 @@ enum Tab {
 pub struct SharingScreen {
     app_state: Arc<AppState>,
     shares: Option<Vec<Share>>,
+    confirm_revoke: Option<String>,
     links: Option<Vec<ShareLinkRecord>>,
     error: Option<SharedString>,
     tab: Tab,
@@ -71,14 +75,22 @@ impl SharingScreen {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
             .detach();
-        Self::load(&app_state, cx);
+        let demo=cx.has_global::<crate::demo::DemoMode>();
+        if !demo { Self::load(&app_state, cx); }
+        // The preview has no pulse ticker: edits must invalidate the picker
+        // and recipient action immediately, including paste and IME input.
+        let recipient_state = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+        let share_search_state = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+        cx.observe(&recipient_state, |_, _, cx| cx.notify()).detach();
+        cx.observe(&share_search_state, |_, _, cx| cx.notify()).detach();
 
         Self {
             app_state,
-            shares: None,
-            links: None,
+            shares: demo.then(Vec::new),
+            confirm_revoke: None,
+            links: demo.then(Vec::new),
             error: None,
-            tab: Tab::Received,
+            tab: if crate::instrument::is_instrument(cx) {Tab::Links} else {Tab::Received},
             show_share_modal: false,
             show_link_modal: false,
             shareable_items: Vec::new(),
@@ -87,8 +99,8 @@ impl SharingScreen {
             picker_active: 0,
             picker_query: String::new(),
             picker_scroll: gpui::UniformListScrollHandle::new(),
-            recipient_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
-            share_search_state: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            recipient_state,
+            share_search_state,
             link_passphrase_state: cx
                 .new(|cx| EditableTextState::new(StringStorage::default(), cx)),
             link_ttl_secs: 86400,
@@ -97,7 +109,7 @@ impl SharingScreen {
             link_copied: false,
             action_error: None,
             sending: false,
-            _pulse_task: animation::spawn_pulse_ticker(cx),
+            _pulse_task: if crate::instrument::is_instrument(cx){Task::ready(())}else{animation::spawn_pulse_ticker(cx)},
         }
     }
 
@@ -418,7 +430,7 @@ fn type_icon_name(item_type: &str) -> &'static str {
 
 impl Render for SharingScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = crate::theme::current_palette(cx);
+        let palette = crate::modal::palette(cx);
         let query = self.share_search_state.read(cx).as_str().to_string();
         if self.picker_query != query {
             self.picker_query = query;
@@ -449,7 +461,7 @@ impl Render for SharingScreen {
         div()
             .relative()
             .size_full()
-            .child(
+            .child(if crate::instrument::is_instrument(cx) { self.render_instrument(window,cx) } else {
                 div()
                     .id("sharing-scroll")
                     .size_full()
@@ -604,8 +616,8 @@ impl Render for SharingScreen {
                     })
                     .when_some(self.error.clone(), |el, error| {
                         el.child(div().text_sm().text_color(palette.error).child(error))
-                    }),
-            )
+                    }).into_any_element()
+            })
             .when(self.show_share_modal, |el| {
                 el.child(share_modal(&palette, self, window, cx))
             })
@@ -1209,6 +1221,7 @@ fn dialog_button(
         .px_3()
         .py_2()
         .rounded_lg()
+        .when(palette.instrument, |el| el.flex_initial().rounded_full().border_1().border_color(palette.outline_variant).text_size(px(13.)))
         .flex()
         .items_center()
         .justify_center()
@@ -1224,7 +1237,9 @@ fn dialog_button(
         } else {
             palette.on_surface
         })
-        .when(enabled, |el| el.cursor_pointer())
+        .when(enabled, |el| el.cursor_pointer().hover(|el| el.bg(if primary {
+            crate::instrument::alpha(palette.primary, 0.85)
+        } else { palette.surface_bright })))
         .when(!enabled, |el| el.opacity(0.45))
         .child(label)
 }
@@ -1235,7 +1250,7 @@ fn item_picker(
     window: &Window,
     cx: &mut Context<SharingScreen>,
 ) -> gpui::AnyElement {
-    let palette = crate::theme::current_palette(cx);
+    let palette = crate::modal::palette(cx);
     let query = screen
         .share_search_state
         .read(cx)
@@ -1270,6 +1285,7 @@ fn item_picker(
                 let (id, name, glyph, kind) = &matches[ix];
                 let id = id.clone();
                 let weak = weak.clone();
+                let hover_weak = weak.clone();
                 div().h(px(64.)).pb_2().child(
                     div()
                         .id(SharedString::from(format!("pick-{id}")))
@@ -1280,6 +1296,7 @@ fn item_picker(
                         .gap_3()
                         .px_3()
                         .rounded_lg()
+                        .when(palette.instrument, |el| el.rounded(px(14.)).border_1().border_color(palette.outline_variant))
                         .cursor_pointer()
                         .bg(if ix == active {
                             gpui::Hsla {
@@ -1289,6 +1306,17 @@ fn item_picker(
                         } else {
                             palette.surface_container_high
                         })
+                        .on_hover(move |hovered, _, app| {
+                            if *hovered {
+                                hover_weak.update(app, |this, cx| {
+                                    if this.picker_active != ix {
+                                        this.picker_active = ix;
+                                        cx.notify();
+                                    }
+                                }).ok();
+                            }
+                        })
+                        .hover(|el| el.bg(gpui::Hsla { a: 0.12, ..palette.primary }))
                         .child(icon(glyph, px(20.), palette.primary))
                         .child(
                             div()
@@ -1340,6 +1368,7 @@ fn item_picker(
         .gap_2()
         .px_4()
         .py_2()
+        .text_size(px(14.))
         .child(
             div()
                 .flex_shrink_0()
@@ -1379,18 +1408,7 @@ fn item_picker(
                     },
                 ))
                 .child(
-                    text_input("share-picker-search")
-                        .state(screen.share_search_state.downgrade())
-                        .placeholder("Search vault items…")
-                        .caret_blink_interval_500ms()
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_lg()
-                        .p_2()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                    crate::ui::text_field("share-picker-search", &screen.share_search_state, &palette).placeholder("Search vault items…"),
                 ),
         )
         .when(window.viewport_size().height >= px(640.), |el| {
@@ -1470,6 +1488,7 @@ fn selected_item_summary(
                 .text_color(palette.primary)
                 .text_sm()
                 .cursor_pointer()
+                .hover(|el| el.bg(palette.surface_bright))
                 .child("Change")
                 .on_mouse_down(
                     MouseButton::Left,
@@ -1519,7 +1538,9 @@ fn sharing_modal(
 ) -> impl IntoElement {
     let picking = screen.picking_item || screen.selected_item_id.is_none();
     let created = for_link && screen.created_link_url.is_some();
-    let title = if created {
+    let title = if palette.instrument && picking {
+        if for_link { "Create share link / Choose item" } else { "Share with a VELA user / Choose item" }
+    } else if created {
         "Share link ready"
     } else if picking {
         "Choose an item"
@@ -1580,6 +1601,7 @@ fn sharing_modal(
                                 .px_3()
                                 .py_2()
                                 .rounded_lg()
+                                .when(palette.instrument, |el| el.rounded_full().border_1().border_color(palette.outline_variant))
                                 .text_sm()
                                 .cursor_pointer()
                                 .bg(if selected {
@@ -1595,6 +1617,8 @@ fn sharing_modal(
                                 } else {
                                     palette.on_surface_variant
                                 })
+                                .when(!selected, |el| el.hover(|el| el.bg(palette.surface_bright).text_color(palette.on_surface)))
+                                .when(palette.instrument && selected, |el| el.bg(palette.primary).text_color(palette.on_primary))
                                 .child(label)
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -1609,6 +1633,8 @@ fn sharing_modal(
                 .child(
                     div()
                         .id("link-view-once")
+                        .rounded_lg()
+                        .hover(|el| el.bg(palette.surface_container_high))
                         .flex()
                         .items_center()
                         .gap_2()
@@ -1640,19 +1666,7 @@ fn sharing_modal(
                         .child("Passphrase (optional)"),
                 )
                 .child(
-                    text_input("link-passphrase")
-                        .state(screen.link_passphrase_state.downgrade())
-                        .mask_char(Some('*'))
-                        .placeholder("Add a passphrase")
-                        .caret_blink_interval_500ms()
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_lg()
-                        .p_3()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                    crate::ui::text_field("link-passphrase", &screen.link_passphrase_state, palette).placeholder("Add a passphrase").mask_char(Some('*')),
                 );
         } else {
             content = content
@@ -1676,18 +1690,7 @@ fn sharing_modal(
                             }
                         }))
                         .child(
-                            text_input("share-recipient")
-                                .state(screen.recipient_state.downgrade())
-                                .placeholder("Enter user ID")
-                                .caret_blink_interval_500ms()
-                                .bg(palette.surface_container_highest)
-                                .text_color(palette.on_surface)
-                                .rounded_lg()
-                                .p_3()
-                                .w_full()
-                                .min_h_auto()
-                                .whitespace_nowrap()
-                                .overflow_x_scroll(),
+                            crate::ui::text_field("share-recipient", &screen.recipient_state, palette).placeholder("Enter user ID"),
                         ),
                 );
         }
@@ -1696,7 +1699,7 @@ fn sharing_modal(
         });
         crate::modal::scroll_body("sharing-options-content", content).into_any_element()
     };
-    let mut footer = div().flex().gap_3();
+    let mut footer = div().flex().gap_3().when(palette.instrument, |el| el.justify_end());
     if created {
         footer = footer
             .child(
@@ -1787,7 +1790,7 @@ fn sharing_modal(
             crate::modal::frame(
                 "sharing-modal-card",
                 560.,
-                640.,
+                if palette.instrument && !picking { if for_link { 600. } else { 440. } } else { 640. },
                 header,
                 body,
                 footer,
@@ -1799,7 +1802,8 @@ fn sharing_modal(
                     cx.stop_propagation();
                     this.close_dialog(cx);
                 }
-            })),
+            }))
+            .map(|card| crate::modal::animate(card, palette.instrument, false)),
         );
     crate::modal::present(window, overlay)
 }
@@ -1821,6 +1825,7 @@ mod modal_tests {
                 let name = format!("Item {i:04}");
                 VaultItem::SecureNote {
                     meta: VaultMeta {
+                rich: Default::default(),
                         id: format!("item-{i}"),
                         name: name.clone(),
                         notes: None,
@@ -1839,6 +1844,7 @@ mod modal_tests {
         SharingScreen {
             app_state: state,
             shares: Some(vec![]),
+            confirm_revoke: None,
             links: Some(vec![]),
             error: None,
             tab: Tab::Received,

@@ -334,7 +334,7 @@ struct VaultItem: Codable, Identifiable, Equatable {
     /// Every JSON key this struct models (property names are the wire keys).
     static let knownKeys: Set<String> = {
         let sample = VaultItem(id: "", name: "", createdAt: "", updatedAt: "")
-        return Set(Mirror(reflecting: sample).children.compactMap { $0.label }).union(["first_name", "last_name"])
+        return Set(Mirror(reflecting: sample).children.compactMap { $0.label }).union(["first_name", "last_name", "cardholder_name"])
     }()
 
     /// Secondary text for list rows / autofill, by type.
@@ -401,7 +401,7 @@ enum VaultClock {
 // Decode wire defaults explicitly; Swift stored-property defaults are not
 // applied by synthesized Decodable when an older client omits a key.
 extension VaultItem {
-    private enum LegacyIdentityKeys: String, CodingKey { case firstName, lastName }
+    private enum LegacyIdentityKeys: String, CodingKey { case firstName, lastName, cardholderName }
     enum CodingKeys: String, CodingKey {
         case folderId
         case tagIds
@@ -440,7 +440,7 @@ extension VaultItem {
         case exp
         case cvv
         case pin
-        case cardholderName
+        case cardholderName = "cardholder_name"
         case title
         case content
         case filename
@@ -493,7 +493,7 @@ extension VaultItem {
         exp = try c.decodeIfPresent(String.self, forKey: .exp)
         cvv = try c.decodeIfPresent(String.self, forKey: .cvv)
         pin = try c.decodeIfPresent(String.self, forKey: .pin)
-        cardholderName = try c.decodeIfPresent(String.self, forKey: .cardholderName)
+        cardholderName = try c.decodeIfPresent(String.self, forKey: .cardholderName) ?? legacy.decodeIfPresent(String.self, forKey: .cardholderName)
         title = try c.decodeIfPresent(String.self, forKey: .title)
         content = try c.decodeIfPresent(String.self, forKey: .content)
         filename = try c.decodeIfPresent(String.self, forKey: .filename)

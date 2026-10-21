@@ -23,6 +23,10 @@ const SHARE_LINKS_FILE: &str = "share_links.enc";
 /// evolve; unknown fields are ignored there.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LinkSecret {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_fields: Option<Vec<vela_core::rich_items::CustomField>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additional_urls: Option<Vec<vela_core::rich_items::AdditionalUrl>>,
     pub v: u32,
     pub kind: String,
     pub name: String,
@@ -97,6 +101,8 @@ fn link_secret_for(item: &VaultItem) -> Result<LinkSecret, String> {
             totp,
             ..
         } => Ok(LinkSecret {
+            custom_fields: meta.rich.custom_fields.clone(),
+            additional_urls: meta.rich.additional_urls.clone(),
             v: 1,
             kind: "login".to_string(),
             name: if meta.name.is_empty() {
@@ -113,6 +119,8 @@ fn link_secret_for(item: &VaultItem) -> Result<LinkSecret, String> {
         VaultItem::SecureNote {
             meta, title, content, ..
         } => Ok(LinkSecret {
+            custom_fields: meta.rich.custom_fields.clone(),
+            additional_urls: meta.rich.additional_urls.clone(),
             v: 1,
             kind: "note".to_string(),
             name: if !title.is_empty() {
@@ -323,6 +331,7 @@ mod tests {
     fn login(name: &str) -> VaultItem {
         VaultItem::Login {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: "id-1".into(),
                 name: name.into(),
                 notes: Some("note".into()),
@@ -359,6 +368,7 @@ mod tests {
     fn link_secret_rejects_unsupported_types() {
         let card = VaultItem::CreditCard {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: "c".into(),
                 name: "Visa".into(),
                 notes: None,

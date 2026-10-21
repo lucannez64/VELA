@@ -75,6 +75,7 @@ pub struct ItemDetail {
     app_state: Arc<AppState>,
     item: VaultItem,
     show_password: bool,
+    revealed_rich: std::collections::BTreeSet<String>,
     show_card_number: bool,
     show_cvv: bool,
     show_pin: bool,
@@ -210,6 +211,7 @@ impl ItemDetail {
             app_state,
             item,
             show_password: false,
+            revealed_rich: Default::default(),
             show_card_number: false,
             show_cvv: false,
             show_pin: false,
@@ -441,6 +443,151 @@ impl Render for ItemDetail {
             ));
         }
 
+        let rich = &item.meta().rich;
+        let org = self.app_state.vault.read().organization.clone();
+        if let Some(folder) = rich
+            .folder_id
+            .as_ref()
+            .and_then(|id| vela_desktop_core::Uuid::parse_str(id).ok())
+            .and_then(|id| org.folder(id))
+        {
+            let path = crate::views::rich_editor::folder_path(&org, folder.id);
+            fields = fields.child(field_card(
+                &palette, "FOLDER", &path, &path, false, window, cx,
+            ));
+        }
+        let tag_names = rich
+            .tag_ids
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .filter_map(|id| org.tag(*id).map(|tag| tag.name.clone()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !tag_names.is_empty() {
+            fields = fields.child(field_card(
+                &palette, "TAGS", &tag_names, &tag_names, false, window, cx,
+            ));
+        }
+        if let VaultItem::Identity {
+            first_name,
+            last_name,
+            ssn,
+            ..
+        } = &item
+        {
+            fields = fields.child(rich_value(
+                "identity-name".into(),
+                "Name".into(),
+                format!("{first_name} {last_name}"),
+                false,
+                false,
+                &palette,
+                window,
+                cx,
+            ));
+            fields = fields.child(rich_value(
+                "identity-number".into(),
+                "Identity number / SSN".into(),
+                ssn.clone(),
+                true,
+                self.revealed_rich.contains("identity-number"),
+                &palette,
+                window,
+                cx,
+            ));
+        }
+        if let Some(custom) = &rich.custom_fields {
+            for field in custom {
+                if matches!(
+                    field.kind,
+                    vela_desktop_core::rich_items::CustomFieldType::Unknown(_)
+                ) {
+                    fields = fields.child(
+                        div().child(format!("{} — unsupported field preserved", field.label)),
+                    );
+                    continue;
+                }
+                let id = field.id.to_string();
+                let value = field
+                    .value
+                    .0
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| field.value.0.to_string());
+                fields = fields.child(rich_value(
+                    id.clone(),
+                    field.label.clone(),
+                    value,
+                    field.kind == vela_desktop_core::rich_items::CustomFieldType::Concealed,
+                    self.revealed_rich.contains(&id),
+                    &palette,
+                    window,
+                    cx,
+                ));
+            }
+        }
+        if let Some(urls) = &rich.additional_urls {
+            for url in urls {
+                fields = fields.child(rich_value(
+                    url.id.to_string(),
+                    format!("Additional site ({:?})", url.match_mode),
+                    url.url.clone(),
+                    false,
+                    false,
+                    &palette,
+                    window,
+                    cx,
+                ));
+            }
+        }
+        if let Some(details) = &rich.identity_details {
+            for (label, value) in [
+                ("Middle name", &details.middle_name),
+                ("Preferred name", &details.preferred_name),
+                ("Email", &details.email),
+                ("Phone", &details.phone),
+                ("Company", &details.company),
+                ("Job title", &details.job_title),
+            ] {
+                if let Some(value) = value {
+                    fields = fields.child(rich_value(
+                        label.into(),
+                        label.into(),
+                        value.clone(),
+                        false,
+                        false,
+                        &palette,
+                        window,
+                        cx,
+                    ));
+                }
+            }
+            for a in &details.addresses {
+                let value = [
+                    &a.line1,
+                    &a.line2,
+                    &a.city,
+                    &a.region,
+                    &a.postal_code,
+                    &a.country_code,
+                ]
+                .into_iter()
+                .filter_map(|v| v.as_deref())
+                .collect::<Vec<_>>()
+                .join("\n");
+                fields = fields.child(rich_value(
+                    a.id.to_string(),
+                    a.label.clone().unwrap_or_else(|| "Address".into()),
+                    value,
+                    false,
+                    false,
+                    &palette,
+                    window,
+                    cx,
+                ));
+            }
+        }
         if let Some(notes) = item.notes() {
             fields = fields.child(note_card(
                 &palette,
@@ -1048,7 +1195,9 @@ fn field_card(
     window: &mut Window,
     cx: &mut Context<ItemDetail>,
 ) -> impl IntoElement {
-    field_card_inner(palette, label, value, copy_value, None, mono, window, cx)
+    field_card_inner(
+        palette, label, label, value, copy_value, None, mono, window, cx,
+    )
 }
 
 fn field_card_with_reveal(
@@ -1063,6 +1212,7 @@ fn field_card_with_reveal(
     field_card_inner(
         palette,
         label,
+        label,
         display_value,
         copy_value,
         Some(revealed),
@@ -1074,14 +1224,17 @@ fn field_card_with_reveal(
 
 fn field_card_inner(
     palette: &Palette,
-    label: &'static str,
+    key: &str,
+    label: &str,
     display_value: &str,
     copy_value: &str,
     revealed: Option<bool>,
     mono: bool,
     window: &mut Window,
     cx: &mut Context<ItemDetail>,
-) -> impl IntoElement {
+) -> gpui::Div {
+    let key = key.to_string();
+    let label = label.to_uppercase();
     let copy_value = copy_value.to_string();
     let display_value = display_value.to_string();
 
@@ -1092,7 +1245,7 @@ fn field_card_inner(
         .justify_between()
         .gap_3();
     let mut value_el = div()
-        .id(SharedString::from(format!("value-{label}")))
+        .id(SharedString::from(format!("value-{key}")))
         .flex_1()
         .min_w_0()
         .overflow_x_scroll()
@@ -1110,7 +1263,8 @@ fn field_card_inner(
 
     let mut buttons = div().flex().flex_shrink_0().gap_1();
     if let Some(revealed) = revealed {
-        let hover_t = animation::hover_transition(format!("reveal-{label}"), window, cx);
+        let reveal_key = key.clone();
+        let hover_t = animation::hover_transition(format!("reveal-{key}"), window, cx);
         let t = *hover_t.evaluate(window, cx);
         let hover_bg = animation::lerp_hsla(
             gpui::transparent_black(),
@@ -1118,44 +1272,47 @@ fn field_card_inner(
             t,
         );
         buttons = buttons.child(
-            div()
-                .id(SharedString::from(format!("reveal-{label}")))
-                .p_2()
-                .rounded_lg()
-                .cursor_pointer()
-                .bg(hover_bg)
-                .on_hover(move |is_hovered, _, cx| {
-                    hover_t.update(cx, |v, cx| {
-                        *v = *is_hovered as u8 as f32;
-                        cx.notify();
-                    });
-                })
-                .child(icon(
-                    if revealed {
-                        "visibility_off"
-                    } else {
-                        "visibility"
-                    },
-                    px(18.),
-                    palette.on_surface_variant,
-                ))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        match label {
-                            "PASSWORD" => this.show_password = !this.show_password,
-                            "CARD NUMBER" => this.show_card_number = !this.show_card_number,
-                            "CVV" => this.show_cvv = !this.show_cvv,
-                            "PIN" => this.show_pin = !this.show_pin,
-                            _ => {}
+            crate::ui::icon_button(
+                format!("reveal-{key}"),
+                if revealed {
+                    "visibility_off"
+                } else {
+                    "visibility"
+                },
+                px(18.),
+                palette.on_surface_variant,
+            )
+            .bg(hover_bg)
+            .on_hover(move |is_hovered, _, cx| {
+                hover_t.update(cx, |v, cx| {
+                    *v = *is_hovered as u8 as f32;
+                    cx.notify();
+                });
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    match reveal_key.as_str() {
+                        "PASSWORD" => this.show_password = !this.show_password,
+                        "CARD NUMBER" => this.show_card_number = !this.show_card_number,
+                        "CVV" => this.show_cvv = !this.show_cvv,
+                        "PIN" => this.show_pin = !this.show_pin,
+                        other => {
+                            if let Some(id) = other.strip_prefix("rich-") {
+                                if !this.revealed_rich.remove(id) {
+                                    this.revealed_rich.insert(id.to_string());
+                                }
+                            }
                         }
-                        cx.notify();
-                    }),
-                ),
+                    }
+                    cx.notify();
+                }),
+            ),
         );
     }
     {
-        let hover_t = animation::hover_transition(format!("copy-{label}"), window, cx);
+        let copy_label = label.clone();
+        let hover_t = animation::hover_transition(format!("copy-{key}"), window, cx);
         let t = *hover_t.evaluate(window, cx);
         let hover_bg = animation::lerp_hsla(
             gpui::transparent_black(),
@@ -1163,44 +1320,114 @@ fn field_card_inner(
             t,
         );
         buttons = buttons.child(
-            div()
-                .id(SharedString::from(format!("copy-{label}")))
-                .p_2()
-                .rounded_lg()
-                .cursor_pointer()
-                .bg(hover_bg)
-                .on_hover(move |is_hovered, _, cx| {
-                    hover_t.update(cx, |v, cx| {
-                        *v = *is_hovered as u8 as f32;
-                        cx.notify();
-                    });
-                })
-                .child(icon("content_copy", px(18.), palette.primary))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        this.copy(label, &copy_value, cx);
-                        cx.notify();
-                    }),
-                ),
+            crate::ui::icon_button(
+                format!("copy-{key}"),
+                "content_copy",
+                px(18.),
+                palette.primary,
+            )
+            .bg(hover_bg)
+            .on_hover(move |is_hovered, _, cx| {
+                hover_t.update(cx, |v, cx| {
+                    *v = *is_hovered as u8 as f32;
+                    cx.notify();
+                });
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.copy(&copy_label, &copy_value, cx);
+                    cx.notify();
+                }),
+            ),
         );
     }
     row = row.child(buttons);
 
-    div()
-        .p_4()
-        .min_w_0()
-        .flex_shrink_0()
-        .rounded_xl()
-        .bg(palette.surface_container_low)
-        .flex()
-        .flex_col()
-        .gap_2()
+    crate::ui::field_card(palette)
+        .debug_selector(move || format!("field-{key}"))
         .child(
-            fonts::tracked_text(label, px(10.), 0.2)
+            fonts::tracked_text(&label, px(10.), 0.2)
                 .font_family(fonts::LABEL)
                 .text_size(px(10.))
                 .text_color(palette.outline),
         )
         .child(row)
+}
+
+fn rich_value(
+    id: String,
+    label: String,
+    value: String,
+    concealed: bool,
+    revealed: bool,
+    p: &Palette,
+    window: &mut Window,
+    cx: &mut Context<ItemDetail>,
+) -> gpui::Div {
+    let display = if concealed && !revealed {
+        "••••••••".to_string()
+    } else {
+        value.clone()
+    };
+    field_card_inner(
+        p,
+        &format!("rich-{id}"),
+        &label,
+        &display,
+        &value,
+        concealed.then_some(revealed),
+        concealed,
+        window,
+        cx,
+    )
+}
+
+#[cfg(test)]
+mod rich_field_tests {
+    use super::*;
+    use crate::modal_test_support as ui;
+    use gpui::{size, Modifiers, TestAppContext};
+
+    #[gpui::test]
+    fn shared_detail_cards_reveal_duplicate_labels_independently_in_every_theme(
+        cx: &mut TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let state = ui::state(&directory);
+        let first = vela_desktop_core::Uuid::new_v4();
+        let second = vela_desktop_core::Uuid::new_v4();
+        let item:VaultItem=serde_json::from_value(serde_json::json!({
+            "item_type":"identity","id":"demo","name":"Demo identity","first_name":"Alex","last_name":"Demo","ssn":"synthetic-id",
+            "customFields":[{"id":first,"label":"Recovery","type":"concealed","value":"first-demo-secret"},{"id":second,"label":"Recovery","type":"concealed","value":"second-demo-secret"}]
+        })).unwrap();
+        cx.update(|cx| cx.set_global(crate::demo::DemoMode));
+        let (detail, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            ItemDetail::new(state, item, cx)
+        });
+        cx.simulate_resize(size(px(1280.), px(1200.)));
+        for theme in crate::theme::ThemeId::ALL {
+            cx.update(|_, cx| cx.set_global(crate::theme::ActiveTheme(theme)));
+            cx.run_until_parked();
+            detail.read_with(cx, |detail, _| assert!(detail.revealed_rich.is_empty()));
+            let selector: &'static str = Box::leak(format!("reveal-rich-{first}").into_boxed_str());
+            let reveal = ui::bounds(cx, selector);
+            assert!(reveal.bottom() <= px(1200.));
+            cx.simulate_mouse_move(reveal.center(), None, Modifiers::default());
+            cx.simulate_click(reveal.center(), Modifiers::default());
+            cx.run_until_parked();
+            detail.read_with(cx, |detail, _| {
+                assert!(detail.revealed_rich.contains(&first.to_string()));
+                assert!(!detail.revealed_rich.contains(&second.to_string()));
+            });
+            let second_selector: &'static str =
+                Box::leak(format!("reveal-rich-{second}").into_boxed_str());
+            assert_eq!(ui::bounds(cx, second_selector).size, reveal.size);
+            detail.update(cx, |detail, cx| {
+                detail.revealed_rich.clear();
+                cx.notify();
+            });
+        }
+    }
 }

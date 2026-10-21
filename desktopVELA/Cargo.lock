@@ -10683,6 +10683,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "vela-client-recovery-policy",
+ "vela-core",
  "vela-crypto",
  "vela-sync-policy",
  "vela-win-passkey",

@@ -787,7 +787,10 @@ pub(crate) fn merge_server_vaults(
     local: &mut crate::vault::VaultStore,
     server: crate::vault::VaultStore,
     device_id: &str,
-) -> Vec<ConflictItem> {
+) -> Result<Vec<ConflictItem>, String> {
+    if local.schema_version.max(server.schema_version).unwrap_or(1) > 2 { return Err("Upgrade VELA to sync this vault".into()); }
+    local.organization = local.organization.merged(&server.organization).map_err(|e| e.to_string())?;
+    local.schema_version = local.schema_version.max(server.schema_version);
     use crate::vault::Tombstone;
 
     let mut conflicts = Vec::new();
@@ -892,7 +895,7 @@ pub(crate) fn merge_server_vaults(
     // ── 5. Prune old tombstones to prevent unbounded growth ────────────────
     local.prune_tombstones(chrono::Duration::days(TOMBSTONE_RETENTION_DAYS));
 
-    conflicts
+    Ok(conflicts)
 }
 
 fn is_vault_data_chunk(chunk_id: &str) -> bool {
@@ -1488,8 +1491,12 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
         }
     }
 
+    if state.vault.read().schema_version == Some(2) {
+        client.rich_schema(&token, true).await.map_err(|e| e.to_string())?;
+    }
     match downloaded? {
         ServerVault::Available(server_vault, server_lamport) => {
+            if server_vault.schema_version == Some(2) { client.rich_schema(&token, true).await.map_err(|e| e.to_string())?; }
             state.ensure_unlocked_since(generation)?;
             max_server_lamport = max_server_lamport.max(server_lamport);
 
@@ -1500,7 +1507,7 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
             let conflicts = {
                 let mut vault_guard = state.vault.write();
                 let mut local_vault = vault_guard.clone();
-                let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id);
+                let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id)?;
                 *vault_guard = local_vault;
                 conflicts
             };
@@ -2511,6 +2518,7 @@ mod tests {
     fn login(id: &str, updated_at: DateTime<Utc>, last_modified_device: Option<&str>) -> VaultItem {
         VaultItem::Login {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: id.to_string(),
                 name: format!("item-{id}"),
                 notes: None,
@@ -2547,7 +2555,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t_old, Some("this-device"))]);
         let server = store_with(vec![login("a", t_new, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert_eq!(conflicts.len(), 1, "unsynced local edit must conflict");
         assert_eq!(conflicts[0].item_id, "a");
@@ -2573,7 +2581,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t_old, Some("other-device"))]);
         let server = store_with(vec![login("a", t_new, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty(), "remote edit must not conflict");
         let kept = local
@@ -2593,7 +2601,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t_new, Some("this-device"))]);
         let server = store_with(vec![login("a", t_old, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         assert_eq!(
@@ -2623,7 +2631,7 @@ mod tests {
         });
         let server = store_with(vec![login("a", t_item, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         assert!(
@@ -2653,7 +2661,7 @@ mod tests {
         });
         let server = store_with(vec![login("a", t_recreated, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         let kept = local
@@ -2685,7 +2693,7 @@ mod tests {
             deleted_by: Some("srv".into()),
         });
 
-        merge_server_vaults(&mut local, server, "this-device");
+        merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert_eq!(local.tombstones.len(), 1);
         assert_eq!(local.tombstones[0].deleted_at, t_new);
@@ -2698,7 +2706,7 @@ mod tests {
         let mut local = store_with(vec![login("local-only", t, Some("this-device"))]);
         let server = store_with(vec![login("server-only", t, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         assert_eq!(local.items.len(), 2);
@@ -2713,7 +2721,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t, Some("this-device"))]);
         let server = store_with(vec![login("a", t, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         let kept = local.items.iter().find(|i| i.id() == "a").unwrap();

@@ -41,6 +41,7 @@ import com.vela.android.core.ShareDirection
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultShare
 import com.vela.android.core.VelaRepositories
+import com.vela.android.ui.components.*
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
 import com.vela.android.ui.components.VelaCard
@@ -62,12 +63,15 @@ fun SharingScreen(items: List<VaultItem>, onBack: () -> Unit, preselectedItemId:
     var selectedItem by remember { mutableStateOf<VaultItem?>(null) }
     var showPicker by remember { mutableStateOf(false) }
 
-    var recipient by remember { mutableStateOf("") }
+    var showShare by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf(false) }
+    var sendError by remember { mutableStateOf<String?>(null) }
 
     // Auto-select preselected item
     LaunchedEffect(preselectedItemId, shareableItems) {
         if (preselectedItemId != null && selectedItem == null) {
             selectedItem = shareableItems.find { it.id == preselectedItemId }
+            showShare = selectedItem != null
         }
     }
 
@@ -82,7 +86,8 @@ fun SharingScreen(items: List<VaultItem>, onBack: () -> Unit, preselectedItemId:
 
     LaunchedEffect(Unit) { load() }
 
-    Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase).padding(20.dp)) {
+    Box(Modifier.fillMaxSize().background(VelaColors.SurfaceBase)) {
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
         ScreenHeader("Sharing", onBack)
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -95,68 +100,9 @@ fun SharingScreen(items: List<VaultItem>, onBack: () -> Unit, preselectedItemId:
         }
 
         Spacer(Modifier.height(16.dp))
-        VelaCard {
-            Text("Share item", fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(10.dp))
-
-            // Item selector trigger
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(VelaColors.SurfaceBase)
-                    .clickable(enabled = shareableItems.isNotEmpty()) { showPicker = true }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Item",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 2.sp,
-                        color = VelaColors.TextMuted
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        selectedItem?.name ?: if (shareableItems.isEmpty()) "No shareable items" else "Select an item",
-                        fontSize = 15.sp,
-                        color = if (selectedItem != null) VelaColors.TextPrimary else VelaColors.TextMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Icon(
-                    Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Select item",
-                    tint = VelaColors.TextSecondary,
-                    modifier = Modifier.padding(start = 8.dp)
-                )
-            }
-
-            Spacer(Modifier.height(10.dp))
-            VelaTextField(value = recipient, onValueChange = { recipient = it }, label = "Recipient user ID")
-            Spacer(Modifier.height(10.dp))
-            VelaButton(
-                "Share",
-                onClick = {
-                    val itemId = selectedItem?.id ?: return@VelaButton
-                    scope.launch(Dispatchers.IO) {
-                        runCatching { VelaRepositories.sharing.sendShare(itemId, recipient.trim()) }
-                            .onSuccess {
-                                withContext(Dispatchers.Main) {
-                                    selectedItem = null
-                                    recipient = ""
-                                    load()
-                                }
-                            }
-                            .onFailure { e -> withContext(Dispatchers.Main) { error = e.message ?: "Share failed" } }
-                    }
-                },
-                enabled = selectedItem != null && recipient.isNotBlank()
-            )
-        }
+        InstrumentPill("Share an item", { showPicker = true }, Modifier.fillMaxWidth(),
+            icon = InstrumentIcons.Share, style = PillStyle.Primary, enabled = shareableItems.isNotEmpty())
+        if (shareableItems.isEmpty()) InstrumentFine("Add an item to your vault before sharing.")
 
         Spacer(Modifier.height(16.dp))
         val filtered = shares.filter { it.direction == if (sentTab) ShareDirection.Sent else ShareDirection.Received }
@@ -205,9 +151,27 @@ fun SharingScreen(items: List<VaultItem>, onBack: () -> Unit, preselectedItemId:
             onSelect = {
                 selectedItem = it
                 showPicker = false
+                sendError = null
+                showShare = true
             },
             onDismiss = { showPicker = false }
         )
+    }
+    ShareItemSheet(showShare, selectedItem?.name ?: "item", { if (!sending) showShare = false },
+        directOnly = true, busy = sending, error = sendError) { draft ->
+        val itemId = selectedItem?.id ?: return@ShareItemSheet
+        sending = true; sendError = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { VelaRepositories.sharing.sendShare(itemId, draft.recipient.trim()) }
+                showShare = false; selectedItem = null; load()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                sendError = e.message ?: "Share failed"
+            } finally { sending = false }
+        }
+    }
     }
 }
 
@@ -227,7 +191,7 @@ private fun ItemPickerDialog(
         }
         .sortedBy { it.name.lowercase() }
 
-    Dialog(onDismissRequest = onDismiss) {
+    InstrumentSheet(true, "Choose an item", onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -235,8 +199,6 @@ private fun ItemPickerDialog(
                 .background(VelaColors.SurfaceLow)
                 .padding(20.dp)
         ) {
-            Text("Select item to share", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            Spacer(Modifier.height(12.dp))
 
             VelaSearchField(query = query, onQueryChange = { query = it })
 

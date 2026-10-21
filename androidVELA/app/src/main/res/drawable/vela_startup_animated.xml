@@ -1,0 +1,42 @@
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt" android:drawable="@drawable/vela_icon_fg">
+    <target android:name="row0">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="0" />
+        </aapt:attr>
+    </target>
+    <target android:name="row1">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="35" />
+        </aapt:attr>
+    </target>
+    <target android:name="row2">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="70" />
+        </aapt:attr>
+    </target>
+    <target android:name="row3">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="105" />
+        </aapt:attr>
+    </target>
+    <target android:name="row4">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="140" />
+        </aapt:attr>
+    </target>
+    <target android:name="row5">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="175" />
+        </aapt:attr>
+    </target>
+    <target android:name="row6">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="210" />
+        </aapt:attr>
+    </target>
+    <target android:name="row7">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1" android:valueType="floatType" android:duration="180" android:startOffset="245" />
+        </aapt:attr>
+    </target>
+</animated-vector>

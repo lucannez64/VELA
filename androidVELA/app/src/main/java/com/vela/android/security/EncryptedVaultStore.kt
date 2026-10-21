@@ -16,6 +16,14 @@ import javax.crypto.spec.SecretKeySpec
 class EncryptedVaultStore(private val storeDir: File) {
     private val vaultFile = File(storeDir, "vault.enc")
 
+    fun safetyBackup() {
+        val backup = File(storeDir, "vault.before-rich-items.enc")
+        if (backup.exists() || !vaultFile.exists()) return
+        val temporary = File(storeDir, "vault.before-rich-items.tmp")
+        vaultFile.inputStream().use { input -> java.io.FileOutputStream(temporary).use { output -> input.copyTo(output); output.fd.sync() } }
+        check(temporary.renameTo(backup)) { "Could not create the encrypted safety backup" }
+    }
+
     fun exists(): Boolean = vaultFile.exists()
 
     fun load(rms: ByteArray): VaultStore {

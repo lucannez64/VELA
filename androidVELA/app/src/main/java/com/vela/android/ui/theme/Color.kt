@@ -49,31 +49,40 @@ object VelaPalettes {
     /** VELA Dark — default obsidian look. */
     val Vela = VelaPalette(
         isDark = true,
-        Green = Color(0xFF73DB9A),
-        GreenDim = Color(0xFF1C8F56),
-        GreenDark = Color(0xFF00391D),
-        Teal = Color(0xFF44E2CD),
-        TealDark = Color(0xFF003731),
-        Violet = Color(0xFF8B5CF6),
-        VioletDim = Color(0xFF6D28D9),
-        SurfaceDarkest = Color(0xFF0C0E10),
-        SurfaceBase = Color(0xFF121416),
-        SurfaceLow = Color(0xFF1A1C1E),
-        Surface = Color(0xFF1E2022),
-        SurfaceHigh = Color(0xFF282A2C),
-        SurfaceHighest = Color(0xFF333537),
-        SurfaceBright = Color(0xFF37393B),
-        TextPrimary = Color(0xFFE2E2E5),
-        TextSecondary = Color(0xFFC4C7C7),
-        TextMuted = Color(0xFF8E9192),
-        Outline = Color(0xFF444748),
-        ErrorRed = Color(0xFFFFB4AB),
+        Green = Color(0xFFD9F36A),
+        GreenDim = Color(0xFFAFC44F),
+        GreenDark = Color(0xFF202709),
+        Teal = Color(0xFFD9F36A),
+        TealDark = Color(0xFF202709),
+        Violet = Color(0xFFA28AFF),
+        VioletDim = Color(0xFF7455D3),
+        SurfaceDarkest = Color(0xFF060609),
+        SurfaceBase = Color(0xFF0B0B10),
+        SurfaceLow = Color(0xFF15151D),
+        Surface = Color(0xFF15151D),
+        SurfaceHigh = Color(0xFF1D1D27),
+        SurfaceHighest = Color(0xFF242430),
+        SurfaceBright = Color(0xFF2B2B38),
+        TextPrimary = Color(0xFFF3F2EF),
+        TextSecondary = Color(0xFFB1AEBC),
+        TextMuted = Color(0xFF96949F),
+        Outline = Color(0xFF34323F),
+        ErrorRed = Color(0xFFFF7869),
         ErrorRedBg = Color(0x1AFFB4AB),
         WarningAmber = Color(0xFFFFD166),
         WarningAmberBg = Color(0x1AFFD166),
-        SuccessGreen = Color(0xFF73DB9A),
+        SuccessGreen = Color(0xFFD9F36A),
         SuccessGreenBg = Color(0x1A73DB9A),
-        InfoTeal = Color(0xFF44E2CD)
+        InfoTeal = Color(0xFFD9F36A)
+    )
+
+    val Paper = Vela.copy(
+        isDark = false, Green = Color(0xFF5B6C13), GreenDark = Color.White,
+        Violet = Color(0xFF7455D3), SurfaceDarkest = Color(0xFFF7F6F2), SurfaceBase = Color(0xFFF7F6F2),
+        SurfaceLow = Color(0xFFEEECE7), Surface = Color(0xFFEEECE7), SurfaceHigh = Color(0xFFE4E1D9),
+        SurfaceHighest = Color(0xFFE4E1D9), SurfaceBright = Color(0xFFE4E1D9),
+        TextPrimary = Color(0xFF19191E), TextSecondary = Color(0xFF716F78), TextMuted = Color(0xFF8C8992),
+        Outline = Color(0xFFD0CDD5), ErrorRed = Color(0xFFBD4437), SuccessGreen = Color(0xFF5B6C13)
     )
 
     /** Catppuccin Macchiato — dark. */

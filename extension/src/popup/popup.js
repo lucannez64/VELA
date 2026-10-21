@@ -66,15 +66,83 @@ let currentTabUrl = null;
 let availableLogins = [];
 let inCoreLoginCandidates = [];
 let totpPopupTimer = null;
+let instrumentView = "site";
+let vaultItemType = "login";
+let availableVaultItems = [];
+let vaultLoadGeneration = 0;
+let loginQuery = "";
 
 async function init() {
+  setupInstrument();
   await checkDesktopConnection();
   await getCurrentTab();
+  updateInstrumentSite();
   await loadInCoreLoginCandidates();
   await loadLogins();
   setupEventListeners();
   setupSiteSettings();
   renderPhishWarning();
+}
+
+// The Instrument shell only changes presentation. Credential release and fill
+// continue through the existing, authenticated extension commands.
+function setupInstrument() {
+  const ui = globalThis.VelaInstrument;
+  document.getElementById("instrumentMark").innerHTML = ui.mark();
+  document.getElementById("searchIcon").innerHTML = ui.icon("search", 14);
+  for (const [id, icon, label] of [["navSite","globe","This site"],["navSearch","search","Search"],["navGenerate","dice","Generate"],["navMore","dots","More"]]) {
+    document.getElementById(id).innerHTML = ui.icon(icon, 15) + `<span>${label}</span>`;
+  }
+  document.getElementById("quickGenerator").innerHTML = ui.icon("dice") + "<span>Generate password</span>";
+  document.getElementById("quickAliases").innerHTML = ui.icon("spark") + "<span>Email aliases</span>";
+  document.querySelectorAll("button[data-view]").forEach(button => button.addEventListener("click", () => {
+    instrumentView = button.dataset.view;
+    if (!["site","search"].includes(instrumentView)) {
+      if (totpPopupTimer) { clearInterval(totpPopupTimer); totpPopupTimer = null; }
+      mainContent.querySelectorAll(".totp-panel").forEach(panel => panel.remove());
+    }
+    document.body.dataset.view = instrumentView;
+    document.getElementById("siteView").hidden = !["site","search"].includes(instrumentView);
+    document.getElementById("generateView").hidden = instrumentView !== "generate";
+    document.getElementById("moreView").hidden = instrumentView !== "more";
+    document.querySelectorAll(".instrument-dock button").forEach(b => b.setAttribute("aria-current", b.dataset.view === instrumentView ? "page" : "false"));
+    if (instrumentView === "generate") { genBody.hidden = false; genSection.classList.add("open"); }
+    if (instrumentView === "search") document.getElementById("loginSearch").focus();
+    if (button.id === "quickAliases") { aliasBody.hidden = false; aliasSection.classList.add("open"); aliasSection.scrollIntoView({block:"start",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); }
+    if (instrumentView === "site") { document.getElementById("loginSearch").value = ""; loginQuery = ""; renderSelectedItems(); }
+  }));
+  document.getElementById("loginSearch").addEventListener("input", event => { loginQuery = event.target.value.trim().toLowerCase(); renderSelectedItems(); });
+  document.querySelectorAll("[data-item-type]").forEach(button => button.addEventListener("click", () => {
+    vaultItemType = button.dataset.itemType;
+    document.querySelectorAll("[data-item-type]").forEach(b => b.setAttribute("aria-pressed",String(b === button)));
+    if (totpPopupTimer) { clearInterval(totpPopupTimer); totpPopupTimer = null; }
+    document.getElementById("loginSearch").value = ""; loginQuery = "";
+    document.getElementById("loginSearch").placeholder = vaultItemType === "login" ? "Search this site’s accounts" : `Search saved ${vaultItemType === "card" ? "cards" : "identities"}`;
+    document.getElementById("loginSearch").setAttribute("aria-label",document.getElementById("loginSearch").placeholder);
+    loadSelectedItems();
+  }));
+  const theme = document.getElementById("instrumentTheme");
+  theme.value = document.documentElement.getAttribute("data-vela-theme") || "night";
+  browser.storage.local.get("velaInstrumentTheme").then(data => { theme.value = data.velaInstrumentTheme || "night"; }).catch(() => {});
+  theme.addEventListener("change", () => ui.setTheme(theme.value));
+  for (const el of [genToggle, aliasToggle, siteToggle]) {
+    el.setAttribute("role", "button"); el.tabIndex = 0;
+    el.setAttribute("aria-expanded", String(!(el === genToggle ? genBody : el === aliasToggle ? aliasBody : siteBody).hidden));
+    el.addEventListener("keydown", event => { if (["Enter"," "].includes(event.key)) { event.preventDefault(); el.click(); } });
+  }
+  document.addEventListener("keydown", event => {
+    if (event.key === "/" && !event.target.matches("input,textarea,select")) { event.preventDefault(); document.getElementById("navSearch").click(); }
+    if (event.key === "Escape" && instrumentView === "search") document.getElementById("navSite").click();
+  });
+}
+function updateInstrumentSite() {
+  let domain = "Your active page";
+  try { domain = new URL(currentTabUrl).hostname || domain; } catch (_) {}
+  document.getElementById("siteDomain").textContent = domain;
+  document.getElementById("siteCount").innerHTML = globalThis.VelaInstrument.dots(String(vaultItemType === "login" ? availableLogins.length : availableVaultItems.length).padStart(2,"0"));
+  document.getElementById("siteCountLabel").textContent = vaultItemType === "login" ? "Saved accounts" : vaultItemType === "card" ? "Saved cards" : "Saved identities";
+  const warning = hostRisk?.(domain);
+  document.getElementById("siteMatch").textContent = warning?.level && warning.level !== "none" ? "Check the site address" : vaultItemType !== "login" ? "Choose an item to fill on this website" : availableLogins.length ? "Matched to this website" : "No matched accounts yet";
 }
 
 function setupEventListeners() {
@@ -111,6 +179,7 @@ function setupAliasSettings() {
     const open = aliasBody.hidden;
     aliasBody.hidden = !open;
     aliasSection.classList.toggle("open", open);
+    aliasToggle.setAttribute("aria-expanded", String(open));
   });
 
   aliasProvider.addEventListener("change", () => {
@@ -252,6 +321,7 @@ function setupGenerator() {
     const open = genBody.hidden;
     genBody.hidden = !open;
     genSection.classList.toggle("open", open);
+    genToggle.setAttribute("aria-expanded", String(open));
   });
 
   genModeRandom.addEventListener("click", () => setGenMode("random"));
@@ -420,6 +490,7 @@ function generatePassphrase() {
 function regenerate() {
   const result = genOptions.mode === "passphrase" ? generatePassphrase() : generateRandom();
   genOutput.textContent = result.value;
+  globalThis.VelaInstrument?.animateReadout(genOutput);
   updateStrength(result.bits);
   persistGeneratorOptions();
   pushHistory(result.value);
@@ -432,19 +503,19 @@ function updateStrength(bits) {
   if (bits < 40) {
     percent = 25;
     label = "Weak";
-    color = "#ffb4ab";
+    color = "var(--error)";
   } else if (bits < 60) {
     percent = 50;
     label = "Fair";
-    color = "#ffd28a";
+    color = "var(--instrument-violet)";
   } else if (bits < 80) {
     percent = 75;
     label = "Good";
-    color = "#73db9a";
+    color = "var(--instrument-signal)";
   } else {
     percent = 100;
     label = "Strong";
-    color = "#73db9a";
+    color = "var(--instrument-signal)";
   }
   genStrengthFill.style.width = `${percent}%`;
   genStrengthFill.style.background = color;
@@ -510,6 +581,7 @@ function setupSiteSettings() {
     const open = siteBody.hidden;
     siteBody.hidden = !open;
     siteSection.classList.toggle("open", open);
+    siteToggle.setAttribute("aria-expanded", String(open));
   });
   siteAutoFill.addEventListener("change", () =>
     updateSiteSettings({ autoFillOnLoad: siteAutoFill.checked })
@@ -627,7 +699,7 @@ async function checkDesktopConnection() {
 function setConnectedStatus() {
   statusIndicator.classList.remove("disconnected");
   statusIndicator.classList.add("connected");
-  statusText.textContent = "Connected to VELA Desktop";
+  statusText.textContent = "Desktop connected";
 }
 
 function setDisconnectedStatus(reason = "Desktop app not connected") {
@@ -654,7 +726,47 @@ async function getCurrentTab() {
   }
 }
 
+function renderSelectedItems() {
+  if (vaultItemType === "login") { if (availableLogins.length) renderLogins(); else showNoLoginsState(); return; }
+  const choices = availableVaultItems.flatMap(item => (vaultItemType === "identity" && item.addresses?.length ? item.addresses : [null]).map(address => ({item,address})));
+  const filtered = choices.filter(({item,address}) => `${item.name || ""} ${item.firstName || ""} ${item.lastName || ""} ${item.email || ""} ${item.cardholderName || ""} ${String(item.number || "").slice(-4)} ${address?.label || ""} ${address?.line1 || ""} ${address?.city || ""}`.toLowerCase().includes(loginQuery));
+  mainContent.innerHTML = `<div class="section-title">01 / Saved ${vaultItemType === "card" ? "cards" : "identities"}</div><ul class="login-list">${filtered.map(({item,address},index) => {
+    const subtitle = vaultItemType === "card" ? [item.cardholderName, `•••• ${String(item.number || "").replace(/\D/g, "").slice(-4)}`,item.exp].filter(Boolean).join(" · ") : [address?.label,address?.line1,address?.city,item.email].filter(Boolean).join(" · ");
+    return `<li class="login-item"><div class="login-icon">${globalThis.VelaInstrument.icon(vaultItemType === "card" ? "card" : "user",18)}</div><div class="login-info"><div class="login-name">${escapeHtml(item.name || [item.firstName,item.lastName].filter(Boolean).join(" ") || "Card")}</div><div class="login-url">${escapeHtml(subtitle)}</div></div><button type="button" class="icon-btn" data-fill-item="${index}" aria-label="Fill ${vaultItemType}">${globalThis.VelaInstrument.icon("arrow",15)}</button></li>`;
+  }).join("")}</ul>${filtered.length ? "" : '<div class="empty-state"><div class="empty-state-title">No matches.</div><div class="empty-state-text">Add items in VELA Desktop, or try another search.</div></div>'}`;
+  mainContent.querySelectorAll("[data-fill-item]").forEach(button => button.addEventListener("click",async () => {
+    const {item,address} = filtered[Number(button.dataset.fillItem)];
+    button.disabled = true;
+    try {
+      const result = await sendMessage({command:"fillVaultItem", itemType:vaultItemType, itemId:item.id, addressId:address?.id, url:currentTabUrl});
+      if (result?.success) window.close(); else showNotification(result?.error || "No matching form fields on this page.");
+    } catch (_) { showNotification("Could not fill this page."); }
+    button.disabled = false;
+  }));
+  updateInstrumentSite();
+}
+async function loadSelectedItems() {
+  const generation = ++vaultLoadGeneration;
+  if (vaultItemType === "login") { await loadLogins(); return; }
+  availableVaultItems = []; updateInstrumentSite();
+  mainContent.innerHTML = '<div class="empty-state">Loading your vault…</div>';
+  try {
+    const key = vaultItemType === "card" ? "cards" : "identities";
+    const response = await sendMessage({command:vaultItemType === "card" ? "getCards" : "getIdentities",url:currentTabUrl});
+    if (generation !== vaultLoadGeneration) return;
+    if (!response?.success) {
+      showEmptyState("Open VELA Desktop",response?.error || "Unlock your vault and retry.");
+      const retry = document.createElement("button"); retry.textContent = "Retry"; retry.className = "icon-btn";
+      retry.addEventListener("click",loadSelectedItems); mainContent.appendChild(retry); return;
+    }
+    availableVaultItems = response[key] || []; renderSelectedItems();
+  } catch (error) { if (generation === vaultLoadGeneration) showEmptyState("Could not load items",error.message); }
+}
+
 async function loadLogins() {
+  const generation = vaultLoadGeneration;
+  availableLogins = [];
+  updateInstrumentSite();
   if (!currentTabUrl) {
     showEmptyState("No active tab", "Navigate to a website to see saved logins.");
     return;
@@ -667,6 +779,7 @@ async function loadLogins() {
       userInitiated: true
     });
 
+    if (generation !== vaultLoadGeneration || vaultItemType !== "login") return;
     if (response && response.logins && response.logins.length > 0) {
       availableLogins = response.logins;
       renderLogins();
@@ -674,7 +787,14 @@ async function loadLogins() {
       showEmptyState("Unsupported page", "VELA autofill works on HTTP and HTTPS websites.");
     } else if (response && response.requires_biometric) {
       showApprovalRequiredState();
+    } else if (statusIndicator.classList.contains("disconnected")) {
+      showApprovalRequiredState();
+      const title = mainContent.querySelector(".empty-state-title");
+      const text = mainContent.querySelector(".empty-state-text");
+      if (title) title.textContent = "A little out of reach.";
+      if (text) text.textContent = "Open VELA Desktop to connect your vault, then retry.";
     } else {
+      availableLogins = [];
       showNoLoginsState();
     }
   } catch (e) {
@@ -733,78 +853,29 @@ function showApprovalRequiredState() {
   if (retryBtn) {
     retryBtn.addEventListener("click", () => {
       mainContent.innerHTML = `<div class="empty-state"><div class="empty-state-title">Loading...</div></div>`;
-      loadLogins();
+      loadSelectedItems();
     });
   }
 }
 
 function renderLogins() {
-  if (!availableLogins || availableLogins.length === 0) {
-    showEmptyState("No logins found", "No saved logins for this website.");
-    return;
-  }
-
-  const loginsHtml = availableLogins.map((login) => {
-    const name = login.name || extractDomain(login.url) || "Unknown";
-    const initial = name.charAt(0).toUpperCase();
-    const domain = login.url ? extractDomain(login.url) : "";
-    const totpButton = login.totp
-      ? `<button class="icon-btn" title="Authenticator code" data-action="totp" data-login-id="${escapeHtml(login.id || "")}">
-            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-              <path fill-rule="evenodd" d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 6a1 1 0 112 0v4a1 1 0 01-.293.707l-2.5 2.5a1 1 0 01-1.414-1.414L9 9.586V6z" clip-rule="evenodd" />
-            </svg>
-          </button>`
-      : "";
-
-    return `
-      <li class="login-item" data-login-id="${escapeHtml(login.id || "")}">
-        <div class="login-icon">${escapeHtml(initial)}</div>
-        <div class="login-info">
-          <div class="login-name">${escapeHtml(name)}</div>
-          <div class="login-url">${escapeHtml(domain)}</div>
-        </div>
-        <div class="login-actions">
-          <button class="icon-btn" title="Copy Username" data-action="copy-username" data-login-id="${escapeHtml(login.id || "")}">
-            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-              <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
-            </svg>
-          </button>
-          <button class="icon-btn" title="Copy Password" data-action="copy-password" data-login-id="${escapeHtml(login.id || "")}">
-            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-              <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
-            </svg>
-          </button>
-          ${totpButton}
-          <button class="icon-btn" title="Auto-fill" data-action="autofill" data-login-id="${escapeHtml(login.id || "")}">
-            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-              <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-            </svg>
-          </button>
-        </div>
-      </li>
-    `;
-  }).join("");
-
-  mainContent.innerHTML = `
-    ${renderInCoreLoginSection()}
-    <div class="section-title">Logins for this page</div>
-    <ul class="login-list">
-      ${loginsHtml}
-    </ul>
-  `;
-
+  const ui = globalThis.VelaInstrument;
+  const filtered = availableLogins.filter(login => `${login.name || ""} ${login.username || ""} ${login.url || ""}`.toLowerCase().includes(loginQuery));
+  const action = (name, title, glyph, id) => `<button class="icon-btn" type="button" title="${title}" aria-label="${title}" data-action="${name}" data-login-id="${escapeHtml(id)}">${ui.icon(glyph,15)}</button>`;
+  mainContent.innerHTML = `<div class="section-title">${loginQuery ? "Search this site’s accounts" : "01 / Matched accounts"}</div>
+    <ul class="login-list">${filtered.map(login => {
+      const name = login.name || extractDomain(login.url) || "Login";
+      const id = String(login.id || "");
+      return `<li class="login-item" data-login-id="${escapeHtml(id)}"><div class="login-icon">${escapeHtml(name.charAt(0).toUpperCase())}</div>
+        <div class="login-info"><div class="login-name">${escapeHtml(name)}</div><div class="login-url">${escapeHtml(login.username || extractDomain(login.url))}</div></div>
+        <div class="login-actions">${action("copy-username","Copy username","user",id)}${action("copy-password","Copy password","copy",id)}${login.totp ? action("totp","Authenticator code","key",id) : ""}${action("autofill","Fill this account","arrow",id)}</div></li>`;
+    }).join("")}</ul>${filtered.length ? "" : '<div class="empty-state"><div class="empty-state-title">No matches.</div><div class="empty-state-text">Try another account name or username.</div></div>'}${renderInCoreLoginSection()}`;
+  updateInstrumentSite();
   wireInCoreLoginSection();
-
-  const loginItems = mainContent.querySelectorAll(".login-item");
-  loginItems.forEach((item) => {
-    item.addEventListener("click", (e) => {
-      const action = e.target.closest("[data-action]")?.dataset.action;
-      const loginId = e.target.closest("[data-login-id]")?.dataset.loginId;
-      if (action && loginId) {
-        handleLoginAction(action, loginId);
-      }
-    });
-  });
+  mainContent.querySelectorAll(".login-item").forEach(item => item.addEventListener("click", event => {
+    const button = event.target.closest("[data-action]");
+    if (button) handleLoginAction(button.dataset.action, button.dataset.loginId);
+  }));
 }
 
 // ── In-core login (M9a) ──────────────────────────────────────────────────────
@@ -1046,8 +1117,9 @@ function showTotpCode(login) {
       if (response && response.success && response.code) {
         current = response.code;
         remaining = Number(response.remainingSecs) || 30;
-        codeEl.textContent = formatTotpCode(current);
+        codeEl.innerHTML = globalThis.VelaInstrument.dots(current, 4);
       } else {
+        current = "";
         codeEl.textContent = "unavailable";
         countEl.textContent = response?.error ? "—" : "";
       }
@@ -1230,3 +1302,9 @@ function sendMessage(message) {
 }
 
 document.addEventListener("DOMContentLoaded", init);
+
+document.getElementById("manageVaultBtn")?.addEventListener("click", () => {
+  const manifest = runtime.getManifest();
+  const popup = manifest.action?.default_popup || manifest.browser_action?.default_popup;
+  tabs.create({ url: runtime.getURL(popup.replace(/popup\.html$/, "manager.html")) });
+});

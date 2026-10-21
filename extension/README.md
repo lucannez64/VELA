@@ -2,6 +2,14 @@
 
 A secure password manager browser extension with zero-knowledge architecture. Works with Chrome, Firefox, and all their forks using Manifest V3.
 
+## Instrument interface
+
+The extension now uses the Instrument visual direction, with four remembered
+themes and reduced-motion-aware transitions. Build artifacts are in `dist/chrome`
+and `dist/firefox`; reload the unpacked extension to pick up the change.
+See [implementation and verification notes](../docs/EXTENSION_INSTRUMENT_IMPLEMENTATION.md)
+for supported surfaces, current native-bridge limits, and the isolated UI fixture.
+
 ## Features
 
 - **Zero-Knowledge Architecture**: Your master password never leaves your device

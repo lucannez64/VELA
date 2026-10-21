@@ -8,7 +8,21 @@ export interface SessionStatus {
   lock_state: 'locked' | 'unlocked' | 'syncing' | 'error' | 'conflict';
 }
 
+export interface CustomField { id: string; label: string; type: string; value: unknown; [key: string]: unknown }
+export interface AdditionalUrl { id: string; url: string; match: string; [key: string]: unknown }
+export interface PostalAddress { id: string; label?: string | null; line1?: string | null; line2?: string | null; city?: string | null; region?: string | null; postalCode?: string | null; countryCode?: string | null; [key: string]: unknown }
+export interface IdentityDetails { middleName?: string | null; preferredName?: string | null; email?: string | null; phone?: string | null; company?: string | null; jobTitle?: string | null; addresses: PostalAddress[]; [key: string]: unknown }
 export interface VaultItem {
+  folderId?: string;
+  tagIds?: string[];
+  customFields?: CustomField[];
+  additionalUrls?: AdditionalUrl[];
+  identityDetails?: IdentityDetails;
+  firstName?: string;
+  first_name?: string;
+  last_name?: string;
+  lastName?: string;
+  ssn?: string;
   id: string;
   name: string;
   item_type:
@@ -49,6 +63,11 @@ export interface VaultItem {
   checked_at?: string;
   breach_count?: number;
   breaches?: BreachEntry[];
+  createdAt?: string;
+  updatedAt?: string;
+  lastModifiedDevice?: string;
+  shareRecipient?: string;
+  cardholderName?: string;
   created_at: string;
   updated_at: string;
   last_modified_device?: string;
@@ -93,6 +112,14 @@ export function isPasskeyItem(item: VaultItem): item is VaultItem & { item_type:
 
 export function toBackendItem(item: VaultItem): object {
   const base = {
+    folderId: item.folderId,
+    tagIds: item.tagIds,
+    customFields: item.customFields,
+    additionalUrls: item.additionalUrls,
+    identityDetails: item.identityDetails,
+    firstName: item.firstName ?? item.first_name,
+    lastName: item.lastName ?? item.last_name,
+    ssn: item.ssn,
     id: item.id,
     name: item.name,
     created_at: item.created_at,
@@ -104,6 +131,8 @@ export function toBackendItem(item: VaultItem): object {
   };
 
   switch (item.item_type) {
+    case 'identity':
+      return { ...base, item_type: 'identity', firstName: item.firstName ?? item.first_name ?? '', lastName: item.lastName ?? item.last_name ?? '', ssn: item.ssn ?? '', notes: item.notes };
     case 'login':
       return {
         ...base,
@@ -173,17 +202,27 @@ export function toBackendItem(item: VaultItem): object {
 
 export function fromBackendItem(item: any): VaultItem {
   const base = {
+    folderId: item.folderId,
+    tagIds: item.tagIds,
+    customFields: item.customFields,
+    additionalUrls: item.additionalUrls,
+    identityDetails: item.identityDetails,
+    firstName: item.firstName ?? item.first_name,
+    lastName: item.lastName ?? item.last_name,
+    ssn: item.ssn,
     id: item.id || '',
     name: item.name || '',
-    created_at: item.created_at || new Date().toISOString(),
-    updated_at: item.updated_at || new Date().toISOString(),
-    last_modified_device: item.last_modified_device,
+    created_at: (item.createdAt ?? item.created_at) || new Date().toISOString(),
+    updated_at: (item.updatedAt ?? item.updated_at) || new Date().toISOString(),
+    last_modified_device: item.last_modified_device ?? item.lastModifiedDevice,
     favorite: item.favorite || false,
     shared: item.shared || false,
-    share_recipient: item.share_recipient,
+    share_recipient: item.share_recipient ?? item.shareRecipient,
   };
 
   switch (item.item_type) {
+    case 'identity':
+      return { ...base, item_type: 'identity', firstName: item.firstName ?? item.first_name ?? '', lastName: item.lastName ?? item.last_name ?? '', ssn: item.ssn ?? '', notes: item.notes };
     case 'login':
       return {
         ...base,
@@ -204,7 +243,7 @@ export function fromBackendItem(item: any): VaultItem {
         card_exp: item.exp,
         card_cvv: item.cvv,
         card_pin: item.pin,
-        cardholder_name: item.cardholder_name,
+        cardholder_name: item.cardholderName ?? item.cardholder_name,
         notes: item.notes,
       };
     case 'secureNote':

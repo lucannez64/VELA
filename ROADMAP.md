@@ -5,7 +5,9 @@ Status: draft, 2026-09-29.
 VELA's *feature* surface is already 1.0-sized: the whole
 `## [Unreleased]` block in `CHANGELOG.md` is the product (vault, sync, ORAM,
 PQ hybrid auth, recovery, sharing, passkeys, autofill, ephemeral web, rekeying).
-There is no separate feature roadmap because features are not the gap.
+The remaining feature work starts with organization and richer item models,
+which are prerequisites for importing existing vaults faithfully. See
+`docs/VAULT_ORGANIZATION_PLAN.md` for the proposed implementation sequence.
 
 This document tracks what actually stands between the current tree and a
 declared **1.0**: making the thing a signed, updatable, store-listed,
@@ -113,6 +115,26 @@ of 1.0 work.
 
 ## P1 — Product parity & UX
 
+Next feature milestone: **folders, tags, and richer items**, before expanding
+importer coverage. Release-integrity P0 work remains a parallel 1.0 gate.
+
+- [ ] **Organization and richer-item schema.** Define nested folders, multiple
+      tags per item, typed custom fields, additional login URLs and URL-match
+      rules, and complete identity/address fields. Coordinate serialization
+      across clients before enabling writes to the new fields.
+      Shared schema types, organization operations and merge/validation tests
+      landed in `libVELA/vela-core/src/rich_items.rs`; live client codecs and
+      activation remain pending.
+- [ ] **Organization and item editors.** Folder/tag management, filtering,
+      assignment and bulk moves; create/edit/detail support for richer fields
+      in both desktop front ends, followed by mobile and web editing.
+- [ ] **Cross-client preservation and backup.** Verify that editing, syncing,
+      sharing and encrypted export/restore retain the richer item data. Handle
+      older clients explicitly; defaults alone do not prevent field loss.
+- [ ] **Importer fidelity, after the above.** Map cards, identities, folders,
+      tags, custom fields and multiple URLs into the new model, with explicit
+      reports for unsupported source data.
+
 - [ ] **Printable / offline recovery kit.** The 2-of-3 Shamir setup exists, but
       there is nothing that generates a paper or PDF emergency kit. Users will
       lose shares without one.
@@ -125,8 +147,8 @@ of 1.0 work.
       maintainer material; `docs/INSTALL.md` is a developer guide. Add a
       "what happens if I lose my phone" guide and in-app onboarding beyond the
       account/recovery prompts.
-- [ ] **Client capability-parity matrix**, so gaps like extension TOTP are
-      tracked rather than discovered by users.
+- [ ] **Client capability-parity matrix**, tracking read, edit, autofill and
+      preservation separately. Extension TOTP is already implemented.
 
 ---
 

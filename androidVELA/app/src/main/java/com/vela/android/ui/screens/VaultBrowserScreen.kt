@@ -1,341 +1,130 @@
 package com.vela.android.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.SearchOff
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vela.android.core.*
+import org.json.JSONObject
 import com.vela.android.core.VaultItem
-import com.vela.android.ui.components.FaviconIcon
-import com.vela.android.ui.components.StatusBadge
-import com.vela.android.ui.components.VelaButton
-import com.vela.android.ui.components.VelaButtonStyle
-import com.vela.android.ui.components.VelaSearchField
-import com.vela.android.ui.theme.VelaColors
+import com.vela.android.core.accountsNeedingAttention
+import com.vela.android.sync.SyncState
+import com.vela.android.ui.components.*
+import com.vela.android.ui.theme.*
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun VaultBrowserScreen(
-    items: List<VaultItem>,
-    itemCount: Int,
-    onItemClick: (VaultItem) -> Unit,
-    onAddItem: () -> Unit,
-    onLock: () -> Unit
-) {
+fun VaultBrowserScreen(items: List<VaultItem>, itemCount: Int, onItemClick: (VaultItem) -> Unit,
+    onAddItem: () -> Unit, onLock: () -> Unit, initialFavoritesOnly: Boolean = false,
+    initialAttentionOnly: Boolean = false, syncState: SyncState? = null,
+    organization: VaultOrganization = VaultOrganization(), onEnableCollections: () -> Unit = {}, onMutateOrganization: (JSONObject) -> Unit = {}) {
+    var showCollections by remember { mutableStateOf(false) }
+    var scopePicker by remember { mutableStateOf(false) }
+    var folder by remember { mutableStateOf<String?>(null) }
+    var tag by remember { mutableStateOf<String?>(null) }
+    var includeChildren by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf<String?>(null) }
-    var favoritesOnly by remember { mutableStateOf(false) }
+    var favoritesOnly by remember(initialFavoritesOnly) { mutableStateOf(initialFavoritesOnly) }
+    var attentionOnly by remember(initialAttentionOnly) { mutableStateOf(initialAttentionOnly) }
+    val attentionIds = remember(items) { items.accountsNeedingAttention() }
+    val filtered = items.filter { item ->
+        val matches = query.isBlank() || item.name.contains(query, true) ||
+            (item is VaultItem.Login && (item.url.contains(query, true) || item.username.contains(query, true)))
+        matches && (selectedType == null || item.kindLabel == selectedType) &&
+            (!favoritesOnly || item.favorite) && (!attentionOnly || item.id in attentionIds) &&
+            (folder == null || if(folder == "") !organization.containsFolder(item.rich.folderId) else item.rich.folderId == folder ||
+                (includeChildren && organization.folderPath(item.rich.folderId).startsWith(organization.folderPath(folder!!)+" / "))) &&
+            (tag == null || tag in item.rich.tagIds)
+    }.sortedWith(compareByDescending<VaultItem> { it.favorite }.thenBy { it.name.lowercase() })
 
-    val filteredItems = items
-        .asSequence()
-        .filter { item ->
-            val matchesQuery = query.isEmpty() ||
-                item.name.contains(query, ignoreCase = true) ||
-                (item is VaultItem.Login && item.url.contains(query, ignoreCase = true)) ||
-                (item is VaultItem.Login && item.username.contains(query, ignoreCase = true))
-            val matchesType = selectedType == null || item.typeLabel == selectedType
-            val matchesFavorite = !favoritesOnly || item.favorite
-            matchesQuery && matchesType && matchesFavorite
+    Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase).padding(horizontal = 20.dp).padding(top = 10.dp)) {
+        Box(Modifier.arrive(0)) { InstrumentBrand(onLock, syncState) }
+        Row(Modifier.arrive(1), verticalAlignment = Alignment.CenterVertically) {
+            InstrumentHeading("01 / Your vault",
+                if (attentionOnly) "A little attention." else if (favoritesOnly) "Favourites." else "All the essentials.",
+                modifier = Modifier.weight(1f))
+            InstrumentIconButton(InstrumentIcons.Plus, "Add item", onAddItem)
         }
-        // Favorites pin to the top, then alphabetical — mirrors what users
-        // expect from the desktop list.
-        .sortedWith(compareByDescending<VaultItem> { it.favorite }.thenBy { it.name.lowercase() })
-        .toList()
-
-    Box(modifier = Modifier.fillMaxSize().background(VelaColors.SurfaceBase)) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-            Spacer(Modifier.height(16.dp))
-
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Vault",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
-                    Text(
-                        "$itemCount item${if (itemCount != 1) "s" else ""}",
-                        color = VelaColors.TextSecondary,
-                        fontSize = 14.sp
-                    )
-                }
-                VelaButton(
-                    text = "Lock",
-                    onClick = onLock,
-                    style = VelaButtonStyle.Tonal,
-                    icon = Icons.Filled.Lock,
-                    fullWidth = false,
-                    modifier = Modifier
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // Search
-            VelaSearchField(query = query, onQueryChange = { query = it })
-
-            Spacer(Modifier.height(14.dp))
-
-            // Type filter chips
-            val types = listOf(
-                null to "All",
-                "login" to "Logins",
-                "card" to "Cards",
-                "note" to "Notes",
-                "passkey" to "Passkeys"
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                types.forEach { (type, label) ->
-                    val isSelected = selectedType == type
-                    FilterChip(
-                        label = label,
-                        selected = isSelected,
-                        onClick = { selectedType = type; if (!isSelected) favoritesOnly = false }
-                    )
-                }
-            }
-            val favoriteCount = items.count { it.favorite }
-            if (favoriteCount > 0) {
-                Spacer(Modifier.height(8.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        label = "Favorites · $favoriteCount",
-                        selected = favoritesOnly,
-                        leading = Icons.Filled.Star,
-                        onClick = { favoritesOnly = !favoritesOnly }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // Items list
-            if (filteredItems.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Filled.SearchOff, null,
-                            modifier = Modifier.size(48.dp),
-                            tint = VelaColors.TextMuted
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            when {
-                                query.isNotEmpty() -> "No items matching \"$query\""
-                                favoritesOnly -> "No favorites yet"
-                                else -> "Vault is empty"
-                            },
-                            color = VelaColors.TextSecondary,
-                            fontSize = 16.sp
-                        )
-                        if (query.isEmpty() && !favoritesOnly) {
-                            Spacer(Modifier.height(8.dp))
-                            Text("Tap + to add your first item", color = VelaColors.TextMuted, fontSize = 14.sp)
-                        }
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(filteredItems, key = { it.id }) { item ->
-                        VaultItemRow(item = item, onClick = { onItemClick(item) })
-                    }
-                    item { Spacer(Modifier.height(80.dp)) }
-                }
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            InstrumentPill("Collections", { showCollections = true })
+            if (organization.enabled) InstrumentPill(if(folder!=null || tag!=null) "Filtered · Change" else "All folders & tags",{scopePicker=true})
         }
-
-        // FAB
-        FloatingActionButton(
-            onClick = onAddItem,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp),
-            containerColor = VelaColors.Green,
-            contentColor = VelaColors.GreenDark,
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Icon(Icons.Filled.Add, "Add item")
+        SearchField(query, { query = it }, Modifier.padding(top = 0.dp).arrive(2))
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 3.dp, bottom = 7.dp).arrive(3),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(null to "All", "Login" to "Logins", "Card" to "Cards", "Note" to "Notes", "Identity" to "Identities", "Passkey" to "Passkeys").forEach { (type, label) ->
+                InstrumentChip(label, type == selectedType && !favoritesOnly && !attentionOnly, {
+                    selectedType = type; favoritesOnly = false; attentionOnly = false
+                })
+            }
+            if (favoritesOnly) InstrumentChip("Favourites ×", true, { favoritesOnly = false })
+            if (attentionOnly) InstrumentChip("Attention ×", true, { attentionOnly = false })
+        }
+        SectionHead("Saved items", Modifier.arrive(4)) {
+            Text(filtered.size.toString().padStart(2, '0'), fontFamily = InstrumentMono, fontSize = 11.sp, color = VelaColors.Violet)
+        }
+        if (filtered.isEmpty()) {
+            Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp, vertical = 32.dp).arrive(5),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (items.isEmpty()) "A place for your essentials." else "No matches.", fontSize = 14.sp, color = VelaColors.TextPrimary)
+                Spacer(Modifier.height(12.dp))
+                InstrumentFine(if (items.isEmpty()) "Save your first login, card or private note." else "Try another name or item type.")
+                if (items.isEmpty()) { Spacer(Modifier.height(18.dp)); InstrumentPill("Add an item", onAddItem, icon = InstrumentIcons.Plus) }
+            }
+        } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 16.dp)) {
+            itemsIndexed(filtered, key = { _, it -> it.id }) { i, item ->
+                VaultItemRow(item, item.id in attentionIds, Modifier.animateItem().arrive(5 + i)) { onItemClick(item) }
+            }
         }
     }
+    RichDialog(showCollections,"Collections",{showCollections=false}) { CollectionsManager(organization,onEnableCollections,onMutateOrganization) }
+    RichDialog(scopePicker,"Filter collections",{scopePicker=false}) {
+        InstrumentPill("Clear filters",{folder=null;tag=null;scopePicker=false},Modifier.fillMaxWidth())
+        SheetLabel("Folders")
+        InstrumentMenuRow(null,"Unfiled") {folder="";scopePicker=false}
+        organization.folders.forEach {val f=JSONObject(it); val id=f.getString("id")
+            InstrumentMenuRow(null,organization.folderPath(id)) {folder=id;scopePicker=false}
+        }
+        InstrumentControlRow("Include subfolders") {InstrumentToggle(includeChildren,{includeChildren=it},"Include subfolders")}
+        SheetLabel("Tags")
+        organization.tags.forEach {val t=JSONObject(it);val id=t.getString("id")
+            InstrumentMenuRow(null,t.getString("name")) {tag=id;scopePicker=false}
+        }
+    }
+
 }
 
+/** Pill search field; the hairline turns violet while focused. */
 @Composable
-fun VaultItemRow(item: VaultItem, onClick: () -> Unit) {
-    val icon = when (item) {
-        is VaultItem.Login -> Icons.Filled.Key
-        is VaultItem.CreditCard -> Icons.Filled.CreditCard
-        is VaultItem.SecureNote -> Icons.Filled.Description
-        is VaultItem.BreachMonitor -> Icons.Filled.Description
-        is VaultItem.Passkey -> Icons.Filled.Fingerprint
-        else -> Icons.Filled.Description
-    }
-
+fun SearchField(value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier, placeholder: String = "Search your vault") {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(99.dp)
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(VelaColors.SurfaceLow)
-            .clickable(onClick = onClick)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier.fillMaxWidth().padding(top = 18.dp, bottom = 14.dp).heightIn(min = 46.dp).background(Ink.panel, shape)
+            .border(1.dp, if (focused) VelaColors.Violet else Ink.line2, shape).padding(horizontal = 13.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(VelaColors.Green.copy(alpha = 0.1f)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (item is VaultItem.Login && item.url.isNotBlank()) {
-                FaviconIcon(
-                    url = item.url,
-                    fallback = icon,
-                    size = 22.dp,
-                    shape = RoundedCornerShape(6.dp)
-                )
-            } else {
-                Icon(icon, null, modifier = Modifier.size(22.dp), tint = VelaColors.Green)
-            }
+        InstrumentIcon(InstrumentIcons.Search, 17.dp, VelaColors.TextMuted)
+        Spacer(Modifier.width(9.dp))
+        Box(Modifier.weight(1f)) {
+            if (value.isEmpty()) Text(placeholder, fontSize = 12.sp, color = Ink.faint)
+            BasicTextField(value, onValueChange, Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+                singleLine = true, textStyle = TextStyle(fontSize = 12.sp, color = VelaColors.TextPrimary),
+                cursorBrush = SolidColor(VelaColors.Violet))
         }
-
-        Spacer(Modifier.width(14.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    item.name,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (item.favorite) {
-                    Spacer(Modifier.width(6.dp))
-                    Icon(
-                        Icons.Filled.Star, null,
-                        modifier = Modifier.size(14.dp),
-                        tint = VelaColors.WarningAmber
-                    )
-                }
-            }
-            Spacer(Modifier.height(3.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusBadge(text = item.typeLabel)
-                if (item is VaultItem.Login && item.username.isNotBlank()) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        item.username,
-                        color = VelaColors.TextSecondary,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                } else if (item is VaultItem.Login && item.url.isNotBlank()) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        item.url,
-                        color = VelaColors.TextMuted,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-    }
-}
-
-private val VaultItem.typeLabel: String
-    get() = when (this) {
-        is VaultItem.Login -> "login"
-        is VaultItem.CreditCard -> "card"
-        is VaultItem.SecureNote -> "note"
-        is VaultItem.FileBlob -> "file"
-        is VaultItem.BreachMonitor -> "breach"
-        is VaultItem.Passkey -> "passkey"
-        else -> "item"
-    }
-
-@Composable
-private fun FilterChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    leading: androidx.compose.ui.graphics.vector.ImageVector? = null
-) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(if (selected) VelaColors.Green.copy(alpha = 0.15f) else VelaColors.SurfaceHigh)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (leading != null) {
-            Icon(
-                leading, null,
-                modifier = Modifier.size(14.dp),
-                tint = if (selected) VelaColors.Green else VelaColors.WarningAmber
-            )
-            Spacer(Modifier.width(6.dp))
-        }
-        Text(
-            label,
-            color = if (selected) VelaColors.Green else VelaColors.TextSecondary,
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-        )
     }
 }

@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.VELA.Starting" parent="Theme.VELA">
+        <item name="android:windowBackground">@color/vela_icon_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/vela_icon_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/vela_startup_animated</item>
+        <item name="android:windowSplashScreenAnimationDuration">425</item>
+        <item name="android:windowSplashScreenBrandingImage">@drawable/vela_wordmark</item>
+    </style>
+</resources>

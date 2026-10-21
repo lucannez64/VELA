@@ -281,7 +281,7 @@ pub async fn push_sent_share_update_inner(
     let server_url = state.server_url.read().clone();
     let client = ApiClient::with_url(server_url);
 
-    let item_json = serde_json::to_vec(item).map_err(|e| e.to_string())?;
+    let item_json = serde_json::to_vec(&item.without_personal_organization()).map_err(|e| e.to_string())?;
 
     let shares_for_item: Vec<usize> = store
         .sent_shares
@@ -340,7 +340,7 @@ pub async fn send_share(
         let vault = state.vault.read();
         let item = vault.get_item(item_id).ok_or("Item not found")?.clone();
         drop(vault);
-        let item_json = serde_json::to_vec(&item).map_err(|e| e.to_string())?;
+        let item_json = serde_json::to_vec(&item.without_personal_organization()).map_err(|e| e.to_string())?;
         let device_id = state.store.load_device_id().unwrap_or_else(|_| "unknown".to_string());
         (item_json, device_id)
     };
@@ -572,6 +572,7 @@ mod tests {
 
     fn meta(id: &str, name: &str, updated_at: DateTime<Utc>) -> VaultMeta {
         VaultMeta {
+                rich: Default::default(),
             id: id.to_string(),
             name: name.to_string(),
             notes: None,

@@ -1,0 +1,3 @@
+EFF Diceware word list, Electronic Frontier Foundation, as bundled by the VELA extension.
+Source: https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt
+License: CC BY 3.0 https://creativecommons.org/licenses/by/3.0/

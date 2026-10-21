@@ -65,6 +65,13 @@ jobs:
         working-directory: extension
         run: bun test:shim
 
+      - name: Run autofill, TOTP and host authorization regressions
+        working-directory: extension
+        run: |
+          bun test:autofill
+          bun test:totp
+          bun test:hostrisk
+
       - name: Package Chromium build for "Load unpacked"
         working-directory: extension/dist
         run: zip -r ../vela-chrome.zip chrome

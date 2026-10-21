@@ -24,8 +24,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, list, prelude::*, px, Context, EventEmitter, Focusable, IntoElement, ListAlignment,
-    ListState, MouseButton, Render, SharedString, Window,
+    div, list, prelude::*, px, Context, EventEmitter, IntoElement, ListAlignment, ListState,
+    MouseButton, Render, SharedString, Window,
 };
 use gpui_elements::editable_text::{text_input, EditableTextState, StringStorage};
 
@@ -40,6 +40,7 @@ use crate::fonts;
 use crate::icon::icon;
 use crate::theme::Palette;
 use crate::views::add_item_modal::{AddItemModal, AddItemModalEvent};
+use crate::views::organization_panel::OrganizationPanel;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Filter {
@@ -48,15 +49,17 @@ enum Filter {
     CreditCard,
     SecureNote,
     Passkey,
+    Identity,
 }
 
 impl Filter {
-    const ALL: [Filter; 5] = [
+    const ALL: [Filter; 6] = [
         Filter::All,
         Filter::Login,
         Filter::CreditCard,
         Filter::SecureNote,
         Filter::Passkey,
+        Filter::Identity,
     ];
 
     fn label(self) -> &'static str {
@@ -66,6 +69,7 @@ impl Filter {
             Filter::CreditCard => "Cards",
             Filter::SecureNote => "Secure Notes",
             Filter::Passkey => "Passkeys",
+            Filter::Identity => "Identities",
         }
     }
 
@@ -76,6 +80,7 @@ impl Filter {
             Filter::CreditCard => item_type == ItemType::CreditCard,
             Filter::SecureNote => item_type == ItemType::SecureNote,
             Filter::Passkey => item_type == ItemType::Passkey,
+            Filter::Identity => item_type == ItemType::Identity,
         }
     }
 }
@@ -158,12 +163,15 @@ fn resolve_copy_value(
 /// expensive part (lowercasing, sorting and cloning every item) is skipped.
 #[derive(PartialEq, Eq)]
 struct RowsKey {
+    organization_revision: u64,
     version: u64,
     filter: Filter,
     query: String,
 }
 
 pub struct VaultBrowser {
+    organization_panel: gpui::Entity<crate::views::organization_panel::OrganizationPanel>,
+    _organization_subscription: gpui::Subscription,
     app_state: Arc<AppState>,
     /// Shared with the render closure so cached rows can reference entries
     /// by index instead of cloning every visible item on each rebuild.
@@ -185,12 +193,16 @@ pub struct VaultBrowser {
     cached_rows: Arc<Vec<Row>>,
     /// Per-`Filter::ALL` item counts for the filter chips, derived in the same
     /// pass as `cached_rows` (was four independent scans per render).
-    cached_type_counts: [usize; 5],
+    cached_type_counts: [usize; 6],
     favicon_cache: FaviconCache,
 }
 
 impl VaultBrowser {
-    pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        app_state: Arc<AppState>,
+        organization_panel: gpui::Entity<OrganizationPanel>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
             .detach();
         let search_state = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
@@ -206,7 +218,19 @@ impl VaultBrowser {
 
         Self::spawn_reload(app_state.clone(), cx);
 
+        let subscription = cx.subscribe(&organization_panel, |this, _, event, cx| {
+            this.rows_key = None;
+            if matches!(
+                event,
+                crate::views::organization_panel::OrganizationPanelEvent::Changed
+            ) {
+                this.reload(cx);
+            }
+            cx.notify();
+        });
         Self {
+            organization_panel,
+            _organization_subscription: subscription,
             app_state,
             items: Arc::new(Vec::new()),
             items_version: 0,
@@ -219,7 +243,7 @@ impl VaultBrowser {
             list_state: ListState::new(2, ListAlignment::Top, px(400.)),
             rows_key: None,
             cached_rows: Arc::new(Vec::new()),
-            cached_type_counts: [0; 5],
+            cached_type_counts: [0; 6],
             favicon_cache: favicon_ui::new_cache(),
         }
     }
@@ -267,7 +291,8 @@ impl VaultBrowser {
     pub fn open_add_item_modal(&mut self, cx: &mut Context<Self>) {
         let modal = cx.new({
             let app_state = self.app_state.clone();
-            move |cx| AddItemModal::new(app_state, cx)
+            let rich = self.organization_panel.read(cx).new_item_organization();
+            move |cx| AddItemModal::new_in_collection(app_state, rich, cx)
         });
         let subscription = cx.subscribe(&modal, |this, _modal, event, cx| match event {
             AddItemModalEvent::Close => {
@@ -333,6 +358,7 @@ impl VaultBrowser {
     fn refresh_rows(&mut self, cx: &Context<Self>) -> bool {
         let query = self.search_state.read(cx).as_str().to_lowercase();
         let key = RowsKey {
+            organization_revision: self.organization_panel.read(cx).revision,
             version: self.items_version,
             filter: self.filter,
             query: query.clone(),
@@ -344,11 +370,15 @@ impl VaultBrowser {
         // Lowercase each candidate's name exactly once — it drives the query
         // match, the sort, and the section letter — and only touch username
         // /url when the query isn't empty (matching the original's early-out).
+        let org = self.app_state.vault.read().organization.clone();
         let mut matched: Vec<(String, usize)> = self
             .items
             .iter()
             .enumerate()
-            .filter(|(_, item)| self.filter.matches(item.item_type()))
+            .filter(|(_, item)| {
+                self.filter.matches(item.item_type())
+                    && self.organization_panel.read(cx).matches(item, &org)
+            })
             .filter_map(|(ix, item)| {
                 let lower_name = item.name().to_lowercase();
                 let hits = query.is_empty()
@@ -391,9 +421,13 @@ impl VaultBrowser {
             rows.push(Row::Item(ix));
         }
 
-        // All four filter-chip counts in one pass over the vault.
-        let mut counts = [0usize; 5];
-        for item in self.items.iter() {
+        // Type counts describe the current folder or tag, independent of the type tab.
+        let mut counts = [0usize; 6];
+        for item in self
+            .items
+            .iter()
+            .filter(|item| self.organization_panel.read(cx).matches(item, &org))
+        {
             for (i, f) in Filter::ALL.iter().enumerate() {
                 if f.matches(item.item_type()) {
                     counts[i] += 1;
@@ -417,13 +451,52 @@ impl VaultBrowser {
 }
 
 impl VaultBrowser {
-    fn controls(&mut self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn controls(
+        &mut self,
+        compact: bool,
+        collections_compact: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
         div()
             .flex()
             .flex_col()
-            .gap_6()
-            .pb_6()
+            .gap_4()
+            .pb_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .when(compact, |el| el.flex_col().items_start())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .min_w_0()
+                            .flex_1()
+                            .when(compact, |el| el.w_full().flex_none())
+                            .child(self.organization_panel.read(cx).location_header(&palette))
+                            .when_some(
+                                OrganizationPanel::scope_control(&self.organization_panel, cx),
+                                |el, control| el.child(control),
+                            ),
+                    )
+                    .when(collections_compact, |el| {
+                        el.child(self.organization_panel.clone())
+                    }),
+            )
+            .when(
+                !self.organization_panel.read(cx).selected.is_empty(),
+                |el| {
+                    el.child(OrganizationPanel::selection_bar(
+                        &self.organization_panel,
+                        cx,
+                    ))
+                },
+            )
             .child(
                 div()
                     .flex()
@@ -555,15 +628,16 @@ impl Render for VaultBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::theme::current_palette(cx);
         let compact = crate::layout::compact(window.viewport_size().width.into());
+        let collections_compact =
+            window.viewport_size().width < px(crate::layout::SIDEBAR_BREAKPOINT);
         let rows_changed = self.refresh_rows(cx);
         let rows = self.cached_rows.clone();
+        let empty = rows.is_empty();
+        let show_health = self.organization_panel.read(cx).is_all_items();
         if rows_changed {
-            // Controls and health cards are rows in the SAME scroll surface as
-            // the items. A capped list inside an overflow_y_scroll container
-            // made wheel input switch between two independent scroll offsets.
-            self.list_state.reset(rows.len() + 2);
+            // Keep search and selection actions visible while the items scroll.
             self.list_state
-                .splice_focusable(0..1, [Some(self.search_state.read(cx).focus_handle(cx))]);
+                .reset(rows.len() + usize::from(show_health || empty));
         }
         let weak_view = cx.weak_entity();
         let favicon_cache = self.favicon_cache.clone();
@@ -577,54 +651,73 @@ impl Render for VaultBrowser {
             .bg(palette.surface)
             .font_family(fonts::LABEL)
             .p_4()
+            .flex()
+            .when(collections_compact, |el| el.flex_col())
             .child(
-                list(self.list_state.clone(), move |ix, window, app| {
-                    if ix == 0 {
-                        return weak_view
-                            .update(app, |this, cx| {
-                                this.controls(compact, cx).into_any_element()
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(self.controls(compact, collections_compact, cx))
+                    .child(
+                        div().flex_1().min_h_0().child(
+                            list(self.list_state.clone(), move |ix, window, app| {
+                                if ix == rows.len() {
+                                    if empty {
+                                        return weak_view.update(app,|_,_|div().flex().flex_col().items_center().justify_center().gap_3().py_12()
+                                            .child(icon("folder_open",px(36.),palette.outline))
+                                            .child(div().font_family(fonts::HEADLINE).text_lg().text_color(palette.on_surface).child("No items here yet"))
+                                            .child(div().text_sm().text_color(palette.on_surface_variant).child("Add an item or choose another folder, tag or search.")).into_any_element()).unwrap_or_else(|_|div().into_any_element());
+                                    }
+                                    return weak_view
+                                        .update(app, |this, cx| {
+                                            div()
+                                                .flex()
+                                                .when(compact, |el| el.flex_col())
+                                                .gap_4()
+                                                .pt_6()
+                                                .child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .when(!compact, |el| el.flex_1())
+                                                        .child(health_panel(
+                                                            &palette,
+                                                            this.health.as_ref(),
+                                                        )),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .when(!compact, |el| el.w(px(260.)))
+                                                        .child(dark_web_monitor_card(
+                                                            &palette, window, cx,
+                                                        )),
+                                                )
+                                                .into_any_element()
+                                        })
+                                        .unwrap_or_else(|_| div().into_any_element());
+                                }
+                                match &rows[ix] {
+                                    Row::Header(letter) => {
+                                        header_row(&palette, letter).into_any_element()
+                                    }
+                                    Row::Item(item_ix) => div()
+                                        .pb_3()
+                                        .child(item_row(
+                                            &palette,
+                                            &row_items[*item_ix],
+                                            &favicon_cache,
+                                            weak_view.clone(),
+                                            window,
+                                            app,
+                                        ))
+                                        .into_any_element(),
+                                }
                             })
-                            .unwrap_or_else(|_| div().into_any_element());
-                    }
-                    if ix == rows.len() + 1 {
-                        return weak_view
-                            .update(app, |this, cx| {
-                                div()
-                                    .flex()
-                                    .when(compact, |el| el.flex_col())
-                                    .gap_4()
-                                    .pt_6()
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .when(!compact, |el| el.flex_1())
-                                            .child(health_panel(&palette, this.health.as_ref())),
-                                    )
-                                    .child(
-                                        div()
-                                            .when(!compact, |el| el.w(px(260.)))
-                                            .child(dark_web_monitor_card(&palette, window, cx)),
-                                    )
-                                    .into_any_element()
-                            })
-                            .unwrap_or_else(|_| div().into_any_element());
-                    }
-                    match &rows[ix - 1] {
-                        Row::Header(letter) => header_row(&palette, letter).into_any_element(),
-                        Row::Item(item_ix) => div()
-                            .pb_3()
-                            .child(item_row(
-                                &palette,
-                                &row_items[*item_ix],
-                                &favicon_cache,
-                                weak_view.clone(),
-                                window,
-                                app,
-                            ))
-                            .into_any_element(),
-                    }
-                })
-                .size_full(),
+                            .size_full(),
+                        ),
+                    ),
             )
             .when_some(self.add_item_modal.clone(), |el, modal| el.child(modal))
     }
@@ -664,6 +757,53 @@ fn item_row(
     window: &mut Window,
     app: &mut gpui::App,
 ) -> impl IntoElement {
+    let select_id = item.id().to_string();
+    let selectable = !item.is_received_share()
+        && weak_view
+            .update(app, |this, _| {
+                this.app_state.vault.read().schema_version == Some(2)
+            })
+            .unwrap_or(false);
+    let selected = weak_view
+        .update(app, |this, cx| {
+            this.organization_panel
+                .read(cx)
+                .selected
+                .contains(&select_id)
+        })
+        .unwrap_or(false);
+    let selection_view = weak_view.clone();
+    let selection = div()
+        .id(SharedString::from(format!("select-{select_id}")))
+        .p_2()
+        .cursor_pointer()
+        .when(selectable, |el| {
+            el.child(icon(
+                if selected {
+                    "check_box"
+                } else {
+                    "check_box_outline_blank"
+                },
+                px(18.),
+                if selected {
+                    palette.primary
+                } else {
+                    palette.outline
+                },
+            ))
+        })
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            if selectable {
+                selection_view
+                    .update(cx, |this, cx| {
+                        this.organization_panel
+                            .update(cx, |panel, cx| panel.toggle(select_id.clone(), cx));
+                        cx.notify();
+                    })
+                    .ok();
+            }
+        });
     let subtitle: SharedString = match item {
         VaultItem::CreditCard { number, .. } => format!(
             "Ending in •••• {}",
@@ -712,7 +852,14 @@ fn item_row(
 
     let hover_t = animation::hover_transition(format!("item-{id}"), window, app);
     let t = *hover_t.evaluate(window, app);
-    let bg = animation::lerp_hsla(palette.surface_container_low, palette.surface_container, t);
+    let bg = if selected {
+        gpui::Hsla {
+            a: 0.08,
+            ..palette.primary
+        }
+    } else {
+        animation::lerp_hsla(palette.surface_container_low, palette.surface_container, t)
+    };
 
     // Matches the original's `FaviconIcon`: only Login items with a
     // non-empty URL ever attempt a real favicon; everything else always
@@ -760,6 +907,15 @@ fn item_row(
         .justify_between()
         .gap_4()
         .rounded_xl()
+        .border_1()
+        .border_color(if selected {
+            gpui::Hsla {
+                a: 0.35,
+                ..palette.primary
+            }
+        } else {
+            gpui::transparent_black()
+        })
         .bg(bg)
         .cursor_pointer()
         .on_hover(move |is_hovered, _, cx| {
@@ -775,11 +931,13 @@ fn item_row(
                 .gap_2()
                 .flex_1()
                 .min_w(px(0.))
+                .child(selection)
                 .child(div().flex_shrink_0().child(icon_box))
                 .child(
                     div()
                         .flex()
                         .flex_col()
+                        .flex_1()
                         .min_w(px(0.))
                         .child(
                             div()
@@ -1161,6 +1319,7 @@ mod tests {
     fn meta(id: &str, name: &str) -> VaultMeta {
         let now = Utc::now();
         VaultMeta {
+            rich: Default::default(),
             id: id.to_string(),
             name: name.to_string(),
             notes: None,

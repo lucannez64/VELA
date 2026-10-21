@@ -4,6 +4,16 @@ A passwordless, zero-knowledge vault desktop application. Native GPUI is the
 default frontend on Windows and Linux; Tauri + React remains available for
 macOS and as an explicit fallback.
 
+## Animated GPUI interface preview
+
+The opt-in Instrument UI implements direction 04 with animated overview tiles,
+dot-matrix readouts, vault details and a password generator. See
+[preview and rollback instructions](../docs/GPUI_INSTRUMENT_PREVIEW.md).
+
+From `desktopVELA`, run `cargo run -p vela-desktop-gpui -- --ui=instrument`.
+Add `--demo` for a disposable vault. Press **Ctrl+Alt+U** to switch interfaces,
+or launch with `--ui=classic` to force the original interface.
+
 ## Features
 
 - **Biometric Authentication**: Windows Hello / Touch ID integration via TPM 2.0

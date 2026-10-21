@@ -96,6 +96,7 @@ fn seed_passkey(state: &AppState, rp_id: &str) {
     let now = chrono::Utc::now();
     state.vault.write().add_item(VaultItem::Passkey {
         meta: VaultMeta {
+                rich: Default::default(),
             id: uuid::Uuid::new_v4().to_string(),
             name: rp_id.to_string(),
             notes: None,

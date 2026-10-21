@@ -25,6 +25,9 @@
 //! commands::settings::update_settings`'s doc comment) — a changed
 //! shortcut is only persisted, applying after a restart.
 
+#[path = "settings_instrument.rs"]
+mod instrument_view;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -175,8 +178,14 @@ impl SettingsScreen {
     }
 
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
-            .detach();
+        cx.observe_global::<crate::theme::ActiveTheme>(|this, cx| {
+            // The frame's theme picker also saves settings. Keep the mounted
+            // page in sync so later edits cannot overwrite that choice.
+            if let Some(settings) = &mut this.settings {
+                settings.theme = cx.global::<crate::theme::ActiveTheme>().0.to_setting();
+            }
+            cx.notify();
+        }).detach();
         cx.spawn({
             let app_state = app_state.clone();
             async move |this, cx| {
@@ -1287,6 +1296,9 @@ impl Render for SettingsScreen {
                 .into_any_element();
         };
 
+        if crate::instrument::is_instrument(cx) {
+            return self.render_instrument(&settings, window, cx);
+        }
         let category = self.category;
         let tab_columns =
             if crate::layout::content_width(window.viewport_size().width.into()) >= 720. {
@@ -1313,131 +1325,134 @@ impl Render for SettingsScreen {
                 div().child(account_section(&palette, &settings, window, cx))
             }
         };
-        div()
-            .relative()
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .bg(palette.surface)
-            .font_family(fonts::BODY)
-            .child(
-                div()
-                    .w_full()
-                    .flex_shrink_0()
-                    .p_4()
-                    .border_b_1()
-                    .border_color(palette.outline_variant)
-                    .child(
-                        div()
-                            .font_family(fonts::HEADLINE)
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_2xl()
-                            .text_color(palette.on_surface)
-                            .mb_3()
-                            .child("Settings"),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .max_w(px(800.))
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .children(SettingsCategory::ALL.chunks(tab_columns).map(|row| {
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .gap_2()
-                                    .children(row.iter().map(|&item| {
-                                        let focus = window
-                                            .use_keyed_state(
-                                                ("settings-tab-focus", item as usize),
-                                                cx,
-                                                |_, cx| cx.focus_handle().tab_stop(true),
-                                            )
-                                            .read(cx)
-                                            .clone();
-                                        div()
-                                            .track_focus(&focus)
-                                            .border_1()
-                                            .border_color(if item == category {
-                                                palette.primary
-                                            } else {
-                                                palette.surface_container
-                                            })
-                                            .focus(|el| el.border_color(palette.primary))
-                                            .on_key_down(cx.listener(
-                                                move |this, event: &gpui::KeyDownEvent, _, cx| {
-                                                    if matches!(
-                                                        event.keystroke.key.as_str(),
-                                                        "enter" | "space"
-                                                    ) {
+        let page = {
+            div()
+                .relative()
+                .size_full()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .bg(palette.surface)
+                .font_family(fonts::BODY)
+                .child(
+                    div()
+                        .w_full()
+                        .flex_shrink_0()
+                        .p_4()
+                        .border_b_1()
+                        .border_color(palette.outline_variant)
+                        .child(
+                            div()
+                                .font_family(fonts::HEADLINE)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_2xl()
+                                .text_color(palette.on_surface)
+                                .mb_3()
+                                .child("Settings"),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(800.))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .children(SettingsCategory::ALL.chunks(tab_columns).map(|row| {
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .gap_2()
+                                        .children(row.iter().map(|&item| {
+                                            let focus = window
+                                                .use_keyed_state(
+                                                    ("settings-tab-focus", item as usize),
+                                                    cx,
+                                                    |_, cx| cx.focus_handle().tab_stop(true),
+                                                )
+                                                .read(cx)
+                                                .clone();
+                                            div()
+                                                .track_focus(&focus)
+                                                .border_1()
+                                                .border_color(if item == category {
+                                                    palette.primary
+                                                } else {
+                                                    palette.surface_container
+                                                })
+                                                .focus(|el| el.border_color(palette.primary))
+                                                .on_key_down(cx.listener(
+                                                    move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                                        if matches!(
+                                                            event.keystroke.key.as_str(),
+                                                            "enter" | "space"
+                                                        ) {
+                                                            this.category = item;
+                                                            cx.stop_propagation();
+                                                            cx.notify();
+                                                        }
+                                                    },
+                                                ))
+                                                .id(item.label())
+                                                .debug_selector(move || item.label().into())
+                                                .flex_1()
+                                                .min_w_0()
+                                                .h(px(36.))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_lg()
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .bg(if item == category {
+                                                    palette.primary
+                                                } else {
+                                                    palette.surface_container
+                                                })
+                                                .text_color(if item == category {
+                                                    palette.on_primary
+                                                } else {
+                                                    palette.on_surface_variant
+                                                })
+                                                .cursor_pointer()
+                                                .child(item.label())
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, _, _, cx| {
                                                         this.category = item;
-                                                        cx.stop_propagation();
                                                         cx.notify();
-                                                    }
-                                                },
-                                            ))
-                                            .id(item.label())
-                                            .debug_selector(move || item.label().into())
-                                            .flex_1()
-                                            .min_w_0()
-                                            .h(px(36.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded_lg()
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .bg(if item == category {
-                                                palette.primary
-                                            } else {
-                                                palette.surface_container
-                                            })
-                                            .text_color(if item == category {
-                                                palette.on_primary
-                                            } else {
-                                                palette.on_surface_variant
-                                            })
-                                            .cursor_pointer()
-                                            .child(item.label())
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _, _, cx| {
-                                                    this.category = item;
-                                                    cx.notify();
-                                                }),
-                                            )
-                                    }))
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .id(("settings-scroll", category as usize))
-                    .debug_selector(|| "settings-scroll".into())
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .overflow_x_hidden()
-                    .overflow_y_scroll()
-                    .p_4()
-                    .child(
-                        content
-                            .debug_selector(|| "settings-content".into())
-                            .w_full()
-                            .max_w(px(800.))
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_6(),
-                    )
-                    .when_some(self.error.clone(), |el, error| {
-                        el.child(div().text_sm().text_color(palette.error).child(error))
-                    }),
-            )
+                                                    }),
+                                                )
+                                        }))
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .id(("settings-scroll", category as usize))
+                        .debug_selector(|| "settings-scroll".into())
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .overflow_x_hidden()
+                        .overflow_y_scroll()
+                        .p_4()
+                        .child(
+                            content
+                                .debug_selector(|| "settings-content".into())
+                                .w_full()
+                                .max_w(px(800.))
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_6(),
+                        )
+                        .when_some(self.error.clone(), |el, error| {
+                            el.child(div().text_sm().text_color(palette.error).child(error))
+                        }),
+                )
+        };
+        page
             .when(self.show_delete_modal, |el| {
                 el.child(delete_modal(&palette, self, window, cx))
             })
@@ -1460,17 +1475,19 @@ impl Render for SettingsScreen {
     }
 }
 
-fn section_label(palette: &Palette, label: &'static str) -> impl IntoElement {
-    div()
-        .font_family(fonts::HEADLINE)
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_lg()
-        .text_color(palette.on_surface)
-        .mb_3()
-        .child(label)
+fn section_label(palette: &Palette, label: &'static str, cx: &gpui::App) -> gpui::AnyElement {
+    if crate::instrument::is_instrument(cx) {
+        crate::instrument::mono(label, crate::instrument::tokens(cx).muted).mb(px(12.)).into_any_element()
+    } else {
+        crate::ui::section_heading(label, palette).mb_3().into_any_element()
+    }
 }
 
-fn card(palette: &Palette) -> gpui::Div {
+fn card(palette: &Palette, cx: &gpui::App) -> gpui::Div {
+    if crate::instrument::is_instrument(cx) {
+        return crate::instrument::tile(&crate::instrument::tokens(cx)).w_full()
+            .flex_shrink_0().flex().flex_col().items_stretch().gap(px(20.));
+    }
     div()
         .w_full()
         .min_w_0()
@@ -1592,9 +1609,9 @@ fn appearance_section(
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .child(section_label(palette, "Appearance"))
+        .child(section_label(palette, "Appearance", cx))
         .child(
-            card(palette)
+            card(palette, cx)
                 .child(field_label(
                     palette,
                     "Theme",
@@ -1795,9 +1812,9 @@ fn security_section(
     let shortcut = settings.quick_search_shortcut.clone();
 
     div().w_full().min_w_0().flex_shrink_0()
-        .child(section_label(palette, "Security"))
+        .child(section_label(palette, "Security", cx))
         .child(
-            card(palette)
+            card(palette, cx)
                 .child(
                     setting_row(window)
                         .child(field_label(palette, "Auto-lock after idle", "Automatically lock when inactive"))
@@ -1985,9 +2002,9 @@ fn recovery_section(
     let finalizing = screen.finalizing_recovery;
 
     div().w_full().min_w_0().flex_shrink_0()
-        .child(section_label(palette, "Recovery"))
+        .child(section_label(palette, "Recovery", cx))
         .child(
-            card(palette)
+            card(palette, cx)
                 .child(
                     div()
                         .flex()
@@ -2435,9 +2452,9 @@ fn sync_section(
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .child(section_label(palette, "Sync"))
+        .child(section_label(palette, "Sync", cx))
         .child(
-            card(palette)
+            card(palette, cx)
                 .child(
                     div()
                         .flex()
@@ -2689,9 +2706,9 @@ fn import_export_section(
     let status = screen.export_import_status.clone();
 
     div().w_full().min_w_0().flex_shrink_0()
-        .child(section_label(palette, "Import / Export"))
+        .child(section_label(palette, "Import / Export", cx))
         .child(
-            card(palette)
+            card(palette, cx)
                 .child(
                     setting_row(window)
                         .child(field_label(palette, "Export vault", "Download as Bitwarden-compatible JSON"))
@@ -2755,10 +2772,10 @@ fn passkey_section(
 ) -> impl IntoElement {
     #[cfg(not(windows))]
     {
-        let _ = (this, window, cx);
+        let _ = (this, window);
         div()
-            .child(section_label(palette, "System passkeys"))
-            .child(card(palette).child(field_label(
+            .child(section_label(palette, "System passkeys", cx))
+            .child(card(palette, cx).child(field_label(
                 palette,
                 "System-wide passkeys require the Windows desktop build.",
                 "",
@@ -2769,7 +2786,7 @@ fn passkey_section(
     {
         let status = this.passkey_message.clone();
         let busy = this.passkey_busy;
-        let mut row = card(palette)
+        let mut row = card(palette, cx)
             .flex_row()
             .items_center()
             .justify_between()
@@ -2816,10 +2833,10 @@ fn passkey_section(
             );
         row = row.child(buttons);
         div()
-            .child(section_label(palette, "System passkeys"))
+            .child(section_label(palette, "System passkeys", cx))
             .child(row)
             .children(status.map(|message| {
-                card(palette).child(
+                card(palette, cx).child(
                     div()
                         .font_family(fonts::BODY)
                         .text_xs()
@@ -2899,9 +2916,9 @@ fn extension_section(
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .child(section_label(palette, "Browser Extension"))
+        .child(section_label(palette, "Browser Extension", cx))
         .child(
-            card(palette).child(
+            card(palette, cx).child(
                 setting_row(window)
                     .child(
                         div()
@@ -2947,9 +2964,9 @@ fn account_section(
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .child(section_label(palette, "Account"))
+        .child(section_label(palette, "Account", cx))
         .child(
-            card(palette)
+            card(palette, cx)
                 .child(
                     setting_row(window)
                         .child(

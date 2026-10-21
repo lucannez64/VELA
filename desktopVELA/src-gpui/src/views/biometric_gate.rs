@@ -12,6 +12,9 @@
 //! confirmation and calls the real `reset_vault` (same backend call as
 //! Settings' Delete Vault).
 
+#[path = "biometric_instrument.rs"]
+mod instrument_view;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -73,6 +76,7 @@ impl BiometricGate {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
             .detach();
+        cx.observe_global::<crate::instrument::ActiveInterface>(|_, cx| cx.notify()).detach();
         let password_state = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
 
         cx.spawn(async move |this, cx| {
@@ -115,7 +119,7 @@ impl BiometricGate {
             resetting: false,
             reset_error: None,
             _lockout_task: None,
-            _pulse_task: animation::spawn_pulse_ticker(cx),
+            _pulse_task: if crate::instrument::is_instrument(cx) { Task::ready(()) } else { animation::spawn_pulse_ticker(cx) },
         }
     }
 
@@ -290,7 +294,9 @@ impl Render for BiometricGate {
         let palette = crate::theme::current_palette(cx);
         let locked = self.is_locked();
 
-        let content: gpui::AnyElement = if self.mode == Mode::Password || !self.biometric_available
+        let content: gpui::AnyElement = if crate::instrument::is_instrument(cx) {
+            self.render_instrument(window, cx)
+        } else if self.mode == Mode::Password || !self.biometric_available
         {
             password_view(self, &palette, locked, window, cx)
         } else {

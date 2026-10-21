@@ -1,3 +1,7 @@
+//! Classic and Instrument window title bars. Instrument uses a compact row
+//! with dot-matrix branding, session status and outline window controls; the
+//! original title bar remains available in classic mode.
+//!
 //! Full port of `desktopVELA/src/components/TitleBar.tsx` — custom window
 //! chrome (replacing Tauri's `decorations: false` + CSS `app-region: drag`)
 //! plus the real session countdown, lock button, and always-on-top toggle
@@ -61,6 +65,8 @@ pub struct TitleBar {
 impl TitleBar {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
+            .detach();
+        cx.observe_global::<crate::instrument::ActiveInterface>(|_, cx| cx.notify())
             .detach();
 
         let poll_task = cx.spawn({
@@ -133,6 +139,163 @@ impl TitleBar {
         cx.emit(TitleBarEvent::Locked);
         cx.notify();
     }
+
+    fn render_instrument(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        use crate::instrument::{
+            dot_matrix::{dot_text, DotStyle},
+            icons::icon,
+            mono, tokens,
+        };
+        let t = tokens(cx);
+        let palette = crate::theme::current_palette(cx);
+        let wide = window.viewport_size().width >= px(640.);
+        let active = self.session.as_ref().is_some_and(|s| s.active);
+        let remaining = self
+            .session
+            .as_ref()
+            .map(|s| s.session_time_remaining_secs)
+            .unwrap_or(0);
+        let timer_color = if active && remaining <= 60 {
+            t.risk
+        } else if active && remaining <= 180 {
+            t.warn
+        } else {
+            t.muted
+        };
+        let timer = if active {
+            format!("{:02}:{:02}", remaining / 60, remaining % 60)
+        } else {
+            "LOCKED".into()
+        };
+        div()
+            .id("titlebar")
+            .debug_selector(|| "instrument-titlebar".to_string())
+            .h(px(40.))
+            .flex_shrink_0()
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(16.))
+            .bg(t.bg)
+            .border_b_1()
+            .border_color(t.line)
+            .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _cx| {
+                if event.click_count >= 2 {
+                    window.zoom_window();
+                } else {
+                    window.start_window_move();
+                }
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(14.))
+                    .child(dot_text(
+                        "VELA",
+                        DotStyle::new(1.8, t.violet).gradient(t.grad),
+                    ))
+                    .when(wide, |el| {
+                        el.child(div().h(px(12.)).w(px(1.)).bg(t.line2))
+                            .child(mono("Private vault", t.faint))
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(div().size(px(5.)).rounded_full().bg(if active {
+                                t.signal
+                            } else {
+                                t.faint
+                            }))
+                            .when(wide, |el| {
+                                el.child(mono(if active { "Unlocked" } else { "Locked" }, t.muted))
+                            })
+                            .when(active, |el| {
+                                el.child(
+                                    div()
+                                        .font_family(fonts::MONO)
+                                        .text_size(px(10.))
+                                        .text_color(timer_color)
+                                        .opacity(if remaining <= 60 {
+                                            animation::pulse_alpha(1.0)
+                                        } else {
+                                            1.
+                                        })
+                                        .child(timer),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("instrument-titlebar-lock")
+                            .debug_selector(|| "instrument-titlebar-lock".to_string())
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(28.))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(t.line2)
+                            .cursor_pointer()
+                            .hover(|el| el.bg(t.panel2).border_color(t.violet_line))
+                            .child(icon("lock", px(13.), t.muted))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.handle_lock(cx);
+                                }),
+                            ),
+                    )
+                    .child(div().h(px(14.)).w(px(1.)).bg(t.line))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            .child(window_button(
+                                &palette,
+                                "minimize",
+                                "remove",
+                                window,
+                                cx,
+                                false,
+                                |window| window.minimize_window(),
+                            ))
+                            .child(window_button(
+                                &palette,
+                                "maximize",
+                                "crop_square",
+                                window,
+                                cx,
+                                false,
+                                |window| window.zoom_window(),
+                            ))
+                            .child(window_button(
+                                &palette,
+                                "close",
+                                "close",
+                                window,
+                                cx,
+                                true,
+                                |window| window.remove_window(),
+                            )),
+                    ),
+            )
+    }
 }
 
 fn format_time(secs: u64) -> String {
@@ -141,6 +304,9 @@ fn format_time(secs: u64) -> String {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::instrument::is_instrument(cx) {
+            return self.render_instrument(window, cx).into_any_element();
+        }
         let palette = crate::theme::current_palette(cx);
         let show_labels = window.viewport_size().width >= px(640.);
         let show_badge = window.viewport_size().width >= px(900.);
@@ -350,6 +516,7 @@ impl Render for TitleBar {
                             )),
                     ),
             )
+            .into_any_element()
     }
 }
 
@@ -435,6 +602,7 @@ fn window_button(
         .items_center()
         .justify_center()
         .rounded_md()
+        .when(palette.instrument, |el| el.rounded_full())
         .bg(bg)
         .cursor_pointer()
         .on_hover(move |is_hovered, _, cx| {
@@ -450,12 +618,78 @@ fn window_button(
             cx.stop_propagation();
             action(window);
         })
-        .child(icon(icon_name, px(16.), icon_color))
+        .child(if palette.instrument {
+            crate::instrument::icons::icon(
+                match icon_name {
+                    "remove" => "minus",
+                    "crop_square" => "window",
+                    other => other,
+                },
+                px(14.),
+                icon_color,
+            )
+            .into_any_element()
+        } else {
+            icon(icon_name, px(16.), icon_color).into_any_element()
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn instrument_titlebar_fits_compact_windows_and_locks_the_session(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::modal_test_support as ui;
+        use gpui::{size, Modifiers};
+        let dir = tempfile::tempdir().unwrap();
+        let state = ui::state(&dir);
+        state.session.write().active = true;
+        cx.update(|cx| {
+            cx.set_global(crate::instrument::ActiveInterface(
+                crate::instrument::InterfaceMode::Instrument,
+            ))
+        });
+        let (bar, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            crate::clipboard::set_clear_seconds(cx, 30);
+            cx.observe_global::<crate::instrument::ActiveInterface>(|_, cx| cx.notify())
+                .detach();
+            TitleBar {
+                app_state: state.clone(),
+                session: None,
+                always_on_top: false,
+                _poll_task: Task::ready(()),
+                _pulse_task: Task::ready(()),
+            }
+        });
+        for width in [1280., 640., 390.] {
+            cx.simulate_resize(size(px(width), px(720.)));
+            cx.run_until_parked();
+            let bounds = ui::bounds(cx, "instrument-titlebar");
+            assert_eq!(bounds.size.height, px(40.));
+            let lock = ui::bounds(cx, "instrument-titlebar-lock");
+            assert!(lock.left() >= px(0.) && lock.right() <= px(width));
+            assert!(lock.bottom() <= bounds.bottom());
+        }
+        let lock = ui::bounds(cx, "instrument-titlebar-lock");
+        cx.simulate_click(lock.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            !state.session.read().active,
+            "title bar lock must still lock the actual session"
+        );
+        cx.update(|_, cx| {
+            cx.set_global(crate::instrument::ActiveInterface(
+                crate::instrument::InterfaceMode::Classic,
+            ))
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("instrument-titlebar").is_none());
+        bar.update(cx, |_, cx| cx.notify());
+    }
 
     #[test]
     fn format_time_renders_minutes_and_zero_padded_seconds() {

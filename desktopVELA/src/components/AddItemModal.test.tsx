@@ -7,7 +7,8 @@ import AddItemModal from './AddItemModal';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-beforeEach(() => vi.clearAllMocks());
+const legacyOrganization = {enabled:false,organization:{folders:[],tags:[],organizationTombstones:[]}};
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(invoke).mockImplementation(async command => command === 'get_organization' ? legacyOrganization : undefined); });
 
 describe('item editor interactions', () => {
   it('focuses the name field and lets Escape close the editor', () => {
@@ -21,7 +22,7 @@ describe('item editor interactions', () => {
 
   it('keeps an in-flight save open and submits only once', async () => {
     let finish!: () => void;
-    vi.mocked(invoke).mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    vi.mocked(invoke).mockImplementation(command => command === 'get_organization' ? Promise.resolve(legacyOrganization) : new Promise<void>(resolve => { finish = resolve; }));
     const onClose = vi.fn();
     const onSave = vi.fn();
     render(<AppProvider><AddItemModal onClose={onClose} onSave={onSave} /></AppProvider>);
@@ -30,7 +31,7 @@ describe('item editor interactions', () => {
     fireEvent.click(submit);
     fireEvent.click(submit);
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    expect(invoke).toHaveBeenCalledOnce();
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'add_item')).toHaveLength(1);
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
     await act(async () => finish());
@@ -40,7 +41,8 @@ describe('item editor interactions', () => {
 
   it('leaves entered values available for retry after a failed save', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.mocked(invoke).mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValueOnce(undefined);
+    const save=vi.fn().mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValueOnce(undefined);
+    vi.mocked(invoke).mockImplementation(command => command === 'get_organization' ? Promise.resolve(legacyOrganization) : save());
     const onClose = vi.fn();
     render(<AppProvider><AddItemModal onClose={onClose} onSave={vi.fn()} /></AppProvider>);
     fireEvent.change(screen.getByPlaceholderText('Item name'), { target: { value: 'Keep this draft' } });
@@ -50,6 +52,6 @@ describe('item editor interactions', () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Create Item' }));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledTimes(2);
   });
 });

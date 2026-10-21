@@ -2,6 +2,7 @@ package com.vela.android.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -35,6 +36,7 @@ typealias VelaThemeId = String
 
 object VelaThemes {
     const val VELA: VelaThemeId = "vela"
+    const val PAPER: VelaThemeId = "paper"
     const val MACCHIATO: VelaThemeId = "macchiato"
     const val LATTE: VelaThemeId = "latte"
     const val GRUVBOX: VelaThemeId = "gruvbox"
@@ -51,7 +53,8 @@ object VelaThemes {
     )
 
     val ALL: List<Meta> = listOf(
-        Meta(VELA, "VELA Dark", "Default obsidian look", true, listOf(0xFF121416, 0xFF1E2022, 0xFF73DB9A, 0xFF8B5CF6)),
+        Meta(VELA, "Night", "Instrument obsidian", true, listOf(0xFF0B0B10, 0xFF15151D, 0xFFD9F36A, 0xFFA28AFF)),
+        Meta(PAPER, "Paper", "Warm, quiet light", false, listOf(0xFFF7F6F2, 0xFFEEECE7, 0xFF5B6C13, 0xFF7455D3)),
         Meta(MACCHIATO, "Macchiato", "Catppuccin Macchiato", true, listOf(0xFF24273A, 0xFF363A4F, 0xFFA6DA95, 0xFFC6A0F6)),
         Meta(LATTE, "Latte", "Catppuccin Latte — light", false, listOf(0xFFEFF1F5, 0xFFDCE0E8, 0xFF40A02B, 0xFF8839EF)),
         Meta(GRUVBOX, "Gruvbox", "Retro groove, warm dark", true, listOf(0xFF282828, 0xFF3C3836, 0xFFB8BB26, 0xFFD3869B))
@@ -60,6 +63,7 @@ object VelaThemes {
     fun meta(id: VelaThemeId): Meta = ALL.first { it.id == id }
 
     fun palette(id: VelaThemeId): VelaPalette = when (id) {
+        PAPER -> VelaPalettes.Paper
         MACCHIATO -> VelaPalettes.Macchiato
         LATTE -> VelaPalettes.Latte
         GRUVBOX -> VelaPalettes.Gruvbox
@@ -155,11 +159,22 @@ fun VelaTheme(
     themeSetting: VelaThemeId? = null,
     content: @Composable () -> Unit
 ) {
-    val palette = resolveVelaPalette(themeSetting)
+    val base = resolveVelaPalette(themeSetting)
+    val palette = base.copy(Green = base.TextPrimary, GreenDark = base.SurfaceBase, GreenDim = base.SurfaceHigh)
     MaterialTheme(
         colorScheme = velaColorScheme(palette),
         typography = VelaTypography,
         shapes = VelaShapes,
-        content = { CompositionLocalProvider(LocalVelaPalette provides palette, content = content) }
+        // Plain `Text` outside a `Surface` would otherwise fall back to
+        // Material's black content colour, which disappears on dark themes.
+        content = {
+            CompositionLocalProvider(
+                LocalVelaPalette provides palette,
+                LocalContentColor provides palette.TextPrimary,
+            ) {
+                // In-window toasts for copy confirmations and quiet feedback.
+                com.vela.android.ui.components.InstrumentToastHost(content = content)
+            }
+        }
     )
 }

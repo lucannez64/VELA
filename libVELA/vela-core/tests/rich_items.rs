@@ -387,3 +387,19 @@ fn invalid_revision_and_tombstone_ids_fail_closed_during_merge() {
     });
     assert!(data.merged(&OrganizationData::default()).is_err());
 }
+
+#[test]
+fn mobile_identity_and_card_aliases_roundtrip_to_canonical_fields() {
+    use vela_core::vault::VaultItem;
+    let identity: VaultItem = serde_json::from_value(serde_json::json!({
+        "item_type":"identity", "id":"mobile", "name":"Identity", "firstName":"Alex", "lastName":"Demo", "ssn":""
+    })).unwrap();
+    let encoded = serde_json::to_value(identity).unwrap();
+    assert_eq!(encoded["first_name"], "Alex");
+    assert_eq!(encoded["last_name"], "Demo");
+    assert!(encoded.get("firstName").is_none());
+    let card: VaultItem = serde_json::from_value(serde_json::json!({
+        "item_type":"creditCard", "id":"mobile", "name":"Card", "number":"4242", "exp":"08/29", "cvv":"123", "cardholderName":"Alex Demo"
+    })).unwrap();
+    assert_eq!(serde_json::to_value(card).unwrap()["cardholder_name"], "Alex Demo");
+}

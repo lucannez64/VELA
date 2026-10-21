@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useApp, VaultItem, toBackendItem } from '../context/AppContext';
 import PasswordGenerator from './PasswordGenerator';
+import RichFieldsEditor from './RichFieldsEditor';
 
 interface Props {
   editItem?: VaultItem | null;
@@ -24,13 +25,17 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
   const handleClose = () => {
     if (!savingRef.current) onClose();
   };
-  const [itemType, setItemType] = useState<'login' | 'creditCard' | 'secureNote'>(
-    (editItem?.item_type === 'login' || editItem?.item_type === 'creditCard' || editItem?.item_type === 'secureNote') 
-      ? editItem.item_type 
+  const [itemType, setItemType] = useState<'login' | 'creditCard' | 'secureNote' | 'identity'>(
+    (editItem?.item_type === 'login' || editItem?.item_type === 'creditCard' || editItem?.item_type === 'secureNote' || editItem?.item_type === 'identity')
+      ? editItem.item_type
       : 'login'
   );
+  const [rich, setRich] = useState<Partial<VaultItem>>({...editItem});
   const [showPasswordGenerator, setShowPasswordGenerator] = useState(false);
   const [form, setForm] = useState({
+    firstName: editItem?.firstName || '',
+    lastName: editItem?.lastName || '',
+    ssn: editItem?.ssn || '',
     name: editItem?.name || '',
     username: editItem?.username || '',
     password: editItem?.password || '',
@@ -59,6 +64,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
     try {
       const now = new Date().toISOString();
       const baseItem: VaultItem = {
+        ...rich,
+        firstName: form.firstName, lastName: form.lastName, ssn: form.ssn,
         id: editItem?.id || '',
         name: form.name,
         item_type: itemType,
@@ -100,8 +107,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
       await onSave();
       onClose();
     } catch (e) {
-      console.error('Failed to save item:', e);
-      showToast('Failed to save item', 'error');
+
+      showToast(String(e), 'error');
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -151,17 +158,17 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
 
         {!editItem && (
           <div className="flex shrink-0 gap-2 p-4 border-b border-outline-variant/10">
-            {(['login', 'creditCard', 'secureNote'] as const).map(type => (
+            {(['login', 'creditCard', 'secureNote', 'identity'] as const).map(type => (
               <button
                 key={type}
                 onClick={() => setItemType(type)}
                 className={`flex-1 min-w-0 py-3 px-2 sm:px-4 rounded-xl font-label text-sm capitalize transition-colors ${
-                  itemType === type 
-                    ? 'bg-primary/10 text-primary border border-primary' 
+                  itemType === type
+                    ? 'bg-primary/10 text-primary border border-primary'
                     : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
                 }`}
               >
-                {type === 'creditCard' ? 'Card' : type === 'secureNote' ? 'Secure Note' : 'Login'}
+                {type === 'creditCard' ? 'Card' : type === 'secureNote' ? 'Secure Note' : type === 'identity' ? 'Identity' : 'Login'}
               </button>
             ))}
           </div>
@@ -213,7 +220,7 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
                       Generate
                     </button>
                     {showPasswordGenerator && (
-                      <PasswordGenerator 
+                      <PasswordGenerator
                         onSelect={handlePasswordSelect}
                         onClose={() => setShowPasswordGenerator(false)}
                       />
@@ -381,6 +388,8 @@ export default function AddItemModal({ editItem, onClose, onSave }: Props) {
               </>
             )}
 
+            {itemType === 'identity' && <div className="space-y-3">{(['firstName','lastName','ssn'] as const).map(key => <label key={key} className="block">{key === 'ssn' ? 'Identity number / SSN' : key === 'firstName' ? 'First name' : 'Last name'}<input className="w-full rounded-xl p-3 bg-surface-container-highest" type={key === 'ssn' ? 'password' : 'text'} value={form[key]} onChange={e => setForm(prev => ({...prev,[key]:e.target.value}))}/></label>)}</div>}
+            <RichFieldsEditor value={{...rich,item_type:itemType}} onChange={patch => setRich(prev => ({...prev,...patch}))}/>
             {itemType === 'secureNote' && (
               <div>
                 <label className="block text-xs font-label uppercase tracking-widest text-outline mb-2">Content</label>

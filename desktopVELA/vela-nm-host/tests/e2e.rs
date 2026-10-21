@@ -129,8 +129,20 @@ fn the_real_host_meets_the_real_gate() {
     // Desktop side: hermetic store, vault unlocked, IPC server listening on
     // the well-known per-user endpoint.
     let dir = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        let runtime = dir.path().join("runtime");
+        std::fs::create_dir(&runtime).unwrap();
+        std::env::set_var("XDG_RUNTIME_DIR", runtime);
+    }
     let state = Arc::new(AppState::for_test(dir.path()));
     state.unlock_for_test(&vela_desktop_core::crypto::Crypto::generate_rms());
+    for item in [
+        json!({"item_type":"identity", "id":"identity1", "name":"Ada", "first_name":"Ada", "last_name":"Lovelace", "ssn":"SECRET-SSN", "notes":"PRIVATE-NOTE", "identityDetails":{"email":"ada@example.test", "addresses":[{"id":"00000000-0000-0000-0000-000000000001", "line1":"12 Computing Lane", "countryCode":"GB", "privateExtra":"PRIVATE-EXTRA"}]}}),
+        json!({"item_type":"creditCard", "id":"card1", "name":"Visa", "number":"4111111111111111", "exp":"12/29", "cvv":"123", "pin":"SECRET-PIN", "cardholder_name":"Ada Lovelace"}),
+    ] {
+        state.vault.write().add_item(serde_json::from_value(item).unwrap());
+    }
     let host: Arc<dyn Host> = Arc::new(NopHost(state));
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -185,6 +197,40 @@ fn the_real_host_meets_the_real_gate() {
         let response = read_frame(&mut stdout).expect("second exchange");
         assert_eq!(response["success"], false, "{response}");
         assert_eq!(response["error"], "Not implemented");
+
+        // Exercise the real card and identity release paths, including the
+        // native host's whitelist, through browser framing and desktop IPC.
+        for (action, key) in [("getCards", "cards"), ("getIdentities", "identities")] {
+            stdin.write_all(&frame(&json!({"action":action, "url":"https://shop.example/checkout", "userInitiated":false}))).unwrap();
+            let metadata = read_frame(&mut stdout).expect("metadata response");
+            assert_eq!(metadata["success"], true, "{metadata}");
+            assert_eq!(metadata[key].as_array().unwrap().len(), 1);
+            let rendered = metadata.to_string();
+            for secret in ["4111111111111111", "ada@example.test", "12 Computing Lane", "SECRET-PIN", "SECRET-SSN", "PRIVATE-NOTE", "PRIVATE-EXTRA"] {
+                assert!(!rendered.contains(secret), "metadata leaked a sensitive field: {rendered}");
+            }
+            if key == "cards" {
+                assert_eq!(metadata[key][0]["last4"], "1111");
+                assert!(metadata[key][0]["cvv"].is_null());
+            } else {
+                assert_eq!(metadata[key][0]["addresses"].as_array().unwrap().len(), 1);
+                assert!(metadata[key][0]["addresses"][0].get("line1").is_none());
+            }
+            stdin.write_all(&frame(&json!({"action":action, "url":"https://shop.example/checkout"}))).unwrap();
+            let response = read_frame(&mut stdout).expect("credential response");
+            assert_eq!(response["success"], true, "{response}");
+            assert_eq!(response[key].as_array().unwrap().len(), 1);
+            let rendered = response.to_string();
+            for secret in ["SECRET-PIN", "SECRET-SSN", "PRIVATE-NOTE", "PRIVATE-EXTRA"] {
+                assert!(!rendered.contains(secret), "unexpected sensitive field: {rendered}");
+            }
+            if key == "identities" {
+                assert_eq!(response[key][0]["email"], "ada@example.test");
+                assert_eq!(response[key][0]["addresses"][0]["countryCode"], "GB");
+            } else {
+                assert_eq!(response[key][0]["number"], "4111111111111111");
+            }
+        }
 
         drop(stdin);
         let _ = child.wait();
