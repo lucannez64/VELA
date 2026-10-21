@@ -662,6 +662,7 @@ impl AndroidClient {
             favorite: false,
             shared: false,
             share_recipient: None,
+            rich: Default::default(),
         };
         self.vault.add_item(VaultItem::Login {
             meta,
