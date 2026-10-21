@@ -186,7 +186,7 @@ struct SyncEngine {
         }
 
         // ── 2. Merge (tombstone-aware) and persist locally.
-        let merged = VaultMerge.mergeStores(local: localStore, remote: remoteStore)
+        let merged = try VaultMerge.mergeStores(local: localStore, remote: remoteStore)
         try repo.save(merged, rms: rms)
 
         // ── 3. Push when the vault changed, or to migrate off a legacy layout.

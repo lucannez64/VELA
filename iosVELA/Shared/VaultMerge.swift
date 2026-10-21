@@ -12,7 +12,7 @@ enum VaultMerge {
     /// 30-day prune; long enough for any realistic offline device to catch up).
     static let tombstoneRetentionDays = 30
 
-    static func mergeStores(local: VaultStore, remote: VaultStore) -> VaultStore {
+    static func mergeStores(local: VaultStore, remote: VaultStore) throws -> VaultStore {
         var tombstoneByID: [String: Tombstone] = [:]
         for tombstone in local.tombstones + remote.tombstones {
             if let existing = tombstoneByID[tombstone.id] {
@@ -42,7 +42,23 @@ enum VaultMerge {
         }
         local.items.forEach(apply)
         remote.items.forEach(apply)
-        let organization = mergeOrganization(local: local, remote: remote)
+        let organization = try mergeOrganization(local: local, remote: remote)
+        let organizationObject: [String: Any] = [
+            "folders": organization.folders.map { $0.anyValue },
+            "tags": organization.tags.map { $0.anyValue },
+            "organizationTombstones": organization.tombstones.map { $0.anyValue },
+        ]
+        if max(local.schemaVersion, remote.schemaVersion) >= 2 {
+            for id in Array(mergedItems.keys) {
+                guard var item = mergedItems[id] else { continue }
+                let repaired = try VelaCoreFFI.richItems([
+                    "operation": "repair", "organization": organizationObject, "rich": item.richObject,
+                ])
+                item.folderId = repaired["folderId"] as? String
+                item.tagIds = repaired["tagIds"] as? [String]
+                mergedItems[id] = item
+            }
+        }
 
         return VaultStore(
             items: mergedItems.values.sorted {
@@ -59,35 +75,26 @@ enum VaultMerge {
         )
     }
 
-    /// Folders and tags merge in the core (same rules as Android and desktop:
-    /// revisions, tombstones, Unicode-normalised names). Falls back to the
-    /// newer side's arrays only if the core rejects the input.
-    static func mergeOrganization(local: VaultStore, remote: VaultStore)
+    /// Merge failures abort sync: choosing one side would discard valid edits.
+    static func mergeOrganization(local: VaultStore, remote: VaultStore) throws
         -> (folders: [PreservedJSON], tags: [PreservedJSON], tombstones: [PreservedJSON]) {
         guard local.schemaVersion >= 2 || remote.schemaVersion >= 2 else {
             return (local.folders, local.tags, local.organizationTombstones)
         }
-        func object(_ store: VaultStore) -> [String: Any] {
-            ["folders": store.folders.map { $0.anyValue },
-             "tags": store.tags.map { $0.anyValue },
-             "organizationTombstones": store.organizationTombstones.map { $0.anyValue }]
+        let merged = try VelaCoreFFI.richItems([
+            "operation": "merge", "organization": local.organizationObject,
+            "other": remote.organizationObject,
+        ])
+        func list(_ key: String) -> [PreservedJSON] {
+            ((merged[key] as? [Any]) ?? []).compactMap { PreservedJSON(any: $0) }
         }
-        do {
-            let merged = try VelaCoreFFI.richItems(["operation": "merge", "organization": object(local), "other": object(remote)])
-            func list(_ key: String) -> [PreservedJSON] {
-                ((merged[key] as? [Any]) ?? []).compactMap { PreservedJSON(any: $0) }
-            }
-            return (list("folders"), list("tags"), list("organizationTombstones"))
-        } catch {
-            let newer = remote.schemaVersion >= 2 ? remote : local
-            return (newer.folders, newer.tags, newer.organizationTombstones)
-        }
+        return (list("folders"), list("tags"), list("organizationTombstones"))
     }
 
     /// Item-only convenience (used by tests and callers that carry no
     /// tombstones locally).
-    static func merge(local: [VaultItem], remote: [VaultItem]) -> [VaultItem] {
-        mergeStores(local: VaultStore(items: local), remote: VaultStore(items: remote)).items
+    static func merge(local: [VaultItem], remote: [VaultItem]) throws -> [VaultItem] {
+        try mergeStores(local: VaultStore(items: local), remote: VaultStore(items: remote)).items
     }
 
     static func isNewer(_ a: String, than b: String) -> Bool {

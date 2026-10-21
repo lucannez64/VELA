@@ -31,6 +31,33 @@ final class RichItemsTests: XCTestCase {
         XCTAssertNotNil(item?["futureKey"])
     }
 
+    func testMissingMetadataFlagsUseCoreDefaults() throws {
+        let store = try JSONDecoder().decode(VaultStore.self, from: Data(json.utf8))
+        XCTAssertFalse(store.items[0].favorite)
+        XCTAssertFalse(store.items[0].shared)
+        // Malformed flags are rejected instead of silently changing their meaning.
+        let malformed = json.replacingOccurrences(of: "\"name\":\"Site\"", with: "\"name\":\"Site\",\"favorite\":\"yes\"")
+        XCTAssertThrowsError(try JSONDecoder().decode(VaultStore.self, from: Data(malformed.utf8)))
+    }
+
+    func testInvalidOrganizationAbortsMerge() {
+        let invalid = VaultStore(items: [], schemaVersion: 2, folders: [.object(["id": .string("broken")])])
+        XCTAssertThrowsError(try VaultMerge.mergeStores(local: invalid, remote: VaultStore(items: [])))
+    }
+
+    func testMergeRepairsDeletedAssignmentsWithoutChangingSecrets() throws {
+        let folderID = UUID().uuidString.lowercased()
+        let tagID = UUID().uuidString.lowercased()
+        var item = VaultItem.newLogin(name: "Example", url: "https://example.test", username: "a", password: "secret", totp: nil)
+        item.folderId = folderID
+        item.tagIds = [tagID]
+        let store = VaultStore(items: [item], schemaVersion: 2)
+        let merged = try VaultMerge.mergeStores(local: store, remote: VaultStore(items: [], schemaVersion: 2))
+        XCTAssertEqual(merged.items.first?.folderId, "")
+        XCTAssertEqual(merged.items.first?.tagIds, [])
+        XCTAssertEqual(merged.items.first?.password, "secret")
+    }
+
     func testCustomFieldKeepsExtraProperties() {
         let record = PreservedJSON.object([
             "id": .string(UUID().uuidString.lowercased()), "label": .string("PIN"),
@@ -60,7 +87,7 @@ final class RichItemsTests: XCTestCase {
                                              "action": ["operation": "createFolder", "name": "Work"]])
         let local = VaultStore(items: [], schemaVersion: 2,
                                folders: ((org["folders"] as? [Any]) ?? []).compactMap { PreservedJSON(any: $0) })
-        let merged = VaultMerge.mergeStores(local: local, remote: VaultStore(items: [], schemaVersion: 2))
+        let merged = try VaultMerge.mergeStores(local: local, remote: VaultStore(items: [], schemaVersion: 2))
         XCTAssertEqual(VaultOrganization(store: merged).folders.map(\.name), ["Work"])
     }
 }

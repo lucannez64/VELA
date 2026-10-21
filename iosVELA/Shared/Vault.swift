@@ -385,3 +385,110 @@ enum VaultClock {
         ISO8601DateFormatter().string(from: Date())
     }
 }
+
+// Decode wire defaults explicitly; Swift stored-property defaults are not
+// applied by synthesized Decodable when an older client omits a key.
+extension VaultItem {
+    enum CodingKeys: String, CodingKey {
+        case folderId
+        case tagIds
+        case customFields
+        case additionalUrls
+        case identityDetails
+        case firstName
+        case lastName
+        case ssn
+        case rp_id
+        case rp_name
+        case credential_id
+        case user_handle
+        case user_name
+        case user_display_name
+        case private_key
+        case sign_count
+        case credential_change_needs_reauth
+        case allow_second_factor_downgrade
+        case item_type
+        case id
+        case name
+        case notes
+        case createdAt
+        case updatedAt
+        case lastModifiedDevice
+        case favorite
+        case shared
+        case shareRecipient
+        case url
+        case username
+        case password
+        case totp
+        case app_ids
+        case number
+        case exp
+        case cvv
+        case pin
+        case cardholderName
+        case title
+        case content
+        case filename
+        case mime
+        case chunks
+        case sizeBytes
+        case email
+        case checkedAt
+        case breachCount
+        case breaches
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        folderId = try c.decodeIfPresent(String.self, forKey: .folderId)
+        tagIds = try c.decodeIfPresent([String].self, forKey: .tagIds)
+        customFields = try c.decodeIfPresent([PreservedJSON].self, forKey: .customFields)
+        additionalUrls = try c.decodeIfPresent([PreservedJSON].self, forKey: .additionalUrls)
+        identityDetails = try c.decodeIfPresent(PreservedJSON.self, forKey: .identityDetails)
+        firstName = try c.decodeIfPresent(String.self, forKey: .firstName)
+        lastName = try c.decodeIfPresent(String.self, forKey: .lastName)
+        ssn = try c.decodeIfPresent(String.self, forKey: .ssn)
+        rp_id = try c.decodeIfPresent(String.self, forKey: .rp_id)
+        rp_name = try c.decodeIfPresent(String.self, forKey: .rp_name)
+        credential_id = try c.decodeIfPresent(String.self, forKey: .credential_id)
+        user_handle = try c.decodeIfPresent(String.self, forKey: .user_handle)
+        user_name = try c.decodeIfPresent(String.self, forKey: .user_name)
+        user_display_name = try c.decodeIfPresent(String.self, forKey: .user_display_name)
+        private_key = try c.decodeIfPresent(String.self, forKey: .private_key)
+        sign_count = try c.decodeIfPresent(UInt64.self, forKey: .sign_count)
+        credential_change_needs_reauth = try c.decodeIfPresent(Bool.self, forKey: .credential_change_needs_reauth)
+        allow_second_factor_downgrade = try c.decodeIfPresent(Bool.self, forKey: .allow_second_factor_downgrade)
+        item_type = try c.decodeIfPresent(String.self, forKey: .item_type) ?? "login"
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+        lastModifiedDevice = try c.decodeIfPresent(String.self, forKey: .lastModifiedDevice)
+        favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        shared = try c.decodeIfPresent(Bool.self, forKey: .shared) ?? false
+        shareRecipient = try c.decodeIfPresent(String.self, forKey: .shareRecipient)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        username = try c.decodeIfPresent(String.self, forKey: .username)
+        password = try c.decodeIfPresent(String.self, forKey: .password)
+        totp = try c.decodeIfPresent(String.self, forKey: .totp)
+        app_ids = try c.decodeIfPresent([String].self, forKey: .app_ids)
+        number = try c.decodeIfPresent(String.self, forKey: .number)
+        exp = try c.decodeIfPresent(String.self, forKey: .exp)
+        cvv = try c.decodeIfPresent(String.self, forKey: .cvv)
+        pin = try c.decodeIfPresent(String.self, forKey: .pin)
+        cardholderName = try c.decodeIfPresent(String.self, forKey: .cardholderName)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        content = try c.decodeIfPresent(String.self, forKey: .content)
+        filename = try c.decodeIfPresent(String.self, forKey: .filename)
+        mime = try c.decodeIfPresent(String.self, forKey: .mime)
+        chunks = try c.decodeIfPresent([String].self, forKey: .chunks)
+        sizeBytes = try c.decodeIfPresent(Int.self, forKey: .sizeBytes)
+        email = try c.decodeIfPresent(String.self, forKey: .email)
+        checkedAt = try c.decodeIfPresent(String.self, forKey: .checkedAt)
+        breachCount = try c.decodeIfPresent(Int.self, forKey: .breachCount)
+        breaches = try c.decodeIfPresent([BreachEntry].self, forKey: .breaches)
+    }
+}

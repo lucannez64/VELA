@@ -132,22 +132,22 @@ final class Phase4Tests: XCTestCase {
 
     // MARK: Merge
 
-    func testMergePrefersNewerUpdatedAt() {
+    func testMergePrefersNewerUpdatedAt() throws {
         var older = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "old", password: "p", totp: nil)
         older.updatedAt = "2026-01-01T00:00:00Z"
         var newer = older
         newer.username = "new"
         newer.updatedAt = "2026-06-01T00:00:00Z"
 
-        let merged = VaultMerge.merge(local: [older], remote: [newer])
+        let merged = try VaultMerge.merge(local: [older], remote: [newer])
         XCTAssertEqual(merged.count, 1)
         XCTAssertEqual(merged.first?.username ?? "", "new")
     }
 
-    func testMergeUnionsDistinctItems() {
+    func testMergeUnionsDistinctItems() throws {
         let a = VaultItem.newLogin(name: "A", url: "https://a.com", username: "a", password: "p", totp: nil)
         let b = VaultItem.newLogin(name: "B", url: "https://b.com", username: "b", password: "p", totp: nil)
-        let merged = VaultMerge.merge(local: [a], remote: [b])
+        let merged = try VaultMerge.merge(local: [a], remote: [b])
         XCTAssertEqual(Set(merged.map { $0.name }), ["A", "B"])
     }
 
@@ -159,27 +159,27 @@ final class Phase4Tests: XCTestCase {
         iso.string(from: Date().addingTimeInterval(-daysAgo * 86_400))
     }
 
-    func testTombstoneSuppressesStaleRemoteCopy() {
+    func testTombstoneSuppressesStaleRemoteCopy() throws {
         // Deleted locally; the server still serves an older copy. The merge
         // must not resurrect it (deletions used to vanish on the next sync).
         var item = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "u", password: "p", totp: nil)
         item.updatedAt = Self.stamp(daysAgo: 10)
         let tombstone = Tombstone(id: item.id, deletedAt: Self.stamp(daysAgo: 5))
 
-        let merged = VaultMerge.mergeStores(
+        let merged = try VaultMerge.mergeStores(
             local: VaultStore(items: [], tombstones: [tombstone]),
             remote: VaultStore(items: [item]))
         XCTAssertTrue(merged.items.isEmpty, "deleted item must stay deleted")
         XCTAssertEqual(merged.tombstones.count, 1, "the tombstone must be retained for propagation")
     }
 
-    func testNewerEditBeatsOlderTombstone() {
+    func testNewerEditBeatsOlderTombstone() throws {
         // Edited elsewhere *after* this device deleted it — the edit wins.
         var item = VaultItem.newLogin(name: "GitHub", url: "https://github.com", username: "edited", password: "p", totp: nil)
         item.updatedAt = Self.stamp(daysAgo: 1)
         let tombstone = Tombstone(id: item.id, deletedAt: Self.stamp(daysAgo: 5))
 
-        let merged = VaultMerge.mergeStores(
+        let merged = try VaultMerge.mergeStores(
             local: VaultStore(items: [], tombstones: [tombstone]),
             remote: VaultStore(items: [item]))
         XCTAssertEqual(merged.items.first?.username, "edited")

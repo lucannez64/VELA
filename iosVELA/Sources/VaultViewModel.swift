@@ -156,43 +156,39 @@ final class VaultViewModel: ObservableObject {
     }
 
     func addLogin(name: String, url: String, username: String, password: String, totp: String?) {
-        items.append(VaultItem.newLogin(name: name, url: url, username: username, password: password, totp: totp))
-        persist()
+        add(VaultItem.newLogin(name: name, url: url, username: username, password: password, totp: totp))
     }
 
-    /// Add any item kind (login / card / note). Returns false (and sets
-    /// `errorMessage`) when the core rejects the item's richer fields.
     @discardableResult
     func add(_ item: VaultItem) -> Bool {
-        guard checkWritable(item, old: nil) else { return false }
-        items.append(item)
-        persist()
+        guard checkWritable(item, old: nil), !items.contains(where: { $0.id == item.id }) else { return false }
+        var next = currentStore
+        next.items.append(item)
+        do { try commit(next) } catch { errorMessage = "Couldn't save the vault."; return false }
         AuditLog.shared.record("item_added", item.kind.displayName)
         return true
     }
 
-    /// Replace an existing item by id, stamping `updatedAt`.
     @discardableResult
     func update(_ item: VaultItem) -> Bool {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return false }
         guard checkWritable(item, old: items[index]) else { return false }
         let updated = item.touched()
-        items[index] = updated
-        persist()
+        var next = currentStore
+        next.items[index] = updated
+        do { try commit(next) } catch { errorMessage = "Couldn't save the vault."; return false }
         AuditLog.shared.record("item_updated", item.name)
-        if let onItemUpdated = onItemUpdated {
-            Task { await onItemUpdated(updated) }
-        }
+        if let onItemUpdated = onItemUpdated { Task { await onItemUpdated(updated) } }
         return true
     }
 
     func delete(_ item: VaultItem) {
-        items.removeAll { $0.id == item.id }
-        // Record the deletion so sync propagates it instead of resurrecting
-        // the item from another device's (or the server's) copy.
-        tombstones.removeAll { $0.id == item.id }
-        tombstones.append(Tombstone(id: item.id, deletedAt: VaultClock.nowISO8601()))
-        persist()
+        var next = currentStore
+        next.items.removeAll { $0.id == item.id }
+        next.unknownItemKeys.removeValue(forKey: item.id)
+        next.tombstones.removeAll { $0.id == item.id }
+        next.tombstones.append(Tombstone(id: item.id, deletedAt: VaultClock.nowISO8601()))
+        do { try commit(next) } catch { errorMessage = "Couldn't save the vault."; return }
         AuditLog.shared.record("item_deleted")
     }
 
@@ -231,8 +227,18 @@ final class VaultViewModel: ObservableObject {
     func enableCollections() throws {
         guard envelope.schemaVersion < 2 else { return }
         _ = try VelaCoreFFI.richItems(["operation": "capabilities"])
-        envelope.schemaVersion = 2
-        persist()
+        guard let r = rms, lockState == .unlocked else {
+            throw NSError(domain: "VELA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unlock the vault first."])
+        }
+        // Keep an encrypted snapshot before the first schema-2 write.
+        try repo.save(currentStore, rms: r)
+        let backup = repo.directory.appendingPathComponent("vault.before-rich-items.enc")
+        if !FileManager.default.fileExists(atPath: backup.path) {
+            try FileManager.default.copyItem(at: repo.directory.appendingPathComponent("vault.enc"), to: backup)
+        }
+        var next = currentStore
+        next.schemaVersion = 2
+        try commit(next)
         AuditLog.shared.record("collections_enabled")
     }
 
@@ -277,28 +283,26 @@ final class VaultViewModel: ObservableObject {
         func list(_ key: String) -> [PreservedJSON] {
             ((result[key] as? [Any]) ?? []).compactMap { PreservedJSON(any: $0) }
         }
-        var next = envelope
+        var next = currentStore
         next.folders = list("folders")
         next.tags = list("tags")
         next.organizationTombstones = list("organizationTombstones")
-        envelope = next
-
         let now = VaultClock.nowISO8601()
-        for index in items.indices where items[index].folderId != nil || items[index].tagIds != nil {
+        for index in next.items.indices where next.items[index].folderId != nil || next.items[index].tagIds != nil {
             let repaired = try VelaCoreFFI.richItems([
                 "operation": "repair",
-                "organization": envelope.organizationObject,
-                "rich": items[index].richObject,
+                "organization": next.organizationObject,
+                "rich": next.items[index].richObject,
             ])
             let folder = repaired["folderId"] as? String
             let tags = repaired["tagIds"] as? [String]
-            if folder != items[index].folderId || tags != items[index].tagIds {
-                items[index].folderId = folder
-                items[index].tagIds = tags
-                items[index].updatedAt = now
+            if folder != next.items[index].folderId || tags != next.items[index].tagIds {
+                next.items[index].folderId = folder
+                next.items[index].tagIds = tags
+                next.items[index].updatedAt = now
             }
         }
-        persist()
+        try commit(next)
     }
 
     /// Lock the vault: drop the in-memory RMS and items, return to the unlock screen.
@@ -391,6 +395,18 @@ final class VaultViewModel: ObservableObject {
         items = merged.items
         tombstones = merged.tombstones
         persist(notifyLocalChange: false)
+    }
+
+    /// Publish only after encryption and atomic disk persistence succeed.
+    private func commit(_ candidate: VaultStore, notifyLocalChange: Bool = true) throws {
+        guard let r = rms, lockState == .unlocked else {
+            throw NSError(domain: "VELA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unlock the vault first."])
+        }
+        try repo.save(candidate, rms: r)
+        envelope = candidate
+        items = candidate.items
+        tombstones = candidate.tombstones
+        if notifyLocalChange { onLocalChange?() }
     }
 
     private func persist(notifyLocalChange: Bool = true) {
