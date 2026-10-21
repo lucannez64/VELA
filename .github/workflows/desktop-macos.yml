@@ -80,6 +80,15 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: desktopVELA
+          # Tauri hides bundle_dmg.sh stdout/stderr at the default log level.
+          args: --verbose
+
+      - name: Diagnose failed macOS packaging
+        if: failure()
+        run: |
+          df -h
+          hdiutil info
+          ls -la target/release/bundle/macos target/release/bundle/dmg || true
 
       # Launch the built app on the runner, screenshot it, and confirm it didn't
       # crash on startup. The screenshot is uploaded so the UI can be eyeballed.
