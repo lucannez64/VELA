@@ -64,6 +64,19 @@ enum DemoVault {
             gist.url = "https://gist.github.com"
             github.additionalUrls = [gist.record]
             vm.update(github)
+            let now = VaultClock.nowISO8601()
+            var identity = VaultItem(firstName: "Alex", lastName: "Demo", ssn: "",
+                                     item_type: "identity", id: UUID().uuidString, name: "Personal identity",
+                                     createdAt: now, updatedAt: now)
+            identity.identityDetails = .object([
+                "email": .string("alex@example.test"), "company": .string("Example Studio"),
+                "addresses": .array([.object([
+                    "id": .string(UUID().uuidString.lowercased()), "label": .string("Home"),
+                    "line1": .string("10 Example Street"), "city": .string("Paris"),
+                    "postalCode": .string("75001"), "countryCode": .string("FR"),
+                ])]),
+            ])
+            vm.add(identity)
         } catch {
             vm.errorMessage = error.localizedDescription
         }

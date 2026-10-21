@@ -200,6 +200,9 @@ enum ItemKind: String, CaseIterable, Identifiable {
     case secureNote
     case fileBlob
     case breachMonitor
+    case identity
+    case passkey
+    case unsupported
 
     var id: String { rawValue }
 
@@ -210,6 +213,9 @@ enum ItemKind: String, CaseIterable, Identifiable {
         case .secureNote: return "Note"
         case .fileBlob: return "File"
         case .breachMonitor: return "Breach Monitor"
+        case .identity: return "Identity"
+        case .passkey: return "Passkey"
+        case .unsupported: return "Item"
         }
     }
 
@@ -220,11 +226,14 @@ enum ItemKind: String, CaseIterable, Identifiable {
         case .secureNote: return "note.text"
         case .fileBlob: return "doc.fill"
         case .breachMonitor: return "shield.lefthalf.filled"
+        case .identity: return "person.fill"
+        case .passkey: return "key.fill"
+        case .unsupported: return "doc.fill"
         }
     }
 
     /// The kinds the user can create/edit on iOS.
-    static var creatable: [ItemKind] { [.login, .creditCard, .secureNote] }
+    static var creatable: [ItemKind] { [.login, .creditCard, .secureNote, .identity] }
 }
 
 /// A single breach record inside a BreachMonitor item. Snake_case wire keys
@@ -320,12 +329,12 @@ struct VaultItem: Codable, Identifiable, Equatable {
     var breachCount: Int?
     var breaches: [BreachEntry]?
 
-    var kind: ItemKind { ItemKind(rawValue: item_type) ?? .login }
+    var kind: ItemKind { ItemKind(rawValue: item_type) ?? .unsupported }
 
     /// Every JSON key this struct models (property names are the wire keys).
     static let knownKeys: Set<String> = {
         let sample = VaultItem(id: "", name: "", createdAt: "", updatedAt: "")
-        return Set(Mirror(reflecting: sample).children.compactMap { $0.label })
+        return Set(Mirror(reflecting: sample).children.compactMap { $0.label }).union(["first_name", "last_name"])
     }()
 
     /// Secondary text for list rows / autofill, by type.
@@ -336,6 +345,9 @@ struct VaultItem: Codable, Identifiable, Equatable {
         case .secureNote: return "Secure note"
         case .fileBlob: return filename ?? "File"
         case .breachMonitor: return email ?? "Breach monitor"
+        case .identity: return [firstName, lastName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
+        case .passkey: return user_name ?? rp_id ?? "Passkey"
+        case .unsupported: return "Update VELA to view this item"
         }
     }
 
@@ -389,14 +401,15 @@ enum VaultClock {
 // Decode wire defaults explicitly; Swift stored-property defaults are not
 // applied by synthesized Decodable when an older client omits a key.
 extension VaultItem {
+    private enum LegacyIdentityKeys: String, CodingKey { case firstName, lastName }
     enum CodingKeys: String, CodingKey {
         case folderId
         case tagIds
         case customFields
         case additionalUrls
         case identityDetails
-        case firstName
-        case lastName
+        case firstName = "first_name"
+        case lastName = "last_name"
         case ssn
         case rp_id
         case rp_name
@@ -447,8 +460,9 @@ extension VaultItem {
         customFields = try c.decodeIfPresent([PreservedJSON].self, forKey: .customFields)
         additionalUrls = try c.decodeIfPresent([PreservedJSON].self, forKey: .additionalUrls)
         identityDetails = try c.decodeIfPresent(PreservedJSON.self, forKey: .identityDetails)
-        firstName = try c.decodeIfPresent(String.self, forKey: .firstName)
-        lastName = try c.decodeIfPresent(String.self, forKey: .lastName)
+        let legacy = try decoder.container(keyedBy: LegacyIdentityKeys.self)
+        firstName = try c.decodeIfPresent(String.self, forKey: .firstName) ?? legacy.decodeIfPresent(String.self, forKey: .firstName)
+        lastName = try c.decodeIfPresent(String.self, forKey: .lastName) ?? legacy.decodeIfPresent(String.self, forKey: .lastName)
         ssn = try c.decodeIfPresent(String.self, forKey: .ssn)
         rp_id = try c.decodeIfPresent(String.self, forKey: .rp_id)
         rp_name = try c.decodeIfPresent(String.self, forKey: .rp_name)

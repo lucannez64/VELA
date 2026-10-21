@@ -32,7 +32,7 @@ struct VaultScreen: View {
     private static let types: [TypeChip] = [
         TypeChip(type: nil, label: "All"), TypeChip(type: "login", label: "Logins"),
         TypeChip(type: "creditCard", label: "Cards"), TypeChip(type: "secureNote", label: "Notes"),
-        TypeChip(type: "passkey", label: "Passkeys"),
+        TypeChip(type: "passkey", label: "Passkeys"), TypeChip(type: "identity", label: "Identities"),
     ]
 
     private var attention: Set<String> { items.accountsNeedingAttention }
@@ -43,7 +43,7 @@ struct VaultScreen: View {
         return items.filter { item in
             let matches = q.isEmpty
                 || item.name.localizedCaseInsensitiveContains(q)
-                || (item.username ?? "").localizedCaseInsensitiveContains(q)
+                || item.subtitle.localizedCaseInsensitiveContains(q)
                 || (item.url ?? "").localizedCaseInsensitiveContains(q)
             let typeOK = type == nil || item.item_type == type
             let scopeOK: Bool

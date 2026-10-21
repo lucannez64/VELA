@@ -25,23 +25,29 @@ enum VaultMerge {
         }
 
         var mergedItems: [String: VaultItem] = [:]
+        var unknownByID: [String: [String: PreservedJSON]] = [:]
         // Insertion order matters only for stable output; items are sorted below.
-        func apply(_ item: VaultItem) {
+        func apply(_ item: VaultItem, unknown: [String: PreservedJSON]) {
             if let tombstone = tombstoneByID[item.id],
                isNewerOrEqual(tombstone.deletedAt, than: item.updatedAt) {
                 mergedItems.removeValue(forKey: item.id)
+                unknownByID.removeValue(forKey: item.id)
                 return
             }
             if let existing = mergedItems[item.id] {
                 if isNewerOrEqual(item.updatedAt, than: existing.updatedAt) {
                     mergedItems[item.id] = item
+                    unknownByID[item.id] = (unknownByID[item.id] ?? [:]).merging(unknown) { _, winner in winner }
+                } else {
+                    unknownByID[item.id] = unknown.merging(unknownByID[item.id] ?? [:]) { _, winner in winner }
                 }
             } else {
                 mergedItems[item.id] = item
+                unknownByID[item.id] = unknown
             }
         }
-        local.items.forEach(apply)
-        remote.items.forEach(apply)
+        local.items.forEach { apply($0, unknown: local.unknownItemKeys[$0.id] ?? [:]) }
+        remote.items.forEach { apply($0, unknown: remote.unknownItemKeys[$0.id] ?? [:]) }
         let organization = try mergeOrganization(local: local, remote: remote)
         let organizationObject: [String: Any] = [
             "folders": organization.folders.map { $0.anyValue },
@@ -69,9 +75,7 @@ enum VaultMerge {
             folders: organization.folders,
             tags: organization.tags,
             organizationTombstones: organization.tombstones,
-            unknownItemKeys: local.unknownItemKeys
-                .merging(remote.unknownItemKeys) { _, newer in newer }
-                .filter { mergedItems[$0.key] != nil }
+            unknownItemKeys: unknownByID.filter { !$0.value.isEmpty && mergedItems[$0.key] != nil }
         )
     }
 

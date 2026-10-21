@@ -58,6 +58,26 @@ final class RichItemsTests: XCTestCase {
         XCTAssertEqual(merged.items.first?.password, "secret")
     }
 
+    func testIdentityWireNamesAndItemKinds() throws {
+        let raw = """
+        {"item_type":"identity","id":"identity-1","name":"Alex","createdAt":"2026-01-01T00:00:00Z",
+         "updatedAt":"2026-01-01T00:00:00Z","first_name":"Alex","last_name":"Demo","ssn":""}
+        """
+        let item = try JSONDecoder().decode(VaultItem.self, from: Data(raw.utf8))
+        XCTAssertEqual(item.kind, .identity)
+        XCTAssertEqual(item.firstName, "Alex")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(item)) as? [String: Any])
+        XCTAssertEqual(object["first_name"] as? String, "Alex")
+        XCTAssertNil(object["firstName"])
+        let legacy = raw.replacingOccurrences(of: "first_name", with: "firstName").replacingOccurrences(of: "last_name", with: "lastName")
+        XCTAssertEqual(try JSONDecoder().decode(VaultItem.self, from: Data(legacy.utf8)).firstName, "Alex")
+        var future = item
+        future.item_type = "future-item"
+        XCTAssertEqual(future.kind, .unsupported)
+        future.item_type = "passkey"
+        XCTAssertEqual(future.kind, .passkey)
+    }
+
     func testCustomFieldKeepsExtraProperties() {
         let record = PreservedJSON.object([
             "id": .string(UUID().uuidString.lowercased()), "label": .string("PIN"),

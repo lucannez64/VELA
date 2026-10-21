@@ -164,6 +164,32 @@ struct ItemDetailScreen: View {
                     InstrumentField(label: "PIN", value: pin, secret: true, revealed: revealed,
                                     onReveal: { revealed.toggle() }, onCopy: { copy("PIN", pin) })
                 }
+            case .identity:
+                InstrumentField(label: "First name", value: item.firstName ?? "")
+                InstrumentField(label: "Last name", value: item.lastName ?? "")
+                if let ssn = item.ssn, !ssn.isEmpty {
+                    InstrumentField(label: "SSN", value: ssn, secret: true, revealed: revealed,
+                                    onReveal: { revealed.toggle() }, onCopy: { copy("SSN", ssn) })
+                }
+                if let details = item.identityDetails?.objectValue {
+                    ForEach(IdentityDetailsEditor.contacts, id: \.0) { key, label in
+                        if let value = details[key]?.stringValue, !value.isEmpty {
+                            InstrumentField(label: label, value: value, onCopy: { copy(label, value) })
+                        }
+                    }
+                    if case .array(let addresses) = details["addresses"] {
+                        ForEach(addresses.indices, id: \.self) { index in
+                            let record = addresses[index].objectValue ?? [:]
+                            let value = IdentityDetailsEditor.addressFields.filter { $0.0 != "label" }
+                                .compactMap { record[$0.0]?.stringValue }.filter { !$0.isEmpty }.joined(separator: "\n")
+                            InstrumentField(label: record["label"]?.stringValue ?? "Address", value: value,
+                                            onCopy: { copy("Address", value) })
+                        }
+                    }
+                }
+            case .passkey:
+                InstrumentField(label: "Website", value: item.rp_id ?? "")
+                InstrumentField(label: "Account", value: item.user_name ?? item.user_display_name ?? "")
             case .secureNote:
                 InstrumentField(label: "Note", value: item.content ?? "", copyID: "copyNoteButton", onCopy: { copy("Note", item.content ?? "") })
             default:

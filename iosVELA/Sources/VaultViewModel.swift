@@ -26,6 +26,13 @@ final class VaultViewModel: ObservableObject {
     private var envelope = VaultStore(items: []) {
         didSet { organization = VaultOrganization(store: envelope) }
     }
+    private static var organizationDeviceID: String {
+        let key = "vela.organizationDeviceID"
+        if let existing = UserDefaults.standard.string(forKey: key) { return existing }
+        let id = UUID().uuidString.lowercased()
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }
     private var rms: Data?
     private var backgroundedAt: Date?
     /// Grace period the cached RMS survives in the background before the next
@@ -276,7 +283,7 @@ final class VaultViewModel: ObservableObject {
         }
         let result = try VelaCoreFFI.richItems([
             "operation": "mutate",
-            "deviceId": "ios-local",
+            "deviceId": Self.organizationDeviceID,
             "organization": envelope.organizationObject,
             "action": action.json,
         ])

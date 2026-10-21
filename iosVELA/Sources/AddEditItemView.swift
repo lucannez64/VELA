@@ -29,6 +29,11 @@ struct AddEditItemView: View {
     @State private var cvv: String
     @State private var pin: String
 
+    @State private var firstName: String
+    @State private var lastName: String
+    @State private var ssn: String
+    @State private var identityDetails: PreservedJSON
+
     // note
     @State private var content: String
 
@@ -55,6 +60,10 @@ struct AddEditItemView: View {
         _cvv = State(initialValue: editing?.cvv ?? "")
         _pin = State(initialValue: editing?.pin ?? "")
         _content = State(initialValue: editing?.content ?? "")
+        _firstName = State(initialValue: editing?.firstName ?? "")
+        _lastName = State(initialValue: editing?.lastName ?? "")
+        _ssn = State(initialValue: editing?.ssn ?? "")
+        _identityDetails = State(initialValue: editing?.identityDetails ?? .object([:]))
         _folderID = State(initialValue: editing?.folderId ?? "")
         _tagIDs = State(initialValue: editing?.tagIds ?? [])
         _customFields = State(initialValue: editing?.customFieldDrafts ?? [])
@@ -69,6 +78,7 @@ struct AddEditItemView: View {
         case .login: return !password.isEmpty
         case .creditCard: return !number.isEmpty
         case .secureNote: return !content.isEmpty
+        case .identity: return true
         default: return false
         }
     }
@@ -127,6 +137,11 @@ struct AddEditItemView: View {
                     case .login: loginFields
                     case .creditCard: cardFields
                     case .secureNote: noteFields
+                    case .identity:
+                        EditorField(label: "First name", text: $firstName, id: "firstNameField", focus: $focus)
+                        EditorField(label: "Last name", text: $lastName, id: "lastNameField", focus: $focus)
+                        EditorField(label: "SSN", text: $ssn, id: "ssnField", focus: $focus, secret: true)
+                        IdentityDetailsEditor(details: $identityDetails)
                     default: EmptyView()
                     }
                 }
@@ -243,6 +258,12 @@ struct AddEditItemView: View {
                                      notes: trimmedNotes.isEmpty ? nil : trimmedNotes)
         case .secureNote:
             item = VaultItem.newNote(name: trimmedName, content: content)
+        case .identity:
+            let now = VaultClock.nowISO8601()
+            item = VaultItem(firstName: firstName, lastName: lastName, ssn: ssn,
+                             item_type: "identity", id: UUID().uuidString, name: trimmedName,
+                             notes: trimmedNotes.isEmpty ? nil : trimmedNotes, createdAt: now, updatedAt: now)
+            item.identityDetails = identityDetails
         default:
             return
         }
@@ -268,6 +289,12 @@ struct AddEditItemView: View {
             updated.cvv = item.cvv
             updated.pin = item.pin
             updated.cardholderName = item.cardholderName
+            if kind == .identity {
+                updated.firstName = item.firstName
+                updated.lastName = item.lastName
+                updated.ssn = item.ssn
+                updated.identityDetails = item.identityDetails
+            }
             updated.title = item.title
             updated.content = item.content
             updated.folderId = item.folderId
@@ -281,7 +308,7 @@ struct AddEditItemView: View {
     }
 
     private var hasRichDraft: Bool {
-        !folderID.isEmpty || !tagIDs.isEmpty || !customFields.isEmpty || !extraURLs.isEmpty
+        !folderID.isEmpty || !tagIDs.isEmpty || !customFields.isEmpty || !extraURLs.isEmpty || (kind == .identity && !(identityDetails.objectValue ?? [:]).isEmpty)
     }
 
     /// Writes folder, tags, custom fields and other websites. Collections the

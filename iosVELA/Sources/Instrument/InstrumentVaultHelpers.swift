@@ -11,6 +11,9 @@ extension VaultItem {
         case .secureNote: return .note
         case .fileBlob: return .note
         case .breachMonitor: return .shield
+        case .identity: return .user
+        case .passkey: return .fingerprint
+        case .unsupported: return .note
         }
     }
 

@@ -114,6 +114,7 @@ jobs:
           shot detail-card vault night "Everyday Visa"
           shot add-sheet vault night "" add
           shot detail-rich vault night GitHub
+          shot detail-identity vault night "Personal identity"
           shot collections more night "" "" collections
           shot settings more night "" settings
           shot vault-folders vault paper
