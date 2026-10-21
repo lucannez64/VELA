@@ -21,6 +21,7 @@ final class VaultViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let repo: VaultRepository
+    private var envelope = VaultStore(items: [])
     private var rms: Data?
     private var backgroundedAt: Date?
     /// Grace period the cached RMS survives in the background before the next
@@ -51,7 +52,8 @@ final class VaultViewModel: ObservableObject {
         // serve as a wipe/seed primitive.
         #if DEBUG
         if ProcessInfo.processInfo.environment["VELA_RESET"] == "1" {
-            repo.reset()
+            envelope = VaultStore(items: [])
+        repo.reset()
         }
         #endif
         if repo.hasVault() {
@@ -82,7 +84,8 @@ final class VaultViewModel: ObservableObject {
             }
             do {
                 let r = try repo.loadRMS(context: context)
-                items = try repo.load(rms: r).items
+                let loaded = try repo.load(rms: r)
+                envelope = loaded; items = loaded.items; tombstones = loaded.tombstones
                 rms = r
                 backgroundedAt = nil
                 lockState = .unlocked
@@ -99,7 +102,7 @@ final class VaultViewModel: ObservableObject {
         items = []
         tombstones = []
         backgroundedAt = nil
-        try repo.save(VaultStore(items: items), rms: r)
+        try repo.save(currentStore, rms: r)
         unlockMode = .biometric
         lockState = .unlocked
         AuditLog.shared.record("vault_created", "biometric")
@@ -112,7 +115,7 @@ final class VaultViewModel: ObservableObject {
         items = []
         tombstones = []
         backgroundedAt = nil
-        try repo.save(VaultStore(items: items), rms: r)
+        try repo.save(currentStore, rms: r)
         unlockMode = .password
         lockState = .unlocked
         AuditLog.shared.record("vault_created", "password")
@@ -136,6 +139,7 @@ final class VaultViewModel: ObservableObject {
         do {
             let r = try repo.loadRMSWithPassword(password)
             let store = try repo.load(rms: r)
+            envelope = store
             items = store.items
             tombstones = store.tombstones
             rms = r
@@ -148,12 +152,14 @@ final class VaultViewModel: ObservableObject {
     }
 
     func addLogin(name: String, url: String, username: String, password: String, totp: String?) {
+        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
         items.append(VaultItem.newLogin(name: name, url: url, username: username, password: password, totp: totp))
         persist()
     }
 
     /// Add any item kind (login / card / note).
     func add(_ item: VaultItem) {
+        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
         items.append(item)
         persist()
         AuditLog.shared.record("item_added", item.kind.displayName)
@@ -161,6 +167,7 @@ final class VaultViewModel: ObservableObject {
 
     /// Replace an existing item by id, stamping `updatedAt`.
     func update(_ item: VaultItem) {
+        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         let updated = item.touched()
         items[index] = updated
@@ -172,6 +179,7 @@ final class VaultViewModel: ObservableObject {
     }
 
     func delete(_ item: VaultItem) {
+        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
         items.removeAll { $0.id == item.id }
         // Record the deletion so sync propagates it instead of resurrecting
         // the item from another device's (or the server's) copy.
@@ -206,7 +214,7 @@ final class VaultViewModel: ObservableObject {
         items = []
         tombstones = []
         backgroundedAt = nil
-        try repo.save(VaultStore(items: items), rms: newRMS)
+        try repo.save(currentStore, rms: newRMS)
         try repo.saveKeyEpoch(keyEpoch, rms: newRMS)
         unlockMode = mode
         lockState = .unlocked
@@ -242,6 +250,7 @@ final class VaultViewModel: ObservableObject {
         }
         backgroundedAt = nil
         if let store = try? repo.load(rms: rms) {
+            envelope = store
             items = store.items
             tombstones = store.tombstones
         }
@@ -249,6 +258,7 @@ final class VaultViewModel: ObservableObject {
 
     /// Wipe the on-device vault entirely (reset local security).
     func wipe() {
+        envelope = VaultStore(items: [])
         repo.reset()
         rms = nil
         items = []
@@ -261,10 +271,11 @@ final class VaultViewModel: ObservableObject {
     var currentRMS: Data? { rms }
 
     /// The full local store, available while unlocked (needed for sync).
-    var currentStore: VaultStore { VaultStore(items: items, tombstones: tombstones) }
+    var currentStore: VaultStore { var value = envelope; value.items = items; value.tombstones = tombstones; return value }
 
     /// Replace the vault contents after a sync merge and persist locally.
     func applyMergedStore(_ merged: VaultStore) {
+        envelope = merged
         items = merged.items
         tombstones = merged.tombstones
         persist(notifyLocalChange: false)
@@ -273,7 +284,7 @@ final class VaultViewModel: ObservableObject {
     private func persist(notifyLocalChange: Bool = true) {
         guard let r = rms else { return }
         do {
-            try repo.save(VaultStore(items: items, tombstones: tombstones), rms: r)
+            try repo.save(currentStore, rms: r)
             if notifyLocalChange { onLocalChange?() }
         } catch {
             errorMessage = "Couldn't save the vault."

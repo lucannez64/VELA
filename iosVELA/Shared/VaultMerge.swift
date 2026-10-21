@@ -47,7 +47,11 @@ enum VaultMerge {
             items: mergedItems.values.sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             },
-            tombstones: pruneTombstones(Array(tombstoneByID.values))
+            tombstones: pruneTombstones(Array(tombstoneByID.values)),
+            schemaVersion: max(local.schemaVersion, remote.schemaVersion),
+            folders: remote.schemaVersion >= 2 ? remote.folders : local.folders,
+            tags: remote.schemaVersion >= 2 ? remote.tags : local.tags,
+            organizationTombstones: remote.schemaVersion >= 2 ? remote.organizationTombstones : local.organizationTombstones
         )
     }
 

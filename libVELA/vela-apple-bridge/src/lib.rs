@@ -1967,3 +1967,10 @@ mod tests {
         ));
     }
 }
+
+/// # Safety
+/// The request must be a NUL-terminated UTF-8 string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_rich_items_json(request: *const c_char) -> *mut c_char {
+    json_result(|| Ok(vela_core::rich_api::process(c_str(request)?)?))
+}

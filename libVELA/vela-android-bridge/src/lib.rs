@@ -2101,3 +2101,9 @@ mod tests {
         assert!(identity_open(&[9u8; 32], &open_request).is_err());
     }
 }
+
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeRichItemsJson(mut env: JNIEnv, _object: JObject, request: JString) -> jstring {
+    let result = jni_json_result(&mut env, request, |s| Ok(vela_core::rich_api::process(s)?));
+    jni_string(&mut env, &result)
+}

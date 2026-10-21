@@ -4,17 +4,55 @@ import Foundation
 /// deletions survive sync: without them, the next pull resurrected every item
 /// another device had deleted, and a push from this device silently wiped the
 /// tombstone set for everyone else.
+indirect enum PreservedJSON: Codable, Equatable {
+    case object([String: PreservedJSON]), array([PreservedJSON]), string(String), integer(Int64), unsigned(UInt64), number(Double), boolean(Bool), null
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let v = try? c.decode(Bool.self) { self = .boolean(v) }
+        else if let v = try? c.decode(Int64.self) { self = .integer(v) }
+        else if let v = try? c.decode(UInt64.self) { self = .unsigned(v) }
+        else if let v = try? c.decode(Double.self) { self = .number(v) }
+        else if let v = try? c.decode(String.self) { self = .string(v) }
+        else if let v = try? c.decode([PreservedJSON].self) { self = .array(v) }
+        else { self = .object(try c.decode([String: PreservedJSON].self)) }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .object(let v): try c.encode(v)
+        case .array(let v): try c.encode(v)
+        case .string(let v): try c.encode(v)
+        case .integer(let v): try c.encode(v)
+        case .unsigned(let v): try c.encode(v)
+        case .number(let v): try c.encode(v)
+        case .boolean(let v): try c.encode(v)
+        case .null: try c.encodeNil()
+        }
+    }
+}
+
 struct VaultStore: Codable, Equatable {
+    var schemaVersion: Int = 1
+    var folders: [PreservedJSON] = []
+    var tags: [PreservedJSON] = []
+    var organizationTombstones: [PreservedJSON] = []
     var items: [VaultItem]
     var tombstones: [Tombstone] = []
 
-    init(items: [VaultItem], tombstones: [Tombstone] = []) {
+    init(items: [VaultItem], tombstones: [Tombstone] = [], schemaVersion: Int = 1, folders: [PreservedJSON] = [], tags: [PreservedJSON] = [], organizationTombstones: [PreservedJSON] = []) {
+        self.schemaVersion = schemaVersion; self.folders = folders; self.tags = tags; self.organizationTombstones = organizationTombstones
         self.items = items
         self.tombstones = tombstones
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard schemaVersion <= 2 else { throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: container, debugDescription: "Upgrade VELA to read this vault") }
+        folders = try container.decodeIfPresent([PreservedJSON].self, forKey: .folders) ?? []
+        tags = try container.decodeIfPresent([PreservedJSON].self, forKey: .tags) ?? []
+        organizationTombstones = try container.decodeIfPresent([PreservedJSON].self, forKey: .organizationTombstones) ?? []
         items = try container.decode([VaultItem].self, forKey: .items)
         // Older chunks (and older iOS builds) predate the field; the Rust core
         // defaults it the same way (`#[serde(default)]`).
@@ -22,7 +60,7 @@ struct VaultStore: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case items, tombstones
+        case items, tombstones, schemaVersion, folders, tags, organizationTombstones
     }
 }
 
@@ -122,6 +160,24 @@ struct BreachEntry: Codable, Equatable {
 /// equal the JSON keys (camelCase, matching the Android client) so the default
 /// Codable round-trips through the core unchanged.
 struct VaultItem: Codable, Identifiable, Equatable {
+    var folderId: String?
+    var tagIds: [String]?
+    var customFields: [PreservedJSON]?
+    var additionalUrls: [PreservedJSON]?
+    var identityDetails: PreservedJSON?
+    var firstName: String?
+    var lastName: String?
+    var ssn: String?
+    var rp_id: String?
+    var rp_name: String?
+    var credential_id: String?
+    var user_handle: String?
+    var user_name: String?
+    var user_display_name: String?
+    var private_key: String?
+    var sign_count: UInt64?
+    var credential_change_needs_reauth: Bool?
+    var allow_second_factor_downgrade: Bool?
     var item_type: String = "login"
 
     // meta (flattened, camelCase)

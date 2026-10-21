@@ -1,0 +1,19 @@
+{
+  "folderId": "00000000-0000-4000-8000-000000000001",
+  "tagIds": ["00000000-0000-4000-8000-000000000002"],
+  "customFields": [
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "label": "Recovery code",
+      "type": "concealed",
+      "value": "fixture-secret-never-log",
+      "futureHint": {"secret": "future-secret-never-log"}
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "label": "Future field",
+      "type": "future-file-reference",
+      "value": {"token": "opaque-secret-never-log"}
+    }
+  ]
+}

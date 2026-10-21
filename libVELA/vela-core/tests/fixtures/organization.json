@@ -1,0 +1,24 @@
+{
+  "folders": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "Personal",
+      "parentId": null,
+      "revision": {"counter": 1, "deviceId": "fixture-device"},
+      "createdAt": "2026-10-20T10:00:00Z",
+      "updatedAt": "2026-10-20T10:00:00Z"
+    }
+  ],
+  "tags": [
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Important",
+      "revision": {"counter": 2, "deviceId": "fixture-device"},
+      "createdAt": "2026-10-20T10:00:00Z",
+      "updatedAt": "2026-10-20T10:00:00Z"
+    }
+  ],
+  "organizationTombstones": [
+    {"kind": "tag", "id": "00000000-0000-4000-8000-000000000005"}
+  ]
+}
