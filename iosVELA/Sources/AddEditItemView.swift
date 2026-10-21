@@ -31,7 +31,7 @@ struct AddEditItemView: View {
     // note
     @State private var content: String
 
-    init(vm: VaultViewModel, editing: VaultItem? = nil) {
+    init(vm: VaultViewModel, editing: VaultItem? = nil, prefillPassword: String? = nil) {
         self.vm = vm
         self.editing = editing
         _kind = State(initialValue: editing?.kind ?? .login)
@@ -39,7 +39,7 @@ struct AddEditItemView: View {
         _notes = State(initialValue: editing?.notes ?? "")
         _url = State(initialValue: editing?.url ?? "")
         _username = State(initialValue: editing?.username ?? "")
-        _password = State(initialValue: editing?.password ?? "")
+        _password = State(initialValue: editing?.password ?? prefillPassword ?? "")
         _totp = State(initialValue: editing?.totp ?? "")
         _cardholder = State(initialValue: editing?.cardholderName ?? "")
         _number = State(initialValue: editing?.number ?? "")

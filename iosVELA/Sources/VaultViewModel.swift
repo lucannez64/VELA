@@ -67,9 +67,8 @@ final class VaultViewModel: ObservableObject {
         #if DEBUG
         if lockState != .unlocked, ProcessInfo.processInfo.environment["VELA_DEMO"] == "1" {
             try? createVault()
-            addLogin(name: "GitHub", url: "https://github.com", username: "alice", password: "h7$Kp2!q", totp: nil)
-            addLogin(name: "Proton Mail", url: "https://proton.me", username: "alice@proton.me", password: "Zq9!vT3m", totp: nil)
-            addLogin(name: "Cloudflare", url: "https://dash.cloudflare.com", username: "alice", password: "Wp4#nL8x", totp: nil)
+            // Mirrors the sample vault in docs/mobile-redesign-instrument.html.
+            for item in DemoVault.items() { add(item) }
         }
         #endif
     }

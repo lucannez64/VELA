@@ -19,7 +19,11 @@ final class VELAUITests: XCTestCase {
         sleep(2)
         createButton.tap()
 
-        // 2) Empty vault → add the first login
+        // 2) Empty vault → open the Vault tab and add the first login
+        let vaultTab = app.buttons["dock-vault"]
+        XCTAssertTrue(vaultTab.waitForExistence(timeout: 15), "dock")
+        sleep(1)
+        vaultTab.tap()
         let addButton = app.buttons["addItemButton"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 15), "vault list")
         sleep(1)
