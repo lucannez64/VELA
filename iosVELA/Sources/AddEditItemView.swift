@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Create or edit a vault item (login / card / note), with a password generator
 /// for logins. The type picker is shown only when creating.
@@ -61,22 +62,45 @@ struct AddEditItemView: View {
         }
     }
 
+    @Environment(\.ink) private var ink
+
+    private var title: String {
+        isEditing ? "Edit \(kind.displayName.lowercased())" : "New \(kind.displayName.lowercased())"
+    }
+
     var body: some View {
-        NavigationStack {
-            Form {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Capsule().fill(ink.faint.opacity(0.5)).frame(width: 32, height: 4)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 14)
+                HStack {
+                    Text(title)
+                        .font(InstrumentFont.display(22))
+                        .tracking(-0.6)
+                        .foregroundColor(ink.text)
+                        .animation(nil, value: kind)
+                    Spacer()
+                    InstrumentIconButton(icon: .x, label: "Cancel", iconSize: 17) { dismiss() }
+                        .accessibilityIdentifier("cancelButton")
+                }
+                .padding(.bottom, 14)
+
                 if !isEditing {
-                    Section {
-                        Picker("Type", selection: $kind) {
-                            ForEach(ItemKind.creatable) { Text($0.displayName).tag($0) }
+                    HStack(spacing: 6) {
+                        ForEach(ItemKind.creatable) { option in
+                            InstrumentChip(text: option.displayName, selected: kind == option) {
+                                withAnimation(.instrument(0.3)) { kind = option }
+                            }
                         }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("typePicker")
                     }
+                    .accessibilityIdentifier("typePicker")
+                    .padding(.bottom, 4)
                 }
 
-                Section(kind == .secureNote ? "Note" : "Details") {
-                    TextField(kind == .secureNote ? "Title" : "Name", text: $name)
-                        .accessibilityIdentifier("nameField")
+                EditorField(label: kind == .secureNote ? "Title" : "Name", text: $name, id: "nameField")
+
+                Group {
                     switch kind {
                     case .login: loginFields
                     case .creditCard: cardFields
@@ -84,83 +108,66 @@ struct AddEditItemView: View {
                     default: EmptyView()
                     }
                 }
-
-                if kind == .login { generatorSection }
+                .transition(.opacity)
 
                 if kind != .secureNote {
-                    Section("Notes") {
-                        TextField("Notes", text: $notes, axis: .vertical)
-                            .accessibilityIdentifier("notesField")
-                    }
+                    EditorField(label: "Notes", text: $notes, id: "notesField", multiline: true)
                 }
+
             }
-            .navigationTitle(isEditing ? "Edit \(kind.displayName.lowercased())" : "Add \(kind.displayName.lowercased())")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .accessibilityIdentifier("cancelButton")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
-                        .accessibilityIdentifier("saveButton")
-                        .disabled(!canSave)
-                }
-            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            .padding(.bottom, 16)
         }
+        .scrollIndicators(.hidden)
+        // Sticky save bar: rides above the keyboard so it is always reachable.
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 10) {
+                InstrumentPill(text: isEditing ? "Save changes" : "Save item", icon: .check, style: .primary,
+                               fullWidth: true, enabled: canSave) { save() }
+                    .accessibilityIdentifier("saveButton")
+                FineText("Encrypted on this device before it syncs.", size: 9)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity)
+            .background(ink.bg.opacity(0.96).ignoresSafeArea())
+            .overlay(Rectangle().fill(ink.line).frame(height: 1), alignment: .top)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(ink.bg.ignoresSafeArea())
+        .presentationDragIndicator(.hidden)
     }
 
     @ViewBuilder private var loginFields: some View {
-        TextField("Website", text: $url)
-            .keyboardType(.URL).textInputAutocapitalization(.never)
-            .accessibilityIdentifier("urlField")
-        TextField("Username or email", text: $username)
-            .textInputAutocapitalization(.never)
-            .accessibilityIdentifier("usernameField")
-        SecureField("Password", text: $password)
-            .accessibilityIdentifier("passwordField")
-        TextField("TOTP secret (Base32 or otpauth://)", text: $totp)
-            .textInputAutocapitalization(.never)
-            .accessibilityIdentifier("totpField")
-    }
-
-    @ViewBuilder private var cardFields: some View {
-        TextField("Cardholder name", text: $cardholder)
-            .accessibilityIdentifier("cardholderField")
-        TextField("Card number", text: $number)
-            .keyboardType(.numberPad).font(.body.monospaced())
-            .accessibilityIdentifier("cardNumberField")
-        TextField("Expiry (MM/YY)", text: $exp)
-            .accessibilityIdentifier("expField")
-        SecureField("CVV", text: $cvv)
-            .keyboardType(.numberPad)
-            .accessibilityIdentifier("cvvField")
-        SecureField("PIN (optional)", text: $pin)
-            .keyboardType(.numberPad)
-            .accessibilityIdentifier("pinField")
-    }
-
-    @ViewBuilder private var noteFields: some View {
-        TextField("Content", text: $content, axis: .vertical)
-            .lineLimit(4...12)
-            .accessibilityIdentifier("contentField")
-    }
-
-    private var generatorSection: some View {
-        Section("Password generator") {
-            HStack {
-                Text("Length")
-                Spacer()
-                Text("\(Int(genLength))").monospacedDigit().foregroundStyle(.secondary)
-            }
-            Slider(value: $genLength, in: 8...64, step: 1)
-            Toggle("Uppercase", isOn: $genUppercase)
-            Toggle("Symbols", isOn: $genSymbols)
-            Button("Generate password") {
-                password = PasswordGenerator.generate(length: Int(genLength), uppercase: genUppercase, symbols: genSymbols)
+        EditorField(label: "Website", text: $url, id: "urlField", keyboard: .URL)
+        EditorField(label: "Username or email", text: $username, id: "usernameField", keyboard: .emailAddress)
+        EditorField(label: "Password", text: $password, id: "passwordField", secret: true, mono: true) {
+            InstrumentIconButton(icon: .dice, label: "Generate password", size: 36, iconSize: 16, bordered: false, tint: ink.violet) {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                withAnimation(.instrument(0.25)) {
+                    password = InstrumentGenerator.password(length: Int(genLength), upper: genUppercase, lower: true,
+                                                            numbers: true, symbols: genSymbols)
+                }
             }
             .accessibilityIdentifier("generateButton")
         }
+        EditorField(label: "Authenticator key (optional)", text: $totp, id: "totpField", mono: true)
+    }
+
+    @ViewBuilder private var cardFields: some View {
+        EditorField(label: "Cardholder name", text: $cardholder, id: "cardholderField")
+        EditorField(label: "Card number", text: $number, id: "cardNumberField", keyboard: .numberPad, mono: true)
+        HStack(spacing: 9) {
+            EditorField(label: "Expiry (MM/YY)", text: $exp, id: "expField", keyboard: .numbersAndPunctuation, mono: true)
+            EditorField(label: "Security code", text: $cvv, id: "cvvField", keyboard: .numberPad, secret: true, mono: true)
+        }
+        EditorField(label: "PIN (optional)", text: $pin, id: "pinField", keyboard: .numberPad, secret: true, mono: true)
+    }
+
+    @ViewBuilder private var noteFields: some View {
+        EditorField(label: "Note", text: $content, id: "contentField", multiline: true)
     }
 
     private func save() {
@@ -186,16 +193,92 @@ struct AddEditItemView: View {
         }
 
         if let editing = editing {
-            // Preserve identity/meta of the edited item.
-            item.id = editing.id
-            item.createdAt = editing.createdAt
-            item.favorite = editing.favorite
-            item.shared = editing.shared
-            item.shareRecipient = editing.shareRecipient
-            vm.update(item)
+            // Start from the stored item so fields this form doesn't show
+            // (app links, folders, tags, custom fields) survive the edit.
+            var updated = editing
+            updated.name = item.name
+            updated.notes = item.notes
+            updated.url = item.url
+            updated.username = item.username
+            updated.password = item.password
+            updated.totp = item.totp
+            updated.number = item.number
+            updated.exp = item.exp
+            updated.cvv = item.cvv
+            updated.pin = item.pin
+            updated.cardholderName = item.cardholderName
+            updated.title = item.title
+            updated.content = item.content
+            vm.update(updated)
         } else {
             vm.add(item)
         }
         dismiss()
+    }
+}
+
+/// Sheet input: small mono label over a 48pt bordered box; violet when focused.
+struct EditorField<Accessory: View>: View {
+    let label: String
+    @Binding var text: String
+    let id: String
+    var keyboard: UIKeyboardType = .default
+    var secret: Bool = false
+    var mono: Bool = false
+    var multiline: Bool = false
+    @ViewBuilder var accessory: () -> Accessory
+
+    @Environment(\.ink) private var ink
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MonoLabel(label)
+            HStack(spacing: 4) {
+                input
+                    .font(mono ? InstrumentFont.mono(12) : InstrumentFont.body(12))
+                    .foregroundColor(ink.text)
+                    .tint(ink.violet)
+                    .keyboardType(keyboard)
+                    .textInputAutocapitalization(keyboard == .default && !secret && !mono ? TextInputAutocapitalization.sentences : TextInputAutocapitalization.never)
+                    .disableAutocorrection(secret || mono || keyboard != .default)
+                    .focused($focused)
+                    .accessibilityLabel(label)
+                    .accessibilityIdentifier(id)
+                accessory()
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 4)
+            .padding(.vertical, multiline ? 12 : 0)
+            .frame(minHeight: 48)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(ink.panel))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(focused ? ink.violet : ink.line2, lineWidth: 1))
+            .animation(.easeOut(duration: 0.18), value: focused)
+        }
+        .padding(.top, 17)
+    }
+
+    @ViewBuilder private var input: some View {
+        if secret {
+            SecureField("", text: $text)
+        } else if multiline {
+            TextField("", text: $text, axis: .vertical).lineLimit(3...10)
+        } else {
+            TextField("", text: $text)
+        }
+    }
+}
+
+extension EditorField where Accessory == EmptyView {
+    init(label: String, text: Binding<String>, id: String, keyboard: UIKeyboardType = .default,
+         secret: Bool = false, mono: Bool = false, multiline: Bool = false) {
+        self.label = label
+        self._text = text
+        self.id = id
+        self.keyboard = keyboard
+        self.secret = secret
+        self.mono = mono
+        self.multiline = multiline
+        self.accessory = { EmptyView() }
     }
 }

@@ -50,6 +50,10 @@ final class VELAUITests: XCTestCase {
         let deleteButton = app.buttons["deleteButton"]
         XCTAssertTrue(deleteButton.waitForExistence(timeout: 15), "delete button")
         deleteButton.tap()
+        let confirmDelete = app.buttons["confirmDeleteButton"]
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 15), "delete confirmation")
+        sleep(1)
+        confirmDelete.tap()
         sleep(2)
         XCTAssertTrue(app.staticTexts["Proton Mail"].waitForExistence(timeout: 15), "back on list")
         XCTAssertFalse(app.staticTexts["GitHub"].exists, "GitHub deleted")

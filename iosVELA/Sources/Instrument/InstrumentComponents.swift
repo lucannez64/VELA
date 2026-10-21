@@ -857,7 +857,7 @@ struct LockOrbit<Content: View>: View {
                     context.stroke(Path(ellipseIn: CGRect(x: mid.x - r1, y: mid.y - r1, width: r1 * 2, height: r1 * 2)),
                                    with: .color(ink.line2), lineWidth: 1)
                     context.stroke(Path(ellipseIn: CGRect(x: mid.x - r2, y: mid.y - r2, width: r2 * 2, height: r2 * 2)),
-                                   with: .color(ink.line2.opacity(1 - 0.4 * t)), lineWidth: 1)
+                                   with: .color(ink.line2.opacity(Double(1 - 0.4 * t))), lineWidth: 1)
                 }
                 content()
             }

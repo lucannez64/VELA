@@ -123,13 +123,7 @@ struct InstrumentRootView: View {
     @ViewBuilder private func destination(_ route: InstrumentRoute) -> some View {
         switch route {
         case .item(let id):
-            if let item = vm.items.first(where: { $0.id == id }) {
-                ItemDetailView(vm: vm, item: item)
-            } else {
-                Text("This item was removed.")
-                    .font(InstrumentFont.body(13))
-                    .foregroundColor(ink.muted)
-            }
+            ItemDetailScreen(vm: vm, itemID: id, onShare: { path.append(.sharing) })
         case .sharing:
             SharingView(vault: vm, account: accountVM)
         case .devices:
