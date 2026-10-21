@@ -78,9 +78,10 @@ final class VELAUITests: XCTestCase {
         let urlField = app.textFields["urlField"]
         urlField.tap(); urlField.typeText(url); sleep(1)
         let userField = app.textFields["usernameField"]
-        userField.tap(); userField.typeText(username); sleep(1)
+        // Return moves focus to the password field and scrolls it above the keyboard.
+        userField.tap(); userField.typeText(username + "\n"); sleep(1)
         let passField = app.secureTextFields["passwordField"]
-        passField.tap(); passField.typeText(password); sleep(1)
+        passField.typeText(password); sleep(1)
         app.buttons["saveButton"].tap()
     }
 }

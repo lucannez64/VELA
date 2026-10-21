@@ -63,12 +63,23 @@ struct AddEditItemView: View {
     }
 
     @Environment(\.ink) private var ink
+    @FocusState private var focus: String?
+
+    /// Return moves through the fields in this order.
+    private var fieldOrder: [String] {
+        switch kind {
+        case .login: return ["nameField", "urlField", "usernameField", "passwordField", "totpField"]
+        case .creditCard: return ["nameField", "cardholderField", "cardNumberField", "expField", "cvvField", "pinField"]
+        default: return ["nameField", "contentField"]
+        }
+    }
 
     private var title: String {
         isEditing ? "Edit \(kind.displayName.lowercased())" : "New \(kind.displayName.lowercased())"
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Capsule().fill(ink.faint.opacity(0.5)).frame(width: 32, height: 4)
@@ -98,7 +109,7 @@ struct AddEditItemView: View {
                     .padding(.bottom, 4)
                 }
 
-                EditorField(label: kind == .secureNote ? "Title" : "Name", text: $name, id: "nameField")
+                EditorField(label: kind == .secureNote ? "Title" : "Name", text: $name, id: "nameField", focus: $focus, chain: fieldOrder)
 
                 Group {
                     switch kind {
@@ -111,7 +122,7 @@ struct AddEditItemView: View {
                 .transition(.opacity)
 
                 if kind != .secureNote {
-                    EditorField(label: "Notes", text: $notes, id: "notesField", multiline: true)
+                    EditorField(label: "Notes", text: $notes, id: "notesField", focus: $focus, chain: fieldOrder, multiline: true)
                 }
 
             }
@@ -120,6 +131,13 @@ struct AddEditItemView: View {
             .padding(.bottom, 16)
         }
         .scrollIndicators(.hidden)
+        .onChange(of: focus) { field in
+            guard let field else { return }
+            // Wait for the keyboard, then bring the field above it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                withAnimation(.instrument(0.3)) { proxy.scrollTo(field, anchor: .center) }
+            }
+        }
         // Sticky save bar: rides above the keyboard so it is always reachable.
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
@@ -135,15 +153,16 @@ struct AddEditItemView: View {
             .background(ink.bg.opacity(0.96).ignoresSafeArea())
             .overlay(Rectangle().fill(ink.line).frame(height: 1), alignment: .top)
         }
+        }
         .scrollDismissesKeyboard(.interactively)
         .background(ink.bg.ignoresSafeArea())
         .presentationDragIndicator(.hidden)
     }
 
     @ViewBuilder private var loginFields: some View {
-        EditorField(label: "Website", text: $url, id: "urlField", keyboard: .URL)
-        EditorField(label: "Username or email", text: $username, id: "usernameField", keyboard: .emailAddress)
-        EditorField(label: "Password", text: $password, id: "passwordField", secret: true, mono: true) {
+        EditorField(label: "Website", text: $url, id: "urlField", focus: $focus, chain: fieldOrder, keyboard: .URL)
+        EditorField(label: "Username or email", text: $username, id: "usernameField", focus: $focus, chain: fieldOrder, keyboard: .emailAddress)
+        EditorField(label: "Password", text: $password, id: "passwordField", focus: $focus, chain: fieldOrder, secret: true, mono: true) {
             InstrumentIconButton(icon: .dice, label: "Generate password", size: 36, iconSize: 16, bordered: false, tint: ink.violet) {
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 withAnimation(.instrument(0.25)) {
@@ -153,21 +172,21 @@ struct AddEditItemView: View {
             }
             .accessibilityIdentifier("generateButton")
         }
-        EditorField(label: "Authenticator key (optional)", text: $totp, id: "totpField", mono: true)
+        EditorField(label: "Authenticator key (optional)", text: $totp, id: "totpField", focus: $focus, chain: fieldOrder, mono: true)
     }
 
     @ViewBuilder private var cardFields: some View {
-        EditorField(label: "Cardholder name", text: $cardholder, id: "cardholderField")
-        EditorField(label: "Card number", text: $number, id: "cardNumberField", keyboard: .numberPad, mono: true)
+        EditorField(label: "Cardholder name", text: $cardholder, id: "cardholderField", focus: $focus, chain: fieldOrder)
+        EditorField(label: "Card number", text: $number, id: "cardNumberField", focus: $focus, chain: fieldOrder, keyboard: .numberPad, mono: true)
         HStack(spacing: 9) {
-            EditorField(label: "Expiry (MM/YY)", text: $exp, id: "expField", keyboard: .numbersAndPunctuation, mono: true)
-            EditorField(label: "Security code", text: $cvv, id: "cvvField", keyboard: .numberPad, secret: true, mono: true)
+            EditorField(label: "Expiry (MM/YY)", text: $exp, id: "expField", focus: $focus, chain: fieldOrder, keyboard: .numbersAndPunctuation, mono: true)
+            EditorField(label: "Security code", text: $cvv, id: "cvvField", focus: $focus, chain: fieldOrder, keyboard: .numberPad, secret: true, mono: true)
         }
-        EditorField(label: "PIN (optional)", text: $pin, id: "pinField", keyboard: .numberPad, secret: true, mono: true)
+        EditorField(label: "PIN (optional)", text: $pin, id: "pinField", focus: $focus, chain: fieldOrder, keyboard: .numberPad, secret: true, mono: true)
     }
 
     @ViewBuilder private var noteFields: some View {
-        EditorField(label: "Note", text: $content, id: "contentField", multiline: true)
+        EditorField(label: "Note", text: $content, id: "contentField", focus: $focus, chain: fieldOrder, multiline: true)
     }
 
     private func save() {
@@ -222,6 +241,8 @@ struct EditorField<Accessory: View>: View {
     let label: String
     @Binding var text: String
     let id: String
+    var focus: FocusState<String?>.Binding
+    var chain: [String] = []
     var keyboard: UIKeyboardType = .default
     var secret: Bool = false
     var mono: Bool = false
@@ -229,7 +250,13 @@ struct EditorField<Accessory: View>: View {
     @ViewBuilder var accessory: () -> Accessory
 
     @Environment(\.ink) private var ink
-    @FocusState private var focused: Bool
+
+    private var focused: Bool { focus.wrappedValue == id }
+
+    private var next: String? {
+        guard let index = chain.firstIndex(of: id), index + 1 < chain.count else { return nil }
+        return chain[index + 1]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -242,7 +269,9 @@ struct EditorField<Accessory: View>: View {
                     .keyboardType(keyboard)
                     .textInputAutocapitalization(keyboard == .default && !secret && !mono ? TextInputAutocapitalization.sentences : TextInputAutocapitalization.never)
                     .disableAutocorrection(secret || mono || keyboard != .default)
-                    .focused($focused)
+                    .focused(focus, equals: id)
+                    .submitLabel(next == nil ? .done : .next)
+                    .onSubmit { focus.wrappedValue = next }
                     .accessibilityLabel(label)
                     .accessibilityIdentifier(id)
                 accessory()
@@ -253,9 +282,12 @@ struct EditorField<Accessory: View>: View {
             .frame(minHeight: 48)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(ink.panel))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(focused ? ink.violet : ink.line2, lineWidth: 1))
+            .contentShape(Rectangle())
+            .onTapGesture { focus.wrappedValue = id }
             .animation(.easeOut(duration: 0.18), value: focused)
         }
         .padding(.top, 17)
+        .id(id)
     }
 
     @ViewBuilder private var input: some View {
@@ -270,11 +302,14 @@ struct EditorField<Accessory: View>: View {
 }
 
 extension EditorField where Accessory == EmptyView {
-    init(label: String, text: Binding<String>, id: String, keyboard: UIKeyboardType = .default,
+    init(label: String, text: Binding<String>, id: String, focus: FocusState<String?>.Binding, chain: [String] = [],
+         keyboard: UIKeyboardType = .default,
          secret: Bool = false, mono: Bool = false, multiline: Bool = false) {
         self.label = label
         self._text = text
         self.id = id
+        self.focus = focus
+        self.chain = chain
         self.keyboard = keyboard
         self.secret = secret
         self.mono = mono
