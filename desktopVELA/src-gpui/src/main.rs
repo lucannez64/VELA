@@ -55,6 +55,7 @@ use gpui::{
     div, prelude::*, px, rgba, size, App, Bounds, Context, Entity, IntoElement, MouseButton,
     Render, Subscription, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
+#[cfg(not(target_os = "macos"))]
 use ksni::TrayMethods;
 
 use crate::icon::icon;
@@ -581,6 +582,7 @@ fn main() {
 
     gpui_platform::application().with_assets(instrument::icons::IconAssets).run(move |cx: &mut App| {
         if demo_mode { cx.set_global(demo::DemoMode); }
+        #[cfg(not(target_os = "macos"))]
         let tray_runtime_handle = runtime_handle.clone();
         gpui_tokio::init_from_handle(cx, runtime_handle);
         cx.set_global(ActiveTheme(initial_theme));
@@ -604,6 +606,7 @@ fn main() {
         cx.activate(true);
 
         let bounds = Bounds::centered(None, if demo_mode {size(px(1280.), px(800.))} else {size(px(1024.), px(720.))}, cx);
+        #[cfg(not(target_os = "macos"))]
         let app_state_for_tray = app_state.clone();
         let app_state_for_auto_lock = app_state.clone();
         let app_state_for_ipc = app_state.clone();
@@ -634,6 +637,8 @@ fn main() {
         })
         .detach();
 
+        tracing::info!("GPUI main window opened");
+
         // Demo profiles never register IPC, shortcuts, a tray or account watchdog.
         if demo_mode { return; }
 
@@ -662,6 +667,7 @@ fn main() {
             );
         }
 
+        #[cfg(not(target_os = "macos"))]
         cx.spawn(async move |_cx| {
             let vela_tray = tray::VelaTray::new(app_state_for_tray, tray_runtime_handle, tray_tx);
             match vela_tray.spawn().await {

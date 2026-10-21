@@ -27,6 +27,9 @@ open = "5"
 qrcode = "0.14"
 image = "0.25.1"
 rfd = "0.15"
+
+# The current StatusNotifierItem tray is not a macOS menu-bar implementation.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
 ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

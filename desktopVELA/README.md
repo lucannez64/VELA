@@ -4,6 +4,22 @@ A passwordless, zero-knowledge vault desktop application. Native GPUI is the
 default frontend on Windows and Linux; Tauri + React remains available for
 macOS and as an explicit fallback.
 
+## macOS GPUI preview verification
+
+The `desktop-macos` workflow now also builds and tests GPUI and the native
+messaging host on Apple Silicon. Its separate **GPUI macOS preview** job launches
+`--demo --ui=instrument` in a disposable vault, checks that the process stays
+alive and opens a window, and captures a screenshot. The
+`vela-gpui-macos-arm64-preview` artifact contains the screenshot, startup log and
+an ad-hoc-signed preview `.app` zip. This is not a notarized release.
+
+The release frontend remains Tauri while this job establishes GPUI's macOS
+build/runtime baseline. Native menu-bar integration and global quick-search
+registration are still missing on macOS. The D-Bus tray dependency is excluded
+from macOS; this preview does not replace it with a native menu-bar service.
+The demo deliberately skips real-account, IPC, tray and shortcut registration,
+so its screenshot is not evidence of those platform integrations working.
+
 ## Animated GPUI interface preview
 
 The opt-in Instrument UI implements direction 04 with animated overview tiles,
