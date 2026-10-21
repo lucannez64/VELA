@@ -1007,6 +1007,47 @@ async fn seed_user_with_device(state: &vela_server::state::AppState) -> (Uuid, S
     (user_id, token)
 }
 
+#[tokio::test]
+async fn rich_schema_activation_blocks_legacy_uploads_and_deletes_without_mutation() {
+    let state=helpers::test_state().await;
+    let (user,token)=seed_user_with_device(&state).await;
+    let app=vela_server::routes::build(state.clone());
+    let request=|method:&str,path:&str,version:Option<&str>,body:&str| {
+        let mut request=Request::builder().method(method).uri(path)
+            .header("authorization",format!("Bearer {token}"))
+            .header("if-match","0").header("x-lamport-clock","1");
+        if let Some(version)=version{request=request.header("x-vela-write-schema",version);}
+        request.body(Body::from(body.to_owned())).unwrap()
+    };
+    assert_eq!(app.clone().oneshot(request("POST","/vault/schema",None,"")).await.unwrap().status(),StatusCode::OK);
+    assert_eq!(vela_server::vault::schema::minimum(&state,&user.to_string()).unwrap(),2);
+    assert_eq!(app.clone().oneshot(request("PUT","/vault/chunk/schema-test",None,"old")).await.unwrap().status(),StatusCode::CONFLICT);
+    assert_eq!(app.clone().oneshot(request("PUT","/vault/chunk/schema-test",Some("2"),"new")).await.unwrap().status(),StatusCode::OK);
+    assert_eq!(app.clone().oneshot(request("DELETE","/vault/chunk/schema-test",None,"")).await.unwrap().status(),StatusCode::CONFLICT);
+    let response=app.clone().oneshot(request("GET","/vault/chunk/schema-test",None,"")).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    use http_body_util::BodyExt;
+    assert_eq!(&response.into_body().collect().await.unwrap().to_bytes()[..],b"new");
+    // Activation retries are idempotent and never lower the floor.
+    assert_eq!(app.oneshot(request("POST","/vault/schema",None,"")).await.unwrap().status(),StatusCode::OK);
+}
+
+#[tokio::test]
+async fn rich_schema_activation_waits_for_an_in_flight_account_write() {
+    let state=helpers::test_state().await;
+    let (user,token)=seed_user_with_device(&state).await;
+    let guard=vela_server::vault::schema::lock(&user.to_string()).await;
+    let app=vela_server::routes::build(state.clone());
+    let task=tokio::spawn(async move { app.oneshot(Request::builder().method("POST").uri("/vault/schema")
+        .header("authorization",format!("Bearer {token}")).body(Body::empty()).unwrap()).await.unwrap() });
+    tokio::task::yield_now().await;
+    assert!(!task.is_finished());
+    assert_eq!(vela_server::vault::schema::minimum(&state,&user.to_string()).unwrap(),1);
+    drop(guard);
+    assert_eq!(task.await.unwrap().status(),StatusCode::OK);
+    assert_eq!(vela_server::vault::schema::minimum(&state,&user.to_string()).unwrap(),2);
+}
+
 fn sign_hybrid_message(secret_key: &[u8], message: &[u8]) -> String {
     let secret_key = secret_key.to_vec();
     let message = message.to_vec();

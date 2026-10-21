@@ -32,6 +32,13 @@ struct AddEditItemView: View {
     // note
     @State private var content: String
 
+    // richer fields (vault schema 2)
+    @State private var folderID: String
+    @State private var tagIDs: [String]
+    @State private var customFields: [CustomFieldDraft]
+    @State private var extraURLs: [AdditionalURLDraft]
+    @State private var confirmEnable = false
+
     init(vm: VaultViewModel, editing: VaultItem? = nil, prefillPassword: String? = nil) {
         self.vm = vm
         self.editing = editing
@@ -48,6 +55,10 @@ struct AddEditItemView: View {
         _cvv = State(initialValue: editing?.cvv ?? "")
         _pin = State(initialValue: editing?.pin ?? "")
         _content = State(initialValue: editing?.content ?? "")
+        _folderID = State(initialValue: editing?.folderId ?? "")
+        _tagIDs = State(initialValue: editing?.tagIds ?? [])
+        _customFields = State(initialValue: editing?.customFieldDrafts ?? [])
+        _extraURLs = State(initialValue: editing?.additionalURLDrafts ?? [])
     }
 
     private var isEditing: Bool { editing != nil }
@@ -125,6 +136,24 @@ struct AddEditItemView: View {
                     EditorField(label: "Notes", text: $notes, id: "notesField", focus: $focus, chain: fieldOrder, multiline: true)
                 }
 
+                RichFieldsSection(
+                    organization: vm.organization,
+                    showWebsites: kind == .login,
+                    folderID: $folderID,
+                    tagIDs: $tagIDs,
+                    customFields: $customFields,
+                    extraURLs: $extraURLs,
+                    onEnable: { confirmEnable = true }
+                )
+
+                if let error = vm.errorMessage {
+                    Text(error)
+                        .font(InstrumentFont.body(11))
+                        .foregroundColor(ink.red)
+                        .padding(.top, 16)
+                        .accessibilityIdentifier("editorError")
+                }
+
             }
             .padding(.horizontal, 20)
             .padding(.top, 10)
@@ -157,6 +186,13 @@ struct AddEditItemView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(ink.bg.ignoresSafeArea())
         .presentationDragIndicator(.hidden)
+        .alert("Turn on folders and custom fields?", isPresented: $confirmEnable) {
+            Button("Turn on") { enableCollections() }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("This upgrades your vault format. Other devices need an up-to-date VELA to sync changes afterwards.")
+        }
+        .onAppear { vm.errorMessage = nil }
     }
 
     @ViewBuilder private var loginFields: some View {
@@ -211,6 +247,12 @@ struct AddEditItemView: View {
             return
         }
 
+        applyRichFields(to: &item, original: editing)
+        if hasRichDraft && !vm.organization.enabled {
+            confirmEnable = true
+            return
+        }
+
         if let editing = editing {
             // Start from the stored item so fields this form doesn't show
             // (app links, folders, tags, custom fields) survive the edit.
@@ -228,11 +270,38 @@ struct AddEditItemView: View {
             updated.cardholderName = item.cardholderName
             updated.title = item.title
             updated.content = item.content
-            vm.update(updated)
+            updated.folderId = item.folderId
+            updated.tagIds = item.tagIds
+            updated.customFields = item.customFields
+            if kind == .login { updated.additionalUrls = item.additionalUrls }
+            if vm.update(updated) { dismiss() }
         } else {
-            vm.add(item)
+            if vm.add(item) { dismiss() }
         }
-        dismiss()
+    }
+
+    private var hasRichDraft: Bool {
+        !folderID.isEmpty || !tagIDs.isEmpty || !customFields.isEmpty || !extraURLs.isEmpty
+    }
+
+    /// Writes folder, tags, custom fields and other websites. Collections the
+    /// item never had stay absent (nil) so older records are not rewritten.
+    private func applyRichFields(to item: inout VaultItem, original: VaultItem?) {
+        let keptFields = customFields.filter { !$0.isEditable || !$0.label.trimmingCharacters(in: .whitespaces).isEmpty }
+        let keptURLs = extraURLs.filter { !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !folderID.isEmpty || original?.folderId != nil { item.folderId = folderID }
+        if !tagIDs.isEmpty || original?.tagIds != nil { item.tagIds = tagIDs }
+        if !keptFields.isEmpty || original?.customFields != nil { item.customFields = keptFields.map(\.record) }
+        if kind == .login, !keptURLs.isEmpty || original?.additionalUrls != nil { item.additionalUrls = keptURLs.map(\.record) }
+    }
+
+    private func enableCollections() {
+        do {
+            try vm.enableCollections()
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            vm.errorMessage = error.localizedDescription
+        }
     }
 }
 

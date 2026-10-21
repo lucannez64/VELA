@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Preset filters the Overview tiles open the vault with.
 enum VaultScope: Equatable {
@@ -8,6 +9,7 @@ enum VaultScope: Equatable {
 /// Vault tab: heading with add button, search, type chips and the item list.
 struct VaultScreen: View {
     let items: [VaultItem]
+    var organization = VaultOrganization()
     let sync: InstrumentSyncState
     @Binding var scope: VaultScope
     let onItem: (VaultItem) -> Void
@@ -17,6 +19,9 @@ struct VaultScreen: View {
     @Environment(\.ink) private var ink
     @State private var query = ""
     @State private var type: String? = nil
+    /// nil = all, "" = unfiled, otherwise a folder id.
+    @State private var folderFilter: String? = nil
+    @State private var tagFilter: String? = nil
 
     private struct TypeChip: Identifiable {
         let type: String?
@@ -47,7 +52,17 @@ struct VaultScreen: View {
             case .favorites: scopeOK = item.favorite
             case .attention: scopeOK = attentionIDs.contains(item.id)
             }
-            return matches && typeOK && scopeOK
+            let folderOK: Bool
+            if let folderFilter {
+                folderOK = folderFilter.isEmpty
+                    ? !organization.contains(folder: item.folderId)
+                    : (item.folderId == folderFilter
+                       || organization.path(of: item.folderId).hasPrefix(organization.path(of: folderFilter) + " / "))
+            } else {
+                folderOK = true
+            }
+            let tagOK = tagFilter == nil || (item.tagIds ?? []).contains(tagFilter ?? "")
+            return matches && typeOK && scopeOK && folderOK && tagOK
         }
         .sorted { lhs, rhs in
             if lhs.favorite != rhs.favorite { return lhs.favorite }
@@ -108,6 +123,9 @@ struct VaultScreen: View {
                 .padding(.horizontal, -2)
                 .padding(.bottom, 4)
                 .arrive(3)
+                if organization.enabled && (!organization.folders.isEmpty || !organization.tags.isEmpty) {
+                    collectionFilter.padding(.top, 6).arrive(3)
+                }
                 SectionHead(label: "Saved items") {
                     Text(rows.count < 10 ? "0\(rows.count)" : "\(rows.count)")
                         .font(InstrumentFont.mono(11))
@@ -137,6 +155,58 @@ struct VaultScreen: View {
         }
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.immediately)
+    }
+
+    private var filterLabel: String {
+        var parts: [String] = []
+        if let folderFilter { parts.append(folderFilter.isEmpty ? "Unfiled" : organization.path(of: folderFilter)) }
+        if let tagFilter, let name = organization.tagName(tagFilter) { parts.append("# " + name) }
+        return parts.isEmpty ? "All folders & tags" : parts.joined(separator: " · ")
+    }
+
+    private var collectionFilter: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button("All folders & tags") { setFilter(folder: nil, tag: nil) }
+                Section("Folders") {
+                    Button("Unfiled") { setFilter(folder: "", tag: tagFilter) }
+                    ForEach(organization.sortedFolders) { folder in
+                        Button(organization.path(of: folder.id)) { setFilter(folder: folder.id, tag: tagFilter) }
+                    }
+                }
+                if !organization.tags.isEmpty {
+                    Section("Tags") {
+                        ForEach(organization.tags) { tag in
+                            Button("# " + tag.name) { setFilter(folder: folderFilter, tag: tag.id) }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    InstrumentIcon(name: .grid, size: 14, color: ink.violet)
+                    Text(filterLabel).font(InstrumentFont.body(11)).foregroundColor(ink.text).lineLimit(1)
+                    InstrumentIcon(name: .chev, size: 12, color: ink.muted).rotationEffect(.degrees(90))
+                }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 40)
+                .overlay(Capsule().stroke(folderFilter != nil || tagFilter != nil ? ink.violet : ink.line2, lineWidth: 1))
+                .contentShape(Capsule())
+            }
+            .accessibilityIdentifier("collectionFilter")
+            if folderFilter != nil || tagFilter != nil {
+                InstrumentIconButton(icon: .x, label: "Clear filter", size: 36, iconSize: 13) {
+                    setFilter(folder: nil, tag: nil)
+                }
+            }
+        }
+    }
+
+    private func setFilter(folder: String?, tag: String?) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        withAnimation(.instrument(0.3)) {
+            folderFilter = folder
+            tagFilter = tag
+        }
     }
 
     private var emptyState: some View {

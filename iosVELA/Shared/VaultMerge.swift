@@ -42,6 +42,7 @@ enum VaultMerge {
         }
         local.items.forEach(apply)
         remote.items.forEach(apply)
+        let organization = mergeOrganization(local: local, remote: remote)
 
         return VaultStore(
             items: mergedItems.values.sorted {
@@ -49,10 +50,38 @@ enum VaultMerge {
             },
             tombstones: pruneTombstones(Array(tombstoneByID.values)),
             schemaVersion: max(local.schemaVersion, remote.schemaVersion),
-            folders: remote.schemaVersion >= 2 ? remote.folders : local.folders,
-            tags: remote.schemaVersion >= 2 ? remote.tags : local.tags,
-            organizationTombstones: remote.schemaVersion >= 2 ? remote.organizationTombstones : local.organizationTombstones
+            folders: organization.folders,
+            tags: organization.tags,
+            organizationTombstones: organization.tombstones,
+            unknownItemKeys: local.unknownItemKeys
+                .merging(remote.unknownItemKeys) { _, newer in newer }
+                .filter { mergedItems[$0.key] != nil }
         )
+    }
+
+    /// Folders and tags merge in the core (same rules as Android and desktop:
+    /// revisions, tombstones, Unicode-normalised names). Falls back to the
+    /// newer side's arrays only if the core rejects the input.
+    static func mergeOrganization(local: VaultStore, remote: VaultStore)
+        -> (folders: [PreservedJSON], tags: [PreservedJSON], tombstones: [PreservedJSON]) {
+        guard local.schemaVersion >= 2 || remote.schemaVersion >= 2 else {
+            return (local.folders, local.tags, local.organizationTombstones)
+        }
+        func object(_ store: VaultStore) -> [String: Any] {
+            ["folders": store.folders.map { $0.anyValue },
+             "tags": store.tags.map { $0.anyValue },
+             "organizationTombstones": store.organizationTombstones.map { $0.anyValue }]
+        }
+        do {
+            let merged = try VelaCoreFFI.richItems(["operation": "merge", "organization": object(local), "other": object(remote)])
+            func list(_ key: String) -> [PreservedJSON] {
+                ((merged[key] as? [Any]) ?? []).compactMap { PreservedJSON(any: $0) }
+            }
+            return (list("folders"), list("tags"), list("organizationTombstones"))
+        } catch {
+            let newer = remote.schemaVersion >= 2 ? remote : local
+            return (newer.folders, newer.tags, newer.organizationTombstones)
+        }
     }
 
     /// Item-only convenience (used by tests and callers that carry no

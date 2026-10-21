@@ -32,5 +32,41 @@ enum DemoVault {
 
         return [proton, github, figma, visa, codes, music]
     }
+
+    /// Turns on folders/tags and decorates GitHub with richer fields so CI
+    /// screenshots exercise the schema-2 screens.
+    @MainActor
+    static func decorate(_ vm: VaultViewModel) {
+        do {
+            try vm.enableCollections()
+            try vm.mutateOrganization(.createFolder(name: "Work", parentID: nil))
+            try vm.mutateOrganization(.createFolder(name: "Personal", parentID: nil))
+            try vm.mutateOrganization(.createTag(name: "2FA"))
+            try vm.mutateOrganization(.createTag(name: "Shared"))
+            guard let work = vm.organization.folders.first(where: { $0.name == "Work" }),
+                  let twoFA = vm.organization.tags.first(where: { $0.name == "2FA" }),
+                  var github = vm.items.first(where: { $0.name == "GitHub" }) else { return }
+            try vm.mutateOrganization(.createFolder(name: "Code", parentID: work.id))
+            let code = vm.organization.folders.first(where: { $0.name == "Code" })
+            github.folderId = code?.id ?? work.id
+            github.tagIds = [twoFA.id]
+            var email = CustomFieldDraft(kind: .text)
+            email.label = "Recovery email"
+            email.text = "alex@example.test"
+            var pin = CustomFieldDraft(kind: .concealed)
+            pin.label = "Backup PIN"
+            pin.text = "4821"
+            var sso = CustomFieldDraft(kind: .boolean)
+            sso.label = "SSO enforced"
+            sso.flag = true
+            github.customFields = [email.record, pin.record, sso.record]
+            var gist = AdditionalURLDraft()
+            gist.url = "https://gist.github.com"
+            github.additionalUrls = [gist.record]
+            vm.update(github)
+        } catch {
+            vm.errorMessage = error.localizedDescription
+        }
+    }
 }
 #endif

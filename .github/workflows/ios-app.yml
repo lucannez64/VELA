@@ -97,6 +97,7 @@ jobs:
           shot() {
             SIMCTL_CHILD_VELA_DEMO=1 SIMCTL_CHILD_VELA_TAB="$2" SIMCTL_CHILD_VELA_THEME="$3" \
               SIMCTL_CHILD_VELA_OPEN="${4:-}" SIMCTL_CHILD_VELA_SHEET="${5:-}" \
+              SIMCTL_CHILD_VELA_ROUTE="${6:-}" SIMCTL_CHILD_VELA_DEMO_RICH=1 \
               xcrun simctl launch "$UDID" com.vela.vault
             sleep 7
             xcrun simctl io "$UDID" screenshot "screens/$1.png"
@@ -112,6 +113,10 @@ jobs:
           shot detail-login vault night Proton
           shot detail-card vault night "Everyday Visa"
           shot add-sheet vault night "" add
+          shot detail-rich vault night GitHub
+          shot collections more night "" "" collections
+          shot settings more night "" settings
+          shot vault-folders vault paper
           cp screens/overview.png ios-app.png
           # Relaunch without the seed: the demo vault is now locked.
           xcrun simctl launch "$UDID" com.vela.vault

@@ -21,7 +21,11 @@ final class VaultViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let repo: VaultRepository
-    private var envelope = VaultStore(items: [])
+    /// Folders, tags and whether schema 2 is on (derived from the envelope).
+    @Published private(set) var organization = VaultOrganization()
+    private var envelope = VaultStore(items: []) {
+        didSet { organization = VaultOrganization(store: envelope) }
+    }
     private var rms: Data?
     private var backgroundedAt: Date?
     /// Grace period the cached RMS survives in the background before the next
@@ -69,6 +73,7 @@ final class VaultViewModel: ObservableObject {
             try? createVault()
             // Mirrors the sample vault in docs/mobile-redesign-instrument.html.
             for item in DemoVault.items() { add(item) }
+            if ProcessInfo.processInfo.environment["VELA_DEMO_RICH"] == "1" { DemoVault.decorate(self) }
         }
         #endif
     }
@@ -151,23 +156,26 @@ final class VaultViewModel: ObservableObject {
     }
 
     func addLogin(name: String, url: String, username: String, password: String, totp: String?) {
-        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
         items.append(VaultItem.newLogin(name: name, url: url, username: username, password: password, totp: totp))
         persist()
     }
 
-    /// Add any item kind (login / card / note).
-    func add(_ item: VaultItem) {
-        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
+    /// Add any item kind (login / card / note). Returns false (and sets
+    /// `errorMessage`) when the core rejects the item's richer fields.
+    @discardableResult
+    func add(_ item: VaultItem) -> Bool {
+        guard checkWritable(item, old: nil) else { return false }
         items.append(item)
         persist()
         AuditLog.shared.record("item_added", item.kind.displayName)
+        return true
     }
 
     /// Replace an existing item by id, stamping `updatedAt`.
-    func update(_ item: VaultItem) {
-        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+    @discardableResult
+    func update(_ item: VaultItem) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return false }
+        guard checkWritable(item, old: items[index]) else { return false }
         let updated = item.touched()
         items[index] = updated
         persist()
@@ -175,10 +183,10 @@ final class VaultViewModel: ObservableObject {
         if let onItemUpdated = onItemUpdated {
             Task { await onItemUpdated(updated) }
         }
+        return true
     }
 
     func delete(_ item: VaultItem) {
-        guard envelope.schemaVersion < 2 else { errorMessage = "Richer vaults are read-only on mobile during rollout. Edit on desktop."; return }
         items.removeAll { $0.id == item.id }
         // Record the deletion so sync propagates it instead of resurrecting
         // the item from another device's (or the server's) copy.
@@ -186,6 +194,111 @@ final class VaultViewModel: ObservableObject {
         tombstones.append(Tombstone(id: item.id, deletedAt: VaultClock.nowISO8601()))
         persist()
         AuditLog.shared.record("item_deleted")
+    }
+
+    // MARK: - Folders, tags and richer fields (vault schema 2)
+
+    /// Validates richer fields in the core before any write. Schema-2 data
+    /// needs collections turned on first, exactly like Android and desktop.
+    private func checkWritable(_ item: VaultItem, old: VaultItem?) -> Bool {
+        errorMessage = nil
+        guard envelope.schemaVersion <= 2 else {
+            errorMessage = "Update VELA to edit this vault."
+            return false
+        }
+        guard item.hasRichData || envelope.schemaVersion >= 2 else { return true }
+        guard envelope.schemaVersion >= 2 else {
+            errorMessage = "Turn on folders and custom fields first."
+            return false
+        }
+        do {
+            _ = try VelaCoreFFI.richItems([
+                "operation": "validate",
+                "organization": envelope.organizationObject,
+                "rich": item.richObject,
+                "old": old?.richObject ?? [:],
+            ])
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Upgrade this vault to schema 2 (folders, tags, custom fields). Other
+    /// devices must run a VELA version that understands it before they can
+    /// sync changes; the server enforces that on the next push.
+    func enableCollections() throws {
+        guard envelope.schemaVersion < 2 else { return }
+        _ = try VelaCoreFFI.richItems(["operation": "capabilities"])
+        envelope.schemaVersion = 2
+        persist()
+        AuditLog.shared.record("collections_enabled")
+    }
+
+    enum OrganizationAction {
+        case createFolder(name: String, parentID: String?)
+        case updateFolder(id: String, name: String, parentID: String?)
+        case deleteFolder(id: String)
+        case createTag(name: String)
+        case renameTag(id: String, name: String)
+        case deleteTag(id: String)
+
+        var json: [String: Any] {
+            switch self {
+            case let .createFolder(name, parent):
+                var object: [String: Any] = ["operation": "createFolder", "name": name]
+                if let parent { object["parentId"] = parent }
+                return object
+            case let .updateFolder(id, name, parent):
+                var object: [String: Any] = ["operation": "updateFolder", "id": id, "name": name]
+                if let parent { object["parentId"] = parent }
+                return object
+            case let .deleteFolder(id): return ["operation": "deleteFolder", "id": id]
+            case let .createTag(name): return ["operation": "createTag", "name": name]
+            case let .renameTag(id, name): return ["operation": "renameTag", "id": id, "name": name]
+            case let .deleteTag(id): return ["operation": "deleteTag", "id": id]
+            }
+        }
+    }
+
+    /// Change folders/tags through the core, then repair items that pointed
+    /// at a deleted folder or tag.
+    func mutateOrganization(_ action: OrganizationAction) throws {
+        guard envelope.schemaVersion == 2 else {
+            throw NSError(domain: "VELA", code: 2, userInfo: [NSLocalizedDescriptionKey: "Turn on folders and custom fields first."])
+        }
+        let result = try VelaCoreFFI.richItems([
+            "operation": "mutate",
+            "deviceId": "ios-local",
+            "organization": envelope.organizationObject,
+            "action": action.json,
+        ])
+        func list(_ key: String) -> [PreservedJSON] {
+            ((result[key] as? [Any]) ?? []).compactMap { PreservedJSON(any: $0) }
+        }
+        var next = envelope
+        next.folders = list("folders")
+        next.tags = list("tags")
+        next.organizationTombstones = list("organizationTombstones")
+        envelope = next
+
+        let now = VaultClock.nowISO8601()
+        for index in items.indices where items[index].folderId != nil || items[index].tagIds != nil {
+            let repaired = try VelaCoreFFI.richItems([
+                "operation": "repair",
+                "organization": envelope.organizationObject,
+                "rich": items[index].richObject,
+            ])
+            let folder = repaired["folderId"] as? String
+            let tags = repaired["tagIds"] as? [String]
+            if folder != items[index].folderId || tags != items[index].tagIds {
+                items[index].folderId = folder
+                items[index].tagIds = tags
+                items[index].updatedAt = now
+            }
+        }
+        persist()
     }
 
     /// Lock the vault: drop the in-memory RMS and items, return to the unlock screen.

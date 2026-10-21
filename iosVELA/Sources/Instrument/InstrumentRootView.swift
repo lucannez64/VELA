@@ -4,7 +4,7 @@ import UIKit
 /// Pushed screens inside the unlocked app.
 enum InstrumentRoute: Hashable {
     case item(String)
-    case sharing, devices, activity, breach, account
+    case sharing, devices, activity, breach, account, collections
 }
 
 /// The unlocked app: four tabs behind the floating dock, item detail and the
@@ -83,9 +83,12 @@ struct InstrumentRootView: View {
         .overlay(ToastOverlay(center: toast, bottomInset: path.isEmpty ? 83 : 24))
         .sheet(item: $addSheet) { request in
             AddEditItemView(vm: vm, prefillPassword: request.password)
+                .environment(\.ink, ink)
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView(vm: vm, accountVM: accountVM)
+                .environmentObject(toast)
+                .environment(\.ink, ink)
         }
         .sheet(isPresented: $showingTheme) {
             ThemeSheet(selection: $themeID) { showingTheme = false }
@@ -100,7 +103,8 @@ struct InstrumentRootView: View {
     @ViewBuilder private var currentTab: some View {
         switch tab {
         case "vault":
-            VaultScreen(items: vm.items, sync: sync, scope: $scope, onItem: openItem, onAdd: { add() }, onLock: lock)
+            VaultScreen(items: vm.items, organization: vm.organization, sync: sync, scope: $scope,
+                        onItem: openItem, onAdd: { add() }, onLock: lock)
         case "generate":
             GeneratorScreen(sync: sync) { password in add(password: password) }
         case "more":
@@ -109,6 +113,7 @@ struct InstrumentRootView: View {
                 favorites: vm.items.filter(\.favorite).count,
                 attention: vm.items.accountsNeedingAttention.count,
                 themeName: (InstrumentThemeID(rawValue: themeID) ?? .night).title,
+                collectionsMeta: vm.organization.enabled ? "\(vm.organization.folders.count + vm.organization.tags.count)" : "Off",
                 sync: sync,
                 onOpen: openMore,
                 onLock: lock
@@ -142,6 +147,8 @@ struct InstrumentRootView: View {
             BreachMonitorView(vault: vm)
         case .account:
             AccountView(vm: accountVM)
+        case .collections:
+            CollectionsScreen(vm: vm)
         }
     }
 
@@ -153,6 +160,10 @@ struct InstrumentRootView: View {
         if let name = env["VELA_OPEN"], let item = vm.items.first(where: { $0.name == name }), path.isEmpty {
             path.append(.item(item.id))
         }
+        if env["VELA_ROUTE"] == "collections", path.isEmpty {
+            path.append(.collections)
+        }
+        if env["VELA_SHEET"] == "settings" { showingSettings = true }
         if env["VELA_SHEET"] == "add", addSheet == nil {
             addSheet = AddRequest(password: nil)
         }
@@ -195,6 +206,7 @@ struct InstrumentRootView: View {
         case .devices: path.append(.devices)
         case .activity: path.append(.activity)
         case .account: path.append(.account)
+        case .collections: path.append(.collections)
         case .settings: showingSettings = true
         case .theme: showingTheme = true
         }

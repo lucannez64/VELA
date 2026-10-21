@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 enum MoreDestination: Hashable {
-    case favorites, attention, sharing, breach, devices, activity, settings, theme, account
+    case favorites, attention, collections, sharing, breach, devices, activity, settings, theme, account
 }
 
 /// More tab: profile card and grouped menus, ending with "Lock vault".
@@ -11,6 +11,7 @@ struct MoreScreen: View {
     let favorites: Int
     let attention: Int
     let themeName: String
+    var collectionsMeta: String? = nil
     let sync: InstrumentSyncState
     let onOpen: (MoreDestination) -> Void
     let onLock: () -> Void
@@ -28,6 +29,9 @@ struct MoreScreen: View {
                     InstrumentMenuRow(icon: .star, label: "Favourites", meta: "\(favorites)") { onOpen(.favorites) }
                     GroupDivider()
                     InstrumentMenuRow(icon: .shield, label: "Needs attention", meta: attention > 0 ? "\(attention)" : nil) { onOpen(.attention) }
+                    GroupDivider()
+                    InstrumentMenuRow(icon: .grid, label: "Folders & tags", meta: collectionsMeta) { onOpen(.collections) }
+                        .accessibilityIdentifier("collectionsLink")
                 }
                 .arrive(2)
 

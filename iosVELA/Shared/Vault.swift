@@ -32,6 +32,67 @@ indirect enum PreservedJSON: Codable, Equatable {
     }
 }
 
+extension PreservedJSON {
+    /// Bridge from `JSONSerialization` output (used for the core's FFI).
+    init?(any: Any) {
+        switch any {
+        case is NSNull:
+            self = .null
+        case let string as String:
+            self = .string(string)
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                self = .boolean(number.boolValue)
+            } else if CFNumberIsFloatType(number) {
+                self = .number(number.doubleValue)
+            } else if number.compare(NSNumber(value: Int64.max)) == .orderedDescending {
+                self = .unsigned(number.uint64Value)
+            } else {
+                self = .integer(number.int64Value)
+            }
+        case let array as [Any]:
+            self = .array(array.compactMap { PreservedJSON(any: $0) })
+        case let object as [String: Any]:
+            var out: [String: PreservedJSON] = [:]
+            for (key, value) in object {
+                if let converted = PreservedJSON(any: value) { out[key] = converted }
+            }
+            self = .object(out)
+        default:
+            return nil
+        }
+    }
+
+    /// Bridge to `JSONSerialization` input.
+    var anyValue: Any {
+        switch self {
+        case .object(let value): return value.mapValues { $0.anyValue }
+        case .array(let value): return value.map { $0.anyValue }
+        case .string(let value): return value
+        case .integer(let value): return NSNumber(value: value)
+        case .unsigned(let value): return NSNumber(value: value)
+        case .number(let value): return NSNumber(value: value)
+        case .boolean(let value): return value
+        case .null: return NSNull()
+        }
+    }
+
+    var objectValue: [String: PreservedJSON]? {
+        if case .object(let value) = self { return value }
+        return nil
+    }
+
+    var stringValue: String? {
+        if case .string(let value) = self { return value }
+        return nil
+    }
+
+    var boolValue: Bool? {
+        if case .boolean(let value) = self { return value }
+        return nil
+    }
+}
+
 struct VaultStore: Codable, Equatable {
     var schemaVersion: Int = 1
     var folders: [PreservedJSON] = []
@@ -39,11 +100,15 @@ struct VaultStore: Codable, Equatable {
     var organizationTombstones: [PreservedJSON] = []
     var items: [VaultItem]
     var tombstones: [Tombstone] = []
+    /// Per item id: JSON keys written by newer clients that `VaultItem` does
+    /// not model. Re-attached on encode so editing here never drops them.
+    var unknownItemKeys: [String: [String: PreservedJSON]] = [:]
 
-    init(items: [VaultItem], tombstones: [Tombstone] = [], schemaVersion: Int = 1, folders: [PreservedJSON] = [], tags: [PreservedJSON] = [], organizationTombstones: [PreservedJSON] = []) {
+    init(items: [VaultItem], tombstones: [Tombstone] = [], schemaVersion: Int = 1, folders: [PreservedJSON] = [], tags: [PreservedJSON] = [], organizationTombstones: [PreservedJSON] = [], unknownItemKeys: [String: [String: PreservedJSON]] = [:]) {
         self.schemaVersion = schemaVersion; self.folders = folders; self.tags = tags; self.organizationTombstones = organizationTombstones
         self.items = items
         self.tombstones = tombstones
+        self.unknownItemKeys = unknownItemKeys
     }
 
     init(from decoder: Decoder) throws {
@@ -54,9 +119,37 @@ struct VaultStore: Codable, Equatable {
         tags = try container.decodeIfPresent([PreservedJSON].self, forKey: .tags) ?? []
         organizationTombstones = try container.decodeIfPresent([PreservedJSON].self, forKey: .organizationTombstones) ?? []
         items = try container.decode([VaultItem].self, forKey: .items)
+        let rawItems = (try? container.decode([PreservedJSON].self, forKey: .items)) ?? []
+        for raw in rawItems {
+            guard let object = raw.objectValue, let id = object["id"]?.stringValue else { continue }
+            let unknown = object.filter { !VaultItem.knownKeys.contains($0.key) }
+            if !unknown.isEmpty { unknownItemKeys[id] = unknown }
+        }
         // Older chunks (and older iOS builds) predate the field; the Rust core
         // defaults it the same way (`#[serde(default)]`).
         tombstones = try container.decodeIfPresent([Tombstone].self, forKey: .tombstones) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(folders, forKey: .folders)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(organizationTombstones, forKey: .organizationTombstones)
+        if unknownItemKeys.isEmpty {
+            try container.encode(items, forKey: .items)
+        } else {
+            let itemEncoder = JSONEncoder()
+            let itemDecoder = JSONDecoder()
+            let merged: [PreservedJSON] = try items.map { item in
+                let encoded = try itemDecoder.decode(PreservedJSON.self, from: itemEncoder.encode(item))
+                guard var object = encoded.objectValue, let unknown = unknownItemKeys[item.id] else { return encoded }
+                for (key, value) in unknown where object[key] == nil { object[key] = value }
+                return .object(object)
+            }
+            try container.encode(merged, forKey: .items)
+        }
+        try container.encode(tombstones, forKey: .tombstones)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -228,6 +321,12 @@ struct VaultItem: Codable, Identifiable, Equatable {
     var breaches: [BreachEntry]?
 
     var kind: ItemKind { ItemKind(rawValue: item_type) ?? .login }
+
+    /// Every JSON key this struct models (property names are the wire keys).
+    static let knownKeys: Set<String> = {
+        let sample = VaultItem(id: "", name: "", createdAt: "", updatedAt: "")
+        return Set(Mirror(reflecting: sample).children.compactMap { $0.label })
+    }()
 
     /// Secondary text for list rows / autofill, by type.
     var subtitle: String {

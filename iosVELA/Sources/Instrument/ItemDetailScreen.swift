@@ -18,6 +18,7 @@ struct ItemDetailScreen: View {
     @State private var editing = false
     @State private var confirmDelete = false
     @State private var favoritePop = false
+    @State private var revealedFields: Set<String> = []
 
     private var item: VaultItem? { vm.items.first { $0.id == itemID } }
 
@@ -58,6 +59,7 @@ struct ItemDetailScreen: View {
                 BackHead(title: "Vault / \(item.kindLabel)") { dismiss() }.arrive(0)
                 header(item).padding(.top, 12).padding(.bottom, 22).arrive(1)
                 fields(item).arrive(2)
+                richDetails(item).arrive(3)
                 HStack(spacing: 9) {
                     InstrumentPill(text: "Edit item", icon: .pen, fullWidth: true) { editing = true }
                         .accessibilityIdentifier("editButton")
@@ -171,6 +173,59 @@ struct ItemDetailScreen: View {
             if let notes = item.notes, !notes.isEmpty, item.kind != .secureNote {
                 InstrumentField(label: "Notes", value: notes, onCopy: { copy("Notes", notes) })
             }
+        }
+    }
+
+    /// Folder and tags, custom fields and other websites (schema 2).
+    @ViewBuilder private func richDetails(_ item: VaultItem) -> some View {
+        let org = vm.organization
+        let folder = org.path(of: item.folderId)
+        let tags = (item.tagIds ?? []).compactMap { org.tagName($0) }
+        VStack(alignment: .leading, spacing: 0) {
+            if !folder.isEmpty || !tags.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    MonoLabel("Organised", color: ink.faint, size: 8)
+                    if !folder.isEmpty {
+                        HStack(spacing: 8) {
+                            InstrumentIcon(name: .vault, size: 15, color: ink.violet)
+                            Text(folder).font(InstrumentFont.body(13)).foregroundColor(ink.text)
+                        }
+                    }
+                    if !tags.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(tags, id: \.self) { tag in InstrumentTag(text: "# \(tag)") }
+                        }
+                    }
+                }
+                .padding(.horizontal, 15)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .instrumentPanel(radius: 17, border: ink.line, fill: ink.panel)
+                .padding(.bottom, 9)
+                .accessibilityIdentifier("organisedCard")
+            }
+            ForEach(item.customFieldDrafts) { field in
+                if field.kind == .concealed {
+                    InstrumentField(label: field.label, value: field.text, secret: true,
+                                    revealed: revealedFields.contains(field.id),
+                                    onReveal: { toggleReveal(field.id) },
+                                    onCopy: { copy(field.label, field.text) })
+                } else if field.kind == .text {
+                    InstrumentField(label: field.label, value: field.text, onCopy: { copy(field.label, field.text) })
+                } else {
+                    InstrumentField(label: field.label, value: field.displayValue)
+                }
+            }
+            ForEach(item.additionalURLDrafts) { entry in
+                InstrumentField(label: "Also on · \(entry.mode?.title ?? "custom rule")", value: entry.url.displayHost,
+                                onCopy: { copy("Website", entry.url) })
+            }
+        }
+    }
+
+    private func toggleReveal(_ id: String) {
+        withAnimation(.instrument(0.25)) {
+            if revealedFields.contains(id) { revealedFields.remove(id) } else { revealedFields.insert(id) }
         }
     }
 

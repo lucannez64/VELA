@@ -3,6 +3,7 @@ pub mod events;
 pub mod oram;
 pub mod rekey;
 pub mod sync;
+pub mod schema;
 
 use crate::{
     error::{AppError, Result},
