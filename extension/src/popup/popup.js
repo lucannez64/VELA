@@ -732,7 +732,7 @@ function renderSelectedItems() {
   const filtered = choices.filter(({item,address}) => `${item.name || ""} ${item.firstName || ""} ${item.lastName || ""} ${item.email || ""} ${item.cardholderName || ""} ${String(item.number || "").slice(-4)} ${address?.label || ""} ${address?.line1 || ""} ${address?.city || ""}`.toLowerCase().includes(loginQuery));
   mainContent.innerHTML = `<div class="section-title">01 / Saved ${vaultItemType === "card" ? "cards" : "identities"}</div><ul class="login-list">${filtered.map(({item,address},index) => {
     const subtitle = vaultItemType === "card" ? [item.cardholderName, `•••• ${String(item.number || "").replace(/\D/g, "").slice(-4)}`,item.exp].filter(Boolean).join(" · ") : [address?.label,address?.line1,address?.city,item.email].filter(Boolean).join(" · ");
-    return `<li class="login-item"><div class="login-icon">${globalThis.VelaInstrument.icon(vaultItemType === "card" ? "card" : "user",18)}</div><div class="login-info"><div class="login-name">${escapeHtml(item.name || [item.firstName,item.lastName].filter(Boolean).join(" ") || "Card")}</div><div class="login-url">${escapeHtml(subtitle)}</div></div><button type="button" class="icon-btn" data-fill-item="${index}" aria-label="Fill ${vaultItemType}">${globalThis.VelaInstrument.icon("arrow",15)}</button></li>`;
+    return `<li class="login-item"><div class="login-icon">${globalThis.VelaInstrument.icon(vaultItemType === "card" ? "card" : "user",18)}</div><div class="login-info"><div class="login-name">${escapeHtml(item.name || [item.firstName,item.lastName].filter(Boolean).join(" ") || "Card")}</div><div class="login-url">${escapeHtml(subtitle)}</div></div><button type="button" class="icon-btn" data-fill-item="${escapeHtml(String(index))}" aria-label="Fill ${vaultItemType}">${globalThis.VelaInstrument.icon("arrow",15)}</button></li>`;
   }).join("")}</ul>${filtered.length ? "" : '<div class="empty-state"><div class="empty-state-title">No matches.</div><div class="empty-state-text">Add items in VELA Desktop, or try another search.</div></div>'}`;
   mainContent.querySelectorAll("[data-fill-item]").forEach(button => button.addEventListener("click",async () => {
     const {item,address} = filtered[Number(button.dataset.fillItem)];
@@ -861,7 +861,7 @@ function showApprovalRequiredState() {
 function renderLogins() {
   const ui = globalThis.VelaInstrument;
   const filtered = availableLogins.filter(login => `${login.name || ""} ${login.username || ""} ${login.url || ""}`.toLowerCase().includes(loginQuery));
-  const action = (name, title, glyph, id) => `<button class="icon-btn" type="button" title="${title}" aria-label="${title}" data-action="${name}" data-login-id="${escapeHtml(id)}">${ui.icon(glyph,15)}</button>`;
+  const action = (name, title, glyph, id) => `<button class="icon-btn" type="button" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" data-action="${escapeHtml(name)}" data-login-id="${escapeHtml(id)}">${ui.icon(glyph,15)}</button>`;
   mainContent.innerHTML = `<div class="section-title">${loginQuery ? "Search this site’s accounts" : "01 / Matched accounts"}</div>
     <ul class="login-list">${filtered.map(login => {
       const name = login.name || extractDomain(login.url) || "Login";

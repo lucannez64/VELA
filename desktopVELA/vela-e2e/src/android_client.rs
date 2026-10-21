@@ -653,7 +653,6 @@ impl AndroidClient {
 
     pub fn add_login(&mut self, id: &str, name: &str, url: &str, username: &str, password: &str) {
         let meta = VaultMeta {
-                rich: Default::default(),
             id: id.to_string(),
             name: name.to_string(),
             notes: None,
