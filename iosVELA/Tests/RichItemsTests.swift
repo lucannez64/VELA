@@ -78,6 +78,46 @@ final class RichItemsTests: XCTestCase {
         XCTAssertEqual(future.kind, .passkey)
     }
 
+    @MainActor
+    func testFailedWriteDoesNotPublishAnEdit() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let moved = directory.appendingPathExtension("saved")
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: moved)
+        }
+        let vm = VaultViewModel(repo: VaultRepository(directory: directory))
+        try vm.createVault()
+        var notifications = 0
+        vm.onLocalChange = { notifications += 1 }
+        let item = VaultItem.newLogin(name: "Example", url: "https://example.test", username: "a", password: "p", totp: nil)
+        // A file where the storage directory belongs forces an atomic write failure.
+        try FileManager.default.moveItem(at: directory, to: moved)
+        try Data().write(to: directory)
+        XCTAssertFalse(vm.add(item))
+        XCTAssertTrue(vm.items.isEmpty)
+        XCTAssertEqual(notifications, 0)
+        XCTAssertNotNil(vm.errorMessage)
+    }
+
+    @MainActor
+    func testEnablingCollectionsKeepsAnEncryptedSchemaOneBackup() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repo = VaultRepository(directory: directory)
+        let vm = VaultViewModel(repo: repo)
+        try vm.createVault()
+        XCTAssertTrue(vm.add(.newLogin(name: "Example", url: "https://example.test", username: "a", password: "secret", totp: nil)))
+        try vm.enableCollections()
+        let backup = try String(contentsOf: directory.appendingPathComponent("vault.before-rich-items.enc"), encoding: .utf8)
+        let rms = try repo.loadRMS()
+        let plaintext = try XCTUnwrap(VelaCoreFFI.decryptVault(rms: rms, ciphertextBase64: backup))
+        let store = try JSONDecoder().decode(VaultStore.self, from: Data(plaintext.utf8))
+        XCTAssertEqual(store.schemaVersion, 1)
+        XCTAssertEqual(store.items.first?.password, "secret")
+        XCTAssertEqual(try repo.load(rms: rms).schemaVersion, 2)
+    }
+
     func testCustomFieldKeepsExtraProperties() {
         let record = PreservedJSON.object([
             "id": .string(UUID().uuidString.lowercased()), "label": .string("PIN"),
