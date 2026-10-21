@@ -79,7 +79,7 @@ struct AddEditItemView: View {
         case .creditCard: return !number.isEmpty
         case .secureNote: return !content.isEmpty
         case .identity: return true
-        default: return false
+        default: return isEditing
         }
     }
 
@@ -265,7 +265,10 @@ struct AddEditItemView: View {
                              notes: trimmedNotes.isEmpty ? nil : trimmedNotes, createdAt: now, updatedAt: now)
             item.identityDetails = identityDetails
         default:
-            return
+            guard let existing = editing else { return }
+            item = existing
+            item.name = trimmedName
+            item.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
         }
 
         applyRichFields(to: &item, original: editing)

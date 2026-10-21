@@ -16,7 +16,7 @@ struct IdentityDetailsEditor: View {
     ]
 
     private var addresses: [PreservedJSON] {
-        if case .array(let records) = details.objectValue?["addresses"] { return records }
+        if case .array(let records)? = details.objectValue?["addresses"] { return records }
         return []
     }
 

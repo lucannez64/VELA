@@ -177,7 +177,7 @@ struct ItemDetailScreen: View {
                             InstrumentField(label: label, value: value, onCopy: { copy(label, value) })
                         }
                     }
-                    if case .array(let addresses) = details["addresses"] {
+                    if case .array(let addresses)? = details["addresses"] {
                         ForEach(addresses.indices, id: \.self) { index in
                             let record = addresses[index].objectValue ?? [:]
                             let value = IdentityDetailsEditor.addressFields.filter { $0.0 != "label" }
