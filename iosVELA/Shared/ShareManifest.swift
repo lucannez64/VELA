@@ -8,6 +8,32 @@ struct ShareRecord: Codable, Equatable {
     let recipientUserID: String
     /// The recipient's share public key (base64, 1600 B), fetched at send time.
     let recipientShareEK: String
+    /// Share envelope v2: signed into every envelope of this share. Empty for
+    /// shares sent before v2; recipients no longer accept updates for those.
+    var lineageID: String = ""
+    /// Last revision sealed (1 at first send).
+    var revision: UInt64 = 0
+
+    init(shareID: String, vaultItemID: String, recipientUserID: String,
+         recipientShareEK: String, lineageID: String = "", revision: UInt64 = 0) {
+        self.shareID = shareID
+        self.vaultItemID = vaultItemID
+        self.recipientUserID = recipientUserID
+        self.recipientShareEK = recipientShareEK
+        self.lineageID = lineageID
+        self.revision = revision
+    }
+
+    // Manifests written before envelope v2 have no lineage or revision.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        shareID = try c.decode(String.self, forKey: .shareID)
+        vaultItemID = try c.decode(String.self, forKey: .vaultItemID)
+        recipientUserID = try c.decode(String.self, forKey: .recipientUserID)
+        recipientShareEK = try c.decode(String.self, forKey: .recipientShareEK)
+        lineageID = try c.decodeIfPresent(String.self, forKey: .lineageID) ?? ""
+        revision = try c.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0
+    }
 }
 
 /// Persists the outbound share manifest to the shared App Group container.

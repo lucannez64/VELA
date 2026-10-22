@@ -38,6 +38,14 @@ char *vela_ffi_identity_rotate_share_key(const uint8_t *seal_key, size_t seal_ke
                                          const char *request_json);
 char *vela_ffi_identity_sign_json(const char *request_json);
 char *vela_ffi_identity_open_share_json(const char *request_json);
+/* Share envelope v2: signed, recipient-bound shared items.
+ * seal:  { handle, sender_user_id, sender_device_id, recipient_user_id,
+ *          recipient_share_ek_b64, lineage_id, revision, item_json } -> { capsule_b64 }
+ * admit: { handle, capsule_b64, recipient_user_id, attributed_sender_user_id,
+ *          pin?: { sender_user_id, sender_vk_b64, lineage_id, revision } }
+ *        -> { item_json, first_contact, pin, sender_fingerprint } or { error } */
+char *vela_ffi_identity_seal_signed_share_json(const char *request_json);
+char *vela_ffi_identity_admit_share_json(const char *request_json);
 /* Enrollment v3 (audit P-1). The fingerprint call takes only a handle: the
    value shown to the user must come from the key this device holds. */
 char *vela_ffi_identity_enrollment_fingerprint_json(const char *request_json);

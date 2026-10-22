@@ -1567,6 +1567,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vela-client-share-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
+]
+
+[[package]]
 name = "vela-core"
 version = "0.1.0"
 dependencies = [
@@ -1599,6 +1606,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "vela-client-recovery-policy",
+ "vela-client-share-policy",
  "x25519-dalek",
  "zeroize",
 ]

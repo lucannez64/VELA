@@ -8,12 +8,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use vela_crypto::{kem, share_envelope, signing};
+
 use crate::api::ApiClient;
 use crate::audit::{record_audit_event, AuditAction};
 use crate::vault::VaultItem;
 use crate::AppState;
 
 const SHARES_FILE: &str = "shares.enc";
+/// Revision of the first envelope of a share (share envelope v2).
+const FIRST_REVISION: u64 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Share {
@@ -30,6 +34,49 @@ pub struct Share {
     pub encrypted_payload: Option<Vec<u8>>,
     #[serde(default)]
     pub recipient_share_ek: Option<String>,
+    /// Sent shares: the lineage id signed into every envelope of this share.
+    #[serde(default)]
+    pub lineage_id: Option<String>,
+    /// Sent shares: the last revision sealed (1 at first send).
+    #[serde(default)]
+    pub revision: u64,
+    /// Received shares: the sender key, lineage and revision pinned when the
+    /// share was accepted. Updates must match it (share envelope v2).
+    #[serde(default)]
+    pub pin: Option<StoredSharePin>,
+    /// Received shares: fingerprint of the sending device's key, for the user
+    /// to compare out of band. `None` when the envelope could not be verified.
+    #[serde(default)]
+    pub sender_fingerprint: Option<String>,
+}
+
+/// Serialized form of [`vela_crypto::share_envelope::SharePin`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StoredSharePin {
+    pub sender_user_id: String,
+    pub sender_vk_b64: String,
+    pub lineage_id: String,
+    pub revision: u64,
+}
+
+impl StoredSharePin {
+    fn from_pin(pin: &share_envelope::SharePin) -> Self {
+        Self {
+            sender_user_id: pin.sender_user_id.clone(),
+            sender_vk_b64: B64.encode(&pin.sender_vk),
+            lineage_id: pin.lineage_id.clone(),
+            revision: pin.revision,
+        }
+    }
+
+    fn to_pin(&self) -> Option<share_envelope::SharePin> {
+        Some(share_envelope::SharePin {
+            sender_user_id: self.sender_user_id.clone(),
+            sender_vk: B64.decode(&self.sender_vk_b64).ok()?,
+            lineage_id: self.lineage_id.clone(),
+            revision: self.revision,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -134,7 +181,8 @@ pub(crate) async fn refresh_linked_shares_inner(state: &AppState) -> Result<(), 
                 existing.encrypted_payload = Some(payload.clone());
                 existing.shared_at = linked.updated_at.parse().unwrap_or_else(|_| Utc::now());
             } else {
-                let (item_name, item_type) = decrypt_share_name_type(state, &payload);
+                let (item_name, item_type, sender_fingerprint) =
+                    preview_received(state, &payload, &linked.sender_user_id);
                 store.received_shares.push(Share {
                     id: linked.id.clone(),
                     item_id: linked.id.clone(),
@@ -148,62 +196,155 @@ pub(crate) async fn refresh_linked_shares_inner(state: &AppState) -> Result<(), 
                     allow_edit: false,
                     encrypted_payload: Some(payload),
                     recipient_share_ek: None,
+                    lineage_id: None,
+                    revision: 0,
+                    pin: None,
+                    sender_fingerprint,
                 });
             }
         }
     }
 
-    sync_received_linked_items(state, &store)?;
+    sync_received_linked_items(state, &mut store)?;
     save_share_store(state, &store)?;
     Ok(())
 }
 
-fn decrypt_share_name_type(state: &AppState, payload: &[u8]) -> (String, String) {
+fn load_identity(state: &AppState) -> Result<crate::store::IdentityKeysStore, String> {
     let crypto = state.crypto.read();
-    if let Some(crypto) = crypto.as_ref() {
-        if let Ok(plaintext) = crypto.decrypt_vault(payload) {
-            if let Ok(item) = serde_json::from_slice::<crate::vault::VaultItem>(&plaintext) {
-                return (item.name().to_string(), format!("{:?}", item.item_type()).to_lowercase());
-            }
+    let crypto = crypto.as_ref().ok_or("Session not unlocked")?;
+    state
+        .store
+        .load_identity_keys(crypto)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No identity keys found".to_string())
+}
+
+/// Open and verify a received envelope and run the admission policy.
+fn admit_received(
+    keys: &crate::store::IdentityKeysStore,
+    capsule: &[u8],
+    recipient_user_id: &str,
+    attributed_sender_user_id: &str,
+    pin: Option<&share_envelope::SharePin>,
+) -> Result<share_envelope::AdmittedShare, String> {
+    let share_dk = kem::HybridSecretKey::from_bytes(&keys.share_dk).map_err(|e| e.to_string())?;
+    share_envelope::admit(
+        &share_dk,
+        capsule,
+        share_envelope::AdmissionContext {
+            recipient_user_id,
+            attributed_sender_user_id,
+            pin,
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Name, type and sender fingerprint for a not-yet-accepted share. An
+/// envelope that does not verify is listed, but cannot be accepted.
+fn preview_received(
+    state: &AppState,
+    capsule: &[u8],
+    attributed_sender_user_id: &str,
+) -> (String, String, Option<String>) {
+    let user_id = current_user_id(state);
+    let admitted = load_identity(state)
+        .and_then(|keys| admit_received(&keys, capsule, &user_id, attributed_sender_user_id, None));
+    match admitted {
+        Ok(admitted) => match serde_json::from_slice::<VaultItem>(&admitted.opened.item) {
+            Ok(item) => (
+                item.name().to_string(),
+                format!("{:?}", item.item_type()).to_lowercase(),
+                Some(vela_crypto::verification::signing_key_fingerprint(&admitted.pin.sender_vk)),
+            ),
+            Err(_) => ("Shared item".to_string(), "login".to_string(), None),
+        },
+        Err(e) => {
+            tracing::warn!("Received share does not verify: {e}");
+            ("Unverified share".to_string(), "login".to_string(), None)
         }
     }
-    ("Shared item".to_string(), "login".to_string())
+}
+
+/// Sign and seal `item_json` for one recipient (share envelope v2).
+#[allow(clippy::too_many_arguments)]
+fn seal_for_recipient(
+    keys: &crate::store::IdentityKeysStore,
+    sender_user_id: &str,
+    sender_device_id: &str,
+    recipient_user_id: &str,
+    recipient_share_ek: &[u8],
+    lineage_id: &str,
+    revision: u64,
+    item_json: &[u8],
+) -> Result<Vec<u8>, String> {
+    if keys.hybrid_sk.is_empty() {
+        return Err("This device has no signing key and cannot share items. Re-enroll it to share.".into());
+    }
+    let signing_key = signing::HybridSigningKey::from_bytes(&keys.hybrid_sk).map_err(|e| e.to_string())?;
+    let recipient = kem::HybridPublicKey::from_bytes(recipient_share_ek)
+        .map_err(|_| "Invalid recipient share key".to_string())?;
+    let header = share_envelope::ShareHeader {
+        sender_user_id: sender_user_id.to_string(),
+        sender_device_id: sender_device_id.to_string(),
+        sender_vk: signing_key.verifying_key().to_bytes().to_vec(),
+        recipient_user_id: recipient_user_id.to_string(),
+        recipient_ek_digest: share_envelope::recipient_ek_digest(recipient_share_ek),
+        lineage_id: lineage_id.to_string(),
+        revision,
+    };
+    share_envelope::seal_signed_item(&signing_key, &header, &recipient, item_json)
+        .map_err(|e| format!("Failed to seal share: {e}"))
 }
 
 /// Applies any accepted received shares whose sender re-sealed a newer
 /// version onto the local vault (so an accepted share reflects edits made
 /// after acceptance, without needing a separate "sync" action).
-fn sync_received_linked_items(state: &AppState, store: &ShareStore) -> Result<(), String> {
-    let share_dk = {
-        let crypto = state.crypto.read();
-        let crypto = crypto.as_ref().ok_or("Crypto not initialized")?;
-        match state.store.load_identity_keys(crypto) {
-            Ok(Some(keys)) => keys.share_dk,
-            _ => return Ok(()),
-        }
+///
+/// Only envelopes the admission policy accepts as an *update* are applied:
+/// signed by the pinned sender key, in the pinned lineage, with a strictly
+/// newer revision. Anything else — a capsule the server forged, replayed, or
+/// re-attributed — is ignored. Shares accepted before envelope v2 have no pin
+/// and are never updated; the sender has to share them again.
+fn sync_received_linked_items(state: &AppState, store: &mut ShareStore) -> Result<(), String> {
+    let keys = match load_identity(state) {
+        Ok(keys) => keys,
+        Err(_) => return Ok(()),
     };
+    let user_id = current_user_id(state);
 
     let mut vault = state.vault.write();
     let mut changed = false;
 
-    for share in store.received_shares.iter().filter(|s| s.accepted == Some(true)) {
+    for share in store.received_shares.iter_mut().filter(|s| s.accepted == Some(true)) {
         let Some(payload) = &share.encrypted_payload else {
             continue;
         };
-        let Ok(decrypted) = crate::crypto::open_share(&share_dk, payload) else {
+        let Some(pin) = share.pin.as_ref().and_then(StoredSharePin::to_pin) else {
             continue;
         };
-        let Ok(item) = serde_json::from_slice::<crate::vault::VaultItem>(&decrypted) else {
-            continue;
-        };
-
-        if let Some(existing) = vault.get_item(&share.item_id).cloned() {
-            if item.updated_at() > existing.updated_at() {
-                let refreshed = item.with_id(share.item_id.clone()).with_shared_status(true, None);
-                vault.update_item(refreshed);
-                changed = true;
+        let admitted = match admit_received(&keys, payload, &user_id, &share.from, Some(&pin)) {
+            Ok(admitted) => admitted,
+            Err(e) => {
+                // The capsule the server still holds for an accepted share is
+                // normally the one already applied; only other rejections are
+                // worth a warning.
+                if !e.contains("not newer") {
+                    tracing::warn!("Ignoring linked-share update for {}: {e}", share.id);
+                }
+                continue;
             }
+        };
+        let Ok(item) = serde_json::from_slice::<VaultItem>(&admitted.opened.item) else {
+            continue;
+        };
+        if vault.get_item(&share.item_id).is_some() {
+            let refreshed = item.with_id(share.item_id.clone()).with_shared_status(true, None);
+            vault.update_item(refreshed);
+            changed = true;
         }
+        share.pin = Some(StoredSharePin::from_pin(&admitted.pin));
     }
 
     drop(vault);
@@ -238,7 +379,8 @@ pub async fn get_shares(state: &AppState) -> Result<Vec<Share>, String> {
                         continue;
                     }
                     let capsule_bytes = B64.decode(&inbox_item.capsule).unwrap_or_default();
-                    let (item_name, item_type) = decrypt_share_name_type(state, &capsule_bytes);
+                    let (item_name, item_type, sender_fingerprint) =
+                        preview_received(state, &capsule_bytes, &inbox_item.sender_user_id);
                     store.received_shares.push(Share {
                         id: inbox_item.id.clone(),
                         item_id: inbox_item.id.clone(),
@@ -252,6 +394,10 @@ pub async fn get_shares(state: &AppState) -> Result<Vec<Share>, String> {
                         allow_edit: false,
                         encrypted_payload: Some(capsule_bytes),
                         recipient_share_ek: None,
+                        lineage_id: None,
+                        revision: 0,
+                        pin: None,
+                        sender_fingerprint,
                     });
                 }
                 let _ = save_share_store(state, &store);
@@ -282,6 +428,9 @@ pub async fn push_sent_share_update_inner(
     let client = ApiClient::with_url(server_url);
 
     let item_json = serde_json::to_vec(&item.without_personal_organization()).map_err(|e| e.to_string())?;
+    let keys = load_identity(state)?;
+    let sender_user_id = current_user_id(state);
+    let sender_device_id = state.store.load_device_id().map_err(|e| e.to_string())?;
 
     let shares_for_item: Vec<usize> = store
         .sent_shares
@@ -296,10 +445,25 @@ pub async fn push_sent_share_update_inner(
         let Some(recipient_share_ek_b64) = &share.recipient_share_ek else {
             continue;
         };
+        let (Some(recipient_user_id), Some(lineage_id)) = (&share.to, &share.lineage_id) else {
+            // Sent before share envelope v2: the recipient will not accept an
+            // update to it. The user has to share the item again.
+            continue;
+        };
         let recipient_share_ek = B64
             .decode(recipient_share_ek_b64.as_bytes())
             .map_err(|e| e.to_string())?;
-        let capsule = crate::crypto::seal_share(&recipient_share_ek, &item_json).map_err(|e| e.to_string())?;
+        let revision = share.revision.checked_add(1).ok_or("share revision overflow")?;
+        let capsule = seal_for_recipient(
+            &keys,
+            &sender_user_id,
+            &sender_device_id,
+            recipient_user_id,
+            &recipient_share_ek,
+            lineage_id,
+            revision,
+            &item_json,
+        )?;
         let capsule_b64 = B64.encode(&capsule);
 
         let share_id = share.id.clone();
@@ -313,6 +477,7 @@ pub async fn push_sent_share_update_inner(
 
         let share = &mut store.sent_shares[idx];
         share.encrypted_payload = Some(capsule);
+        share.revision = revision;
         share.shared_at = Utc::now();
     }
 
@@ -360,7 +525,18 @@ pub async fn send_share(
 
     let recipient_share_ek =
         B64.decode(recipient_share_ek_b64.as_bytes()).map_err(|_| "Invalid recipient share key encoding")?;
-    let capsule = crate::crypto::seal_share(&recipient_share_ek, &item_json).map_err(|e| format!("Failed to seal share: {e}"))?;
+    let keys = load_identity(state)?;
+    let lineage_id = Uuid::new_v4().to_string();
+    let capsule = seal_for_recipient(
+        &keys,
+        &current_user_id(state),
+        &device_id,
+        recipient,
+        &recipient_share_ek,
+        &lineage_id,
+        FIRST_REVISION,
+        &item_json,
+    )?;
 
     let mut share = Share {
         id: String::new(),
@@ -375,6 +551,10 @@ pub async fn send_share(
         allow_edit,
         encrypted_payload: Some(capsule.clone()),
         recipient_share_ek: Some(recipient_share_ek_b64),
+        lineage_id: Some(lineage_id),
+        revision: FIRST_REVISION,
+        pin: None,
+        sender_fingerprint: None,
     };
 
     let mut store = load_share_store(state).unwrap_or_default();
@@ -423,20 +603,15 @@ pub async fn accept_share(state: &AppState, share_id: &str) -> Result<(), String
         .ok_or("Share not found")?
         .clone();
 
+    let mut pin = None;
     if let Some(capsule) = &share.encrypted_payload {
-        let share_dk = {
-            let crypto = state.crypto.read();
-            let crypto = crypto.as_ref().ok_or("Session not unlocked")?;
-            state
-                .store
-                .load_identity_keys(crypto)
-                .map_err(|e| e.to_string())?
-                .ok_or("No identity keys found")?
-                .share_dk
-        };
-
-        let decrypted = crate::crypto::open_share(&share_dk, capsule).map_err(|e| format!("Failed to open share: {e}"))?;
-        let item: VaultItem = serde_json::from_slice(&decrypted).map_err(|e| e.to_string())?;
+        let keys = load_identity(state)?;
+        let admitted = admit_received(&keys, capsule, &current_user_id(state), &share.from, None)
+            .map_err(|e| format!("This share cannot be verified and was not added: {e}"))?;
+        let item: VaultItem = serde_json::from_slice(&admitted.opened.item).map_err(|e| e.to_string())?;
+        if matches!(item, VaultItem::Passkey { .. }) {
+            return Err("Passkeys cannot be shared".to_string());
+        }
 
         // Always give the received copy a fresh ID so it is a distinct vault
         // item, even when the sender and recipient are the same user.
@@ -447,6 +622,7 @@ pub async fn accept_share(state: &AppState, share_id: &str) -> Result<(), String
             vault.add_item(received_item);
         }
         state.persist_current_vault().map_err(|e| e.to_string())?;
+        pin = Some(StoredSharePin::from_pin(&admitted.pin));
     }
 
     let server_url = state.server_url.read().clone();
@@ -461,6 +637,7 @@ pub async fn accept_share(state: &AppState, share_id: &str) -> Result<(), String
 
     if let Some(existing) = store.received_shares.iter_mut().find(|s| s.id == share_id) {
         existing.accepted = Some(true);
+        existing.pin = pin;
         if let Some(item_id) = received_item_id {
             existing.item_id = item_id;
         }
@@ -602,48 +779,80 @@ mod tests {
         }
     }
 
-    /// A share capsule the server serves back later must not undo a newer edit.
-    ///
-    /// Share capsules are KEM-sealed to the recipient and carry no AAD, so
-    /// nothing at the AEAD layer distinguishes a current capsule from one the
-    /// server kept and replayed (audit C-2). What stops the rollback is one
-    /// line in `sync_received_linked_items`: apply only when the capsule's
-    /// item is strictly newer than what is already held. `updated_at` travels
-    /// *inside* the sealed payload, so it is authenticated — a server cannot
-    /// alter it without breaking the capsule.
-    ///
-    /// That makes the whole protection a single comparison, which is exactly
-    /// the kind of thing that gets refactored away. Hence this test.
+    fn identity() -> crate::store::IdentityKeysStore {
+        let keys = crate::crypto::generate_identity_keypair().unwrap();
+        crate::store::IdentityKeysStore {
+            hybrid_ek: keys.hybrid_ek,
+            hybrid_vk: keys.hybrid_vk,
+            hybrid_sk: keys.hybrid_sk,
+            share_ek: keys.share_ek,
+            share_dk: keys.share_dk,
+            hybrid_dk: keys.hybrid_dk,
+        }
+    }
+
+    fn seal(sender: &crate::store::IdentityKeysStore, bob: &crate::store::IdentityKeysStore, revision: u64, item: &VaultItem) -> Vec<u8> {
+        seal_for_recipient(
+            sender,
+            "alice",
+            "alice-laptop",
+            "bob",
+            &bob.share_ek,
+            "lineage-1",
+            revision,
+            &serde_json::to_vec(item).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// The server holds every share capsule and the recipient's public share
+    /// key. Under envelope v1 it could seal a new capsule with any content and
+    /// a later `updated_at`, and the recipient applied it as the sender's edit.
+    /// With v2 the update must be signed by the key pinned at acceptance.
     #[test]
-    fn a_replayed_share_capsule_cannot_revert_a_newer_item() {
-        let (share_ek, share_dk) = crate::crypto::generate_share_keypair();
+    fn a_server_forged_update_is_not_applied() {
+        let alice = identity();
+        let mallory = identity();
+        let bob = identity();
         let now = Utc::now();
 
-        // What the sender sealed some time ago, and what the recipient has now.
-        let stale = login("item-1", "Example", "old-password", now - Duration::hours(2));
-        let current = login("item-1", "Example", "new-password", now);
+        let original = login("item-1", "Example", "real-password", now);
+        let accepted = admit_received(&bob, &seal(&alice, &bob, 1, &original), "bob", "alice", None).unwrap();
+        assert!(accepted.first_contact);
 
-        let capsule = crate::crypto::seal_share(
-            &share_ek,
-            &serde_json::to_vec(&stale).unwrap(),
-        )
-        .unwrap();
+        // A forger with its own key, claiming Alice and a later edit time.
+        let forged_item = login("item-1", "Example", "attacker-password", now + Duration::days(1));
+        let forged = seal(&mallory, &bob, 99, &forged_item);
+        let err = admit_received(&bob, &forged, "bob", "alice", Some(&accepted.pin)).unwrap_err();
+        assert!(err.contains("not signed by the device"), "{err}");
 
-        // The capsule still opens — replay is not detectable here, which is the
-        // point: the freshness decision is made after decryption, not by it.
-        let opened = crate::crypto::open_share(&share_dk, &capsule).unwrap();
-        let replayed: VaultItem = serde_json::from_slice(&opened).unwrap();
-        assert_eq!(replayed.updated_at(), stale.updated_at());
+        // Under v1 the forger did not even need a key: an unsigned capsule.
+        let unsigned = crate::crypto::seal_share(&bob.share_ek, &serde_json::to_vec(&forged_item).unwrap()).unwrap();
+        assert!(admit_received(&bob, &unsigned, "bob", "alice", Some(&accepted.pin)).is_err());
+    }
 
-        // And the applier's rule rejects it.
-        assert!(
-            !(replayed.updated_at() > current.updated_at()),
-            "a replayed capsule must not be newer than what is already held"
-        );
+    /// A capsule the server kept and replays later must not undo a newer edit.
+    #[test]
+    fn a_replayed_share_capsule_cannot_revert_a_newer_item() {
+        let alice = identity();
+        let bob = identity();
+        let now = Utc::now();
+        let v1 = seal(&alice, &bob, 1, &login("item-1", "Example", "old-password", now));
+        let v2 = seal(&alice, &bob, 2, &login("item-1", "Example", "new-password", now));
 
-        // The same rule accepts a genuinely newer one, or the check would be
-        // trivially satisfied by rejecting everything.
-        let newer = login("item-1", "Example", "newest", now + Duration::hours(1));
-        assert!(newer.updated_at() > current.updated_at());
+        let pin1 = admit_received(&bob, &v1, "bob", "alice", None).unwrap().pin;
+        let pin2 = admit_received(&bob, &v2, "bob", "alice", Some(&pin1)).unwrap().pin;
+        assert_eq!(pin2.revision, 2);
+        assert!(admit_received(&bob, &v1, "bob", "alice", Some(&pin2)).is_err());
+        assert!(admit_received(&bob, &v2, "bob", "alice", Some(&pin2)).is_err());
+    }
+
+    #[test]
+    fn stored_pins_round_trip() {
+        let alice = identity();
+        let bob = identity();
+        let capsule = seal(&alice, &bob, 1, &login("item-1", "Example", "pw", Utc::now()));
+        let pin = admit_received(&bob, &capsule, "bob", "alice", None).unwrap().pin;
+        assert_eq!(StoredSharePin::from_pin(&pin).to_pin(), Some(pin));
     }
 }

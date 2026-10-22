@@ -1,0 +1,172 @@
+theory M19c_ShareSenderAuthentication
+begin
+
+/*
+  Share envelope v2: sender-authenticated, recipient-bound shared items,
+  with a malicious server.
+
+  Code: libVELA/vela-crypto/src/share_envelope.rs (format, signing, opening)
+        libVELA/vela-client-share-policy (admission decision, hax/F*-verified)
+        desktopVELA/vela-desktop-core/src/sharing.rs, the Android and Apple
+        bridges (callers).
+
+  Adversary: full Dolev-Yao. The server IS the adversary here: it relays
+  (or drops, reorders, replays) every capsule, chooses which sender each
+  capsule is attributed to, and can seal anything it likes to any public
+  share key. Device signing keys and share decapsulation keys can be
+  revealed (Reveal_* rules), and the lemmas say what still holds.
+
+  Message correspondence (share_envelope.rs):
+    header   = <sender_user_id, sender_device_id, sender_vk,
+                recipient_user_id, recipient_ek_digest, lineage_id, revision>
+    sig      = sign(<'vela share item v2', header, item>, device_sk)
+    capsule  = aenc(<'VSE2', header, item, sig>, share_ek)     -- kem::seal_share
+    digest   = h(share_ek)                                     -- SHA-256(share_ek)
+  KEM combiner v2 + XChaCha20-Poly1305 is idealised as asymmetric encryption.
+
+  Admission correspondence (vela-client-share-policy::plan_share_admission):
+    AcceptFirstContact  <-> rule Recipient_FirstContact
+        envelope_authenticated      : the verify(...) = true restriction
+        addressed_to_recipient      : header names $B and h(pk(~dk))
+        sender_matches_attribution  : the attributed sender S equals header S
+        candidate_revision >= 1     : revisions are natural numbers from %1
+    ApplyUpdate         <-> rule Recipient_Update
+        + signer_matches_pin        : header vk and S equal the pinned ones
+        + lineage_matches_pin       : header lineage equals the pinned one
+        + candidate > pinned        : restriction RevisionIncreases (<< on naturals is <)
+    pinned_share_can_restart_as_first_contact = false
+                        <-> a Pin slot is created only by FirstContact
+
+  Trust in the first contact: the recipient pins the key in the first
+  envelope it accepts, and the server chooses the attribution. If the
+  server is malicious at first contact, it can introduce a key of its own
+  (TOFU). The lemmas therefore talk about pins on an honest, unrevealed
+  device key; the sender fingerprint shown to the user exists to check the
+  pin out of band. Key directory: the sender seals to the recipient's
+  registered share key (the honest-directory assumption of M19b), which
+  matters only for the secrecy lemma.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+
+builtins: signing, asymmetric-encryption, hashing, natural-numbers
+
+/* ── Keys ─────────────────────────────────────────────────────────────────── */
+
+rule Device_Identity:
+    [ Fr(~sk), Fr(~dev) ]
+  --[ HonestDeviceKey($S, pk(~sk)) ]->
+    [ !DeviceKey($S, ~dev, ~sk), Out(<$S, ~dev, pk(~sk)>) ]
+
+rule Recipient_ShareKey:
+    [ Fr(~dk) ]
+  --[ ShareKeyCreated($B, pk(~dk)) ]->
+    [ !ShareKey($B, ~dk), Out(<$B, pk(~dk)>) ]
+
+rule Reveal_DeviceKey:
+    [ !DeviceKey(S, dev, sk) ]
+  --[ DeviceKeyRevealed(pk(sk)) ]->
+    [ Out(sk) ]
+
+rule Reveal_ShareKey:
+    [ !ShareKey(B, dk) ]
+  --[ ShareKeyRevealed(B) ]->
+    [ Out(dk) ]
+
+/* ── Sender (seal_signed_item) ────────────────────────────────────────────── */
+
+rule Sender_FirstSend:
+    let header = <$S, dev, pk(sk), $B, h(pk(dk)), ~lineage, %1>
+        sig    = sign(<'vela share item v2', header, ~item>, sk)
+    in
+    [ !DeviceKey($S, dev, sk), !ShareKey($B, dk), Fr(~lineage), Fr(~item) ]
+  --[ Sent($S, pk(sk), $B, ~lineage, %1, ~item), SecretItem(~item, $B) ]->
+    [ SenderShare($S, dev, sk, $B, dk, ~lineage, %1),
+      Out(aenc(<'VSE2', header, ~item, sig>, pk(dk))) ]
+
+rule Sender_Update:
+    let header = <$S, dev, pk(sk), $B, h(pk(dk)), lineage, r %+ %1>
+        sig    = sign(<'vela share item v2', header, ~item>, sk)
+    in
+    [ SenderShare($S, dev, sk, $B, dk, lineage, r), Fr(~item) ]
+  --[ Sent($S, pk(sk), $B, lineage, r %+ %1, ~item), SecretItem(~item, $B) ]->
+    [ SenderShare($S, dev, sk, $B, dk, lineage, r %+ %1),
+      Out(aenc(<'VSE2', header, ~item, sig>, pk(dk))) ]
+
+/* ── Recipient (admit) ─────────────────────────────────────────────────────── */
+
+// The server delivers a capsule and says who sent it. Both are adversarial.
+rule Recipient_FirstContact:
+    let header = <S, dev, vk, $B, h(pk(dk)), lineage, rev>
+    in
+    [ !ShareKey($B, dk), Fr(~slot),
+      In(<S, aenc(<'VSE2', header, item, sig>, pk(dk))>) ]
+  --[ Verified(verify(sig, <'vela share item v2', header, item>, vk)),
+      Accepted(~slot, $B, S, vk, lineage, rev, item),
+      Admitted(~slot, $B, S, vk, lineage, rev, item) ]->
+    [ Pin(~slot, $B, dk, S, vk, lineage, rev) ]
+
+rule Recipient_Update:
+    let header = <S, dev, vk, $B, h(pk(dk)), lineage, rev>
+    in
+    [ Pin(slot, $B, dk, S, vk, lineage, pinned),
+      In(<S, aenc(<'VSE2', header, item, sig>, pk(dk))>) ]
+  --[ Verified(verify(sig, <'vela share item v2', header, item>, vk)),
+      RevisionIncreases(pinned, rev),
+      Applied(slot, $B, S, vk, lineage, rev, item),
+      Admitted(slot, $B, S, vk, lineage, rev, item) ]->
+    [ Pin(slot, $B, dk, S, vk, lineage, rev) ]
+
+restriction SignatureVerifies:
+  "All x #i. Verified(x) @ #i ==> x = true"
+
+restriction RevisionIncreases:
+  "All a b #i. RevisionIncreases(a, b) @ #i ==> a << b"
+
+/* ── Lemmas ───────────────────────────────────────────────────────────────── */
+
+// Sender authentication: whatever this device admits under a pin on an
+// honest, unrevealed device key was sent by that device, to this recipient,
+// in this lineage, at this revision, with this content. A malicious server
+// can neither forge nor re-attribute nor retarget it.
+lemma admitted_items_were_sent_by_the_pinned_device:
+  "All slot B S vk lineage rev item #i #h.
+     Admitted(slot, B, S, vk, lineage, rev, item) @ #i &
+     HonestDeviceKey(S, vk) @ #h
+   ==> (Ex #j. Sent(S, vk, B, lineage, rev, item) @ #j & #j < #i)
+     | (Ex #k. DeviceKeyRevealed(vk) @ #k & #k < #i)"
+
+// After first contact the pin is fixed: every later update to the same slot
+// carries the pinned key and lineage. (Holds even if the pinned key is
+// adversarial: the server cannot swap it for another.)
+lemma updates_keep_the_pinned_key_and_lineage:
+  "All slot B S S2 vk vk2 lineage lineage2 rev rev2 item item2 #i #j.
+     Accepted(slot, B, S, vk, lineage, rev, item) @ #i &
+     Applied(slot, B, S2, vk2, lineage2, rev2, item2) @ #j
+   ==> S = S2 & vk = vk2 & lineage = lineage2"
+
+// No rollback: the revision of each update to a slot is strictly above the
+// revision it replaces.
+lemma updates_strictly_increase_the_revision:
+  "All slot B S vk lineage rev item #i.
+     Applied(slot, B, S, vk, lineage, rev, item) @ #i
+   ==> Ex old item0 #j. Admitted(slot, B, S, vk, lineage, old, item0) @ #j & #j < #i & old << rev"
+
+// Confidentiality: an item sealed to an unrevealed share key stays secret.
+lemma shared_items_stay_secret:
+  "All item B #i #k.
+     SecretItem(item, B) @ #i & K(item) @ #k
+   ==> Ex #r. ShareKeyRevealed(B) @ #r"
+
+// Honest first contact and an honest update are both possible.
+lemma honest_share_and_update_are_reachable:
+  exists-trace
+  "Ex slot B S vk lineage item1 item2 #a #b #c #d.
+     Sent(S, vk, B, lineage, %1, item1) @ #a &
+     Accepted(slot, B, S, vk, lineage, %1, item1) @ #b &
+     Sent(S, vk, B, lineage, %1 %+ %1, item2) @ #c &
+     Applied(slot, B, S, vk, lineage, %1 %+ %1, item2) @ #d &
+     not (Ex k #r. DeviceKeyRevealed(k) @ #r) &
+     not (Ex b #r. ShareKeyRevealed(b) @ #r)"
+
+end
