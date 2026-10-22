@@ -7,8 +7,12 @@ epoch-rotation theories (`m11`, `m11b`, `m11c`), the M12 web-session
 capability lifecycle, the M13 permanent-device enrollment ceremony, the M14
 account-recovery lifecycle, the M15 client recovery boundary, the M16
 two-phase recovery-publication protocol, and the M17 crash/restart publication
-journal. Together they contain 216 lemmas: 211 verified and five
-intentionally falsified impossibility claims.
+journal, followed by the M18–M26 recovery, sharing, sync, and composition
+theories and the M22 ProVerif ORAM models. Together the 30 Tamarin theories
+contain 264 lemmas: 259 verified and five intentionally falsified
+impossibility claims (176 of them gated in CI). For the external-review
+package, including claims, adversary models, and known limitations, see
+[`../assurance/`](../assurance/README.md).
 
 Read the assurance record for the family being changed:
 
@@ -148,7 +152,7 @@ cd ../../serverVELA/vela-enrollment-policy
 ./verify-fstar.sh
 ```
 
-Expected: **15 Tamarin lemmas verified** and all F* verification conditions
+Expected: **16 Tamarin lemmas verified** and all F* verification conditions
 discharged. The production boundary additionally has a serializable sled
 grant+claim take and concurrency tests proving exactly one racing completion
 wins. See
@@ -270,7 +274,7 @@ cd ../../serverVELA/vela-share-policy
 ./verify-fstar.sh
 ```
 
-Expected: **2 + 5 Tamarin lemmas verified** and all F* verification
+Expected: **2 + 6 Tamarin lemmas verified** and all F* verification
 conditions discharged. The enforced policy lives in
 `serverVELA/vela-share-policy`; the binding construction in
 `libVELA/vela-crypto/src/signing.rs`; enforcement in
@@ -313,7 +317,7 @@ sender-only provenance (`only_sender_can_revoke_link`) is enforced by the
 ./run-link-revocation-finality-proofs.sh
 ```
 
-Expected: **2 Tamarin lemmas verified**. The enforced rules live in
+Expected: **3 Tamarin lemmas verified**. The enforced rules live in
 `vela-share-policy::plan_link_mutation`; the server predicates live in
 `share/mod.rs` (sender identity match for updates/deletes, `revoked = 0` filter,
 ETag `If-Match` comparison). The shared channel's complete verified stack is
@@ -360,7 +364,7 @@ with a public `succ` constructor so "exactly local + 1" is structural.
 cd ../../libVELA/vela-sync-policy && ./verify-fstar.sh
 ```
 
-Expected: **8 Tamarin lemmas verified** and all F* verification conditions
+Expected: **11 Tamarin lemmas verified** and all F* verification conditions
 discharged.
 
 ## Checking Path-ORAM stash dynamics (M24, statistical)
@@ -402,7 +406,8 @@ staging through vault pass-through is reachable.
 ./run-composition-proofs.sh
 ```
 
-Expected: **8 Tamarin lemmas verified**.
+Expected: **4 + 6 Tamarin lemmas verified** (`m26_composition`,
+`m26a_recovery_provenance`).
 
 ## Checking cross-milestone composition stranding (M26)
 
@@ -415,4 +420,4 @@ This is the interaction property no individual model can express.
 ./run-composition-proofs.sh
 ```
 
-Expected: **3 Tamarin lemmas verified**.
+Same runner as above: **4 + 6 Tamarin lemmas verified**.

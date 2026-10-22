@@ -1,0 +1,164 @@
+# 3. Implementation correspondence
+
+This document explains how the symbolic models relate to the Rust that
+ships, what hax/F\* verifies, and where correspondence is only claimed.
+
+## 3.1 The assurance stack
+
+```
+  ┌──────────────────────────────────────────────────────────────┐
+  │ Tamarin / ProVerif models  (security/formal/*.spthy, *.pv)    │  protocol properties
+  └───────────────▲──────────────────────────────────────────────┘
+                  │  (1) MANUAL correspondence: policy rules ↔ model rules
+  ┌───────────────┴──────────────────────────────────────────────┐
+  │ Pure Rust policy crates  (vela-*-policy)                       │  hax → F*: every input,
+  │   facts (bools/ints/enums) ──► decision / unforgeable permit  │  postconditions proved
+  └───────────────▲──────────────────────────────────────────────┘
+                  │  (2) UNVERIFIED glue: handlers compute facts and act on permits
+  ┌───────────────┴──────────────────────────────────────────────┐
+  │ Axum handlers, SQL (Turso), sled, clients, FFI bridges         │  [EXEC] model tests,
+  │ vela-crypto (RustCrypto primitives, Shamir, ORAM, AEAD)        │  races, [EXPLOIT], unit
+  └──────────────────────────────────────────────────────────────┘
+```
+
+Two seams in this stack are **not** formally verified:
+
+1. **Model ↔ policy.** No tool checks that a policy crate's Rust spec
+   predicate is the same as the corresponding Tamarin rule guard. The
+   relationship is maintained by hand. Names line up on purpose (for example,
+   M11c `ACTIVE`-at-permit-epoch and `authorize_active_mutation`), but this
+   is a reviewable claim, not a theorem.
+2. **Facts ↔ reality.** A policy function takes facts such as
+   `signature_verified: bool` or `device_active: bool`. Handler code computes
+   those facts with SQL queries and calls into `vela-crypto`. If a handler
+   computes a fact wrongly, the verified decision is made over false inputs.
+   **This glue is the most valuable place for an auditor to look.**
+
+## 3.2 What hax/F\* verifies
+
+hax 0.3.7 extracts selected Rust functions into F\*. F\* 2025.10.06 with
+Z3 4.13.3 then discharges their `hax_lib::ensures` postconditions **without
+`--lax`**, for every input, including Rust integer-overflow semantics.
+
+Each crate follows the same pattern:
+
+- **Planning functions** (`plan_*`, `authorize_*`) map a facts struct to a
+  decision. Positive outcomes carry a permit type with private fields, so
+  handler code can only obtain a permit through the policy. Postcondition:
+  `decision_matches_spec(facts, decision)`, where the spec is a separate
+  Rust predicate in the same crate.
+- **Negative theorems** (`*_can_*`) take an arbitrary facts struct, falsify
+  one required fact, call the real decision function, and are proved to
+  return `false` or `Reject`. Example from `vela-share-policy`:
+
+  ```rust
+  #[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+  pub fn forged_ek_binding_can_register(mut facts: EkRegistrationFacts) -> bool {
+      facts.signature_verified = false;
+      ek_registration_is_authorized(facts)
+  }
+  ```
+
+### Crate inventory (92 extracted entry points)
+
+| Crate | Entry points | Models | Production call sites |
+|---|---:|---|---|
+| `serverVELA/vela-rekey-policy` | 12: `next_epoch`, `resolve_write_epoch`, `plan_start`, `authorize_attempt`, `authorize_shadow`, `plan_commit`, `plan_abort`, `plan_timeout`, `authorize_commit_replay`, `plan_active_mutation`, `authorize_active_mutation`, `stale_permit_authorizes_successor` | M11, M11c | `vault/rekey.rs`, `middleware.rs`, `device/enroll.rs`, `device/rendezvous.rs`, `recovery/mod.rs`, `recovery/enroll_device.rs` |
+| `serverVELA/vela-session-policy` | 11: `parse_scope_claim`, `plan_grant`, `plan_device_token`, `plan_web_session_token`, `plan_renewal`, `authorize_route`, `clamp_web_ttl`, `web_session_expired`, plus 3 negative theorems | M12, M20 | `middleware.rs` (`DeviceSession` extractor), `auth/token.rs`, `web_session/mod.rs` |
+| `serverVELA/vela-enrollment-policy` | 9: `plan_open`, `plan_claim`, `authorize_inspection`, `plan_completion`, `authorize_result`, plus 4 negative theorems | M13 | `device/rendezvous.rs` |
+| `serverVELA/vela-recovery-policy` | 21: publication stage/finalize, initiation, registration, recovery, credential update, enrollment, proof initiation, possession recovery, plus 12 negative theorems | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
+| `serverVELA/vela-share-policy` | 10: `plan_ek_registration`, `plan_send`, `plan_link_mutation`, `timestamp_format_plausible`, plus 6 negative theorems | M19b, M21 | `share/mod.rs` |
+| `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
+| `libVELA/vela-sync-policy` | 11: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
+
+Every crate has a `verify-fstar.sh` runner, and most have a README that
+states its proof boundary (for example
+[`vela-rekey-policy/README.md`](../../serverVELA/vela-rekey-policy/README.md)).
+
+### Trusted in the F\* layer
+
+| Item | Why it is trusted |
+|---|---|
+| **hax frontend and engine 0.3.7** | Extraction soundness. hax is research-grade. A translation bug could make F\* prove something about code that differs from the Rust |
+| **hax `core_models` / `rust_primitives` F\* libraries** | Models of Rust integers, slices, and `Option`. Shipped by hax, not reviewed here |
+| **15 `assume val` `PartialEq` instances** | hax emits `assume val impl_N': Core_models.Cmp.t_PartialEq T T` for `#[derive(PartialEq)]` on enums (for example `t_CapabilityScope`, `t_RouteClass`, `t_MergeAction`, `t_RecoveryChannel`). Proofs that go through `==` on these types depend on an axiomatised equality. No other `assume` or `admit` appears in the committed extractions |
+| **F\* 2025.10.06 and Z3 4.13.3** | Standard trusted computing base for F\* |
+| **The spec predicates** | `*_matches_spec` predicates are written in Rust by the same authors. F\* proves code = spec, not spec = intent |
+
+### Extraction artifacts
+
+Extracted `.fst` files are committed for six crates
+(`proofs/fstar/extraction/*.fst`) and listed in
+[`MANIFEST.sha256`](MANIFEST.sha256). `vela-rekey-policy` gitignores its
+extraction, so it is regenerated on each run. **CI does not regenerate or
+check any extraction** ([§5 G-1](05-known-limitations.md#gaps-in-the-assurance-itself)),
+so a committed `.fst` may be stale relative to its `src/lib.rs`. Always
+re-extract before you rely on one.
+
+## 3.3 Executable refinement evidence (CI-gated)
+
+These tests check the layer that F\* does not cover:
+
+| Test | What it checks |
+|---|---|
+| `serverVELA/vela-server/tests/rekey_state_model.rs` | Fixed-point state exploration (epoch ≤3, 4 attempts, 2 devices, 2 chunks). All 24 upload orderings run against the real Axum handlers and Turso. Start-vs-write and timeout-vs-commit races |
+| `…/tests/session_capability_model.rs` | Session lifecycle against real handlers |
+| `…/tests/enrollment_ceremony_model.rs` | Enrollment ceremony. Exactly one racing completion wins |
+| `…/tests/recovery_lifecycle_model.rs` | Recovery lifecycle against real handlers |
+| `…/tests/integration.rs::recovery_publication_finalizes_exactly_the_current_staged_split` | The SQL pending-row compare and atomic promotion |
+| `libVELA/vela-client-recovery-policy/tests/bounded_refinement.rs` | Exhausts the reducer's Boolean state space |
+| `vela-crypto rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible` | Every producer × consumer across desktop, web, Android, and Apple at epochs 1–4. Exact epoch AAD; legacy rejected after epoch 1 |
+| Android, Apple, and WASM bridge `--lib` tests | Same wire contract through each FFI |
+| `security/exploits/run-exploits.sh` | 9 live exploits (S-1/2/4, IDOR/XFF, P-1, S-3/RT-1, RT-2, RT-4, RT-5, RT-6, RT-7) against an isolated server |
+
+## 3.4 ProVerif extraction (M22)
+
+`libVELA/vela-crypto/proofs/proverif/extraction/lib.pvl` is produced by
+hax's experimental ProVerif backend. It contains exactly one function:
+
+```
+letfun vela_crypto__oram__uuse_trivial_oram_with_threshold(chunk_count, threshold) =
+       core_models__cmp__f_le(chunk_count, threshold).
+```
+
+The ORAM transcripts in `m22{a,b,c}.pv` are written by hand to match
+`PathOram::prepare_access` and the trivial sweep. The correspondence of
+those transcripts to `libVELA/vela-crypto/src/oram.rs` is **manual**. M24
+checks the real ORAM statistically.
+
+## 3.5 Components with no formal correspondence
+
+| Component | Covered by |
+|---|---|
+| `vela-crypto` primitives and constructions: hybrid KEM combiner, hybrid signatures, AEAD wrappers and AAD encoding, BLAKE3 context registry, Shamir and its share tags, link encryption, Argon2id parameters | Unit and interop tests; dependency audit (`cargo audit`, `cargo deny`) |
+| Device authentication (`/auth/challenge`, `/auth/verify`) and PASETO v4 issuance and validation | Unit and integration tests; RT exploit suite |
+| Rate limiting (sled TTL counters) | RT-7 exploit regression |
+| Desktop IPC peer checks (`ipc_peer`, `ipc_gate`), native host, extension | M6 abstracts them as `BrowserSpawned`; audit D-4, E-1, E-2 |
+| Android and iOS sync admission | **Not** routed through `vela-sync-policy`. Kotlin and Swift sync engines implement the rules natively (contract test `EpochSyncContractTest.kt`) |
+| Hardware keystore integration (TPM, Secure Enclave, StrongBox, Windows Hello, LocalAuthentication) | Audit D-3 and D-5 fixes; manual |
+| WebAuthn verification | `webauthn-rs` 0.5.4 (trusted library) |
+| One-off share links (`/send`), audit log, breach monitoring, importers | Tests only |
+
+## 3.6 Tracing a claim end to end
+
+Use AUTH-7 (share-key registration) as a worked example of how to audit a
+claim across layers:
+
+1. **Model:** `m19b_share_channel.spthy`, rule `RegisterShareKey` requires
+   `!DevKey(U, X)`. Lemma `registrations_require_enrolled_device_signature`.
+2. **Policy:** `vela-share-policy::plan_ek_registration`. F\* proves it
+   matches `ek_registration_decision_matches_spec`, and
+   `forged_/replayed_/foreign_device_/revoked_device_ek_can_register` are
+   all `false`.
+3. **Glue:** `serverVELA/vela-server/src/share/mod.rs` around lines 600–680
+   computes `signature_verified` (hybrid verify over
+   `share_ek_binding_message`), `device_active` (SQL `revoked` column),
+   `device_owned_by_caller` (hard-coded `true`, justified by the
+   `d.user_id = ?` join), and `signed_at_is_fresher` (bytewise comparison).
+4. **Questions the proofs cannot answer:** Is the SQL join really
+   ownership-scoped? Is the signature verification hybrid-AND? Does the
+   bytewise freshness comparison match chronological order for every
+   RFC 3339 string the handler accepts? The handler stores the
+   client-supplied string as-is, while M25 assumes a canonical rendering
+   (see [Q-6](06-engaging-researchers.md#priority-questions)).
+5. **Executable:** exploit `test_rt5_share_ek_hijack.py`.
