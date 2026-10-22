@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.vela.android.autofill.AutofillDatasetBuilder
 import com.vela.android.core.PreservedJson
+import com.vela.android.core.AuditEntry
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultMeta
 import com.vela.android.core.VaultOrganization
@@ -148,6 +149,21 @@ private fun demoMutate(org: VaultOrganization, action: JSONObject): VaultOrganiz
 private fun demoRich(folder: String?, tags: List<String>, extras: JSONObject.() -> Unit = {}): PreservedJson =
     JSONObject().put("folderId", folder).put("tagIds", JSONArray(tags)).apply(extras).preserved()
 
+private fun activitySamples(): List<AuditEntry> {
+    fun ago(minutes: Long) = Instant.now().minus(minutes, ChronoUnit.MINUTES)
+    return listOf(
+        AuditEntry(timestamp = ago(6), actionType = "vault_unlocked", detail = "Fingerprint", deviceName = "This phone"),
+        AuditEntry(timestamp = ago(22), actionType = "item_updated", detail = "Proton", deviceName = "This phone"),
+        AuditEntry(timestamp = ago(95), actionType = "credential_released", detail = "proton.me · Firefox extension", deviceName = "Studio desktop"),
+        AuditEntry(timestamp = ago(240), actionType = "share_sent", detail = "To jamie-morgan", deviceName = "This phone"),
+        AuditEntry(timestamp = ago(1500), actionType = "vault_sync", detail = "3 chunks", deviceName = "This phone"),
+        AuditEntry(timestamp = ago(1560), actionType = "item_added", detail = "Figma", deviceName = "Studio desktop"),
+        AuditEntry(timestamp = ago(1620), actionType = "device_revoked", detail = "Old tablet", deviceName = "This phone"),
+        AuditEntry(timestamp = ago(2900), actionType = "share_link_created", detail = "Studio Wi-Fi · expires in 2 days", deviceName = "This phone"),
+        AuditEntry(timestamp = ago(3100), actionType = "breach_passwords_checked", detail = "2 exposed passwords", deviceName = "This phone"),
+    )
+}
+
 private fun sampleItems(): List<VaultItem> = listOf(
     VaultItem.Login(VaultMeta(name = "Proton", favorite = true, updatedAt = ago(2), richFields = demoRich(FOLDER_WORK, listOf(TAG_2FA, TAG_SHARED)) {
         put("customFields", JSONArray().put(JSONObject()
@@ -208,10 +224,12 @@ private fun AppReview(start: String, theme: String, onTheme: (String) -> Unit) {
                             "favorites" -> vault(fav = true)
                             "attention" -> vault(attention = true)
                             "settings" -> page = "settings"
-                            else -> toast.show("Sharing, devices and activity use the real account. Not shown in review.")
+                            "audit_log" -> page = "activity"
+                            else -> toast.show("Sharing and devices use the real account. Not shown in review.")
                         }
                     }, { page = "lock" }, sync, favorites = items.count { it.favorite },
                         attention = items.filterIsInstance<VaultItem.Login>().count { it.password == "summer24" })
+                    "activity" -> AuditLogScreen({ page = "more" }, activitySamples())
                     "settings" -> SettingsScreen("", SyncSettings(), sync, null, {}, {}, {}, {},
                         { _, _ -> }, { _, _ -> }, {}, {}, {}, {}, {}, { page = "lock" }, {},
                         autoLock, clipboard, { autoLock = it }, { clipboard = it }, theme, onTheme, { page = "more" }, biometricUnlockEnabled = false)

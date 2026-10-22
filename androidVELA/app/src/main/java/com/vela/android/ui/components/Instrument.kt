@@ -222,7 +222,7 @@ fun InstrumentChip(text: String, selected: Boolean, onClick: () -> Unit, modifie
             .border(1.dp, if (selected) VelaColors.TextPrimary else Ink.line2, RoundedCornerShape(99.dp))
             .instrumentClick(role = Role.Tab, onClick = onClick).padding(horizontal = 13.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(text, fontSize = 10.sp, color = fg, maxLines = 1) }
+    ) { Text(text, fontSize = 11.sp, color = fg, maxLines = 1) }
 }
 
 /** 38×23 switch: lime when on, thumb slides over 200ms. */
