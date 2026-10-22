@@ -51,6 +51,7 @@ pub struct OrganizationPanel {
     choose_parent: bool,
 
     name: Entity<EditableTextState>,
+    header_only: bool,
     busy: bool,
     error: Option<String>,
     confirm_delete: bool,
@@ -72,11 +73,41 @@ impl OrganizationPanel {
             choose_parent: false,
 
             name: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+            header_only: false,
             busy: false,
             error: None,
             confirm_delete: false,
         }
     }
+    /// Instrument uses a rail at every width, so keep its collections in a picker.
+    pub fn new_header(state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
+        let mut this = Self::new(state, cx);
+        this.header_only = true;
+        this
+    }
+
+    pub fn modal_open(&self) -> bool {
+        self.dialog.is_some()
+    }
+
+    /// Open the collection picker (or setup) from an external control. Instrument
+    /// renders its own pill in the vault header; this keeps the dialog and its
+    /// state in the panel that already owns them.
+    pub fn open_picker(&mut self, cx: &mut Context<Self>) {
+        let active = self.state.vault.read().schema_version == Some(2);
+        self.open(if active { Dialog::Navigate } else { Dialog::Setup }, cx);
+    }
+
+    pub fn filter_label(&self) -> String {
+        let vault = self.state.vault.read();
+        let org = &vault.organization;
+        let folder = self.active_folder(org).map(|id| {
+            Uuid::parse_str(&id).ok().map(|id| folder_path(org, id)).unwrap_or_else(|| "Unfiled".into())
+        });
+        let tag = self.active_tag(org).and_then(|id| org.tag(id).map(|tag| format!("#{}", tag.name)));
+        [folder, tag].into_iter().flatten().collect::<Vec<_>>().join(" · ")
+    }
+
     pub fn toggle(&mut self, id: String, cx: &mut Context<Self>) {
         if !self.selected.remove(&id) {
             self.selected.insert(id);
@@ -512,16 +543,21 @@ impl OrganizationPanel {
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> Div {
+        let instrument = p.instrument;
+        let hover_bg = p.surface_container;
+        let hover_bg_strong = p.surface_container_high;
+        let hover_border = p.primary;
         div()
             .flex()
             .items_center()
-            .px_6()
-            .pt_4()
-            .pb_2()
+            .px(if p.instrument { px(16.) } else { px(24.) })
+            .pt(if p.instrument { px(18.) } else { px(16.) })
+            .pb(if p.instrument { px(6.) } else { px(8.) })
             .child(
                 fonts::tracked_text(label, px(10.), 0.1)
                     .flex_1()
-                    .font_family(fonts::LABEL)
+                    .font_family(if p.instrument { fonts::MONO } else { fonts::LABEL })
+                    .when(p.instrument, |el| el.text_size(px(9.5)))
                     .text_color(p.outline),
             )
             .child(
@@ -535,13 +571,22 @@ impl OrganizationPanel {
                         }
                     })
                     .size(px(28.))
-                    .rounded_lg()
+                    .rounded(if p.instrument { px(99.) } else { px(8.) })
+                    .when(p.instrument, |el| {
+                        el.border_1().border_color(p.outline_variant)
+                    })
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .hover(|el| el.bg(p.surface_container))
-                    .child(icon("add", px(16.), p.on_surface_variant))
+                    .hover(move |el| {
+                        if instrument {
+                            el.bg(hover_bg_strong).border_color(hover_border)
+                        } else {
+                            el.bg(hover_bg)
+                        }
+                    })
+                    .child(icon("add", px(if p.instrument { 15. } else { 16. }), p.on_surface_variant))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| this.edit_record(tags, None, cx)),
@@ -632,10 +677,13 @@ impl OrganizationPanel {
                         div()
                             .id(gpui::SharedString::from(format!("edit-folder-{id}")))
                             .cursor_pointer()
-                            .p_1()
-                            .rounded_md()
+                            .size(px(24.))
+                            .rounded(px(99.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .hover(|el| el.bg(p.surface_container_high))
-                            .child(icon("more_horiz", px(16.), p.on_surface_variant))
+                            .child(icon("more_horiz", px(15.), p.on_surface_variant))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, _, cx| {
@@ -649,7 +697,7 @@ impl OrganizationPanel {
                     MouseButton::Left,
                     cx.listener(move |this, _, _, cx| {
                         this.folder = Some(id.to_string());
-                        this.tag = None;
+                        if !this.header_only { this.tag = None; }
                         if this.dialog == Some(Dialog::Navigate) {
                             this.dialog = None;
                         }
@@ -681,10 +729,13 @@ impl OrganizationPanel {
                             div()
                                 .id(gpui::SharedString::from(format!("edit-tag-{id}")))
                                 .cursor_pointer()
-                                .p_1()
-                                .rounded_md()
+                                .size(px(24.))
+                                .rounded(px(99.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
                                 .hover(|el| el.bg(p.surface_container_high))
-                                .child(icon("more_horiz", px(16.), p.on_surface_variant))
+                                .child(icon("more_horiz", px(15.), p.on_surface_variant))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(move |this, _, _, cx| {
@@ -698,7 +749,7 @@ impl OrganizationPanel {
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| {
                             this.tag = Some(id);
-                            this.folder = None;
+                            if !this.header_only { this.folder = None; }
                             if this.dialog == Some(Dialog::Navigate) {
                                 this.dialog = None;
                             }
@@ -730,7 +781,7 @@ impl OrganizationPanel {
         if dialog == Dialog::Setup {
             return body.child(div().text_lg().child("A place for everything"))
                 .child("Organize your vault with folders and tags, and add custom fields, extra websites and identity details.")
-                .child(div().text_sm().text_color(p.on_surface_variant).child("An encrypted safety copy is saved on this device before activation. Mobile and browser access becomes read-only during rollout. Older desktop apps must upgrade before syncing changes."));
+                .child(div().text_sm().text_color(p.on_surface_variant).child("An encrypted safety copy is saved on this device before activation. Use current VELA apps on every device; older clients must upgrade before syncing changes."));
         }
         if dialog == Dialog::Navigate {
             return self.navigation(org, true, p, cx);
@@ -931,26 +982,29 @@ impl Render for OrganizationPanel {
         let active = vault.schema_version == Some(2);
         let org = vault.organization.clone();
         drop(vault);
-        let compact = window.viewport_size().width < px(crate::layout::SIDEBAR_BREAKPOINT);
+        let compact = self.header_only || window.viewport_size().width < px(crate::layout::SIDEBAR_BREAKPOINT);
         let mut root = div().min_w_0().text_color(p.on_surface);
         if compact {
-            root = root.flex().items_center().max_w_full().child(
-                button("collections".into(), "Folders & tags", &p)
-                    .child(icon("expand_more", px(18.), p.on_surface_variant))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
-                            this.open(
-                                if active {
-                                    Dialog::Navigate
-                                } else {
-                                    Dialog::Setup
-                                },
-                                cx,
-                            )
-                        }),
-                    ),
-            );
+            // Instrument renders its own header pill and calls `open_picker`.
+            if !self.header_only {
+                root = root.flex().items_center().max_w_full().child(
+                    button("collections".into(), "Folders & tags", &p)
+                        .child(icon("expand_more", px(18.), p.on_surface_variant))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.open(
+                                    if active {
+                                        Dialog::Navigate
+                                    } else {
+                                        Dialog::Setup
+                                    },
+                                    cx,
+                                )
+                            }),
+                        ),
+                );
+            }
         } else {
             root = root
                 .w_full()
@@ -1288,6 +1342,39 @@ fn nav_row(
     depth: usize,
     p: &Palette,
 ) -> gpui::Stateful<Div> {
+    if p.instrument {
+        let selector = id.clone();
+        let hover = p.surface_container_high;
+        let hover_text = p.on_surface;
+        return div()
+            .id(gpui::SharedString::from(id))
+            .debug_selector(move || selector.clone())
+            .mx_2()
+            .my(px(1.))
+            .pl(px(10. + depth as f32 * 14.))
+            .pr(px(10.))
+            .min_h(px(40.))
+            .rounded(px(10.))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .bg(if selected {
+                p.surface_container_high
+            } else {
+                gpui::transparent_black()
+            })
+            .hover(move |el| el.bg(hover).text_color(hover_text))
+            .cursor_pointer()
+            .text_size(px(13.))
+            .text_color(if selected { p.on_surface } else { p.on_surface_variant })
+            .when(selected, |el| el.font_weight(gpui::FontWeight::MEDIUM))
+            .child(icon(
+                icon_name,
+                px(16.),
+                if selected { p.primary } else { p.on_surface_variant },
+            ))
+            .child(div().flex_1().min_w_0().text_ellipsis().child(label));
+    }
     let selector = id.clone();
     ui::navigation_row(gpui::SharedString::from(id), selected, p)
         .debug_selector(move || selector.clone())

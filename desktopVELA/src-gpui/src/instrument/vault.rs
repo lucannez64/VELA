@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use gpui::{div, prelude::*, px, uniform_list, AnimationExt, Context, FontWeight, IntoElement, SharedString, Window};
+use gpui::{div, prelude::*, px, uniform_list, AnimationExt, Context, FontWeight, IntoElement, MouseButton, SharedString, Window};
 use vela_desktop_core::vault::VaultItem;
 
 use super::analysis::Kind;
@@ -16,7 +16,9 @@ const ROW_H: f32 = 58.;
 const DETAIL_W: f32 = 432.;
 
 impl InstrumentShell {
-    pub(super) fn refresh_rows_with(&mut self, query: &str) {
+    pub(super) fn refresh_rows_with(&mut self, query: &str, cx: &gpui::App) {
+        let panel = self.organization_panel.read(cx);
+        let vault = self.app_state.vault.read();
         let a = &self.analysis;
         let items = &self.items;
         let mut rows: Vec<usize> = a
@@ -28,6 +30,7 @@ impl InstrumentShell {
                 ListKind::Favorites => f.favorite,
                 ListKind::Of(k) => f.kind == k,
             })
+            .filter(|(_, f)| panel.matches(&items[f.index], &vault.organization))
             .filter(|(_, f)| !self.risk_only || f.at_risk())
             .filter(|(_, f)| {
                 if query.is_empty() {
@@ -154,7 +157,7 @@ impl InstrumentShell {
             let active = self.list_kind == kind || (kind == ListKind::All && self.list_kind == ListKind::Favorites);
             seg = seg.child(self.filter_chip(id, label, active, t).on_click(cx.listener(move |this, _, _, cx| {
                 this.list_kind = kind;
-                this.refresh_rows();
+                this.refresh_rows(cx);
                 this.anim_gen += 1;
                 cx.notify();
             })));
@@ -181,7 +184,7 @@ impl InstrumentShell {
             .child(format!("At risk · {at_risk}"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.risk_only = !this.risk_only;
-                this.refresh_rows();
+                this.refresh_rows(cx);
                 this.anim_gen += 1;
                 cx.notify();
             }));
@@ -192,10 +195,64 @@ impl InstrumentShell {
             .child(icon("swap_vert", px(15.), t.muted))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.sort = this.sort.next();
-                this.refresh_rows();
+                this.refresh_rows(cx);
                 cx.notify();
             }));
 
+        let collection_label = self.organization_panel.read(cx).filter_label();
+        let collections_active = self.app_state.vault.read().schema_version == Some(2);
+        let collections_filtered = !collection_label.is_empty();
+        let collections_label = if collections_filtered {
+            collection_label
+        } else if collections_active {
+            "Folders & tags".to_string()
+        } else {
+            "Set up collections".to_string()
+        };
+        let panel = self.organization_panel.clone();
+        let collections = div()
+            .id("collections")
+            .debug_selector(|| "collections".into())
+            .h(px(36.))
+            .px(px(13.))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .gap(px(7.))
+            .border_1()
+            .border_color(if collections_filtered {
+                alpha(t.violet, 0.45)
+            } else {
+                t.line
+            })
+            .bg(if collections_filtered {
+                alpha(t.violet, 0.10)
+            } else {
+                t.panel2
+            })
+            .text_color(if collections_filtered { t.violet } else { t.muted })
+            .text_size(px(12.5))
+            .font_weight(FontWeight::MEDIUM)
+            .cursor_pointer()
+            .hover(move |el| {
+                el.bg(if collections_filtered {
+                    alpha(t.violet, 0.16)
+                } else {
+                    t.panel3
+                })
+                .border_color(t.violet)
+                .text_color(t.text)
+            })
+            .child(SharedString::from(collections_label))
+            .child(crate::icon::icon(
+                "expand_more",
+                px(16.),
+                if collections_filtered { t.violet } else { t.muted },
+            ))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                panel.update(cx, |panel, cx| panel.open_picker(cx));
+            });
+        let scope_control = crate::views::organization_panel::OrganizationPanel::scope_control(&self.organization_panel, cx);
         let header = div()
             .flex()
             .flex_col()
@@ -213,7 +270,13 @@ impl InstrumentShell {
                     .child(div().flex_1())
                     .child(sort),
             )
-            .child(div().flex().flex_wrap().items_center().gap(px(6.)).child(seg).child(risk_chip));
+            .child(div().flex().flex_wrap().items_center().gap(px(6.)).child(seg).child(risk_chip))
+            .child(div().flex().flex_wrap().items_center().gap(px(10.))
+                .child(collections)
+                .when_some(scope_control, |d, control| d.child(control))
+                // Header-mode panel renders no control; keep it mounted so its
+                // deferred dialog can appear above the vault.
+                .child(div().child(self.organization_panel.clone())));
 
         let cols = div()
             .flex()
@@ -849,5 +912,88 @@ mod column_tests {
                 assert_eq!(column.size.width,header.size.width);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+    use crate::modal_test_support as ui;
+    use gpui::{size, Modifiers, TestAppContext};
+
+    #[gpui::test]
+    fn collection_picker_filters_instrument_rows_at_every_width(cx: &mut TestAppContext) {
+        let demo = crate::demo::DemoVault::new().unwrap();
+        cx.update(|cx| cx.set_global(crate::demo::DemoMode));
+        let (shell, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            InstrumentShell::new(demo.state.clone(), cx)
+        });
+        cx.run_until_parked();
+        shell.update(cx, |shell, cx| shell.open_list(ListKind::All, false, cx));
+        let all = shell.read_with(cx, |shell, _| shell.rows.len());
+        let folder = demo.state.vault.read().organization.folders[0].id;
+        let tag = demo.state.vault.read().organization.tags[0].id;
+        for (width, height) in [(945., 1025.), (1440., 900.), (480., 700.)] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            let picker = ui::bounds(cx, "collections");
+            assert!(picker.right() <= px(width));
+            cx.simulate_click(picker.center(), Modifiers::default());
+            cx.run_until_parked();
+            assert!(ui::bounds(cx, "collections-dialog").right() <= px(width));
+            let selector: &'static str = Box::leak(format!("org-folder-{folder}").into_boxed_str());
+            let row = ui::bounds(cx, selector);
+            cx.simulate_click(row.center(), Modifiers::default());
+            cx.run_until_parked();
+            shell.read_with(cx, |shell, cx| {
+                let panel = shell.organization_panel.read(cx);
+                let vault = demo.state.vault.read();
+                let expected = vault.items.iter().filter(|item| panel.matches(item, &vault.organization)).count();
+                assert!(expected > 0 && expected < all);
+                assert_eq!(shell.rows.len(), expected);
+                assert_eq!(panel.new_item_organization().folder_id, Some(folder.to_string()));
+            });
+            // Add a tag filter to the selected folder, then clear both via All items.
+            let picker = ui::bounds(cx, "collections");
+            cx.simulate_click(picker.center(), Modifiers::default());
+            cx.run_until_parked();
+            let selector: &'static str = Box::leak(format!("org-tag-{tag}").into_boxed_str());
+            let row = ui::bounds(cx, selector);
+            cx.simulate_click(row.center(), Modifiers::default());
+            cx.run_until_parked();
+            shell.read_with(cx, |shell, cx| {
+                let panel = shell.organization_panel.read(cx);
+                let vault = demo.state.vault.read();
+                assert_eq!(shell.rows.len(), vault.items.iter().filter(|item| panel.matches(item, &vault.organization)).count());
+                assert_eq!(panel.new_item_organization().tag_ids, Some(vec![tag]));
+            });
+            let picker = ui::bounds(cx, "collections");
+            cx.simulate_click(picker.center(), Modifiers::default());
+            cx.run_until_parked();
+            let all_items = ui::bounds(cx, "org-filter-all");
+            cx.simulate_click(all_items.center(), Modifiers::default());
+            cx.run_until_parked();
+            assert_eq!(shell.read_with(cx, |shell, _| shell.rows.len()), all);
+        }
+    }
+
+    #[gpui::test]
+    fn instrument_exposes_collection_activation_before_upgrade(cx: &mut TestAppContext) {
+        let demo = crate::demo::DemoVault::new().unwrap();
+        demo.state.vault.write().schema_version = None;
+        cx.update(|cx| cx.set_global(crate::demo::DemoMode));
+        let (shell, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            InstrumentShell::new(demo.state.clone(), cx)
+        });
+        cx.run_until_parked();
+        shell.update(cx, |shell, cx| shell.open_list(ListKind::All, false, cx));
+        cx.simulate_resize(size(px(945.), px(1025.)));
+        cx.run_until_parked();
+        let picker = ui::bounds(cx, "collections");
+        cx.simulate_click(picker.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert!(ui::bounds(cx, "enable-rich-items").size.width > px(0.));
     }
 }
