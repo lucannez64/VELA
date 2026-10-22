@@ -89,6 +89,14 @@ private fun demoOrganization(): VaultOrganization {
     val tags = JSONArray()
         .put(record(TAG_2FA, "2FA"))
         .put(record(TAG_SHARED, "Shared"))
+        .put(record("c1111111-1111-4111-8111-111111111111", "Family"))
+        .put(record("c2222222-2222-4222-8222-222222222222", "Important"))
+        .put(record("c3333333-3333-4333-8333-333333333333", "Review later"))
+        .put(record("c4444444-4444-4444-8444-444444444444", "Finance"))
+        .put(record("c5555555-5555-4555-8555-555555555555", "Travel"))
+        .put(record("c6666666-6666-4666-8666-666666666666", "Social"))
+        .put(record("c7777777-7777-4777-8777-777777777777", "Work tools"))
+        .put(record("c8888888-8888-4888-8888-888888888888", "Archive"))
     return VaultOrganization(true, JSONObject().put("folders", folders).put("tags", tags).preserved())
 }
 

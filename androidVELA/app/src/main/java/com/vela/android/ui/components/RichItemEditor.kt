@@ -18,8 +18,14 @@ import java.util.UUID
 
 @Composable
 fun RichDialog(visible: Boolean, title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    if (visible) Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.Inherit)) {
-        InstrumentSheet(true,title,onDismiss,content)
+    if (!visible) return
+    Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.Inherit)) {
+        // A dialog window can extend under the gesture/navigation bar. Constrain the
+        // sheet to the area that is actually visible, so long folder/tag lists scroll
+        // instead of disappearing past the bottom edge.
+        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
+            InstrumentSheet(true, title, onDismiss, maxHeight = maxHeight * 0.94f, content = content)
+        }
     }
 }
 
