@@ -7,7 +7,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import com.vela.android.core.*
@@ -20,9 +22,17 @@ import java.util.UUID
 fun RichDialog(visible: Boolean, title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     if (!visible) return
     Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.Inherit)) {
-        // A dialog window can extend under the gesture/navigation bar. Constrain the
-        // sheet to the area that is actually visible, so long folder/tag lists scroll
-        // instead of disappearing past the bottom edge.
+        // A wrap-content dialog window can measure taller than the display, in which
+        // case a bottom sheet aligned to its bottom sits partly off-screen and its
+        // scrollable content can never be reached. Force the window to the real
+        // display size before laying the sheet out.
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        LaunchedEffect(dialogWindow) {
+            dialogWindow?.setLayout(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
             InstrumentSheet(true, title, onDismiss, maxHeight = maxHeight * 0.94f, content = content)
         }

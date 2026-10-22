@@ -97,6 +97,15 @@ private fun demoOrganization(): VaultOrganization {
         .put(record("c6666666-6666-4666-8666-666666666666", "Social"))
         .put(record("c7777777-7777-4777-8777-777777777777", "Work tools"))
         .put(record("c8888888-8888-4888-8888-888888888888", "Archive"))
+        .put(record("c9999999-9999-4999-8999-999999999999", "Banking"))
+        .put(record("d1111111-1111-4111-8111-111111111111", "Clients"))
+        .put(record("d2222222-2222-4222-8222-222222222222", "Dev"))
+        .put(record("d3333333-3333-4333-8333-333333333333", "Family shared"))
+        .put(record("d4444444-4444-4444-8444-444444444444", "Insurance"))
+        .put(record("d5555555-5555-4555-8555-555555555555", "Old accounts"))
+        .put(record("d6666666-6666-4666-8666-666666666666", "Shopping"))
+        .put(record("d7777777-7777-4777-8777-777777777777", "Streaming"))
+        .put(record("d8888888-8888-4888-8888-888888888888", "Utilities"))
     return VaultOrganization(true, JSONObject().put("folders", folders).put("tags", tags).preserved())
 }
 
