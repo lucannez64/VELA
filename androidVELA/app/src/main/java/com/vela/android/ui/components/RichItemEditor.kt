@@ -136,6 +136,9 @@ fun CollectionsManager(organization: VaultOrganization, onEnable: () -> Unit, on
         if(records.isEmpty()) InstrumentFine("No ${section.lowercase()} yet.")
     }
     error?.let {Text(it,color=VelaColors.ErrorRed)}
+    // Same gesture-bar headroom as the filter sheet: the dialog can report a
+    // taller viewport than the screen, so keep the last folder/tag scrollable.
+    Spacer(Modifier.height(72.dp))
     RichDialog(edit!=null,if(edit=="new")"New ${section.dropLast(1).lowercase()}" else "Edit ${section.dropLast(1).lowercase()}",{edit=null}) {
         SheetInput("Name",name,{name=it})
         if(section=="Folders") {
