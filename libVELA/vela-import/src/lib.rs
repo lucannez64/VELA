@@ -1059,7 +1059,11 @@ pub fn parse_1pux(data: &[u8]) -> Result<ParsedImport, String> {
         let mut file = archive
             .by_index(index)
             .map_err(|e| format!("Could not read .1pux entry: {e}"))?;
-        if file.name().ends_with("export.data") {
+        let entry_name = file
+            .name()
+            .map_err(|e| format!("Could not read .1pux entry name: {e}"))?
+            .to_string();
+        if entry_name.ends_with("export.data") {
             let mut text = String::new();
             std::io::Read::read_to_string(&mut file, &mut text)
                 .map_err(|e| format!("Could not read .1pux export.data: {e}"))?;
@@ -1391,7 +1395,13 @@ fn read_attachment(
 ) -> Option<Vec<u8>> {
     let mut candidate = None;
     for index in 0..archive.len() {
-        let name = archive.by_index(index).ok()?.name().to_string();
+        let Ok(file) = archive.by_index(index) else {
+            continue;
+        };
+        let Ok(name) = file.name() else {
+            continue;
+        };
+        let name = name.to_string();
         if !name.starts_with("files/") {
             continue;
         }
