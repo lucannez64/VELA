@@ -104,6 +104,9 @@ fun VaultBrowserScreen(items: List<VaultItem>, itemCount: Int, onItemClick: (Vau
         organization.tags.forEach {val t=JSONObject(it);val id=t.getString("id")
             InstrumentMenuRow(null,t.getString("name")) {tag=id;scopePicker=false}
         }
+        // Keep the last tag reachable above gesture navigation, even when the
+        // dialog window reports a taller viewport than the visible screen.
+        Spacer(Modifier.height(72.dp))
     }
 
 }
