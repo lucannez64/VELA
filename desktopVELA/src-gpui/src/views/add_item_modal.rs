@@ -870,8 +870,16 @@ mod modal_tests {
         for (width, height) in [(1440., 900.), (945., 1025.), (390., 620.)] {
             cx.simulate_resize(size(px(width), px(height)));
             cx.run_until_parked();
+            // GPUI element animations use wall time, unlike executor timers.
+            // Let the 220 ms entrance finish before checking settled geometry.
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
             let card = ui::bounds(cx, "add-item-card");
-            assert!((card.right() - px(width - 12.)).abs() < px(2.));
+            assert!(
+                (card.right() - px(width - 12.)).abs() < px(2.),
+                "drawer not right-aligned at {width}×{height}: {card:?}"
+            );
             assert!(card.size.width <= px(620.));
             let footer = ui::bounds(cx, "add-item-card-footer");
             assert!(footer.bottom() <= px(height));
