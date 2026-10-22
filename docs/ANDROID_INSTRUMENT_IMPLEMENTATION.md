@@ -113,6 +113,17 @@ Older clients still preserve the data they cannot edit. iOS and browser
 access remain read-only until their own editors ship; the extension's
 autofill path already reads cards, identities and richer address data.
 
+## Import
+
+Settings → **Import vault** opens the system file picker and reads JSON, CSV,
+`.1pif` or `.1pux` exports. Parsing runs in the shared `vela-import` crate
+through the JNI bridge; the Kotlin side maps the neutral entries onto the
+vault. Logins, notes, cards, identities, custom fields, extra websites, folder
+paths, tags and `.1pux` attachments all land in the vault. On a schema-1 vault
+the rich parts are folded into notes and counted as converted, mirroring
+desktop. The row below the picker shows the report: detected source, added,
+duplicates, preserved, converted and unsupported fields.
+
 ## Build and install
 
 ```sh

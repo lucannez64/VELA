@@ -2102,6 +2102,147 @@ mod tests {
     }
 }
 
+/// Parse a password-manager export for the Android picker. The file arrives
+/// base64-encoded so a `.1pux` ZIP never has to cross the JNI boundary as text.
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeParseImportJson(mut env: JNIEnv, _object: JObject, request: JString) -> jstring {
+    let result = jni_json_result(&mut env, request, parse_import_request);
+    jni_string(&mut env, &result)
+}
+
+fn parse_import_request(request: &str) -> anyhow_like::Result<serde_json::Value> {
+    let request: serde_json::Value = serde_json::from_str(request)?;
+    let encoded = request
+        .get("dataBase64")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let bytes = B64
+        .decode(encoded)
+        .map_err(|error| anyhow_like::Error::from(format!("import data is not base64: {error}")))?;
+    let parsed = vela_import::parse_import_bytes(&bytes)?;
+    Ok(import_response(&parsed))
+}
+
+fn import_response(parsed: &vela_import::ParsedImport) -> serde_json::Value {
+    let entries: Vec<serde_json::Value> = parsed.entries.iter().map(import_entry_json).collect();
+    serde_json::json!({
+        "source": parsed.source,
+        "skippedUnsupported": parsed.skipped_unsupported,
+        "unsupported": parsed.unsupported,
+        "entries": entries,
+    })
+}
+
+fn import_entry_json(entry: &vela_import::ImportedEntry) -> serde_json::Value {
+    use vela_import::{EntryKind, FieldKind};
+    let kind = match entry.kind {
+        EntryKind::Login => "login",
+        EntryKind::Note => "note",
+        EntryKind::Card => "card",
+        EntryKind::Identity => "identity",
+    };
+    let fields: Vec<serde_json::Value> = entry
+        .fields
+        .iter()
+        .map(|field| {
+            serde_json::json!({
+                "label": field.label,
+                "kind": match field.kind {
+                    FieldKind::Text => "text",
+                    FieldKind::Concealed => "concealed",
+                    FieldKind::Boolean => "boolean",
+                },
+                "value": field.value,
+            })
+        })
+        .collect();
+    let addresses: Vec<serde_json::Value> = entry
+        .identity
+        .addresses
+        .iter()
+        .map(|address| {
+            serde_json::json!({
+                "label": address.label,
+                "line1": address.line1,
+                "line2": address.line2,
+                "city": address.city,
+                "region": address.region,
+                "postal": address.postal,
+                "country": address.country,
+            })
+        })
+        .collect();
+    let attachments: Vec<serde_json::Value> = entry
+        .attachments
+        .iter()
+        .map(|attachment| {
+            serde_json::json!({
+                "fileName": attachment.file_name,
+                "mime": attachment.mime,
+                "note": vela_import::encode_attachment_note(
+                    &attachment.file_name,
+                    &attachment.mime,
+                    &attachment.bytes,
+                ),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "name": entry.name,
+        "kind": kind,
+        "url": entry.url,
+        "username": entry.username,
+        "password": entry.password,
+        "notes": entry.notes,
+        "totp": entry.totp,
+        "favorite": entry.favorite,
+        "folder": entry.folder,
+        "tags": entry.tags,
+        "fields": fields,
+        "extraUrls": entry.extra_urls,
+        "card": {
+            "number": entry.card.number,
+            "cardholder": entry.card.cardholder,
+            "expiry": entry.card.expiry,
+            "cvv": entry.card.cvv,
+            "pin": entry.card.pin,
+        },
+        "identity": {
+            "first": entry.identity.first,
+            "last": entry.identity.last,
+            "middle": entry.identity.middle,
+            "email": entry.identity.email,
+            "phone": entry.identity.phone,
+            "company": entry.identity.company,
+            "jobTitle": entry.identity.job_title,
+            "ssn": entry.identity.ssn,
+            "addresses": addresses,
+        },
+        "attachments": attachments,
+    })
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    #[test]
+    fn import_request_returns_source_and_entries() {
+        let csv = "name,url,username,password\nGitHub,https://github.com,octo,pw";
+        let request = serde_json::json!({ "dataBase64": B64.encode(csv) }).to_string();
+        let value = parse_import_request(&request).unwrap();
+        assert_eq!(value["source"], "Browser CSV");
+        assert_eq!(value["entries"][0]["name"], "GitHub");
+        assert_eq!(value["entries"][0]["kind"], "login");
+    }
+
+    #[test]
+    fn import_request_rejects_non_base64() {
+        let request = serde_json::json!({ "dataBase64": "not base64!!" }).to_string();
+        assert!(parse_import_request(&request).is_err());
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeRichItemsJson(mut env: JNIEnv, _object: JObject, request: JString) -> jstring {
     let result = jni_json_result(&mut env, request, |s| Ok(vela_core::rich_api::process(s)?));
