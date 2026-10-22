@@ -77,31 +77,32 @@ pub fn fallback_icon_box(palette: &Palette, icon_name: &'static str, size: Pixel
 /// entity — kept generic over the caller's entity type via a closure rather
 /// than a `WeakEntity<T>` parameter, since `VaultBrowser` and `ItemDetail`
 /// are different types.
-pub fn favicon_or_fallback(
-    palette: &Palette,
+/// Returns the favicon image when it is already cached, or kicks off the fetch
+/// and returns `None` so the caller can keep its own placeholder (e.g. the
+/// Instrument initials tile). Progress is reported through `on_loaded`.
+pub fn cached_or_fetch(
     url: &str,
-    icon_name: &'static str,
     size: Pixels,
     favicon_cache: &FaviconCache,
     app: &mut App,
     on_loaded: impl FnOnce(&mut AsyncApp) + 'static,
-) -> gpui::AnyElement {
-    if app.has_global::<crate::demo::DemoMode>() { return fallback_icon_box(palette, icon_name, size).into_any_element(); }
+) -> Option<gpui::AnyElement> {
+    if app.has_global::<crate::demo::DemoMode>() {
+        return None;
+    }
     let cached = favicon_cache.borrow().get(url).cloned();
     match cached {
-        Some(FaviconState::Loaded(image)) => div()
-            .flex_shrink_0()
-            .w(size)
-            .h(size)
-            .rounded_xl()
-            .overflow_hidden()
-            .child(img(ImageSource::Image(image)).w(size).h(size))
-            .into_any_element(),
-        Some(FaviconState::Loading) | Some(FaviconState::Failed) => {
-            fallback_icon_box(palette, icon_name, size).into_any_element()
-        }
+        Some(FaviconState::Loaded(image)) => Some(
+            img(ImageSource::Image(image))
+                .w(size)
+                .h(size)
+                .into_any_element(),
+        ),
+        Some(FaviconState::Loading) | Some(FaviconState::Failed) => None,
         None => {
-            favicon_cache.borrow_mut().insert(url.to_string(), FaviconState::Loading);
+            favicon_cache
+                .borrow_mut()
+                .insert(url.to_string(), FaviconState::Loading);
             let url = url.to_string();
             let cache = favicon_cache.clone();
             app.spawn(async move |cx| {
@@ -119,7 +120,29 @@ pub fn favicon_or_fallback(
                 on_loaded(cx);
             })
             .detach();
-            fallback_icon_box(palette, icon_name, size).into_any_element()
+            None
         }
     }
+}
+
+pub fn favicon_or_fallback(
+    palette: &Palette,
+    url: &str,
+    icon_name: &'static str,
+    size: Pixels,
+    favicon_cache: &FaviconCache,
+    app: &mut App,
+    on_loaded: impl FnOnce(&mut AsyncApp) + 'static,
+) -> gpui::AnyElement {
+    if let Some(image) = cached_or_fetch(url, size, favicon_cache, app, on_loaded) {
+        return div()
+            .flex_shrink_0()
+            .w(size)
+            .h(size)
+            .rounded_xl()
+            .overflow_hidden()
+            .child(image)
+            .into_any_element();
+    }
+    fallback_icon_box(palette, icon_name, size).into_any_element()
 }

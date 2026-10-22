@@ -657,6 +657,9 @@ impl InstrumentShell {
                 }
             };
             let hover = t.line2;
+            let weak_avatar = cx.weak_entity();
+            let avatar_el = super::favicon_avatar(item.url(), item.name(), 36., t, &self.favicon_cache, cx,
+                move |cx| { weak_avatar.update(cx, |_, cx| cx.notify()).ok(); });
             row = row.child(
                 div()
                     .id(gpui::ElementId::Name(format!("pin-{id}").into()))
@@ -678,7 +681,7 @@ impl InstrumentShell {
                             .flex()
                             .items_center()
                             .gap(px(10.))
-                            .child(avatar(item.name(), 36., t))
+                            .child(avatar_el)
                             .child(
                                 div()
                                     .min_w_0()

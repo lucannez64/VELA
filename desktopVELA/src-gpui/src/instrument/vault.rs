@@ -330,17 +330,22 @@ impl InstrumentShell {
                                 VaultItem::CreditCard { .. } => Some("Card number"),
                                 _ => None,
                             },
+                            url: match item {
+                                VaultItem::Login { url, .. } if !url.is_empty() => Some(url.clone()),
+                                _ => None,
+                            },
                         }
                     })
                     .collect(),
             );
             let selected = self.selected.clone();
-            uniform_list("vault-rows", count, move |range, _window, _cx| {
+            let favicon_cache = self.favicon_cache.clone();
+            uniform_list("vault-rows", count, move |range, _window, cx| {
                 range
                     .map(|ix| {
                         let r = &data[ix];
                         let is_sel = selected.as_deref() == Some(r.id.as_str());
-                        let row = vault_row(r, ix, is_sel, compact, &tk, entity.clone());
+                        let row = vault_row(r, ix, is_sel, compact, &tk, entity.clone(), &favicon_cache, cx);
                         if ix < 14 {
                             row.with_animation(anim_id("vault-row", gen * 1000 + ix as u64), stagger(ix, 28, 320), |el, d| {
                                 el.opacity(d).left(px(10. * (1. - d)))
@@ -435,12 +440,14 @@ impl InstrumentShell {
             .child(icon_btn("d-close", "close", t).on_click(cx.listener(|this, _, _, cx| this.select(None, cx))));
 
         let url = item.url().filter(|u| !u.is_empty()).map(str::to_string);
+        let detail_weak = cx.weak_entity();
         let ident = div()
             .flex()
             .items_center()
             .gap(px(16.))
             .mb(px(18.))
-            .child(avatar(item.name(), 58., t))
+            .child(super::favicon_avatar(item.url(), item.name(), 58., t, &self.favicon_cache, cx,
+                { let weak = detail_weak; move |cx| { weak.update(cx, |_, cx| cx.notify()).ok(); } }))
             .child(
                 div()
                     .min_w_0()
@@ -624,9 +631,11 @@ struct RowData {
     old: bool,
     risk: bool,
     copy: Option<&'static str>,
+    url: Option<String>,
 }
 
-fn vault_row(r: &RowData, ix: usize, selected: bool, compact: bool, t: &Tok, entity: gpui::WeakEntity<InstrumentShell>) -> gpui::Stateful<gpui::Div> {
+fn vault_row(r: &RowData, ix: usize, selected: bool, compact: bool, t: &Tok, entity: gpui::WeakEntity<InstrumentShell>,
+    favicon_cache: &crate::favicon_ui::FaviconCache, app: &mut gpui::App) -> gpui::Stateful<gpui::Div> {
     let id = r.id.clone();
     let hover = t.panel2;
     let strength: gpui::AnyElement = match r.strength {
@@ -660,9 +669,12 @@ fn vault_row(r: &RowData, ix: usize, selected: bool, compact: bool, t: &Tok, ent
         .cursor_pointer()
         .when(selected, |d| d.bg(t.panel3).border_1().border_color(t.line2))
         .when(!selected, move |d| d.hover(move |s| s.bg(hover)))
-        .on_click(move |_, _, cx| {
-            let id = id.clone();
-            entity.update(cx, |this, cx| this.select(Some(id), cx)).ok();
+        .on_click({
+            let entity = entity.clone();
+            move |_, _, cx| {
+                let id = id.clone();
+                entity.update(cx, |this, cx| this.select(Some(id), cx)).ok();
+            }
         })
         .child(
             div()
@@ -671,7 +683,11 @@ fn vault_row(r: &RowData, ix: usize, selected: bool, compact: bool, t: &Tok, ent
                 .flex()
                 .items_center()
                 .gap(px(12.))
-                .child(avatar(&r.name, 36., t))
+                .child({
+                    let weak = entity.clone();
+                    super::favicon_avatar(r.url.as_deref(), &r.name, 36., t, favicon_cache, app,
+                        move |cx| { weak.update(cx, |_, cx| cx.notify()).ok(); })
+                })
                 .when(r.risk, |d| d.child(div().size(px(6.)).ml(px(-6.)).rounded_full().bg(t.risk)))
                 .child(
                     div()
