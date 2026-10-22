@@ -10,7 +10,8 @@ description = "Passwordless, zero-knowledge password vault."
 
 [dependencies]
 gpui = { path = "../vendor/gpui-ce/crates/gpui" }
-gpui_platform = { path = "../vendor/gpui-ce/crates/gpui_platform" }
+# macOS otherwise selects NoopTextSystem and opens a window without text.
+gpui_platform = { path = "../vendor/gpui-ce/crates/gpui_platform", features = ["font-kit"] }
 gpui_tokio = { path = "../vendor/gpui-ce/crates/gpui_tokio" }
 gpui_elements = { path = "../vendor/gpui-ce/crates/gpui_elements" }
 vela-desktop-core = { path = "../vela-desktop-core", features = ["browser-login", "http3"] }

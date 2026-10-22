@@ -603,6 +603,19 @@ fn main() {
                 .unwrap_or_else(|e| panic!("failed to load font {font_file}: {e}"));
         }
 
+        if cfg!(target_os = "macos") && demo_mode {
+            // A launch alone can succeed with GPUI's no-op text backend.
+            // Require the embedded families so CI catches a missing font-kit feature.
+            let families = cx.text_system().all_font_names();
+            for family in [fonts::HEADLINE, fonts::BODY, fonts::LABEL, fonts::MONO] {
+                assert!(
+                    families.iter().any(|name| name == family),
+                    "macOS native text backend did not register {family}"
+                );
+            }
+            tracing::info!("GPUI native text fonts registered");
+        }
+
         cx.activate(true);
 
         let bounds = Bounds::centered(None, if demo_mode {size(px(1280.), px(800.))} else {size(px(1024.), px(720.))}, cx);

@@ -39,6 +39,11 @@ if ! kill -0 "$app_pid" 2>/dev/null; then
   echo 'GPUI exited before the smoke check.' >&2
   exit 1
 fi
+if ! grep -q 'GPUI native text fonts registered' "$output/startup.log"; then
+  cat "$output/startup.log"
+  echo 'GPUI did not initialize the native text backend.' >&2
+  exit 1
+fi
 if ! grep -q 'GPUI main window opened' "$output/startup.log"; then
   cat "$output/startup.log"
   echo 'GPUI did not report an opened main window.' >&2
