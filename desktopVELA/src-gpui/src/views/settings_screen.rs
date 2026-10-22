@@ -918,20 +918,18 @@ impl SettingsScreen {
             let result: Result<Option<vela_desktop_core::commands::vault::ImportResult>, String> =
                 async {
                     let file = rfd::AsyncFileDialog::new()
-                        .add_filter("Password exports", &["json", "csv", "1pif"])
+                        .add_filter("Password exports", &["json", "csv", "1pif", "1pux", "vela"])
                         .pick_file()
                         .await;
                     let Some(file) = file else { return Ok(None) };
                     let data = file.read().await;
-                    let text = String::from_utf8(data)
-                        .map_err(|e| format!("Import file is not valid UTF-8: {e}"))?;
 
                     let imported = cx
                         .background_spawn_guarded("import vault", {
                             let app_state = app_state.clone();
                             async move {
-                                vela_desktop_core::commands::vault::import_vault_file(
-                                    &app_state, &text,
+                                vela_desktop_core::commands::vault::import_vault_bytes(
+                                    &app_state, &data,
                                 )
                             }
                         })
@@ -945,12 +943,25 @@ impl SettingsScreen {
                 this.importing = false;
                 this.export_import_status = match result {
                     Ok(Some(r)) => {
-                        let mut status = format!("Imported {} of {} items", r.added, r.total);
+                        let mut status = if r.source.is_empty() {
+                            format!("Imported {} of {} items", r.added, r.total)
+                        } else {
+                            format!("{}: imported {} of {} items", r.source, r.added, r.total)
+                        };
                         if r.duplicates > 0 {
                             status.push_str(&format!(", {} already in vault", r.duplicates));
                         }
+                        if r.preserved > 0 {
+                            status.push_str(&format!(", {} with folders/tags/fields", r.preserved));
+                        }
+                        if r.converted > 0 {
+                            status.push_str(&format!(", {} converted to notes", r.converted));
+                        }
                         if r.skipped > 0 {
-                            status.push_str(&format!(", {} unsupported skipped", r.skipped));
+                            status.push_str(&format!(", {} item types skipped", r.skipped));
+                        }
+                        if !r.unsupported.is_empty() {
+                            status.push_str(&format!(" · unsupported: {}", r.unsupported.join(", ")));
                         }
                         Some(status.into())
                     }
@@ -2739,7 +2750,7 @@ fn import_export_section(
                 )
                 .child(
                     setting_row(window)
-                        .child(field_label(palette, "Import vault", "Bitwarden, 1Password, KeePass, Chrome/Edge/Safari, Proton Pass — detected automatically"))
+                        .child(field_label(palette, "Import vault", "Bitwarden, 1Password (.1pif/.1pux), KeePass, Chrome/Edge/Safari, Proton Pass — detected automatically; folders, tags and rich fields are preserved or reported"))
                         .child(
                             action_button(palette, "import-vault", if importing { "Importing…" } else { "Import" }, window, cx)
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.import_vault(cx))),

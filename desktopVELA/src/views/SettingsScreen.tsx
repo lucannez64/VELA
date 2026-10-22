@@ -617,12 +617,12 @@ export default function SettingsScreen() {
               <div>
                 <label className="font-body font-medium text-on-surface">Import vault</label>
                 <p className="text-sm text-on-surface-variant">
-                  From Bitwarden, 1Password, KeePass/KeePassXC, Chrome/Edge/Safari, or Proton Pass — format is detected automatically. A .vela archive restores a full encrypted backup. Duplicates are skipped, never overwritten.
+                  From Bitwarden, 1Password (.1pif or .1pux), KeePass/KeePassXC, Chrome/Edge/Safari, or Proton Pass — format is detected automatically. Folders, tags, cards, identities and custom fields are preserved where the vault supports them and reported otherwise. A .vela archive restores a full encrypted backup. Duplicates are skipped, never overwritten.
                 </p>
               </div>
               <input
                 type="file"
-                accept=".json,.csv,.1pif,.vela"
+                accept=".json,.csv,.1pif,.1pux,.vela"
                 id="import-file-input"
                 className="hidden"
                 onChange={async (e) => {
@@ -633,11 +633,14 @@ export default function SettingsScreen() {
                       const data = new Uint8Array(await file.arrayBuffer());
                       setArchiveModal({ mode: 'import', data, fileName: file.name });
                     } else {
-                      const text = await file.text();
-                      const result = await invoke<{ added: number; skipped: number; duplicates: number; total: number }>('import_vault_file', { data: text });
-                      const skippedNote = result.skipped > 0 ? `, ${result.skipped} unsupported items skipped` : '';
+                      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+                      const result = await invoke<{ added: number; skipped: number; duplicates: number; total: number; preserved: number; converted: number; unsupported: string[]; source: string }>('import_vault_archive', { data: bytes });
+                      const skippedNote = result.skipped > 0 ? `, ${result.skipped} item types skipped` : '';
                       const dupNote = result.duplicates > 0 ? `, ${result.duplicates} already in vault` : '';
-                      showToast(`Imported ${result.added} of ${result.total} items${dupNote}${skippedNote}`, 'success');
+                      const richNote = result.preserved > 0 ? `, ${result.preserved} with folders/tags/fields` : '';
+                      const convertedNote = result.converted > 0 ? `, ${result.converted} converted to notes` : '';
+                      const unsupportedNote = result.unsupported?.length ? ` · unsupported: ${result.unsupported.join(', ')}` : '';
+                      showToast(`${result.source ? result.source + ': ' : ''}imported ${result.added} of ${result.total} items${dupNote}${richNote}${convertedNote}${skippedNote}${unsupportedNote}`, 'success');
                     }
                   } catch (err) {
                     showToast('Import failed: ' + String(err), 'error');

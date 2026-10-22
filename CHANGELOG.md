@@ -9,6 +9,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Migration importer fidelity: Bitwarden JSON and 1Password `.1pux` now bring
+  cards, identities, custom fields, extra websites and favorites alongside
+  logins and notes. Folder paths and tags become first-class collections when
+  the vault is upgraded, and are otherwise folded into notes rather than lost.
+  `.1pux` archives are read directly (ZIP + `export.data`). The import report
+  now carries the detected source, preserved/converted counts and field-level
+  unsupported losses. See `docs/IMPORT_FIDELITY.md`.
 - Shared organization/rich-item schema foundation (`vela-core::rich_items`):
   folder and tag operations, deterministic merge and permanent organization
   tombstones; custom fields, additional URL records and identity/address types;
