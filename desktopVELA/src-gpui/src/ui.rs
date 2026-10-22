@@ -52,12 +52,20 @@ pub fn button(
         })
         .bg(if primary {
             p.primary
+        } else if p.instrument {
+            gpui::transparent_black()
         } else {
             p.surface_container_highest
         })
         .text_color(if primary { p.on_primary } else { p.on_surface })
-        .hover(|el| {
-            el.bg(if primary {
+        .hover(move |el| {
+            el.bg(if p.instrument {
+                if primary {
+                    crate::instrument::alpha(p.primary, 0.9)
+                } else {
+                    crate::instrument::alpha(p.on_surface, 0.06)
+                }
+            } else if primary {
                 gpui::Hsla {
                     a: 0.9,
                     ..p.primary

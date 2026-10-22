@@ -31,6 +31,7 @@ use crate::views::breach_monitor_screen::BreachMonitorScreen;
 use crate::views::devices_screen::DevicesScreen;
 use crate::views::settings_screen::{SettingsScreen, SettingsScreenEvent};
 use crate::views::sharing_screen::SharingScreen;
+use crate::views::organization_panel::{OrganizationPanel, OrganizationPanelEvent};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
@@ -99,6 +100,7 @@ pub struct InstrumentShell {
     pub(super) audit: Vec<AuditEntry>,
     pub(super) search: Entity<EditableTextState>,
     pub(super) last_query: String,
+    pub(super) organization_panel: Entity<OrganizationPanel>,
     pub(super) list_kind: ListKind,
     pub(super) risk_only: bool,
     pub(super) sort: Sort,
@@ -140,7 +142,19 @@ impl InstrumentShell {
             if this.view != View::Vault {
                 this.set_view(View::Vault, cx);
             }
-            this.refresh_rows();
+            this.refresh_rows(cx);
+            cx.notify();
+        });
+        let organization_panel = cx.new(|cx| OrganizationPanel::new_header(app_state.clone(), cx));
+        let organization_sub = cx.subscribe(&organization_panel, |this: &mut Self, _, event, cx| {
+            match event {
+                OrganizationPanelEvent::Filter => {
+                    this.refresh_rows(cx);
+                    this.select(None, cx);
+                    this.list_scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
+                }
+                OrganizationPanelEvent::Changed => this.reload(cx),
+            }
             cx.notify();
         });
         let demo = cx.has_global::<crate::demo::DemoMode>();
@@ -165,6 +179,7 @@ impl InstrumentShell {
             audit: Vec::new(),
             search,
             last_query: String::new(),
+            organization_panel,
             list_kind: ListKind::All,
             risk_only: false,
             sort: Sort::Recent,
@@ -188,7 +203,7 @@ impl InstrumentShell {
             recovery_status: None,
             _recovery_reminder: recovery_reminder,
             _sync_scheduler: sync_scheduler,
-            _subscriptions: vec![search_sub],
+            _subscriptions: vec![search_sub, organization_sub],
         };
         this.reload(cx);
         this
@@ -229,7 +244,7 @@ impl InstrumentShell {
                         if selected.is_some() {
                             this.select(selected, cx);
                         }
-                        this.refresh_rows();
+                        this.refresh_rows(cx);
                     }
                     Some(Err(e)) => tracing::warn!("Instrument shell could not load items: {e}"),
                     None => tracing::warn!("Instrument shell load panicked"),
@@ -245,11 +260,10 @@ impl InstrumentShell {
         self.search.read(cx).as_str().trim().to_lowercase()
     }
 
-    pub(super) fn refresh_rows(&mut self) {
-        // The search text lives in an entity; callers that have `cx` pass the
-        // query through `refresh_rows_with`. This variant keeps the last one.
+    pub(super) fn refresh_rows(&mut self, cx: &App) {
+        // Keep the current search while applying collection, kind and risk filters.
         let q = self.last_query.clone();
-        self.refresh_rows_with(&q);
+        self.refresh_rows_with(&q, cx);
     }
 
     pub(super) fn item_at(&self, fact: usize) -> &VaultItem {
@@ -321,7 +335,7 @@ impl InstrumentShell {
     pub(super) fn open_list(&mut self, kind: ListKind, risk: bool, cx: &mut Context<Self>) {
         self.list_kind = kind;
         self.risk_only = risk;
-        self.refresh_rows();
+        self.refresh_rows(cx);
         self.set_view(View::Vault, cx);
     }
 
@@ -331,7 +345,7 @@ impl InstrumentShell {
         self.risk_only = false;
         self.search.update(cx, |s, cx| s.emplace("", cx));
         self.last_query.clear();
-        self.refresh_rows();
+        self.refresh_rows(cx);
         if self.view != View::Vault {
             self.set_view(View::Vault, cx);
         }
@@ -419,9 +433,10 @@ impl InstrumentShell {
     }
 
     pub(super) fn new_item(&mut self, cx: &mut Context<Self>) {
+        let rich = self.organization_panel.read(cx).new_item_organization();
         let modal = cx.new({
             let s = self.app_state.clone();
-            move |cx| AddItemModal::new(s, cx)
+            move |cx| AddItemModal::new_in_collection(s, rich, cx)
         });
         self.host_modal(modal, cx);
     }
@@ -560,13 +575,13 @@ impl InstrumentShell {
     }
 }
 
-// The search query is cached so row filtering can run without `cx`.
+// Cache the search query to avoid rebuilding rows on every frame.
 impl InstrumentShell {
     pub(super) fn sync_query(&mut self, cx: &App) {
         let q = self.query(cx);
         if q != self.last_query {
             self.last_query = q.clone();
-            self.refresh_rows_with(&q);
+            self.refresh_rows_with(&q, cx);
         }
     }
 }
@@ -1069,6 +1084,9 @@ impl Render for InstrumentShell {
 impl InstrumentShell {
     pub(crate) fn handle_key(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         vela_desktop_core::commands::session::notify_user_activity(&self.app_state);
+        if self.view == View::Vault && self.organization_panel.read(cx).modal_open() {
+            return;
+        }
         let ks = &event.keystroke;
         let ctrl = ks.modifiers.control || ks.modifiers.platform;
         match ks.key.as_str() {

@@ -24,12 +24,12 @@ impl Global for ActiveTheme {}
 /// never panic).
 pub fn current_palette(cx: &App) -> Palette {
     let id = cx.try_global::<ActiveTheme>().map(|t| t.0).unwrap_or(ThemeId::Vela);
-    // The instrument preview recolours VELA Dark as "Night" so the classic
-    // screens it hosts match its frame. Other themes are left as they are.
-    if id == ThemeId::Vela && crate::instrument::is_instrument(cx) {
-        return Palette::night();
-    }
-    if id == ThemeId::Paper && crate::instrument::is_instrument(cx) {
+    let instrument = crate::instrument::is_instrument(cx);
+    // The instrument interface recolours VELA Dark as "Night" and maps Paper
+    // onto its own light tokens so hosted classic screens match its frame.
+    let mut p = if instrument && id == ThemeId::Vela {
+        Palette::night()
+    } else if instrument && id == ThemeId::Paper {
         let t=crate::instrument::tokens_for(ThemeId::Paper);
         let mut p=Palette::latte();
         p.primary=t.primary_bg;p.primary_dim=t.muted;p.on_primary=t.primary_fg;
@@ -38,9 +38,14 @@ pub fn current_palette(cx: &App) -> Palette {
         p.surface_container=t.panel;p.surface_container_high=t.panel2;p.surface_container_highest=t.panel3;
         p.surface_bright=t.panel3;p.surface_variant=t.panel2;p.on_surface=t.text;p.on_surface_variant=t.muted;
         p.outline=t.faint;p.outline_variant=t.line2;
-        return p;
-    }
-    id.palette()
+        p
+    } else {
+        id.palette()
+    };
+    // Shared controls (buttons, form labels, dialogs) switch shape and type
+    // from this flag, so it must reflect the active interface, not the theme.
+    p.instrument = instrument;
+    p
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
