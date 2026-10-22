@@ -51,7 +51,7 @@ fun VaultBrowserScreen(items: List<VaultItem>, itemCount: Int, onItemClick: (Vau
             (tag == null || tag in item.rich.tagIds)
     }.sortedWith(compareByDescending<VaultItem> { it.favorite }.thenBy { it.name.lowercase() })
 
-    Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase).padding(horizontal = 20.dp).padding(top = 10.dp)) {
+    Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase).padding(horizontal = 20.dp).padding(top = 4.dp)) {
         Box(Modifier.arrive(0)) { InstrumentBrand(onLock, syncState) }
         Row(Modifier.arrive(1), verticalAlignment = Alignment.CenterVertically) {
             InstrumentHeading("01 / Your vault",
@@ -104,6 +104,9 @@ fun VaultBrowserScreen(items: List<VaultItem>, itemCount: Int, onItemClick: (Vau
         organization.tags.forEach {val t=JSONObject(it);val id=t.getString("id")
             InstrumentMenuRow(null,t.getString("name")) {tag=id;scopePicker=false}
         }
+        // Keep the last tag reachable above gesture navigation, even when the
+        // dialog window reports a taller viewport than the visible screen.
+        Spacer(Modifier.height(72.dp))
     }
 
 }
@@ -114,7 +117,7 @@ fun SearchField(value: String, onValueChange: (String) -> Unit, modifier: Modifi
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(99.dp)
     Row(
-        modifier.fillMaxWidth().padding(top = 18.dp, bottom = 14.dp).heightIn(min = 46.dp).background(Ink.panel, shape)
+        modifier.fillMaxWidth().padding(top = 10.dp, bottom = 10.dp).heightIn(min = 48.dp).background(Ink.panel, shape)
             .border(1.dp, if (focused) VelaColors.Violet else Ink.line2, shape).padding(horizontal = 13.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

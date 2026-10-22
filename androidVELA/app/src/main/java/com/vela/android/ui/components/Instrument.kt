@@ -143,7 +143,7 @@ fun InstrumentFine(text: String, modifier: Modifier = Modifier, size: TextUnit =
 
 @Composable
 fun InstrumentHeading(eyebrow: String, title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
-    Column(modifier.padding(top = 4.dp, bottom = 22.dp)) {
+    Column(modifier.padding(top = 0.dp, bottom = 14.dp)) {
         InstrumentLabel(eyebrow)
         Spacer(Modifier.height(12.dp))
         Text(title, fontFamily = InstrumentDisplay, fontSize = 33.sp, lineHeight = 36.sp,
@@ -157,7 +157,7 @@ fun InstrumentHeading(eyebrow: String, title: String, subtitle: String? = null, 
 
 @Composable
 fun SectionHead(label: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
-    Row(modifier.fillMaxWidth().padding(top = 23.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().padding(top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         InstrumentLabel(label, Modifier.weight(1f))
         action?.invoke()
     }
@@ -222,7 +222,7 @@ fun InstrumentChip(text: String, selected: Boolean, onClick: () -> Unit, modifie
             .border(1.dp, if (selected) VelaColors.TextPrimary else Ink.line2, RoundedCornerShape(99.dp))
             .instrumentClick(role = Role.Tab, onClick = onClick).padding(horizontal = 13.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(text, fontSize = 10.sp, color = fg, maxLines = 1) }
+    ) { Text(text, fontSize = 11.sp, color = fg, maxLines = 1) }
 }
 
 /** 38×23 switch: lime when on, thumb slides over 200ms. */
@@ -252,10 +252,10 @@ fun InstrumentTag(text: String, kind: TagKind = TagKind.Plain) {
 /** 39dp rounded tile holding an item's glyph (or initials), violet. */
 @Composable
 fun InstrumentAvatar(icon: ImageVector? = null, initials: String? = null, large: Boolean = false) {
-    val size = if (large) 60.dp else 39.dp
-    val shape = RoundedCornerShape(if (large) 20.dp else 13.dp)
+    val size = if (large) 60.dp else 44.dp
+    val shape = RoundedCornerShape(if (large) 20.dp else 15.dp)
     Box(Modifier.size(size).clip(shape).background(Ink.panel2).border(1.dp, Ink.line, shape), contentAlignment = Alignment.Center) {
-        if (icon != null) Icon(icon, null, Modifier.size(if (large) 25.dp else 18.dp), tint = VelaColors.Violet)
+        if (icon != null) Icon(icon, null, Modifier.size(if (large) 25.dp else 20.dp), tint = VelaColors.Violet)
         else Text(initials.orEmpty(), fontFamily = InstrumentMono, fontSize = 12.sp, color = VelaColors.Violet)
     }
 }
@@ -265,18 +265,18 @@ fun InstrumentAvatar(icon: ImageVector? = null, initials: String? = null, large:
 fun InstrumentItemRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit,
     modifier: Modifier = Modifier, needsReview: Boolean = false, favorite: Boolean = false) {
     Row(
-        modifier.fillMaxWidth().heightIn(min = 69.dp).clip(RoundedCornerShape(12.dp))
+        modifier.fillMaxWidth().heightIn(min = 76.dp).clip(RoundedCornerShape(14.dp))
             .instrumentClick(onClick = onClick)
-            .padding(horizontal = 3.dp, vertical = 12.dp),
+            .padding(horizontal = 3.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         InstrumentAvatar(icon)
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = VelaColors.TextPrimary)
-            Spacer(Modifier.height(5.dp))
-            Text(subtitle, fontSize = 10.sp, color = VelaColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(6.dp))
+            Text(subtitle, fontSize = 12.5.sp, color = VelaColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (needsReview) { InstrumentTag("Review", TagKind.Risk); Spacer(Modifier.width(9.dp)) }
         else if (favorite) { Icon(InstrumentIcons.Star, "Favourite", Modifier.size(13.dp), tint = Ink.lime); Spacer(Modifier.width(9.dp)) }
@@ -357,7 +357,7 @@ fun BrandMark(color: Color = VelaColors.Violet, modifier: Modifier = Modifier) {
 
 @Composable
 fun InstrumentBrand(onLock: (() -> Unit)? = null, syncState: SyncState? = null, trailingLabel: String? = null) {
-    Row(Modifier.fillMaxWidth().padding(top = 5.dp, bottom = 24.dp).height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 14.dp).height(44.dp), verticalAlignment = Alignment.CenterVertically) {
         BrandMark()
         Spacer(Modifier.width(9.dp))
         Text("VELA", fontFamily = InstrumentBody, fontWeight = FontWeight.Medium, fontSize = 13.sp,
@@ -651,7 +651,7 @@ fun InstrumentSlider(value: Int, range: IntRange, onChange: (Int) -> Unit, descr
  * reference's easing. Back or the backdrop closes it.
  */
 @Composable
-fun InstrumentSheet(visible: Boolean, title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun InstrumentSheet(visible: Boolean, title: String, onDismiss: () -> Unit, maxHeight: Dp? = null, content: @Composable ColumnScope.() -> Unit) {
     if (visible) BackHandler(onBack = onDismiss)
     var entered by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { entered = true }
@@ -667,7 +667,7 @@ fun InstrumentSheet(visible: Boolean, title: String, onDismiss: () -> Unit, cont
         ) {
             val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
             Column(
-                Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp * .9f).dp)
+                Modifier.fillMaxWidth().heightIn(max = maxHeight ?: (LocalConfiguration.current.screenHeightDp * .9f).dp)
                     .clip(shape).background(Ink.bg).border(1.dp, Ink.line2, shape)
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }
                     .navigationBarsPadding().imePadding()
