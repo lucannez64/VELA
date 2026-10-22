@@ -554,6 +554,7 @@ mod organization_tests {
     use super::*;
     use crate::modal_test_support as ui;
     use gpui::{size, Modifiers, TestAppContext};
+    use vela_desktop_core::vault::VaultItem;
 
     #[gpui::test]
     fn collections_use_sidebar_on_desktop_and_header_on_small_windows(cx: &mut TestAppContext) {
@@ -621,10 +622,21 @@ mod organization_tests {
         cx.simulate_click(scope.center(), Modifiers::default());
         cx.run_until_parked();
         assert!(panel.read_with(cx, |panel, _| matching_count(panel)) < before);
-        shell.update(cx, |shell, cx| {
-            shell.show_item_detail(demo.state.vault.read().items[0].id().into(), cx)
-        });
+        // Exercise detail navigation without starting the login's perpetual
+        // TOTP refresh task: run_until_parked must be able to reach idle.
+        let note_id = {
+            let vault = demo.state.vault.read();
+            vault
+                .items
+                .iter()
+                .find(|item| matches!(item, VaultItem::SecureNote { .. }))
+                .expect("demo vault contains a secure note")
+                .id()
+                .to_string()
+        };
+        shell.update(cx, |shell, cx| shell.show_item_detail(note_id, cx));
         cx.run_until_parked();
+        assert!(shell.read_with(cx, |shell, _| matches!(shell.content, Content::ItemDetail(_))));
         let all = ui::bounds(cx, "org-filter-all");
         cx.simulate_mouse_move(all.center(), None, Modifiers::default());
         cx.simulate_click(all.center(), Modifiers::default());
