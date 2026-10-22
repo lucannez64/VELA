@@ -51,7 +51,9 @@ internal fun VaultItem.rowSubtitle(): String = when (this) {
 /** The vault's standard row, shared by Overview and Vault. */
 @Composable
 fun VaultItemRow(item: VaultItem, needsReview: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    InstrumentItemRow(item.glyph, item.name, item.rowSubtitle(), onClick, modifier, needsReview = needsReview, favorite = item.favorite)
+    val favicon = (item as? VaultItem.Login)?.url?.takeIf { it.isNotBlank() }
+    InstrumentItemRow(item.glyph, item.name, item.rowSubtitle(), onClick, modifier,
+        needsReview = needsReview, favorite = item.favorite, faviconUrl = favicon)
 }
 
 @Composable
