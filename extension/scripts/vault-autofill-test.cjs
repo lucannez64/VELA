@@ -16,6 +16,28 @@ const browser = {
 };
 const context = vm.createContext({browser,URL,console:{log(){}},setTimeout,clearTimeout});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/background/background.js'),'utf8')+'\nglobalThis.handlers={handleGetIdentities,handleGetCards,handleFillVaultItem,handleExtensionMessage};',context);
+// Exercise the production gesture helpers, not a second implementation.
+const content = fs.readFileSync(path.join(__dirname, '../src/content/content-script.js'), 'utf8');
+const guardSource = content.slice(content.indexOf('let velaKeyboardActivation ='), content.indexOf('  function velaOnKeyDown'));
+const gestures = vm.runInNewContext(guardSource + '\n({activate:velaActivateFromKey, allowed:velaIsUserActivation})');
+let releases = 0;
+const row = {click(){ if (gestures.allowed({isTrusted:false,currentTarget:row})) releases++; }};
+row.click();
+assert.equal(releases, 0, 'scripted row clicks cannot release a credential');
+gestures.activate({isTrusted:false}, row);
+assert.equal(releases, 0, 'scripted keyboard events cannot release a credential');
+const keyEvent = {isTrusted:true, stopped:false, stopPropagation(){this.stopped=true;}};
+gestures.activate(keyEvent, row);
+assert.equal(keyEvent.stopped, true, 'row activation does not bubble into a second release');
+assert.equal(releases, 1, 'a trusted keyboard selection can activate its own row');
+row.click();
+assert.equal(releases, 1, 'keyboard activation does not leave a reusable trust flag');
+assert.equal(gestures.allowed({isTrusted:true,currentTarget:row}), true);
+const sectionSource = content.slice(content.indexOf('  function velaSameSection'), content.indexOf('  function velaFillIdentity'));
+const sameSection = vm.runInNewContext(sectionSource + '\nvelaSameSection');
+assert.equal(sameSection('shipping', {autocomplete:''}), true, 'common contact fields join a shipping fill');
+assert.equal(sameSection('shipping', {autocomplete:'billing address-line1'}), false, 'billing addresses stay outside a shipping fill');
+
 const ui = {url:'chrome-extension://test/popup/popup.html'};
 const page = {tab:{id:1},frameId:0,url:active.url};
 const invoke=(name,data,sender=ui)=>new Promise(resolve=>context.handlers[name](data,sender,resolve));
@@ -29,7 +51,9 @@ const invoke=(name,data,sender=ui)=>new Promise(resolve=>context.handlers[name](
     ]) assert.equal((await invoke(name,{url},sender)).success,false);
     assert.equal(calls.length,before,'unauthorized requests never reach native host');
     assert.equal((await invoke(name,{url:active.url},page)).success,true);
-    assert.equal(calls.at(-1).userInitiated,true);
+    assert.equal(calls.at(-1).userInitiated,false,'omitting the flag must only request metadata');
+    assert.equal((await invoke(name,{url:active.url,userInitiated:true},page)).success,true);
+    assert.equal(calls.at(-1).userInitiated,true,'a deliberate choice may request credentials');
     assert.equal((await invoke(name,{url:active.url,userInitiated:false},page)).success,true);
     assert.equal(calls.at(-1).userInitiated,false,'passive metadata flag survives the background bridge');
   }

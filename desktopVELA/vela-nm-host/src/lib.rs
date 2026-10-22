@@ -291,7 +291,8 @@ pub fn handle_get_logins(message: &Value) -> Value {
 
 pub fn handle_get_cards(message: &Value) -> Value {
     // Focus requests metadata; selecting a suggestion releases the full card.
-    let user_initiated = message.get("userInitiated").and_then(Value::as_bool).unwrap_or(true);
+    // A missing flag means metadata only; full details need an explicit choice.
+    let user_initiated = message.get("userInitiated").and_then(Value::as_bool).unwrap_or(false);
     let response = send_to_desktop(
         json!({
             "msg_type": "autofill_request",
@@ -340,7 +341,8 @@ pub fn handle_get_cards(message: &Value) -> Value {
 }
 
 pub fn handle_get_identities(message: &Value) -> Value {
-    let user_initiated = message.get("userInitiated").and_then(Value::as_bool).unwrap_or(true);
+    // A missing flag means metadata only; full details need an explicit choice.
+    let user_initiated = message.get("userInitiated").and_then(Value::as_bool).unwrap_or(false);
     let response = send_to_desktop(json!({
         "msg_type": "autofill_request",
         "payload": { "credential_type": "identity", "domain": message.get("url"), "user_initiated": user_initiated }

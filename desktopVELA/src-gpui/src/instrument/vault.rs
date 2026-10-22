@@ -335,6 +335,8 @@ impl InstrumentShell {
                 .into_any_element();
         };
         let item = item.clone();
+        let is_passkey = matches!(item, VaultItem::Passkey { .. });
+        let is_received_share = item.is_received_share();
         let fact = self.analysis.facts[slot].clone();
         let gen = self.detail_gen;
 
@@ -361,8 +363,12 @@ impl InstrumentShell {
                     .when(item.favorite(), |d| d.text_color(t.signal))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_favorite(cx))),
             )
-            .child(icon_btn("d-share", "share", t).on_click(cx.listener(|this, _, _, cx| this.share_selected(cx))))
-            .child(icon_btn("d-edit", "edit", t).on_click(cx.listener(|this, _, _, cx| this.edit_selected(cx))))
+            // Same rules as the classic detail: a passkey's private key never
+            // reaches an editor or a share, and received shares are read-only.
+            .when(!is_passkey && !is_received_share, |el| {
+                el.child(icon_btn("d-share", "share", t).on_click(cx.listener(|this, _, _, cx| this.share_selected(cx))))
+                    .child(icon_btn("d-edit", "edit", t).on_click(cx.listener(|this, _, _, cx| this.edit_selected(cx))))
+            })
             .child(icon_btn("d-close", "close", t).on_click(cx.listener(|this, _, _, cx| this.select(None, cx))));
 
         let url = item.url().filter(|u| !u.is_empty()).map(str::to_string);

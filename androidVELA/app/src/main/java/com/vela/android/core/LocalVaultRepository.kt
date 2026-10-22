@@ -41,6 +41,14 @@ class LocalVaultRepository(
         try {
             store = encryptedVaultStore.load(rms)
             publish()
+        } catch (error: Exception) {
+            // An unreadable vault (corrupt, or written by a newer VELA) must not
+            // leave an unlocked, empty vault behind: the first save would then
+            // overwrite vault.enc. Lock again and surface the error.
+            store = VaultStore()
+            publish()
+            secureVaultManager.lock()
+            throw error
         } finally {
             rms.fill(0)
         }
@@ -100,7 +108,7 @@ class LocalVaultRepository(
     }
     fun mutateOrganization(action: org.json.JSONObject) {
         ensureWritable(); check(store.schemaVersion == 2) { "Enable collections first" }
-        val organization = _organization.value.mutate(action,"android-local")
+        val organization = _organization.value.mutate(action, encryptedVaultStore.organizationWriterId())
         val now = Instant.now()
         val repaired = store.items.map { item ->
             val rich = organization.repair(item.rich)
@@ -219,13 +227,15 @@ class LocalVaultRepository(
         val kept = login.appIds.filter {
             !AppAssociations.packageFromUri(it).equals(packageName.lowercase(Locale.US), ignoreCase = true)
         }
-        updateItem(
-            login.copy(
-                appIds = kept + link,
-                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+        // A rejected write (e.g. validation) reports failure instead of crashing the UI.
+        return runCatching {
+            updateItem(
+                login.copy(
+                    appIds = kept + link,
+                    meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+                )
             )
-        )
-        return true
+        }.isSuccess
     }
 
     /** Revoke a grant. The link string is what the UI listed, so it round-trips. */
@@ -233,12 +243,14 @@ class LocalVaultRepository(
         val login = _items.value.filterIsInstance<VaultItem.Login>().firstOrNull { it.id == itemId }
             ?: return
         if (link !in login.appIds) return
-        updateItem(
-            login.copy(
-                appIds = login.appIds - link,
-                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+        runCatching {
+            updateItem(
+                login.copy(
+                    appIds = login.appIds - link,
+                    meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+                )
             )
-        )
+        }
     }
 
     /**

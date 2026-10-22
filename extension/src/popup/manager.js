@@ -2,7 +2,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let snapshot = { items: [], collections: { enabled: false, organization: {} } };
-let filter = null, editing = null, selected = new Set(), collection = null, busy = false, secretTimer;
+let filter = null, editing = null, selected = new Set(), collection = null, busy = false, secretTimer, editorDirty = false;
 const labels = { login: "Login", creditcard: "Card", creditCard: "Card", securenote: "Note", secureNote: "Note", identity: "Identity", passkey: "Passkey" };
 const org = () => snapshot.collections.organization;
 const folders = () => org().folders || [];
@@ -29,7 +29,15 @@ async function request(operation, payload = {}) {
 }
 function run(action) { return async () => { try { await action(); } catch (e) { message(e.message, true); } }; }
 async function refresh() { snapshot = await request("list"); selected = new Set([...selected].filter(id => snapshot.items.some(i => i.id === id))); render(); }
-function options(select, entries, first) { select.replaceChildren(); if (first) select.add(new Option(first[1], first[0])); entries.forEach(([id, name]) => select.add(new Option(name, id))); }
+function options(select, entries, first) {
+  // Re-rendering must not silently change what the user picked (a bulk Move
+  // would otherwise fall back to "Unfiled").
+  const previous = select.value;
+  const unselected = select.options.length > 0 && select.selectedIndex < 0;
+  select.replaceChildren(); if (first) select.add(new Option(first[1], first[0])); entries.forEach(([id, name]) => select.add(new Option(name, id)));
+  if (unselected) select.selectedIndex = -1;
+  else if (previous) select.value = previous; // A deleted destination stays unselected, never silently Unfiled.
+}
 function setFilter(next) { filter = next; render(); }
 function render() {
   $("activation").hidden = snapshot.collections.enabled;
@@ -78,6 +86,7 @@ function editCollection(kind, record = null) {
 function input(parent, label, object, key, type = "text") {
   const wrap = node("label", label), el = node(type === "textarea" ? "textarea" : "input");
   if (type !== "textarea") el.type = type; el.value = object[key] ?? "";
+  if (type === "password") el.dataset.secret = "true";
   el.addEventListener("input", () => object[key] = el.value); wrap.append(el);
   if (type === "password") wrap.append(button("Show", event => {
     el.type = el.type === "password" ? "text" : "password";
@@ -113,7 +122,7 @@ function records(parent, item, key, renderRecord, create) {
   draw(); parent.append(list, button(key === "addresses" ? "Add address" : key === "additionalUrls" ? "Add website" : "Add field", () => { (item[key] ||= []).push(create()); draw(); }));
 }
 function renderEditor(readOnly = false, isNew = false) {
-  const item = editing; if (!item) return; resetSecretTimer(); const root = $("editor"); root.replaceChildren();
+  const item = editing; if (!item) return; editorDirty = false; resetSecretTimer(); const root = $("editor"); root.replaceChildren();
   const form = node("form"); root.append(form); form.append(node("h2", isNew ? "New item" : "Edit item"));
   input(form, "Name", item, "name").required = true;
   if (isNew) { const label = node("label", "Type"), kind = node("select"); options(kind, [["login", "Login"], ["creditCard", "Card"], ["secureNote", "Note"], ["identity", "Identity"]]); kind.value = item.item_type; kind.addEventListener("change", () => newItem(kind.value)); label.append(kind); form.append(label); }
@@ -135,7 +144,7 @@ function renderEditor(readOnly = false, isNew = false) {
     const save = node("button", isNew ? "Create item" : "Save changes", "primary"); save.type = "submit"; form.append(save);
     if (!isNew) form.append(button("Delete item", run(async () => { if (!confirm("Delete this item?")) return; await request("delete", { id: item.id }); editing = null; root.replaceChildren(node("p", "Item deleted.")); await refresh(); }), "danger"));
   } else { form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true); }
-  form.addEventListener("submit", event => { event.preventDefault(); run(async () => { if (readOnly || !supported) return; if (type === "secureNote") item.title = item.name; await request(isNew ? "create" : "update", { item }); editing = null; root.replaceChildren(node("p", "Saved to your vault.")); await refresh(); })(); });
+  form.addEventListener("submit", event => { event.preventDefault(); run(async () => { if (readOnly || !supported) return; if (type === "secureNote") item.title = item.name; await request(isNew ? "create" : "update", { item }); editing = null; editorDirty = false; root.replaceChildren(node("p", "Saved to your vault.")); await refresh(); })(); });
 }
 function newItem(type = "login") {
   const now = new Date().toISOString();
@@ -155,7 +164,10 @@ $("collectionForm").addEventListener("submit", event => { event.preventDefault()
   $("collectionDialog").close(); await request("mutate", { action }); await refresh();
 })(); });
 const assign = changes => run(async () => { await request("assign", { changes: { ids: [...selected], folderId: null, addTags: [], removeTags: [], ...changes } }); await refresh(); });
-$("move").addEventListener("click", () => assign({ folderId: $("bulkFolder").value })());
+$("move").addEventListener("click", () => {
+  if ($("bulkFolder").selectedIndex < 0) { message("Choose a destination folder.", true); return; }
+  assign({ folderId: $("bulkFolder").value })();
+});
 $("tagAdd").addEventListener("click", () => { if ($("bulkTag").value) assign({ addTags: [$("bulkTag").value] })(); });
 $("tagRemove").addEventListener("click", () => { if ($("bulkTag").value) assign({ removeTags: [$("bulkTag").value] })(); });
 $("theme").addEventListener("change", () => VelaInstrument.setTheme($("theme").value));
@@ -163,10 +175,30 @@ $("openDesktop").addEventListener("click", () => browser.runtime.sendMessage({ c
 run(refresh)();
 
 function clearEditor() {
-  editing = null; clearTimeout(secretTimer);
+  editing = null; editorDirty = false; clearTimeout(secretTimer);
   $("editor").replaceChildren(node("p", "Editor cleared. Choose an item again to continue.", "empty"));
 }
-function resetSecretTimer() { clearTimeout(secretTimer); if (editing) secretTimer = setTimeout(clearEditor, 120000); }
-document.addEventListener("input", resetSecretTimer);
+function maskSecrets() {
+  $("editor").querySelectorAll("[data-secret]").forEach(el => {
+    el.type = "password";
+    const toggle = el.nextElementSibling; if (toggle?.tagName === "BUTTON") toggle.textContent = "Show";
+  });
+}
+// Idle: an untouched editor is cleared; unsaved work is kept with secrets masked.
+function onEditorIdle() {
+  if (!editorDirty) { clearEditor(); return; }
+  maskSecrets();
+  message("Secrets hidden after 2 minutes idle. Your unsaved changes are kept.");
+}
+function resetSecretTimer() { clearTimeout(secretTimer); if (editing) secretTimer = setTimeout(onEditorIdle, 120000); }
+for (const type of ["input", "change"]) document.addEventListener(type, event => {
+  if ($("editor").contains(event.target)) editorDirty = true;
+  resetSecretTimer();
+});
+document.addEventListener("click", event => {
+  const button = event.target.closest?.("button");
+  if (button && $("editor").contains(button) && !["Show", "Hide"].includes(button.textContent)) editorDirty = true;
+}, true); // Capture removals before their handlers detach the edited record.
+window.addEventListener("beforeunload", event => { if (editing && editorDirty) event.preventDefault(); });
 document.addEventListener("click", resetSecretTimer);
 window.addEventListener("pagehide", clearEditor);

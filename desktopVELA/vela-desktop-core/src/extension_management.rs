@@ -39,6 +39,27 @@ pub async fn handle(host: &Arc<dyn Host>, peer: &PeerIdentity, request: &Value) 
         let item = crate::commands::vault::get_item(host.state(), id)?.ok_or("Item no longer exists")?;
         let name: String = item.meta().name.chars().filter(|c| !c.is_control()).take(80).collect();
         format!("\nItem: {name} ({id})")
+    } else if op == "assign" {
+        let changes: crate::commands::organization::AssignItems =
+            serde_json::from_value(request["changes"].clone()).map_err(|_| "Invalid item selection")?;
+        let vault = host.state().vault.read();
+        let org = &vault.organization;
+        let clean = |name: &str| name.chars().filter(|c| !c.is_control()).take(80).collect::<String>();
+        let mut details = format!("\nSelected items: {}", changes.ids.len());
+        if let Some(folder) = changes.folder_id {
+            let name = if folder.is_empty() { "Unfiled".into() } else {
+                let id = folder.parse().map_err(|_| "Invalid destination folder")?;
+                clean(&org.folder(id).ok_or("Destination folder no longer exists")?.name)
+            };
+            details.push_str(&format!("\nMove to folder: {name}"));
+        }
+        for (label, ids) in [("Add tag", changes.add_tags), ("Remove tag", changes.remove_tags)] {
+            for id in ids {
+                let name = clean(&org.tag(id).ok_or("Tag no longer exists")?.name);
+                details.push_str(&format!("\n{label}: {name}"));
+            }
+        }
+        details
     } else { String::new() };
     let prompt = format!("{action}?{target}\nRequested by {}.", peer.describe());
     let approval_host = host.clone();
@@ -71,6 +92,12 @@ pub async fn handle(host: &Arc<dyn Host>, peer: &PeerIdentity, request: &Value) 
         }
         "create" | "update" => {
             let item: VaultItem = serde_json::from_value(request["item"].clone()).map_err(|_| "Invalid item fields")?;
+            // Sharing state belongs to the sharing flow, not the editor: an
+            // edit keeps the stored values and a new item is never shared.
+            let item = match crate::commands::vault::get_item(state, item.id())? {
+                Some(old) if op == "update" => item.with_shared_status(old.meta().shared, old.meta().share_recipient.clone()),
+                _ => item.with_shared_status(false, None),
+            };
             if !matches!(item.item_type(), ItemType::Login | ItemType::CreditCard | ItemType::SecureNote | ItemType::Identity) {
                 return Err("Use the desktop editor for this item type".into());
             }

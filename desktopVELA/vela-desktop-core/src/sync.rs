@@ -874,6 +874,10 @@ pub(crate) fn merge_server_vaults(
     }
 
     local.replace_items(final_items.into_values().collect());
+    // Assignments to folders/tags the merged organization no longer has
+    // (deleted on another device) become unfiled/untagged, as on every
+    // client, so later edits of those items still validate.
+    crate::commands::organization::repair_assignments(local, None);
 
     // ── 4. Merge tombstones, keeping newest timestamp per ID ────────────────
     let mut merged_tombstones: HashMap<String, Tombstone> = HashMap::new();
@@ -1491,12 +1495,18 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
         }
     }
 
-    if state.vault.read().schema_version == Some(2) {
-        client.rich_schema(&token, true).await.map_err(|e| e.to_string())?;
+    let local_rich = state.vault.read().schema_version == Some(2);
+    let server_rich = matches!(&downloaded, Ok(ServerVault::Available(v, _)) if v.schema_version == Some(2));
+    if local_rich || server_rich {
+        client.ensure_rich_schema(&token).await.map_err(|e| e.to_string())?;
+    }
+    if server_rich && !local_rich {
+        // This sync upgrades the local vault to schema 2: keep the same
+        // encrypted pre-upgrade copy an explicit activation would.
+        crate::commands::organization::ensure_safety_backup(state)?;
     }
     match downloaded? {
         ServerVault::Available(server_vault, server_lamport) => {
-            if server_vault.schema_version == Some(2) { client.rich_schema(&token, true).await.map_err(|e| e.to_string())?; }
             state.ensure_unlocked_since(generation)?;
             max_server_lamport = max_server_lamport.max(server_lamport);
 
@@ -2697,6 +2707,34 @@ mod tests {
 
         assert_eq!(local.tombstones.len(), 1);
         assert_eq!(local.tombstones[0].deleted_at, t_new);
+    }
+
+    /// A folder or tag deleted on another device is cleared from items during
+    /// the merge (without touching timestamps), so they stay editable.
+    #[test]
+    fn merge_repairs_assignments_to_deleted_folders_and_tags() {
+        use vela_core::rich_items::{OrganizationKind, OrganizationTombstone};
+        let t = Utc::now() - chrono::Duration::hours(1);
+        let (tag, folder) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        let item = login("x", t, None);
+        let mut rich = item.meta().rich.clone();
+        rich.tag_ids = Some(vec![tag]);
+        rich.folder_id = Some(folder.to_string());
+        let mut local = store_with(vec![item.with_rich(rich)]);
+        local.schema_version = Some(2);
+        let mut server = store_with(vec![]);
+        server.schema_version = Some(2);
+        server.organization.organization_tombstones.extend([
+            OrganizationTombstone { kind: OrganizationKind::Tag, id: tag },
+            OrganizationTombstone { kind: OrganizationKind::Folder, id: folder },
+        ]);
+
+        merge_server_vaults(&mut local, server, "this-device").unwrap();
+
+        let merged = local.get_item("x").unwrap();
+        assert_eq!(merged.meta().rich.tag_ids.as_deref(), Some(&[][..]));
+        assert_eq!(merged.meta().rich.folder_id.as_deref(), Some(""));
+        assert_eq!(merged.updated_at(), t);
     }
 
     /// Items present on only one side are unioned into the merged vault.

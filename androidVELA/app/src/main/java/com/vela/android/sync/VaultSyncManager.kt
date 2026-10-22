@@ -7,6 +7,8 @@ import com.vela.android.core.Tombstone
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultJson
 import com.vela.android.core.VaultStore
+import com.vela.android.core.rich
+import com.vela.android.core.withRich
 import com.vela.android.security.SecureVaultManager
 import com.vela.android.security.WebAuthnCeremony
 import kotlinx.coroutines.async
@@ -1110,13 +1112,25 @@ internal fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore
         }
     }
 
+    val schemaVersion = maxOf(local.schemaVersion, remote.schemaVersion)
+    val organization = com.vela.android.core.VaultOrganization.merge(
+        com.vela.android.core.VaultOrganization(local.schemaVersion == 2,local.richEnvelope),
+        com.vela.android.core.VaultOrganization(remote.schemaVersion == 2,remote.richEnvelope))
+    // Items assigned to a folder or tag that the merged organization no longer
+    // has (deleted on another device) become unfiled/untagged, as on desktop
+    // and iOS. Otherwise every later save of them fails validation.
+    // Deterministic on every client, so timestamps are left alone.
+    val items = mergedItems.values.map { item ->
+        if (schemaVersion < 2 || (item.rich.folderId.isEmpty() && item.rich.tagIds.isEmpty())) item
+        else com.vela.android.core.VaultOrganization(true, organization.data).repair(item.rich)
+            .let { repaired -> if (repaired == item.rich) item else item.withRich(repaired) }
+    }
+
     return VaultStore(
-        items = mergedItems.values.sortedBy { it.name.lowercase() },
+        items = items.sortedBy { it.name.lowercase() },
         tombstones = pruneTombstones(tombstones),
-        schemaVersion = maxOf(local.schemaVersion, remote.schemaVersion),
-        richEnvelope = com.vela.android.core.VaultOrganization.merge(
-            com.vela.android.core.VaultOrganization(local.schemaVersion == 2,local.richEnvelope),
-            com.vela.android.core.VaultOrganization(remote.schemaVersion == 2,remote.richEnvelope)).data,
+        schemaVersion = schemaVersion,
+        richEnvelope = organization.data,
         opaqueItems = mergeOpaqueItems(local.opaqueItems, remote.opaqueItems, tombstoneById)
     )
 }

@@ -86,7 +86,8 @@ fun AddItemScreen(
                 is VaultItem.Login -> editItem.notes.orEmpty()
                 is VaultItem.SecureNote -> editItem.content
                 is VaultItem.CreditCard -> editItem.notes.orEmpty()
-                else -> ""
+                // Identities, passkeys and other types keep their notes on edit.
+                else -> editItem?.notes.orEmpty()
             }
         )
     }

@@ -428,6 +428,9 @@ impl InstrumentShell {
 
     pub(super) fn edit_selected(&mut self, cx: &mut Context<Self>) {
         let Some((_, item)) = self.selected_item() else { return };
+        // The generic editor cannot represent a passkey (saving would replace
+        // it with a login) and received shares are read-only.
+        if matches!(item, VaultItem::Passkey { .. }) || item.is_received_share() { return; }
         let item = item.clone();
         let modal = cx.new({
             let s = self.app_state.clone();
@@ -503,6 +506,7 @@ impl InstrumentShell {
 
     pub(super) fn share_selected(&mut self, cx: &mut Context<Self>) {
         let Some((_, item)) = self.selected_item() else { return };
+        if matches!(item, VaultItem::Passkey { .. }) || item.is_received_share() { return; }
         let id = item.id().to_string();
         self.set_view(View::Sharing, cx);
         if let Some(Embedded::Sharing(sharing)) = &self.embedded {

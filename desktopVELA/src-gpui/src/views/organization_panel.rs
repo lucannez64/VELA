@@ -140,6 +140,16 @@ impl OrganizationPanel {
         .detach();
         cx.notify();
     }
+    /// The folder filter, ignored once another device deleted that folder
+    /// (otherwise the view stays empty and new items get a dangling folder).
+    fn active_folder(&self, org: &OrganizationData) -> Option<String> {
+        self.folder.clone().filter(|id| {
+            id.is_empty() || Uuid::parse_str(id).ok().and_then(|id| org.folder(id)).is_some()
+        })
+    }
+    fn active_tag(&self, org: &OrganizationData) -> Option<Uuid> {
+        self.tag.filter(|id| org.tag(*id).is_some())
+    }
     pub fn matches(&self, item: &VaultItem, org: &OrganizationData) -> bool {
         let rich = &item.meta().rich;
         let folder = rich
@@ -147,7 +157,7 @@ impl OrganizationPanel {
             .as_ref()
             .and_then(|s| Uuid::parse_str(s).ok())
             .filter(|id| org.folder(*id).is_some());
-        if let Some(filter) = &self.folder {
+        if let Some(filter) = &self.active_folder(org) {
             if filter.is_empty() {
                 if folder.is_some() {
                     return false;
@@ -172,7 +182,7 @@ impl OrganizationPanel {
                 }
             }
         }
-        self.tag
+        self.active_tag(org)
             .map(|id| rich.tag_ids.as_ref().is_some_and(|tags| tags.contains(&id)))
             .unwrap_or(true)
     }
@@ -412,18 +422,19 @@ impl OrganizationPanel {
     }
     pub fn new_item_organization(&self) -> vela_desktop_core::rich_items::RichItemData {
         let mut rich = vela_desktop_core::rich_items::RichItemData::default();
-        rich.folder_id = self.folder.clone().or_else(|| Some(String::new()));
-        rich.tag_ids = Some(self.tag.into_iter().collect());
+        let vault = self.state.vault.read();
+        rich.folder_id = self.active_folder(&vault.organization).or_else(|| Some(String::new()));
+        rich.tag_ids = Some(self.active_tag(&vault.organization).into_iter().collect());
         rich
     }
     pub fn location_header(&self, p: &Palette) -> Div {
         let vault = self.state.vault.read();
         let org = &vault.organization;
-        let title = self
-            .tag
+        let (active_folder, active_tag) = (self.active_folder(org), self.active_tag(org));
+        let title = active_tag
             .and_then(|id| org.tag(id).map(|t| t.name.clone()))
             .or_else(|| {
-                self.folder.as_ref().map(|id| {
+                active_folder.as_ref().map(|id| {
                     Uuid::parse_str(id)
                         .ok()
                         .and_then(|id| org.folder(id).map(|f| f.name.clone()))
@@ -436,9 +447,9 @@ impl OrganizationPanel {
             .iter()
             .filter(|item| self.matches(item, org))
             .count();
-        let subtitle = if self.tag.is_some() {
+        let subtitle = if active_tag.is_some() {
             format!("{count} items with this tag")
-        } else if let Some(id) = self.folder.as_ref().filter(|id| !id.is_empty()) {
+        } else if let Some(id) = active_folder.as_ref().filter(|id| !id.is_empty()) {
             format!(
                 "{} · {count} items",
                 Uuid::parse_str(id)

@@ -509,10 +509,6 @@ impl VaultItem {
         let mut new = self.clone(); new.meta_mut().rich = rich; new
     }
 
-    pub fn with_last_modified_device(&self, device: String) -> Self {
-        let mut new = self.clone(); new.meta_mut().last_modified_device = Some(device); new
-    }
-
     pub fn without_personal_organization(&self) -> Self {
         let mut rich = self.meta().rich.clone(); rich.strip_personal_organization(); self.with_rich(rich)
     }

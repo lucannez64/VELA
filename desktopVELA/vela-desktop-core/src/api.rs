@@ -186,6 +186,23 @@ impl ApiClient {
         Ok(())
     }
 
+    /// Raise the account's schema floor only if the server has not already
+    /// (sync calls this every run; activation is a durable server write).
+    pub async fn ensure_rich_schema(&self, token: &str) -> Result<()> {
+        let resp = self.send_request(false, |client| {
+            client.get(format!("{}/vault/schema", self.base_url)).bearer_auth(token)
+        }).await?;
+        if resp.status().is_success() {
+            let status: serde_json::Value = resp.json().await?;
+            if status["minimum_write_schema"].as_u64().unwrap_or(1) >= 2
+                && status["supported_schema"].as_u64().unwrap_or(0) >= 2
+            {
+                return Ok(());
+            }
+        }
+        self.rich_schema(token, true).await
+    }
+
     pub fn with_url(base_url: String) -> Self {
         Self::new(&base_url)
     }
@@ -1993,6 +2010,19 @@ mod tests {
     use super::*;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn an_active_schema_floor_does_not_need_another_activation_write() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/vault/schema"))
+            .and(header("authorization", "Bearer fixture-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "supported_schema": 2, "minimum_write_schema": 2
+            }))).expect(1).mount(&server).await;
+        Mock::given(method("POST")).and(path("/vault/schema"))
+            .respond_with(ResponseTemplate::new(500)).expect(0).mount(&server).await;
+        ApiClient::new(&server.uri()).ensure_rich_schema("fixture-token").await.unwrap();
+    }
 
     #[tokio::test]
     async fn health_check_reflects_status() {

@@ -25,18 +25,7 @@ pub async fn activate_rich_items(state: &Arc<AppState>) -> Result<OrganizationSt
     require_unlocked(state)?;
     let _sync = state.sync_mutex.lock().await;
     state.persist_current_vault().map_err(|e| e.to_string())?;
-    let backup = state.store.store_path().join("vault.before-rich-items.enc");
-    if !backup.exists() {
-        std::fs::copy(state.store.store_path().join("vault.enc"), &backup)
-            .map_err(|_| "Could not create the encrypted safety backup".to_string())?;
-        // Windows FlushFileBuffers requires a writable handle. Opening the
-        // existing copy for writing does not truncate the encrypted backup.
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&backup)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
-    }
+    ensure_safety_backup(state)?;
     let server = state.server_url.read().clone();
     if !server.is_empty() {
         let token = state
@@ -52,6 +41,59 @@ pub async fn activate_rich_items(state: &Arc<AppState>) -> Result<OrganizationSt
         Ok(())
     })?;
     get_organization(state)
+}
+
+/// Copy the current encrypted vault aside once, before its first schema-2
+/// write. Used by explicit activation and by a sync that adopts schema 2.
+pub(crate) fn ensure_safety_backup(state: &AppState) -> Result<(), String> {
+    let vault_file = state.store.store_path().join("vault.enc");
+    let backup = state.store.store_path().join("vault.before-rich-items.enc");
+    if backup.exists() || !vault_file.exists() {
+        return Ok(());
+    }
+    std::fs::copy(&vault_file, &backup)
+        .map_err(|_| "Could not create the encrypted safety backup".to_string())?;
+    // Windows FlushFileBuffers requires a writable handle. Opening the
+    // existing copy for writing does not truncate the encrypted backup.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&backup)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Clear folder and tag assignments that point at records the organization
+/// no longer has (deleted here or on another device). `stamp` bumps
+/// `updated_at` for a local mutation; sync repairs deterministically on every
+/// client and leaves timestamps alone. Received shares are never rewritten.
+pub(crate) fn repair_assignments(vault: &mut VaultStore, stamp: Option<chrono::DateTime<Utc>>) {
+    let org = &vault.organization;
+    let mut repaired = Vec::new();
+    for (index, item) in vault.items.iter().enumerate() {
+        if item.is_received_share() {
+            continue;
+        }
+        let mut rich = item.meta().rich.clone();
+        if rich.folder_id.as_ref().is_some_and(|id| {
+            !id.is_empty() && Uuid::parse_str(id).ok().and_then(|id| org.folder(id)).is_none()
+        }) {
+            rich.folder_id = Some(String::new());
+        }
+        if let Some(tags) = &mut rich.tag_ids {
+            tags.retain(|id| org.tag(*id).is_some());
+        }
+        if rich != item.meta().rich {
+            repaired.push((index, rich));
+        }
+    }
+    for (index, rich) in repaired {
+        let item = vault.items[index].with_rich(rich);
+        vault.items[index] = match stamp {
+            Some(now) => item.with_updated_at(now),
+            None => item,
+        };
+    }
 }
 
 /// Persist the candidate before replacing memory; lock order matches lock/rekey.
@@ -170,27 +212,7 @@ pub fn mutate_organization(
             }
         }
         // Repair local assignments in the same transaction as deletion.
-        for item in &mut vault.items {
-            let mut rich = item.meta().rich.clone();
-            if rich.folder_id.as_ref().is_some_and(|id| {
-                !id.is_empty()
-                    && Uuid::parse_str(id)
-                        .ok()
-                        .and_then(|id| org.folder(id))
-                        .is_none()
-            }) {
-                rich.folder_id = Some(String::new());
-            }
-            if let Some(tags) = &mut rich.tag_ids {
-                tags.retain(|id| org.tag(*id).is_some());
-            }
-            if rich != item.meta().rich {
-                *item = item
-                    .with_rich(rich)
-                    .with_updated_at(now)
-                    .with_last_modified_device(device.clone());
-            }
-        }
+        repair_assignments(vault, Some(now));
         Ok(())
     })?;
     get_organization(state)
@@ -206,10 +228,6 @@ pub struct AssignItems {
 }
 
 pub fn assign_items(state: &Arc<AppState>, changes: AssignItems) -> Result<(), String> {
-    let device = state
-        .store
-        .load_device_id()
-        .unwrap_or_else(|_| "local-desktop".into());
     transaction(state, |vault| {
         if vault.schema_version != Some(2) {
             return Err("Enable folders and richer items first".into());
@@ -257,8 +275,7 @@ pub fn assign_items(state: &Arc<AppState>, changes: AssignItems) -> Result<(), S
             .map_err(|e| e.to_string())?;
             let updated = item
                 .with_rich(rich)
-                .with_updated_at(Utc::now())
-                .with_last_modified_device(device.clone());
+                .with_updated_at(Utc::now());
             vault.update_item(updated);
         }
         Ok(())

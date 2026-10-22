@@ -201,7 +201,7 @@ fn the_real_host_meets_the_real_gate() {
         // Exercise the real card and identity release paths, including the
         // native host's whitelist, through browser framing and desktop IPC.
         for (action, key) in [("getCards", "cards"), ("getIdentities", "identities")] {
-            stdin.write_all(&frame(&json!({"action":action, "url":"https://shop.example/checkout", "userInitiated":false}))).unwrap();
+            stdin.write_all(&frame(&json!({"action":action, "url":"https://shop.example/checkout"}))).unwrap();
             let metadata = read_frame(&mut stdout).expect("metadata response");
             assert_eq!(metadata["success"], true, "{metadata}");
             assert_eq!(metadata[key].as_array().unwrap().len(), 1);
@@ -216,7 +216,7 @@ fn the_real_host_meets_the_real_gate() {
                 assert_eq!(metadata[key][0]["addresses"].as_array().unwrap().len(), 1);
                 assert!(metadata[key][0]["addresses"][0].get("line1").is_none());
             }
-            stdin.write_all(&frame(&json!({"action":action, "url":"https://shop.example/checkout"}))).unwrap();
+            stdin.write_all(&frame(&json!({"action":action, "url":"https://shop.example/checkout", "userInitiated":true}))).unwrap();
             let response = read_frame(&mut stdout).expect("credential response");
             assert_eq!(response["success"], true, "{response}");
             assert_eq!(response[key].as_array().unwrap().len(), 1);

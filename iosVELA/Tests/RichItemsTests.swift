@@ -79,6 +79,33 @@ final class RichItemsTests: XCTestCase {
     }
 
     @MainActor
+    func testBackgroundAndLockDiscardTheDecryptedEnvelope() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let vm = VaultViewModel(repo: VaultRepository(directory: directory))
+        try vm.createVault()
+        let item = VaultItem.newLogin(name: "Local only", url: "https://example.test", username: "a", password: "secret", totp: nil)
+        XCTAssertTrue(vm.add(item))
+        try vm.enableCollections()
+        XCTAssertTrue(vm.hasLoadedVault)
+        vm.clearMemory()
+        XCTAssertFalse(vm.hasLoadedVault)
+        XCTAssertTrue(vm.currentStore.items.isEmpty)
+        XCTAssertFalse(vm.organization.enabled)
+        vm.applyMergedStore(VaultStore(items: [item]))
+        XCTAssertTrue(vm.items.isEmpty, "A sync finishing in the background must not restore plaintext")
+        vm.reloadFromSession()
+        XCTAssertTrue(vm.hasLoadedVault)
+        XCTAssertEqual(vm.items.map(\.id), [item.id], "Foreground reload must retain the unsynced local item")
+        vm.lock()
+        XCTAssertNil(vm.currentRMS)
+        XCTAssertFalse(vm.hasLoadedVault)
+        XCTAssertFalse(vm.organization.enabled)
+        vm.applyMergedStore(VaultStore(items: [item]))
+        XCTAssertTrue(vm.items.isEmpty)
+    }
+
+    @MainActor
     func testFailedWriteDoesNotPublishAnEdit() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let moved = directory.appendingPathExtension("saved")

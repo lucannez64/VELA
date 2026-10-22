@@ -122,9 +122,9 @@ fun VelaNavHost(
     hasPasswordVault: Boolean,
     itemCount: Int,
     items: List<com.vela.android.core.VaultItem>,
-    onAddItem: (com.vela.android.core.VaultItem) -> Unit,
-    onUpdateItem: (com.vela.android.core.VaultItem) -> Unit,
-    onDeleteItem: (String) -> Unit,
+    onAddItem: (com.vela.android.core.VaultItem) -> Boolean,
+    onUpdateItem: (com.vela.android.core.VaultItem) -> Boolean,
+    onDeleteItem: (String) -> Boolean,
     onLock: () -> Unit,
     onReset: () -> Unit,
     onCreateBiometricVault: () -> Unit,
@@ -439,9 +439,10 @@ fun VelaNavHost(
                     initialPassword = generatedPassword,
                     organization = organization,
                     onSave = { item ->
-                        onAddItem(item)
-                        generatedPassword = ""
-                        navController.popBackStack()
+                        if (onAddItem(item)) {
+                            generatedPassword = ""
+                            navController.popBackStack()
+                        }
                     },
                     onBack = { generatedPassword = ""; navController.popBackStack() }
                 )
@@ -457,11 +458,11 @@ fun VelaNavHost(
                     onBack = { navController.popBackStack() },
                     onEdit = { navController.navigate(VelaRoutes.editItem(itemId)) },
                     onDelete = {
-                        onDeleteItem(itemId)
-                        navController.popBackStack()
+                        if (onDeleteItem(itemId)) navController.popBackStack()
                     },
                     onToggleFavorite = { current ->
-                        onUpdateItem(current.withMeta { it.copy(favorite = !it.favorite) })
+                        // A newer timestamp so the change survives the next merge.
+                        onUpdateItem(current.withMeta { it.copy(favorite = !it.favorite, updatedAt = java.time.Instant.now()) })
                     },
                     onShare = {
                         preselectedShareItemId = itemId
@@ -483,8 +484,7 @@ fun VelaNavHost(
                     editItem = item,
                     organization = organization,
                     onSave = { updated ->
-                        onUpdateItem(updated)
-                        navController.popBackStack()
+                        if (onUpdateItem(updated)) navController.popBackStack()
                     },
                     onBack = { navController.popBackStack() }
                 )

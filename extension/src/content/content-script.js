@@ -1142,18 +1142,19 @@
     // Payment fields first: the card heuristics are deliberately narrow, but
     // they must win over the login ones so a cardholder field (which contains
     // "account") is not mistaken for a username.
+    // Cards and identities are not tied to a site, so focus alone (which a
+    // page can trigger itself) only shows the icon. The chooser, and the
+    // vault request behind it, wait for a click on the icon or ArrowDown.
     if (velaIsCardField(el)) {
       velaActiveField = el;
       velaCurrentCards = null;
       velaInjectFieldIcon(el);
-      velaShowCardsForField(el);
       return;
     }
 
     if (velaIsIdentityField(el)) {
       velaActiveField = el;
       velaInjectFieldIcon(el);
-      velaShowIdentityDropdown(el);
       return;
     }
     if (velaIsTotpInput(el)) {
@@ -1223,6 +1224,21 @@
     velaRemoveFieldIcon();
   }
 
+  // Releasing a credential needs a real user gesture. Page scripts can call
+  // `.click()` on our rows (the dropdown lives in the page DOM), so a row
+  // only acts on a trusted click, or on a click we dispatch ourselves from a
+  // trusted Enter/Space keypress.
+  let velaKeyboardActivation = null;
+  function velaActivateFromKey(e, item) {
+    if (!e.isTrusted || !item) return;
+    e.stopPropagation(); // The row and document key handlers must not activate twice.
+    velaKeyboardActivation = item;
+    try { item.click(); } finally { velaKeyboardActivation = null; }
+  }
+  function velaIsUserActivation(e) {
+    return e.isTrusted || (velaKeyboardActivation !== null && velaKeyboardActivation === e.currentTarget);
+  }
+
   function velaOnKeyDown(e) {
     if (e.key === "Escape" && velaDropdownEl) {
       e.stopPropagation();
@@ -1230,7 +1246,16 @@
       return;
     }
 
-    if (!velaDropdownEl) return;
+    if (!velaDropdownEl) {
+      // Cards and identities never open on focus alone (a page can focus a
+      // field itself). The keyboard equivalent of clicking the field icon:
+      if (e.key === "ArrowDown" && e.isTrusted && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        const field = e.target;
+        if (field === velaActiveField && velaIsCardField(field)) { e.preventDefault(); velaShowCardsForField(field); }
+        else if (field === velaActiveField && velaIsIdentityField(field)) { e.preventDefault(); velaShowIdentityDropdown(field); }
+      }
+      return;
+    }
 
     const items = Array.from(velaDropdownEl.querySelectorAll(".vela-dd-item"));
     if (!items.length) return;
@@ -1252,7 +1277,7 @@
         if (velaSelectedIndex >= 0 && items[velaSelectedIndex]) {
           e.preventDefault();
           e.stopPropagation();
-          items[velaSelectedIndex].click();
+          velaActivateFromKey(e, items[velaSelectedIndex]);
         }
         break;
       case "Tab":
@@ -1304,6 +1329,7 @@
     icon.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!e.isTrusted) return;
       // Focusing a field opens its chooser. Clicking any part of its icon
       // keeps that chooser open rather than toggling it shut.
       if (velaDropdownEl && velaActiveField === field) return;
@@ -1493,7 +1519,8 @@
     velaPositionDropdown(field);
 
     dd.querySelectorAll("[data-vela-login-id]").forEach((item) => {
-      item.addEventListener("click", async () => {
+      item.addEventListener("click", async (e) => {
+        if (!velaIsUserActivation(e)) return;
         const loginId = item.getAttribute("data-vela-login-id");
         let login = (logins || []).find((l) => String(l.id) === loginId);
         if (!login) return;
@@ -1711,7 +1738,8 @@
     velaPositionDropdown(field);
 
     dd.querySelectorAll("[data-vela-card-id]").forEach((item) => {
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (e) => {
+        if (!velaIsUserActivation(e)) return;
         const id = item.getAttribute("data-vela-card-id");
         velaFillChosenItem("card", id, field, undefined, dd);
       });
@@ -1758,7 +1786,7 @@
     const byKind = {};
     for (const el of scope.querySelectorAll("input,select")) {
       const kind = velaCardFieldKind(el);
-      if (kind && velaVisibleField(el) && velaFieldSection(el) === section && !byKind[kind]) byKind[kind] = el;
+      if (kind && velaVisibleField(el) && velaSameSection(section, el) && !byKind[kind]) byKind[kind] = el;
     }
     const exp = velaParseExpiry(card.exp);
     let count = 0;
@@ -1838,7 +1866,7 @@
     velaPrepareDropdown(dd); velaPositionDropdown(field);
     dd.querySelectorAll("[data-identity-index]").forEach(row => {
       row.addEventListener("mousedown", e => e.preventDefault());
-      row.addEventListener("click", () => { const c = choices[Number(row.dataset.identityIndex)]; velaFillChosenItem("identity", c.identity.id, field, c.address?.id, dd); });
+      row.addEventListener("click", (e) => { if (!velaIsUserActivation(e)) return; const c = choices[Number(row.dataset.identityIndex)]; velaFillChosenItem("identity", c.identity.id, field, c.address?.id, dd); });
     });
   }
   async function velaFillChosenItem(type, id, field, addressId, dropdown) {
@@ -1855,11 +1883,19 @@
     } catch (_) { velaShowToast("Could not fill this item. Try again.", true); }
     finally { delete dropdown.dataset.filling; }
   }
+  /** Same autofill section, or the anchor has none (e.g. a plain email field
+   *  next to `shipping …` address fields), so the whole form still fills. */
+  function velaSameSection(anchorSection, el) {
+    const section = velaFieldSection(el);
+    return section === anchorSection || section === "" || anchorSection === "";
+  }
   function velaFieldSection(el) {
     return (el?.autocomplete || "").split(/\s+/).filter(t => t.startsWith("section-") || ["shipping","billing"].includes(t)).join(" ");
   }
   function velaFillIdentity(identity, anchor, addressId) {
     const addresses = identity.addresses || [];
+    // A chosen address that no longer exists is an error, not a cue to fill another one.
+    if (addressId && !addresses.some(a => a.id === addressId)) { velaShowToast("That address was removed. Choose it again.", true); return 0; }
     const address = addresses.find(a => a.id === addressId) || addresses[0] || {};
     const values = {...address, ...identity, fullName:[identity.firstName,identity.middleName,identity.lastName].filter(Boolean).join(" "), street:[address.line1,address.line2].filter(Boolean).join("\n")};
     try { values.countryName = new Intl.DisplayNames([document.documentElement.lang || "en"], {type:"region"}).of(address.countryCode); } catch (_) {}
@@ -1868,8 +1904,7 @@
     let count = 0;
     for (const el of scope.querySelectorAll("input,select,textarea")) {
       const kind = velaIdentityFieldKind(el);
-      const group = velaFieldSection(el);
-      if (kind && group === section && values[kind] && velaVisibleField(el)) {
+      if (kind && velaSameSection(section, el) && values[kind] && velaVisibleField(el)) {
         if (velaFillValue(el,values[kind])) count++;
         else if (kind === "countryCode" && values.countryName && velaFillValue(el,values.countryName)) count++;
       }
@@ -1915,7 +1950,7 @@
     dd.querySelectorAll(".vela-dd-item").forEach((item,index) => {
       item.setAttribute("role", "option"); item.tabIndex = 0; item.setAttribute("aria-selected", "false");
       item.addEventListener("mouseenter", () => { velaSelectedIndex = index; velaUpdateSelection(Array.from(dd.querySelectorAll(".vela-dd-item"))); });
-      item.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); item.click(); } });
+      item.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); velaActivateFromKey(e, item); } });
     });
   }
 
@@ -1969,8 +2004,8 @@
       const update=()=>{item.querySelector(".vela-code-readout").innerHTML=globalThis.VelaInstrument.dots(entry.code,4);const timer=item.querySelector(".vela-totp-timer");timer.textContent=entry.remaining+"s";timer.dataset.expiring=entry.remaining<6;}; entry.update=update;update();
       item.addEventListener("mousedown",e=>e.preventDefault());
       item.addEventListener("mouseenter",()=>{velaSelectedIndex=entries.indexOf(entry);velaUpdateSelection(entries.map(x=>x.item));});
-      item.addEventListener("click",()=>{if(!entry.code||entry.remaining<=0||Date.now()>=entry.expiresAt)return;const code=entry.code;velaHideDropdown();fillElement(field,code);});
-      item.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();item.click();}});
+      item.addEventListener("click",(e)=>{if(!velaIsUserActivation(e))return;if(!entry.code||entry.remaining<=0||Date.now()>=entry.expiresAt)return;const code=entry.code;velaHideDropdown();fillElement(field,code);});
+      item.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();velaActivateFromKey(e,item);}});
       dd.insertBefore(item,dd.querySelector(".vela-dd-origin"));
     }
     if(!alive())return;

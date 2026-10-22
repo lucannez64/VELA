@@ -24,6 +24,20 @@ class EncryptedVaultStore(private val storeDir: File) {
         check(temporary.renameTo(backup)) { "Could not create the encrypted safety backup" }
     }
 
+    /**
+     * Random per-install ID for folder/tag revisions. Two installs sharing one
+     * ID would produce equal revisions for different edits, which the core's
+     * merge rejects, stopping sync. Not a secret.
+     */
+    fun organizationWriterId(): String {
+        val file = File(storeDir, "organization-writer-id")
+        file.takeIf { it.exists() }?.readText()?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val id = "android-" + java.util.UUID.randomUUID().toString()
+        storeDir.mkdirs()
+        file.writeText(id)
+        return id
+    }
+
     fun exists(): Boolean = vaultFile.exists()
 
     fun load(rms: ByteArray): VaultStore {
@@ -77,6 +91,9 @@ class EncryptedVaultStore(private val storeDir: File) {
 
     fun delete() {
         vaultFile.delete()
+        // "Reset local security" must not leave the pre-upgrade copy behind.
+        File(storeDir, "vault.before-rich-items.enc").delete()
+        File(storeDir, "vault.before-rich-items.tmp").delete()
     }
 
     private fun deriveVaultKey(rms: ByteArray): SecretKeySpec {

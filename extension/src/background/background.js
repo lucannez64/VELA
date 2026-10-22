@@ -449,7 +449,8 @@ async function handleGetCards(data, sender, sendResponse) {
       sendResponse({ success: false, error: auth.error, cards: [] });
       return;
     }
-    const response = await sendNativeMessage({ action: "getCards", url: data.url || "", userInitiated: data.userInitiated !== false });
+    // Metadata unless the caller explicitly marks a user-chosen fill.
+    const response = await sendNativeMessage({ action: "getCards", url: data.url || "", userInitiated: data.userInitiated === true });
     if (response && response.success && Array.isArray(response.cards)) {
       sendResponse({ success: true, cards: response.cards });
     } else if (response && response.requires_biometric) {
@@ -466,7 +467,7 @@ async function handleGetIdentities(data, sender, sendResponse) {
   try {
     const auth = await authorizeCredentialRequest(data, sender);
     if (!auth.ok) { sendResponse({success:false, error:auth.error, identities:[]}); return; }
-    const response = await sendNativeMessage({action:"getIdentities", url:data.url, userInitiated:data.userInitiated !== false});
+    const response = await sendNativeMessage({action:"getIdentities", url:data.url, userInitiated:data.userInitiated === true});
     sendResponse(response || {success:false, identities:[]});
   } catch (error) { sendResponse({success:false, error:error.message, identities:[]}); }
 }
@@ -478,7 +479,7 @@ async function handleFillVaultItem(data, sender, sendResponse) {
     if (!["card", "identity"].includes(data.itemType)) { sendResponse({success:false}); return; }
     // Resolve by ID again rather than trusting a credential supplied by UI code.
     const key = data.itemType === "card" ? "cards" : "identities";
-    const response = await sendNativeMessage({action:data.itemType === "card" ? "getCards" : "getIdentities", url:data.url});
+    const response = await sendNativeMessage({action:data.itemType === "card" ? "getCards" : "getIdentities", url:data.url, userInitiated:true});
     const item = response?.success && response[key]?.find(i => String(i.id) === String(data.itemId));
     if (!item) { sendResponse({success:false, error:"Unlock VELA Desktop and retry."}); return; }
     const active = await getActiveTab();

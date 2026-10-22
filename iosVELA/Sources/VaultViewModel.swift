@@ -110,6 +110,7 @@ final class VaultViewModel: ObservableObject {
     func createVault() throws {
         let r = try repo.generateAndStoreRMS()
         rms = r
+        envelope = VaultStore(items: [])
         items = []
         tombstones = []
         backgroundedAt = nil
@@ -123,6 +124,7 @@ final class VaultViewModel: ObservableObject {
     func createVault(password: String) throws {
         let r = try repo.generatePasswordRMS(password: password)
         rms = r
+        envelope = VaultStore(items: [])
         items = []
         tombstones = []
         backgroundedAt = nil
@@ -243,6 +245,7 @@ final class VaultViewModel: ObservableObject {
         if !FileManager.default.fileExists(atPath: backup.path) {
             try FileManager.default.copyItem(at: repo.directory.appendingPathComponent("vault.enc"), to: backup)
         }
+        BackupExclusion.exclude(backup) // Also repair exclusion on an existing safety copy.
         var next = currentStore
         next.schemaVersion = 2
         try commit(next)
@@ -317,6 +320,9 @@ final class VaultViewModel: ObservableObject {
         guard repo.hasVault() else { return }
         rms = nil
         items = []
+        tombstones = []
+        // The envelope holds the same decrypted items; drop it too.
+        envelope = VaultStore(items: [])
         lockState = .locked
         AuditLog.shared.record("vault_locked")
     }
@@ -334,6 +340,7 @@ final class VaultViewModel: ObservableObject {
             try repo.adoptRMSWithPassword(newRMS, password: password)
         }
         rms = newRMS
+        envelope = VaultStore(items: [])
         items = []
         tombstones = []
         backgroundedAt = nil
@@ -359,6 +366,8 @@ final class VaultViewModel: ObservableObject {
     func clearMemory() {
         guard lockState == .unlocked else { return }
         items = []
+        tombstones = []
+        envelope = VaultStore(items: [])
         backgroundedAt = Date()
     }
 
@@ -371,11 +380,16 @@ final class VaultViewModel: ObservableObject {
             lock()
             return
         }
-        backgroundedAt = nil
-        if let store = try? repo.load(rms: rms) {
+        do {
+            let store = try repo.load(rms: rms)
             envelope = store
             items = store.items
             tombstones = store.tombstones
+            backgroundedAt = nil
+        } catch {
+            // Never mark a failed reload as a loaded empty vault.
+            lock()
+            errorMessage = "Couldn't reload the vault."
         }
     }
 
@@ -385,6 +399,8 @@ final class VaultViewModel: ObservableObject {
         repo.reset()
         rms = nil
         items = []
+        tombstones = []
+        backgroundedAt = nil
         lockState = .noVault
     }
 
@@ -393,11 +409,19 @@ final class VaultViewModel: ObservableObject {
     /// The in-memory RMS, available while unlocked (needed to seal sync/share blobs).
     var currentRMS: Data? { rms }
 
+    /// True only while the decrypted vault is in memory (unlocked and in the
+    /// foreground). A sync must not start from a cleared store: merging an
+    /// empty item list would drop local items that were never uploaded.
+    var hasLoadedVault: Bool { lockState == .unlocked && rms != nil && backgroundedAt == nil }
+
     /// The full local store, available while unlocked (needed for sync).
     var currentStore: VaultStore { var value = envelope; value.items = items; value.tombstones = tombstones; return value }
 
     /// Replace the vault contents after a sync merge and persist locally.
     func applyMergedStore(_ merged: VaultStore) {
+        // Finished in the background: SyncEngine already saved the merge to
+        // disk. Keep plaintext out of memory; the foreground reload reads it.
+        if backgroundedAt != nil || lockState != .unlocked { return }
         envelope = merged
         items = merged.items
         tombstones = merged.tombstones

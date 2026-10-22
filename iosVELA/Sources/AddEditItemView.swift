@@ -263,7 +263,10 @@ struct AddEditItemView: View {
             item = VaultItem(firstName: firstName, lastName: lastName, ssn: ssn,
                              item_type: "identity", id: UUID().uuidString, name: trimmedName,
                              notes: trimmedNotes.isEmpty ? nil : trimmedNotes, createdAt: now, updatedAt: now)
-            item.identityDetails = identityDetails
+            // Empty details do not turn a basic identity into a schema-2 item.
+            if !(identityDetails.objectValue ?? [:]).isEmpty || editing?.identityDetails != nil {
+                item.identityDetails = identityDetails
+            }
         default:
             guard let existing = editing else { return }
             item = existing

@@ -31,40 +31,20 @@ async function runVelaUiChecks() {
     assert(UI_FIXTURE.calls.some(x=>x.command==='fillVaultItem'&&x.itemType==='identity'&&x.addressId==='office'),'popup preserves selected address');
     click('[data-item-type=login]');await pause(30);
   } else {
-    const otp=document.querySelector('#code');otp.scrollIntoView({block:'center'});otp.focus();
-    assert(!UI_FIXTURE.calls.some(x=>x.command==='getTotpCode'),'OTP secrets not fetched on passive focus');
-    document.querySelector('.vela-field-icon').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));await pause(40);
-    assert(document.querySelector('.vela-code-readout [aria-label="284619"]'),'OTP chooser shows native response');
-    click('.vela-dd-item');assert(otp.value==='284619'&&!document.querySelector('.vela-inline-dropdown'),'OTP fills and closes');
-    const card=document.querySelector('#card');card.scrollIntoView({block:'center'});
-    card.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
-    const hoveredIcon=document.querySelector('.vela-field-icon');
-    hoveredIcon.querySelector('svg').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,composed:true}));
-    assert(hoveredIcon.isConnected,'hovered icon survives the focus caused by its press');
-    card.focus();
-    assert(!UI_FIXTURE.calls.some(x=>x.command==='getCards'&&x.userInitiated!==false),'full cards not fetched on passive focus');
-    await pause(30);assert(document.querySelector('[data-vela-card-id=visa]'),'card suggestions open on focus');
-    const opened=document.querySelector('.vela-inline-dropdown');
-    const glyph=document.querySelector('.vela-field-icon svg path') || document.querySelector('.vela-field-icon svg');
-    for(const type of ['mousedown','mouseup','click'])glyph.dispatchEvent(new MouseEvent(type,{bubbles:true,composed:true,cancelable:true}));
-    await pause(250);assert(document.querySelector('.vela-inline-dropdown')===opened,'nested icon click keeps focus chooser open');
-    document.querySelector('.vela-field-icon').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));await pause(30);
-    const master=document.querySelector('[data-vela-card-id=master]');master.dispatchEvent(new MouseEvent('mouseenter'));
-    assert(master.classList.contains('vela-dd-item--selected'),'hover updates selection');master.click();await pause(30);
-    assert(card.value==='5555555555555556'&&document.querySelector('#cvv').value==='456','whole selected card fills');
-    const first=document.querySelector('#first');first.scrollIntoView({block:'center'});first.focus();
-    assert(!UI_FIXTURE.calls.some(x=>x.command==='getIdentities'&&x.userInitiated!==false),'full identities not fetched on passive focus');
-    await pause(30);assert(document.querySelectorAll('[data-identity-index]').length===2,'identity suggestions open on focus');
-    document.querySelector('.vela-field-icon').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));await pause(40);
-    assert(document.querySelectorAll('[data-identity-index]').length===2,'identity chooser offers each address');
-    click('[data-identity-index="1"]');await pause(30);
-    assert(first.value==='Ada'&&document.querySelector('#last').value==='Lovelace','identity names filled');
-    assert(document.querySelector('#street').value==='42 Engine Street'&&document.querySelector('#city').value==='Oxford','selected address filled');
-    assert(document.querySelector('#country').value==='GB'&&document.querySelector('#contact-email').value==='ada@example.test','identity contact and country select filled');
-    assert(!document.querySelector('#hidden-name').value,'hidden identity fields remain empty');
-    const pan=document.querySelector('#split-number');pan.scrollIntoView({block:'center'});pan.focus();
-    document.querySelector('.vela-field-icon').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));await pause(40);click('[data-vela-card-id=visa]');await pause(30);
-    assert(document.querySelector('#month').value==='8'&&document.querySelector('#year').value==='2029'&&document.querySelector('#secret-cvv').value==='123','split expiry selects and password CVV filled');
+    // Console-created events are deliberately untrusted: they must never
+    // open a chooser or release credentials. Test real fills using browser
+    // automation clicks/keys, rather than weakening the production guard.
+    for (const id of ['card', 'first']) {
+      const field = document.getElementById(id);
+      const before = UI_FIXTURE.calls.filter(x => ['getCards','getIdentities'].includes(x.command)).length;
+      field.scrollIntoView({block:'center'}); field.focus(); await pause(30);
+      assert(!document.querySelector('[data-vela-card-id], [data-identity-index]'),'focus alone does not publish global vault metadata: '+id);
+      const icon = document.querySelector('.vela-field-icon');
+      icon.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
+      field.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
+      await pause(30);
+      assert(UI_FIXTURE.calls.filter(x => ['getCards','getIdentities'].includes(x.command)).length === before,'scripted focus/icon/key cannot request cards or identities: '+id);
+    }
     await UI_FIXTURE.dispatch({command:'showSaveDialog',username:'new@example.test',password:'EXAMPLE-ONLY'});
     assert(document.querySelector('#vela-save-modal [role=dialog]'),'save review is a dialog');
     click('#vela-save-modal [data-vela-action=save]');await pause(30);

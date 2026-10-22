@@ -729,9 +729,9 @@ async function getCurrentTab() {
 function renderSelectedItems() {
   if (vaultItemType === "login") { if (availableLogins.length) renderLogins(); else showNoLoginsState(); return; }
   const choices = availableVaultItems.flatMap(item => (vaultItemType === "identity" && item.addresses?.length ? item.addresses : [null]).map(address => ({item,address})));
-  const filtered = choices.filter(({item,address}) => `${item.name || ""} ${item.firstName || ""} ${item.lastName || ""} ${item.email || ""} ${item.cardholderName || ""} ${String(item.number || "").slice(-4)} ${address?.label || ""} ${address?.line1 || ""} ${address?.city || ""}`.toLowerCase().includes(loginQuery));
+  const filtered = choices.filter(({item,address}) => `${item.name || ""} ${item.firstName || ""} ${item.lastName || ""} ${item.email || ""} ${item.cardholderName || ""} ${item.last4 || ""} ${address?.label || ""} ${address?.line1 || ""} ${address?.city || ""}`.toLowerCase().includes(loginQuery));
   mainContent.innerHTML = `<div class="section-title">01 / Saved ${vaultItemType === "card" ? "cards" : "identities"}</div><ul class="login-list">${filtered.map(({item,address},index) => {
-    const subtitle = vaultItemType === "card" ? [item.cardholderName, `•••• ${String(item.number || "").replace(/\D/g, "").slice(-4)}`,item.exp].filter(Boolean).join(" · ") : [address?.label,address?.line1,address?.city,item.email].filter(Boolean).join(" · ");
+    const subtitle = vaultItemType === "card" ? [item.cardholderName, item.last4 ? `•••• ${item.last4}` : "",item.exp].filter(Boolean).join(" · ") : [address?.label,address?.line1,address?.city,item.email].filter(Boolean).join(" · ");
     return `<li class="login-item"><div class="login-icon">${globalThis.VelaInstrument.icon(vaultItemType === "card" ? "card" : "user",18)}</div><div class="login-info"><div class="login-name">${escapeHtml(item.name || [item.firstName,item.lastName].filter(Boolean).join(" ") || "Card")}</div><div class="login-url">${escapeHtml(subtitle)}</div></div><button type="button" class="icon-btn" data-fill-item="${escapeHtml(String(index))}" aria-label="Fill ${vaultItemType}">${globalThis.VelaInstrument.icon("arrow",15)}</button></li>`;
   }).join("")}</ul>${filtered.length ? "" : '<div class="empty-state"><div class="empty-state-title">No matches.</div><div class="empty-state-text">Add items in VELA Desktop, or try another search.</div></div>'}`;
   mainContent.querySelectorAll("[data-fill-item]").forEach(button => button.addEventListener("click",async () => {
@@ -752,7 +752,8 @@ async function loadSelectedItems() {
   mainContent.innerHTML = '<div class="empty-state">Loading your vault…</div>';
   try {
     const key = vaultItemType === "card" ? "cards" : "identities";
-    const response = await sendMessage({command:vaultItemType === "card" ? "getCards" : "getIdentities",url:currentTabUrl});
+    // Listing needs metadata only; the full card or identity is released by fillVaultItem.
+    const response = await sendMessage({command:vaultItemType === "card" ? "getCards" : "getIdentities",url:currentTabUrl,userInitiated:false});
     if (generation !== vaultLoadGeneration) return;
     if (!response?.success) {
       showEmptyState("Open VELA Desktop",response?.error || "Unlock your vault and retry.");

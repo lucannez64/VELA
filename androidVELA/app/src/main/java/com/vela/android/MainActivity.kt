@@ -96,28 +96,44 @@ class MainActivity : FragmentActivity() {
                     onAddItem = { item ->
                         if (VelaRepositories.vault.richerVaultReadOnly) {
                             android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                            false
                         } else {
-                        VelaRepositories.vault.addItem(item)
-                        VelaRepositories.audit.record("item_added", item.type.name.lowercase())
-                        requestSync("after-save")
+                            // A rejected write (validation, storage) is shown, never a crash.
+                            runCatching { VelaRepositories.vault.addItem(item) }
+                                .onSuccess {
+                                    VelaRepositories.audit.record("item_added", item.type.name.lowercase())
+                                    requestSync("after-save")
+                                }
+                                .onFailure { showWriteError(it) }
+                                .isSuccess
                         }
                     },
                     onUpdateItem = { item ->
                         if (VelaRepositories.vault.richerVaultReadOnly) {
                             android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                            false
                         } else {
-                        VelaRepositories.vault.updateItem(item)
-                        VelaRepositories.audit.record("item_updated", item.type.name.lowercase())
-                        requestSync("after-save")
+                            runCatching { VelaRepositories.vault.updateItem(item) }
+                                .onSuccess {
+                                    VelaRepositories.audit.record("item_updated", item.type.name.lowercase())
+                                    requestSync("after-save")
+                                }
+                                .onFailure { showWriteError(it) }
+                                .isSuccess
                         }
                     },
                     onDeleteItem = { id ->
                         if (VelaRepositories.vault.richerVaultReadOnly) {
                             android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                            false
                         } else {
-                        VelaRepositories.vault.deleteItem(id)
-                        VelaRepositories.audit.record("item_deleted", id.take(8))
-                        requestSync("after-save")
+                            runCatching { VelaRepositories.vault.deleteItem(id) }
+                                .onSuccess {
+                                    VelaRepositories.audit.record("item_deleted", id.take(8))
+                                    requestSync("after-save")
+                                }
+                                .onFailure { showWriteError(it) }
+                                .isSuccess
                         }
                     },
                     onLock = {
@@ -469,6 +485,10 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun showWriteError(error: Throwable) {
+        android.widget.Toast.makeText(this, error.message ?: "Could not save this change.", android.widget.Toast.LENGTH_LONG).show()
+    }
+
     /** Push a local edit now instead of waiting for the next timer tick. */
     private fun requestSync(why: String) {
         if (!VelaRepositories.security.session.value.unlocked) return
@@ -683,7 +703,8 @@ class MainActivity : FragmentActivity() {
                         VelaRepositories.security.setError("Biometric prompt did not return a cipher")
                         return
                     }
-                    onCipher(authenticatedCipher)
+                    runCatching { onCipher(authenticatedCipher) }
+                        .onFailure { VelaRepositories.security.setError(it.message ?: "Could not open the vault") }
                 }
 
                 override fun onAuthenticationFailed() {

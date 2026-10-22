@@ -72,8 +72,7 @@ pub async fn add_item(state: &Arc<AppState>, item: VaultItem) -> Result<VaultIte
     validate_rich_item(state, &item)?;
     let now = Utc::now();
     let new_id = Uuid::new_v4().to_string();
-    let mut new_item = item.with_id(new_id).with_updated_at(now);
-    if let Ok(device) = state.store.load_device_id() { new_item = new_item.with_last_modified_device(device); }
+    let new_item = item.with_id(new_id).with_updated_at(now);
     super::organization::transaction(state, |vault| {
         vault.add_item(new_item.clone());
         Ok(())
@@ -108,6 +107,11 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
             Some(existing) if existing.is_received_share() => {
                 return Err("Cannot modify a received shared item".to_string());
             }
+            // An edit never changes what an item is. Replacing a passkey with
+            // a login of the same ID would destroy its private key.
+            Some(existing) if existing.item_type() != item.item_type() => {
+                return Err("This item's type cannot be changed".to_string());
+            }
             Some(existing) => item.preserving_app_ids(existing),
             None => item,
         }
@@ -141,8 +145,7 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
     };
     validate_rich_item(state, &item)?;
     let (updated, item_type) = super::organization::transaction(state, |vault| {
-        let mut updated = item.with_updated_at(Utc::now());
-        if let Ok(device) = state.store.load_device_id() { updated = updated.with_last_modified_device(device); }
+        let updated = item.with_updated_at(Utc::now());
         let item_type = format!("{:?}", updated.item_type()).to_lowercase();
         vault.update_item(updated.clone());
         Ok((updated, item_type))
@@ -165,6 +168,11 @@ pub async fn delete_item(state: &Arc<AppState>, id: &str) -> Result<(), String> 
 
     let item_type = {
         let vault = state.vault.read();
+        // Re-saving a newer-schema vault here would drop fields this build
+        // does not know, exactly like an edit would.
+        if vault.schema_version.unwrap_or(1) > 2 {
+            return Err("Upgrade VELA to edit this vault".to_string());
+        }
         if let Some(item) = vault.get_item(id) {
             if item.is_received_share() {
                 return Err("Cannot delete a received shared item".to_string());
@@ -1100,6 +1108,59 @@ mod tests {
         let state = Arc::new(AppState::for_test(dir.path()));
         state.unlock_for_test(&Crypto::generate_rms());
         (dir, state)
+    }
+
+    fn passkey(id: &str) -> VaultItem {
+        serde_json::from_value(serde_json::json!({
+            "item_type": "passkey", "id": id, "name": "Key", "rp_id": "example.test",
+            "private_key": "never-lose-this"
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_edit_cannot_turn_a_passkey_into_another_type() {
+        let (_dir, state) = unlocked_state();
+        state.vault.write().add_item(passkey("pk"));
+        let replacement = login("Key", "https://example.test", "user", "pass").with_id("pk".into());
+        assert!(update_item(&state, replacement).await.is_err());
+        let vault = state.vault.read();
+        match vault.get_item("pk") {
+            Some(VaultItem::Passkey { private_key, .. }) => assert_eq!(private_key, "never-lose-this"),
+            other => panic!("passkey was replaced: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_desktop_edit_does_not_pin_later_remote_changes_as_conflicts() {
+        let (_dir, state) = unlocked_state();
+        state.store.save_device_id("desktop-test-device").unwrap();
+        let item = add_item(&state, login("Original", "https://example.test", "u", "p")).await.unwrap();
+        let edited = update_item(&state, item.with_name("Desktop edit".into())).await.unwrap();
+        let mut local = state.vault.read().clone();
+        let mut remote = crate::vault::VaultStore::new();
+        remote.add_item(edited.with_name("Later remote edit".into())
+            .with_updated_at(edited.updated_at() + chrono::Duration::seconds(1)));
+        let conflicts = crate::sync::merge_server_vaults(&mut local, remote, "desktop-test-device").unwrap();
+        assert!(conflicts.is_empty());
+        assert_eq!(local.get_item(edited.id()).unwrap().name(), "Later remote edit");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_future_schema_vault_is_rejected() {
+        let (_dir, state) = unlocked_state();
+        state.vault.write().add_item(passkey("pk"));
+        state.vault.write().schema_version = Some(3);
+        assert!(delete_item(&state, "pk").await.unwrap_err().contains("Upgrade VELA"));
+        assert!(state.vault.read().get_item("pk").is_some());
+    }
+
+    #[tokio::test]
+    async fn passkeys_cannot_be_shared() {
+        let (_dir, state) = unlocked_state();
+        state.vault.write().add_item(passkey("pk"));
+        let error = crate::sharing::send_share(&state, "pk", "recipient", false).await.unwrap_err();
+        assert!(error.contains("Passkeys cannot be shared"));
     }
 
     fn login(name: &str, url: &str, user: &str, pass: &str) -> VaultItem {

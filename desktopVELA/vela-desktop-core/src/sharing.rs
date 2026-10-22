@@ -332,19 +332,23 @@ pub async fn send_share(
     if !state.is_unlocked() {
         return Err("Vault is locked".to_string());
     }
-    let token = state
-        .get_session_token()
-        .ok_or("Not authenticated — please unlock your vault and try again.")?;
-
     let (item_json, device_id) = {
         let vault = state.vault.read();
         let item = vault.get_item(item_id).ok_or("Item not found")?.clone();
+        // Guard the exact snapshot being serialized, under the same read lock.
+        // A passkey's private key must never enter a share capsule.
+        if matches!(item, VaultItem::Passkey { .. }) {
+            return Err("Passkeys cannot be shared".to_string());
+        }
         drop(vault);
         let item_json = serde_json::to_vec(&item.without_personal_organization()).map_err(|e| e.to_string())?;
         let device_id = state.store.load_device_id().unwrap_or_else(|_| "unknown".to_string());
         (item_json, device_id)
     };
 
+    let token = state
+        .get_session_token()
+        .ok_or("Not authenticated — please unlock your vault and try again.")?;
     let item: VaultItem = serde_json::from_slice(&item_json).map_err(|e| e.to_string())?;
 
     let server_url = state.server_url.read().clone();

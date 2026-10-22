@@ -142,5 +142,7 @@ struct VaultRepository {
         passwordStore.delete()
         try? FileManager.default.removeItem(at: vaultURL)
         try? FileManager.default.removeItem(at: keyEpochURL)
+        // The encrypted pre-upgrade copy goes with the vault it came from.
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent("vault.before-rich-items.enc"))
     }
 }
