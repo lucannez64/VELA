@@ -72,7 +72,7 @@ enum Screen {
     Setup(Entity<SetupScreen>),
     BiometricGate(Entity<BiometricGate>),
     App(Entity<AppShell>),
-    /// The opt-in instrument shell (see `instrument/mod.rs`).
+    /// The default Instrument shell (see `instrument/mod.rs`).
     Instrument(Entity<instrument::shell::InstrumentShell>),
 }
 
@@ -298,7 +298,7 @@ impl Render for RootView {
                     let next = cx
                         .try_global::<instrument::ActiveInterface>()
                         .map(|a| a.0)
-                        .unwrap_or(instrument::InterfaceMode::Classic)
+                        .unwrap_or_default()
                         .toggled();
                     instrument::switch_interface(&this.app_state, next, cx);
                     cx.stop_propagation();

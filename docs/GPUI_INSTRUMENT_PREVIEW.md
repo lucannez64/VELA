@@ -1,16 +1,16 @@
-# Animated GPUI Instrument preview
+# Animated GPUI Instrument interface
 
-Direction 04 is available as an opt-in native GPUI interface. The classic
-interface remains the default for installations without a saved preview choice.
+Direction 04 is the default native GPUI interface. The classic interface
+remains available through the runtime toggle or an explicit launch override.
 
 From `desktopVELA`:
 
 ```sh
 # Disposable local vault with fake items and activity history
-cargo run -p vela-desktop-gpui -- --demo --ui=instrument
+cargo run -p vela-desktop-gpui -- --demo
 
 # Normal vault, with the existing authentication and session handling
-cargo run -p vela-desktop-gpui -- --ui=instrument
+cargo run -p vela-desktop-gpui
 
 # Force the original interface
 cargo run -p vela-desktop-gpui -- --ui=classic
@@ -24,7 +24,7 @@ Press **Ctrl+Alt+U** to switch between interfaces without restarting. The More
 sheet also has a Classic interface action. Switching reconstructs the shell,
 so navigation, search, selection and open editor state are reset. Save edits
 before switching. Runtime choices are remembered in `ui-preview` beside the
-vault store; switching to classic removes that file. A CLI override only
+vault store; both Instrument and Classic choices are saved explicitly. A CLI override only
 applies to that launch. Demo mode does not remember interface choices.
 
 For a lasting rollback, switch to classic with Ctrl+Alt+U or More → Classic interface.
@@ -120,7 +120,7 @@ without starting authentication. The existing
 is excluded because it stalled in the earlier full run. The build succeeds
 with existing warnings. This is not a completed native accessibility or
 Hyprland acceptance pass; real-vault interaction should be reviewed locally
-using the opt-in flag.
+using the default interface.
 
 The native auto-lock implementation clamps idle limits to 1 minute–1 day,
 so its final option is **1 day**, rather than the HTML study's unsupported

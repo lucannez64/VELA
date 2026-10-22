@@ -1,16 +1,15 @@
-//! "Instrument" interface preview — the design explored in
+//! "Instrument" interface — the design explored in
 //! `docs/desktop-redesign-direction-04.html`, ported to gpui.
 //!
-//! It is an opt-in, reversible alternative to the classic shell:
+//! It is the default shell, with a reversible classic interface option:
 //!
 //! - `--ui=instrument` / `--ui=classic` on the command line, or
 //! - `VELA_UI=instrument` in the environment, or
 //! - Ctrl+Alt+U at any time (also the "Classic interface" button in the rail).
 //!
 //! The runtime toggle is remembered in a one-line `ui-preview` file next to
-//! the vault store, so a restart keeps the choice. Choosing classic deletes
-//! that file. Nothing in the vault, the settings file, or `vela-desktop-core`
-//! changes. Launch with `--ui=classic` to force the original interface.
+//! the vault store, so a restart keeps either choice. Nothing in the vault,
+//! the settings file, or `vela-desktop-core` changes. Launch with `--ui=classic` to force the original interface.
 //!
 //! Dedicated Instrument layouts cover the shell, overview, vault list/detail,
 //! generator, lock gate, Sharing, Breach, Devices, Activity, Profile and
@@ -42,9 +41,10 @@ pub fn theme_name(id: ThemeId) -> &'static str { match id {ThemeId::Vela=>"Night
 
 // ── mode switch ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InterfaceMode {
     Classic,
+    #[default]
     Instrument,
 }
 
@@ -93,19 +93,17 @@ pub fn initial_mode(store_path: Option<&Path>) -> InterfaceMode {
     from_args
         .or_else(from_env)
         .or_else(from_file)
-        .unwrap_or(InterfaceMode::Classic)
+        .unwrap_or_default()
 }
 
-/// Remember the choice. Classic is the default, so it is stored as "no file".
+/// Remember either choice explicitly; a missing preference uses Instrument.
 pub fn remember(store_path: &Path, mode: InterfaceMode) {
     let path = pref_path(store_path);
-    let result = match mode {
-        InterfaceMode::Instrument => std::fs::write(&path, "instrument\n"),
-        InterfaceMode::Classic => match std::fs::remove_file(&path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        },
+    let value = match mode {
+        InterfaceMode::Instrument => "instrument\n",
+        InterfaceMode::Classic => "classic\n",
     };
+    let result = std::fs::write(&path, value);
     if let Err(e) = result {
         tracing::warn!("Could not remember interface choice: {e}");
     }
@@ -452,16 +450,15 @@ mod tests {
     }
 
     #[test]
-    fn remembering_classic_removes_the_file() {
-        let dir = std::env::temp_dir().join(format!("vela-ui-pref-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        remember(&dir, InterfaceMode::Instrument);
-        assert_eq!(initial_mode(Some(&dir)), InterfaceMode::Instrument);
-        remember(&dir, InterfaceMode::Classic);
-        assert!(!pref_path(&dir).exists());
-        // Removing a file that is already gone is not an error.
-        remember(&dir, InterfaceMode::Classic);
-        std::fs::remove_dir_all(&dir).unwrap();
+    fn instrument_is_default_and_either_choice_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(initial_mode(Some(dir.path())), InterfaceMode::Instrument);
+        remember(dir.path(), InterfaceMode::Classic);
+        assert_eq!(initial_mode(Some(dir.path())), InterfaceMode::Classic);
+        remember(dir.path(), InterfaceMode::Instrument);
+        assert_eq!(initial_mode(Some(dir.path())), InterfaceMode::Instrument);
+        std::fs::write(pref_path(dir.path()), "invalid choice").unwrap();
+        assert_eq!(initial_mode(Some(dir.path())), InterfaceMode::Instrument);
     }
 
     #[test]

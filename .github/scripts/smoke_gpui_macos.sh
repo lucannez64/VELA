@@ -30,7 +30,7 @@ PY
 # Ad-hoc signature for this CI preview. This is not a notarized release build.
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
-RUST_LOG=info "$app/Contents/MacOS/vela-desktop" --demo --ui=instrument >"$output/startup.log" 2>&1 &
+RUST_LOG=info "$app/Contents/MacOS/vela-desktop" --demo >"$output/startup.log" 2>&1 &
 app_pid=$!
 trap 'kill "$app_pid" 2>/dev/null || true' EXIT
 sleep 15

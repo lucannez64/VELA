@@ -8,7 +8,7 @@ macOS and as an explicit fallback.
 
 The `desktop-macos` workflow now also builds and tests GPUI and the native
 messaging host on Apple Silicon. Its separate **GPUI macOS preview** job launches
-`--demo --ui=instrument` in a disposable vault, checks that the process stays
+`--demo` in a disposable vault, checks that the process stays
 alive and opens a window, and captures a screenshot. The
 `vela-gpui-macos-arm64-preview` artifact contains the screenshot, startup log and
 an ad-hoc-signed preview `.app` zip. This is not a notarized release.
@@ -20,13 +20,13 @@ from macOS; this preview does not replace it with a native menu-bar service.
 The demo deliberately skips real-account, IPC, tray and shortcut registration,
 so its screenshot is not evidence of those platform integrations working.
 
-## Animated GPUI interface preview
+## Animated GPUI interface
 
-The opt-in Instrument UI implements direction 04 with animated overview tiles,
+The default GPUI Instrument UI implements direction 04 with animated overview tiles,
 dot-matrix readouts, vault details and a password generator. See
 [preview and rollback instructions](../docs/GPUI_INSTRUMENT_PREVIEW.md).
 
-From `desktopVELA`, run `cargo run -p vela-desktop-gpui -- --ui=instrument`.
+From `desktopVELA`, run `cargo run -p vela-desktop-gpui`.
 Add `--demo` for a disposable vault. Press **Ctrl+Alt+U** to switch interfaces,
 or launch with `--ui=classic` to force the original interface.
 

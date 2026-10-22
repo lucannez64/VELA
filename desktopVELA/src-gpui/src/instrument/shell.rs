@@ -718,7 +718,6 @@ impl InstrumentShell {
                             super::dot_matrix::DotStyle::new(3.2, t.text),
                         ))
                         .child(div().flex_1())
-                        .child(super::tag("Preview", super::TagKind::Plain, t))
                     }),
             ))
             .when(wide, |el|el.child(group("01 / Vault", t)))
