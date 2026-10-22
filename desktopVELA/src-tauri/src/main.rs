@@ -359,6 +359,7 @@ fn main() {
             commands::vault::save_vault_export_file,
             commands::vault::import_vault_bitwarden_json,
             commands::vault::import_vault_file,
+            commands::vault::import_vault_archive,
             commands::vault::export_vault_csv,
             commands::vault::export_vault_encrypted_file,
             commands::vault::import_vela_archive,

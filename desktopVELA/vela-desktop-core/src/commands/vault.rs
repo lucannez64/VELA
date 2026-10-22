@@ -14,7 +14,7 @@
 //! end: absolute, `.json`, no `..`, an existing directory, and never inside
 //! the app's own data directory.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -594,8 +594,7 @@ fn normalize_import_url(url: Option<&str>) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportResult {
     pub added: u32,
-    /// Rows recognized but deliberately not imported (cards, identities —
-    /// item types this import does not create).
+    /// Rows recognized but not imported at all (unknown item types).
     #[serde(default)]
     pub skipped: u32,
     /// Rows that matched an item already in the vault (or earlier in the same
@@ -603,6 +602,20 @@ pub struct ImportResult {
     #[serde(default)]
     pub duplicates: u32,
     pub total: u32,
+    /// Items whose folders, tags, custom fields, extra URLs or identity
+    /// details were stored as first-class rich data.
+    #[serde(default)]
+    pub preserved: u32,
+    /// Attributes that had to be flattened into notes (vault not upgraded to
+    /// collections yet, or a field the vault cannot represent).
+    #[serde(default)]
+    pub converted: u32,
+    /// Human-readable field-level losses, e.g. `attachments ×3`.
+    #[serde(default)]
+    pub unsupported: Vec<String>,
+    /// Which export format the file was detected as.
+    #[serde(default)]
+    pub source: String,
 }
 
 /// Imports a Bitwarden-compatible JSON export (as read from a file the user
@@ -723,6 +736,10 @@ pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<
         skipped: skipped_count,
         duplicates: 0,
         total: total_count,
+        preserved: 0,
+        converted: 0,
+        unsupported: Vec::new(),
+        source: "Bitwarden JSON (legacy)".to_string(),
     })
 }
 
@@ -760,18 +777,53 @@ fn login_dedup_key(url: &str, name: &str, username: &str) -> (String, String) {
 /// rather than doubling the vault.
 pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResult, String> {
     let parsed = crate::import::parse_import(data)?;
+    import_parsed(state, parsed)
+}
+
+/// Same as [`import_vault_file`], but accepts binary exports too
+/// (1Password `.1pux` is a ZIP archive, not text).
+pub fn import_vault_bytes(state: &Arc<AppState>, data: &[u8]) -> Result<ImportResult, String> {
+    let parsed = crate::import::parse_import_bytes(data)?;
+    import_parsed(state, parsed)
+}
+
+/// Map a parsed export onto vault items, preserving everything the vault can
+/// represent and reporting what it cannot.
+fn import_parsed(
+    state: &Arc<AppState>,
+    parsed: crate::import::ParsedImport,
+) -> Result<ImportResult, String> {
+    use crate::import::{EntryKind, ImportedEntry};
+    use std::collections::HashMap;
 
     require_unlocked(state)?;
 
     let now = Utc::now();
     let total_count = parsed.entries.len() as u32 + parsed.skipped_unsupported;
+    let source = parsed.source.to_string();
+    let skipped_rows = parsed.skipped_unsupported;
+    let unsupported: Vec<String> = parsed
+        .unsupported
+        .iter()
+        .map(|(label, count)| format!("{label} ×{count}"))
+        .collect();
+
     let mut added_count = 0u32;
     let mut duplicates_count = 0u32;
+    let mut preserved_count = 0u32;
+    let mut converted_count = 0u32;
 
     {
         let mut vault = state.vault.write();
+        let collections = vault.schema_version == Some(2);
+        let device = state
+            .store
+            .load_device_id()
+            .unwrap_or_else(|_| "import".to_string());
+        let mut folder_cache: HashMap<String, Uuid> = HashMap::new();
+        let mut tag_cache: HashMap<String, Uuid> = HashMap::new();
 
-        let mut seen: std::collections::HashSet<(String, String)> = vault
+        let mut seen_logins: std::collections::HashSet<(String, String)> = vault
             .items
             .iter()
             .filter(|item| matches!(item, VaultItem::Login { .. }))
@@ -783,54 +835,111 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
                 )
             })
             .collect();
+        let mut seen_cards: std::collections::HashSet<String> = vault
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                VaultItem::CreditCard { number, .. } => Some(card_dedup_key(number, item.name())),
+                _ => None,
+            })
+            .collect();
+        let mut seen_identities: std::collections::HashSet<String> = vault
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                VaultItem::Identity { .. } => Some(identity_dedup_key(item.name(), item.notes().unwrap_or(""))),
+                _ => None,
+            })
+            .collect();
 
         for entry in parsed.entries {
-            let name = if !entry.name.is_empty() {
-                entry.name.clone()
-            } else if !entry.url.is_empty() {
-                entry.url.clone()
-            } else if !entry.username.is_empty() {
-                entry.username.clone()
-            } else {
-                "Imported login".to_string()
-            };
+            let name = fallback_name(&entry);
+
+            // Rich data is only first-class once the vault has collections.
+            // Otherwise it is folded into notes and counted as converted, so
+            // nothing the export carried is silently dropped.
+            let mut rich = vela_core::rich_items::RichItemData::default();
+            let mut item_preserved = false;
+            if collections {
+                if let Some(folder) = entry.folder.as_deref().filter(|f| !f.trim().is_empty()) {
+                    match ensure_folder_path(&mut vault.organization, folder, &device, now, &mut folder_cache) {
+                        Ok(id) => {
+                            rich.folder_id = Some(id.to_string());
+                            item_preserved = true;
+                        }
+                        Err(_) => converted_count += 1,
+                    }
+                }
+                if !entry.tags.is_empty() {
+                    let mut ids = Vec::new();
+                    for tag in &entry.tags {
+                        match ensure_tag(&mut vault.organization, tag, &device, now, &mut tag_cache) {
+                            Ok(id) => ids.push(id),
+                            Err(_) => converted_count += 1,
+                        }
+                    }
+                    if !ids.is_empty() {
+                        rich.tag_ids = Some(ids);
+                        item_preserved = true;
+                    }
+                }
+                if !entry.fields.is_empty() {
+                    let fields: Vec<_> = entry.fields.iter().filter_map(to_custom_field).collect();
+                    converted_count += (entry.fields.len() - fields.len()) as u32;
+                    if !fields.is_empty() {
+                        rich.custom_fields = Some(fields);
+                        item_preserved = true;
+                    }
+                }
+                if !entry.extra_urls.is_empty() {
+                    let urls: Vec<_> = entry.extra_urls.iter().filter_map(|u| to_additional_url(u)).collect();
+                    converted_count += (entry.extra_urls.len() - urls.len()) as u32;
+                    if !urls.is_empty() {
+                        rich.additional_urls = Some(urls);
+                        item_preserved = true;
+                    }
+                }
+                if entry.kind == EntryKind::Identity {
+                    let details = to_identity_details(&entry.identity);
+                    if identity_details_present(&details) {
+                        rich.identity_details = Some(details);
+                        item_preserved = true;
+                    }
+                }
+                if rich.validate_for_write().is_err() {
+                    rich = vela_core::rich_items::RichItemData::default();
+                    converted_count += 1;
+                    item_preserved = false;
+                }
+            }
+            if item_preserved {
+                preserved_count += 1;
+            }
+
+            let mut notes = entry.notes.clone();
+            if !collections || !item_preserved {
+                let folded = fold_into_notes(&entry);
+                if !folded.is_empty() {
+                    if !notes.is_empty() {
+                        notes.push('\n');
+                    }
+                    notes.push_str(&folded);
+                    converted_count += 1;
+                }
+            }
+            let notes = notes.trim().to_string();
 
             match entry.kind {
-                crate::import::EntryKind::Login => {
+                EntryKind::Login => {
                     let key = login_dedup_key(&entry.url, &name, &entry.username);
-                    if !seen.insert(key) {
+                    if !seen_logins.insert(key) {
                         duplicates_count += 1;
                         continue;
                     }
-
-                    let notes = if entry.notes.is_empty() {
-                        None
-                    } else {
-                        Some(entry.notes)
-                    };
-                    let url = if entry.url.is_empty() {
-                        None
-                    } else {
-                        Some(entry.url.as_str())
-                    };
-                    let totp = if entry.totp.is_empty() {
-                        None
-                    } else {
-                        Some(entry.totp)
-                    };
-                    let item = VaultItem::Login {
-                        meta: crate::vault::VaultMeta {
-                rich: Default::default(),
-                            id: Uuid::new_v4().to_string(),
-                            name,
-                            notes,
-                            created_at: now,
-                            updated_at: now,
-                            last_modified_device: None,
-                            favorite: false,
-                            shared: false,
-                            share_recipient: None,
-                        },
+                    let url = if entry.url.is_empty() { None } else { Some(entry.url.as_str()) };
+                    let totp = if entry.totp.is_empty() { None } else { Some(entry.totp) };
+                    vault.add_item(VaultItem::Login {
+                        meta: import_meta(&name, empty_to_none(notes), entry.favorite, rich),
                         url: normalize_import_url(url),
                         username: entry.username,
                         pass: entry.password,
@@ -838,40 +947,54 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
                         app_ids: Vec::new(),
                         credential_change_needs_reauth: None,
                         allow_second_factor_downgrade: None,
-                    };
-                    vault.add_item(item);
+                    });
                     added_count += 1;
                 }
-                crate::import::EntryKind::Note => {
+                EntryKind::Note => {
                     // Notes have no natural identity key; importing the same
                     // note twice yields two notes rather than a lost one.
-                    let item = VaultItem::SecureNote {
-                        meta: crate::vault::VaultMeta {
-                rich: Default::default(),
-                            id: Uuid::new_v4().to_string(),
-                            name,
-                            notes: None,
-                            created_at: now,
-                            updated_at: now,
-                            last_modified_device: None,
-                            favorite: false,
-                            shared: false,
-                            share_recipient: None,
-                        },
+                    vault.add_item(VaultItem::SecureNote {
+                        meta: import_meta(&name, None, entry.favorite, rich),
                         title: entry.name.clone(),
-                        content: entry.notes.clone(),
-                    };
-                    vault.add_item(item);
+                        content: notes,
+                    });
+                    added_count += 1;
+                }
+                EntryKind::Card => {
+                    let key = card_dedup_key(&entry.card.number, &name);
+                    if !seen_cards.insert(key) {
+                        duplicates_count += 1;
+                        continue;
+                    }
+                    vault.add_item(VaultItem::CreditCard {
+                        meta: import_meta(&name, empty_to_none(notes), entry.favorite, rich),
+                        number: entry.card.number,
+                        exp: entry.card.expiry,
+                        cvv: entry.card.cvv,
+                        pin: empty_to_none(entry.card.pin),
+                        cardholder_name: empty_to_none(entry.card.cardholder),
+                    });
+                    added_count += 1;
+                }
+                EntryKind::Identity => {
+                    let key = identity_dedup_key(&name, &notes);
+                    if !seen_identities.insert(key) {
+                        duplicates_count += 1;
+                        continue;
+                    }
+                    vault.add_item(VaultItem::Identity {
+                        meta: import_meta(&name, empty_to_none(notes), entry.favorite, rich),
+                        first_name: entry.identity.first.clone(),
+                        last_name: entry.identity.last.clone(),
+                        ssn: entry.identity.ssn.clone(),
+                    });
                     added_count += 1;
                 }
             }
         }
 
         tracing::info!(
-            "Import: {} added, {} duplicates, {} total",
-            added_count,
-            duplicates_count,
-            total_count
+            "Import ({source}): {added_count} added, {duplicates_count} duplicates, {preserved_count} preserved, {converted_count} converted, {total_count} total"
         );
     }
 
@@ -879,10 +1002,275 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
 
     Ok(ImportResult {
         added: added_count,
-        skipped: parsed.skipped_unsupported,
+        skipped: skipped_rows,
         duplicates: duplicates_count,
         total: total_count,
+        preserved: preserved_count,
+        converted: converted_count,
+        unsupported,
+        source,
     })
+}
+
+fn import_meta(
+    name: &str,
+    notes: Option<String>,
+    favorite: bool,
+    rich: vela_core::rich_items::RichItemData,
+) -> crate::vault::VaultMeta {
+    crate::vault::VaultMeta {
+        rich,
+        id: Uuid::new_v4().to_string(),
+        name: name.to_string(),
+        notes,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        last_modified_device: None,
+        favorite,
+        shared: false,
+        share_recipient: None,
+    }
+}
+
+fn empty_to_none(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn fallback_name(entry: &crate::import::ImportedEntry) -> String {
+    if !entry.name.is_empty() {
+        entry.name.clone()
+    } else if !entry.url.is_empty() {
+        entry.url.clone()
+    } else if !entry.username.is_empty() {
+        entry.username.clone()
+    } else {
+        match entry.kind {
+            crate::import::EntryKind::Card => "Imported card".to_string(),
+            crate::import::EntryKind::Identity => "Imported identity".to_string(),
+            crate::import::EntryKind::Note => "Imported note".to_string(),
+            crate::import::EntryKind::Login => "Imported login".to_string(),
+        }
+    }
+}
+
+fn card_dedup_key(number: &str, name: &str) -> String {
+    let digits: String = number.chars().filter(char::is_ascii_digit).collect();
+    let tail: String = digits.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    format!("{}|{}", tail.to_lowercase(), name.trim().to_lowercase())
+}
+
+fn identity_dedup_key(name: &str, notes: &str) -> String {
+    format!("{}|{}", name.trim().to_lowercase(), notes.trim().to_lowercase())
+}
+
+fn unsupported_total(unsupported: &[String]) -> u32 {
+    unsupported
+        .iter()
+        .filter_map(|entry| entry.rsplit('×').next()?.trim().parse::<u32>().ok())
+        .sum()
+}
+
+/// Create (or reuse) every segment of a folder path.
+fn ensure_folder_path(
+    organization: &mut vela_core::rich_items::OrganizationData,
+    path: &str,
+    device: &str,
+    now: DateTime<Utc>,
+    cache: &mut std::collections::HashMap<String, Uuid>,
+) -> Result<Uuid, String> {
+    let mut parent: Option<Uuid> = None;
+    let mut accumulated = String::new();
+    for segment in path.split('/').map(str::trim).filter(|s| !s.is_empty()) {
+        if !accumulated.is_empty() {
+            accumulated.push('/');
+        }
+        accumulated.push_str(segment);
+        if let Some(id) = cache.get(&accumulated) {
+            parent = Some(*id);
+            continue;
+        }
+        let existing = organization
+            .folders
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case(segment) && f.parent_id == parent)
+            .map(|f| f.id);
+        let id = match existing {
+            Some(id) => id,
+            None => organization
+                .create_folder(segment, parent, device, now)
+                .map_err(|e| e.to_string())?,
+        };
+        cache.insert(accumulated.clone(), id);
+        parent = Some(id);
+    }
+    parent.ok_or_else(|| "Empty folder path".to_string())
+}
+
+fn ensure_tag(
+    organization: &mut vela_core::rich_items::OrganizationData,
+    name: &str,
+    device: &str,
+    now: DateTime<Utc>,
+    cache: &mut std::collections::HashMap<String, Uuid>,
+) -> Result<Uuid, String> {
+    let key = name.trim().to_lowercase();
+    if let Some(id) = cache.get(&key) {
+        return Ok(*id);
+    }
+    if let Some(existing) = organization
+        .tags
+        .iter()
+        .find(|t| t.name.eq_ignore_ascii_case(name.trim()))
+    {
+        cache.insert(key, existing.id);
+        return Ok(existing.id);
+    }
+    let id = organization
+        .create_tag(name, device, now)
+        .map_err(|e| e.to_string())?;
+    cache.insert(key, id);
+    Ok(id)
+}
+
+fn to_custom_field(field: &crate::import::ImportedField) -> Option<vela_core::rich_items::CustomField> {
+    use vela_core::rich_items::{CustomField, CustomFieldType, SensitiveValue};
+    let label = field.label.trim();
+    if label.is_empty() {
+        return None;
+    }
+    let (kind, value) = match field.kind {
+        crate::import::FieldKind::Text => (CustomFieldType::Text, serde_json::Value::String(field.value.clone())),
+        crate::import::FieldKind::Concealed => (CustomFieldType::Concealed, serde_json::Value::String(field.value.clone())),
+        crate::import::FieldKind::Boolean => (
+            CustomFieldType::Boolean,
+            serde_json::Value::Bool(matches!(field.value.trim().to_lowercase().as_str(), "true" | "1" | "yes")),
+        ),
+    };
+    let field = CustomField {
+        id: Uuid::new_v4(),
+        label: label.to_string(),
+        kind,
+        value: SensitiveValue(value),
+        extra: Default::default(),
+    };
+    field.validate_for_write().ok()?;
+    Some(field)
+}
+
+fn to_additional_url(url: &str) -> Option<vela_core::rich_items::AdditionalUrl> {
+    use vela_core::rich_items::{AdditionalUrl, UrlMatch};
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+    let record = AdditionalUrl {
+        id: Uuid::new_v4(),
+        url: url.to_string(),
+        match_mode: UrlMatch::Exact,
+        extra: Default::default(),
+    };
+    record.validate_for_write().ok()?;
+    Some(record)
+}
+
+fn to_identity_details(identity: &crate::import::ImportedIdentity) -> vela_core::rich_items::IdentityDetails {
+    use vela_core::rich_items::{IdentityDetails, PostalAddress};
+    IdentityDetails {
+        middle_name: empty_to_none(identity.middle.clone()),
+        preferred_name: None,
+        email: empty_to_none(identity.email.clone()),
+        phone: empty_to_none(identity.phone.clone()),
+        company: empty_to_none(identity.company.clone()),
+        job_title: empty_to_none(identity.job_title.clone()),
+        addresses: identity
+            .addresses
+            .iter()
+            .filter(|a| !a.line1.is_empty() || !a.city.is_empty())
+            .map(|a| PostalAddress {
+                id: Uuid::new_v4(),
+                label: empty_to_none(a.label.clone()),
+                line1: empty_to_none(a.line1.clone()),
+                line2: empty_to_none(a.line2.clone()),
+                city: empty_to_none(a.city.clone()),
+                region: empty_to_none(a.region.clone()),
+                postal_code: empty_to_none(a.postal.clone()),
+                country_code: empty_to_none(a.country.clone()),
+                extra: Default::default(),
+            })
+            .collect(),
+        extra: Default::default(),
+    }
+}
+
+fn identity_details_present(details: &vela_core::rich_items::IdentityDetails) -> bool {
+    details.email.is_some()
+        || details.phone.is_some()
+        || details.company.is_some()
+        || details.job_title.is_some()
+        || details.middle_name.is_some()
+        || !details.addresses.is_empty()
+}
+
+/// Everything the vault cannot hold as rich data is appended to notes, so the
+/// import report can honestly say it was converted rather than lost.
+fn fold_into_notes(entry: &crate::import::ImportedEntry) -> String {
+    use crate::import::EntryKind;
+    let mut lines = Vec::new();
+    if let Some(folder) = entry.folder.as_deref().filter(|f| !f.trim().is_empty()) {
+        lines.push(format!("Folder: {folder}"));
+    }
+    if !entry.tags.is_empty() {
+        lines.push(format!("Tags: {}", entry.tags.join(", ")));
+    }
+    if !entry.fields.is_empty() {
+        lines.push("Custom fields:".to_string());
+        for field in &entry.fields {
+            lines.push(format!("  {}: {}", field.label, field.value));
+        }
+    }
+    if !entry.extra_urls.is_empty() {
+        lines.push("Additional websites:".to_string());
+        for url in &entry.extra_urls {
+            lines.push(format!("  {url}"));
+        }
+    }
+    if entry.kind == EntryKind::Identity {
+        let identity = &entry.identity;
+        let mut detail = Vec::new();
+        for (label, value) in [
+            ("Email", &identity.email),
+            ("Phone", &identity.phone),
+            ("Company", &identity.company),
+            ("Job title", &identity.job_title),
+        ] {
+            if !value.is_empty() {
+                detail.push(format!("  {label}: {value}"));
+            }
+        }
+        for address in &identity.addresses {
+            let joined = [
+                address.line1.as_str(),
+                address.line2.as_str(),
+                address.city.as_str(),
+                address.region.as_str(),
+                address.postal.as_str(),
+                address.country.as_str(),
+            ]
+            .iter()
+            .filter(|part| !part.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+            if !joined.is_empty() {
+                detail.push(format!("  Address: {joined}"));
+            }
+        }
+        if !detail.is_empty() {
+            lines.push("Identity:".to_string());
+            lines.extend(detail);
+        }
+    }
+    lines.join("\n")
 }
 
 // ── Export: encrypted archive (.vela) and CSV ────────────────────────────────
@@ -988,6 +1376,18 @@ pub fn import_vela_archive(
     let items = archive.items;
     require_unlocked(state)?;
 
+    // Report every archived item that carries organization or rich fields.
+    let preserved_count = items
+        .iter()
+        .filter(|item| {
+            let rich = &item.meta().rich;
+            rich.folder_id.is_some()
+                || rich.tag_ids.as_ref().is_some_and(|tags| !tags.is_empty())
+                || rich.custom_fields.as_ref().is_some_and(|fields| !fields.is_empty())
+                || rich.additional_urls.as_ref().is_some_and(|urls| !urls.is_empty())
+                || rich.identity_details.is_some()
+        })
+        .count() as u32;
     let total_count = items.len() as u32;
     let mut added_count = 0u32;
     let mut duplicates_count = 0u32;
@@ -1013,6 +1413,10 @@ pub fn import_vela_archive(
         skipped: 0,
         duplicates: duplicates_count,
         total: total_count,
+        preserved: preserved_count,
+        converted: 0,
+        unsupported: Vec::new(),
+        source: "VELA archive (.vela)".to_string(),
     })
 }
 
@@ -1529,6 +1933,82 @@ mod tests {
         let bob = items.iter().find(|i| i.username() == Some("bob")).unwrap();
         assert_eq!(bob.name(), "bob");
         assert_eq!(bob.url(), Some(""));
+    }
+
+    #[test]
+    #[test]
+    fn import_preserves_rich_fields_when_collections_are_enabled() {
+        let (_dir, state) = unlocked_state();
+        state.vault.write().schema_version = Some(2);
+        let json = r#"{
+            "encrypted": false,
+            "folders": [{ "id": "f1", "name": "Work" }],
+            "items": [{
+                "type": 1, "name": "GitHub", "folderId": "f1",
+                "login": { "username": "octo", "password": "pw",
+                           "uris": [{ "uri": "https://github.com" },
+                                    { "uri": "https://gist.github.com" }] },
+                "fields": [{ "name": "Recovery", "value": "R-1", "type": 0 }]
+            }]
+        }"#;
+        let report = import_vault_file(&state, json).unwrap();
+        assert_eq!(report.added, 1);
+        assert_eq!(report.preserved, 1);
+        assert_eq!(report.converted, 0);
+
+        let vault = state.vault.read();
+        assert!(vault.organization.folders.iter().any(|f| f.name == "Work"));
+        let item = vault.items.iter().find(|i| i.name() == "GitHub").unwrap();
+        let rich = item.meta().rich.clone();
+        assert!(rich.folder_id.is_some());
+        assert_eq!(rich.custom_fields.as_ref().map(Vec::len), Some(1));
+        assert_eq!(rich.additional_urls.as_ref().map(Vec::len), Some(1));
+        assert!(item.notes().is_none());
+    }
+
+    #[test]
+    fn import_folds_rich_fields_into_notes_before_collections() {
+        let (_dir, state) = unlocked_state();
+        let json = r#"{
+            "encrypted": false,
+            "folders": [{ "id": "f1", "name": "Work" }],
+            "items": [{
+                "type": 1, "name": "GitHub", "folderId": "f1",
+                "login": { "username": "octo", "password": "pw" },
+                "fields": [{ "name": "Recovery", "value": "R-1", "type": 0 }]
+            }]
+        }"#;
+        let report = import_vault_file(&state, json).unwrap();
+        assert_eq!(report.added, 1);
+        assert_eq!(report.preserved, 0);
+        assert!(report.converted >= 1);
+        let vault = state.vault.read();
+        assert!(vault.organization.folders.is_empty());
+        let item = vault.items.iter().find(|i| i.name() == "GitHub").unwrap();
+        let notes = item.notes().unwrap_or("");
+        assert!(notes.contains("Folder: Work"), "{notes}");
+        assert!(notes.contains("Recovery: R-1"), "{notes}");
+    }
+
+    #[test]
+    fn import_creates_cards_and_identities_with_a_report() {
+        let (_dir, state) = unlocked_state();
+        let json = r#"{
+            "encrypted": false,
+            "items": [
+                { "type": 3, "name": "Visa",
+                  "card": { "cardholderName": "Alex", "number": "4111111111111111",
+                            "expMonth": "08", "expYear": "2029", "code": "123" } },
+                { "type": 4, "name": "Alex Demo",
+                  "identity": { "firstName": "Alex", "lastName": "Demo", "email": "a@b.c" } }
+            ]
+        }"#;
+        let report = import_vault_file(&state, json).unwrap();
+        assert_eq!((report.added, report.skipped, report.duplicates), (2, 0, 0));
+        assert_eq!(report.source, "Bitwarden JSON");
+        let vault = state.vault.read();
+        assert!(vault.items.iter().any(|i| matches!(i, VaultItem::CreditCard { .. })));
+        assert!(vault.items.iter().any(|i| matches!(i, VaultItem::Identity { .. })));
     }
 
     #[test]

@@ -24,17 +24,67 @@
 
 use serde_json::Value;
 
-/// What a parsed row becomes. Logins and secure notes exist in every source;
-/// cards and identities are deliberately out of scope (they are counted and
-/// reported, not silently dropped).
+/// What a parsed row becomes. Every source is normalized onto these four
+/// shapes; anything else is counted as unsupported instead of dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
     Login,
     Note,
+    Card,
+    Identity,
+}
+
+/// A custom field as the source spelled it. Concealed values are never logged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FieldKind {
+    #[default]
+    Text,
+    Concealed,
+    Boolean,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImportedField {
+    pub label: String,
+    pub kind: FieldKind,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImportedCard {
+    pub number: String,
+    pub cardholder: String,
+    pub expiry: String,
+    pub cvv: String,
+    pub pin: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImportedAddress {
+    pub label: String,
+    pub line1: String,
+    pub line2: String,
+    pub city: String,
+    pub region: String,
+    pub postal: String,
+    pub country: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImportedIdentity {
+    pub first: String,
+    pub last: String,
+    pub middle: String,
+    pub email: String,
+    pub phone: String,
+    pub company: String,
+    pub job_title: String,
+    pub ssn: String,
+    pub addresses: Vec<ImportedAddress>,
 }
 
 /// One normalized row from any source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ImportedEntry {
     pub name: String,
     pub url: String,
@@ -43,20 +93,43 @@ pub struct ImportedEntry {
     pub notes: String,
     pub totp: String,
     pub kind: EntryKind,
+    pub favorite: bool,
+    /// Folder path as the source wrote it ("Work/Clients"); created as nested
+    /// folders when the vault supports collections.
+    pub folder: Option<String>,
+    pub tags: Vec<String>,
+    pub fields: Vec<ImportedField>,
+    /// Alternate sites that should match this login.
+    pub extra_urls: Vec<String>,
+    pub card: ImportedCard,
+    pub identity: ImportedIdentity,
 }
 
-/// Parse output before vault mapping: the entries plus a count of rows that
-/// were recognized but deliberately not imported (cards, identities, …).
+impl Default for EntryKind {
+    fn default() -> Self {
+        EntryKind::Login
+    }
+}
+
+/// Parse output before vault mapping: the entries plus what could not be
+/// represented, so the import report can name it.
 #[derive(Debug, Default)]
 pub struct ParsedImport {
     pub entries: Vec<ImportedEntry>,
+    /// Rows recognized but not imported (unsupported item types).
     pub skipped_unsupported: u32,
+    /// Field-level losses, keyed by a human-readable label.
+    pub unsupported: std::collections::BTreeMap<String, u32>,
     pub source: &'static str,
 }
 
 impl ParsedImport {
     fn empty(source: &'static str) -> Self {
-        ParsedImport { entries: Vec::new(), skipped_unsupported: 0, source }
+        ParsedImport { entries: Vec::new(), skipped_unsupported: 0, unsupported: Default::default(), source }
+    }
+
+    fn unsupported(&mut self, label: &str) {
+        *self.unsupported.entry(label.to_string()).or_insert(0) += 1;
     }
 }
 
@@ -72,7 +145,7 @@ pub fn parse_import(data: &str) -> Result<ParsedImport, String> {
     if trimmed.starts_with("PK\u{3}\u{4}") {
         return Err(
             "This looks like a 1Password .1pux export (a ZIP archive). \
-             Export as CSV from 1Password and import that instead."
+             Use Import vault in the app, which reads the archive directly."
                 .to_string(),
         );
     }
@@ -184,6 +257,7 @@ fn parse_legacy_vela_json(obj: &serde_json::Map<String, Value>) -> Result<Parsed
                 notes: str_field(entry, &["description"]),
                 totp: str_field(entry, &["otp"]),
                 kind: EntryKind::Login,
+                ..ImportedEntry::default()
             });
         }
     }
@@ -197,7 +271,7 @@ fn parse_bitwarden_json(
     let mut parsed = ParsedImport::empty("Bitwarden JSON");
 
     // Bitwarden folders: { "id", "name" } — resolve each item's folderId to
-    // the folder's name and keep it in the notes, or organization is lost.
+    // the folder's name so organization survives the move.
     let mut folder_names = std::collections::HashMap::new();
     if let Some(list) = folders.and_then(Value::as_array) {
         for folder in list {
@@ -217,41 +291,161 @@ fn parse_bitwarden_json(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let folder_note = item
+        let favorite = item.get("favorite").and_then(Value::as_bool).unwrap_or(false);
+        let folder = item
             .get("folderId")
             .and_then(Value::as_str)
             .and_then(|id| folder_names.get(id))
-            .map(|f| format!("Folder: {f}\n"))
-            .unwrap_or_default();
+            .cloned();
+        let fields = bitwarden_fields(item.get("fields"));
+        if item.get("collectionIds").and_then(Value::as_array).is_some_and(|c| !c.is_empty()) {
+            parsed.unsupported("collections");
+        }
 
         match item.get("type").and_then(Value::as_i64) {
             Some(1) => {
                 let login = item.get("login").cloned().unwrap_or(Value::Null);
+                let mut urls = Vec::new();
+                if let Some(uris) = login.get("uris").and_then(Value::as_array) {
+                    for uri in uris {
+                        if let Some(u) = uri.get("uri").and_then(Value::as_str) {
+                            let u = u.trim();
+                            if !u.is_empty() {
+                                urls.push(u.to_string());
+                            }
+                        }
+                    }
+                }
+                let primary = urls.first().cloned().unwrap_or_default();
+                if !urls.is_empty() {
+                    urls.remove(0);
+                }
                 parsed.entries.push(ImportedEntry {
                     name: name.clone(),
-                    url: first_uri(&login),
+                    url: primary,
                     username: login.get("username").and_then(Value::as_str).unwrap_or("").into(),
                     password: login.get("password").and_then(Value::as_str).unwrap_or("").into(),
-                    notes: format!("{folder_note}{notes}"),
+                    notes,
                     totp: login.get("totp").and_then(Value::as_str).unwrap_or("").into(),
                     kind: EntryKind::Login,
+                    favorite,
+                    folder,
+                    fields,
+                    extra_urls: urls,
+                    ..ImportedEntry::default()
                 });
             }
             Some(2) => {
                 parsed.entries.push(ImportedEntry {
                     name,
-                    url: String::new(),
-                    username: String::new(),
-                    password: String::new(),
-                    notes: format!("{folder_note}{notes}"),
-                    totp: String::new(),
+                    notes,
                     kind: EntryKind::Note,
+                    favorite,
+                    folder,
+                    fields,
+                    ..ImportedEntry::default()
                 });
             }
-            _ => parsed.skipped_unsupported += 1, // card (3), identity (4)
+            Some(3) => {
+                let card = item.get("card").cloned().unwrap_or(Value::Null);
+                let exp_month = card.get("expMonth").and_then(Value::as_str).unwrap_or("").trim();
+                let exp_year = card.get("expYear").and_then(Value::as_str).unwrap_or("").trim();
+                let expiry = match (exp_month.is_empty(), exp_year.is_empty()) {
+                    (false, false) => format!("{exp_month}/{exp_year}"),
+                    (false, true) => exp_month.to_string(),
+                    _ => String::new(),
+                };
+                if card.get("brand").and_then(Value::as_str).is_some_and(|b| !b.is_empty()) {
+                    parsed.unsupported("card brand");
+                }
+                parsed.entries.push(ImportedEntry {
+                    name,
+                    notes,
+                    kind: EntryKind::Card,
+                    favorite,
+                    folder,
+                    fields,
+                    card: ImportedCard {
+                        number: card.get("number").and_then(Value::as_str).unwrap_or("").into(),
+                        cardholder: card.get("cardholderName").and_then(Value::as_str).unwrap_or("").into(),
+                        expiry,
+                        cvv: card.get("code").and_then(Value::as_str).unwrap_or("").into(),
+                        pin: String::new(),
+                    },
+                    ..ImportedEntry::default()
+                });
+            }
+            Some(4) => {
+                let identity = item.get("identity").cloned().unwrap_or(Value::Null);
+                let mut addresses = Vec::new();
+                let address1 = identity.get("address1").and_then(Value::as_str).unwrap_or("").trim();
+                if !address1.is_empty() {
+                    addresses.push(ImportedAddress {
+                        label: "Home".into(),
+                        line1: address1.to_string(),
+                        line2: identity.get("address2").and_then(Value::as_str).unwrap_or("").into(),
+                        city: identity.get("city").and_then(Value::as_str).unwrap_or("").into(),
+                        region: identity.get("state").and_then(Value::as_str).unwrap_or("").into(),
+                        postal: identity.get("postalCode").and_then(Value::as_str).unwrap_or("").into(),
+                        country: identity.get("country").and_then(Value::as_str).unwrap_or("").into(),
+                    });
+                }
+                for field in ["passportNumber", "licenseNumber"] {
+                    if identity.get(field).and_then(Value::as_str).is_some_and(|v| !v.is_empty()) {
+                        parsed.unsupported(field);
+                    }
+                }
+                parsed.entries.push(ImportedEntry {
+                    name,
+                    notes,
+                    kind: EntryKind::Identity,
+                    favorite,
+                    folder,
+                    fields,
+                    identity: ImportedIdentity {
+                        first: identity.get("firstName").and_then(Value::as_str).unwrap_or("").into(),
+                        last: identity.get("lastName").and_then(Value::as_str).unwrap_or("").into(),
+                        middle: identity.get("middleName").and_then(Value::as_str).unwrap_or("").into(),
+                        email: identity.get("email").and_then(Value::as_str).unwrap_or("").into(),
+                        phone: identity.get("phone").and_then(Value::as_str).unwrap_or("").into(),
+                        company: identity.get("company").and_then(Value::as_str).unwrap_or("").into(),
+                        job_title: identity.get("title").and_then(Value::as_str).unwrap_or("").into(),
+                        ssn: identity.get("ssn").and_then(Value::as_str).unwrap_or("").into(),
+                        addresses,
+                    },
+                    ..ImportedEntry::default()
+                });
+            }
+            _ => parsed.skipped_unsupported += 1, // unknown/unsupported Bitwarden type
         }
     }
     Ok(parsed)
+}
+
+/// Bitwarden custom fields: `{ name, value, type }` with 0 = text,
+/// 1 = hidden, 2 = boolean.
+fn bitwarden_fields(fields: Option<&Value>) -> Vec<ImportedField> {
+    let mut out = Vec::new();
+    for field in fields.and_then(Value::as_array).into_iter().flatten() {
+        let label = field.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        if label.is_empty() {
+            continue;
+        }
+        let kind = match field.get("type").and_then(Value::as_i64) {
+            Some(1) => FieldKind::Concealed,
+            Some(2) => FieldKind::Boolean,
+            _ => FieldKind::Text,
+        };
+        let value = match kind {
+            FieldKind::Boolean => field
+                .get("value")
+                .map(|v| v.as_bool().map(|b| b.to_string()).unwrap_or_else(|| v.to_string()))
+                .unwrap_or_else(|| "false".into()),
+            _ => field.get("value").and_then(Value::as_str).unwrap_or("").to_string(),
+        };
+        out.push(ImportedField { label, kind, value });
+    }
+    out
 }
 
 fn first_uri(login: &Value) -> String {
@@ -324,6 +518,7 @@ fn push_proton_item(parsed: &mut ParsedImport, item: &Value, vault_name: &str) {
                 notes: format!("{vault_note}{notes}"),
                 totp: item.get("totp").and_then(Value::as_str).unwrap_or("").into(),
                 kind: EntryKind::Login,
+                ..ImportedEntry::default()
             });
         }
         "note" => {
@@ -335,6 +530,7 @@ fn push_proton_item(parsed: &mut ParsedImport, item: &Value, vault_name: &str) {
                 notes: format!("{vault_note}{}", item.get("note").and_then(Value::as_str).unwrap_or(notes.as_str())),
                 totp: String::new(),
                 kind: EntryKind::Note,
+                ..ImportedEntry::default()
             });
         }
         _ => parsed.skipped_unsupported += 1, // credit_card, identity, ssh_key, …
@@ -470,6 +666,7 @@ fn parse_csv_import(text: &str) -> Result<ParsedImport, String> {
             notes: format!("{group_note}{notes}"),
             totp,
             kind: if is_note { EntryKind::Note } else { EntryKind::Login },
+            ..ImportedEntry::default()
         });
     }
 
@@ -588,6 +785,7 @@ pub fn parse_1pif(text: &str) -> Result<ParsedImport, String> {
                 notes: String::new(),
                 totp: String::new(),
                 kind: EntryKind::Login,
+                ..ImportedEntry::default()
             });
         } else if type_name.contains("note") {
             let content = item
@@ -603,6 +801,7 @@ pub fn parse_1pif(text: &str) -> Result<ParsedImport, String> {
                 notes: content,
                 totp: String::new(),
                 kind: EntryKind::Note,
+                ..ImportedEntry::default()
             });
         } else {
             parsed.skipped_unsupported += 1;
@@ -613,6 +812,285 @@ pub fn parse_1pif(text: &str) -> Result<ParsedImport, String> {
         return Err("No logins or notes found in this .1pif export".to_string());
     }
     Ok(parsed)
+}
+
+/// Detect a binary archive (1Password `.1pux`) or fall back to text parsing.
+pub fn parse_import_bytes(data: &[u8]) -> Result<ParsedImport, String> {
+    if data.starts_with(&[0x50, 0x4b, 0x03, 0x04]) {
+        return parse_1pux(data);
+    }
+    let text = std::str::from_utf8(data)
+        .map_err(|e| format!("Import file is not valid UTF-8: {e}"))?;
+    parse_import(text)
+}
+
+/// 1Password `.1pux` is a ZIP containing `export.data` (JSON) and attachment
+/// files. Only the structured data is imported; attachments are counted.
+pub fn parse_1pux(data: &[u8]) -> Result<ParsedImport, String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data))
+        .map_err(|e| format!("Could not read the .1pux archive: {e}"))?;
+    let mut export = None;
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|e| format!("Could not read .1pux entry: {e}"))?;
+        if file.name().ends_with("export.data") {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut file, &mut text)
+                .map_err(|e| format!("Could not read .1pux export.data: {e}"))?;
+            export = Some(text);
+            break;
+        }
+    }
+    let text = export.ok_or_else(|| "This .1pux archive has no export.data".to_string())?;
+    let root: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Failed to parse .1pux export.data: {e}"))?;
+    let accounts = root
+        .get("accounts")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Unrecognized .1pux export.data".to_string())?;
+
+    let mut parsed = ParsedImport::empty("1Password (.1pux)");
+    for account in accounts {
+        for vault in account
+            .get("vaults")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let vault_name = vault
+                .get("attrs")
+                .and_then(|a| a.get("name"))
+                .and_then(Value::as_str)
+                .or_else(|| vault.get("name").and_then(Value::as_str))
+                .map(str::to_string);
+            for item in vault
+                .get("items")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                push_1pux_item(&mut parsed, item, vault_name.as_deref());
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+fn op_scalar(value: &Value) -> (String, FieldKind) {
+    if let Some(text) = value.as_str() {
+        return (text.to_string(), FieldKind::Text);
+    }
+    if let Some(flag) = value.as_bool() {
+        return (flag.to_string(), FieldKind::Boolean);
+    }
+    if let Some(object) = value.as_object() {
+        if let Some(text) = object.get("concealed").and_then(Value::as_str) {
+            return (text.to_string(), FieldKind::Concealed);
+        }
+        for key in ["string", "email", "url", "phone", "date", "monthYear", "menu", "number"] {
+            if let Some(text) = object.get(key) {
+                if let Some(text) = text.as_str() {
+                    return (text.to_string(), FieldKind::Text);
+                }
+                if text.is_number() {
+                    return (text.to_string(), FieldKind::Text);
+                }
+            }
+        }
+        if let Some(address) = object.get("address").and_then(Value::as_object) {
+            let joined = ["street", "city", "state", "zip", "country"]
+                .iter()
+                .filter_map(|key| address.get(*key).and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return (joined, FieldKind::Text);
+        }
+    }
+    (String::new(), FieldKind::Text)
+}
+
+fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&str>) {
+    let type_name = item
+        .get("typeName")
+        .or_else(|| item.get("type_name"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_lowercase();
+    let title = item
+        .get("title")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("overview").and_then(|o| o.get("title")).and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let note = item
+        .get("note")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("details").and_then(|d| d.get("notesPlain")).and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    let tags: Vec<String> = item
+        .get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.as_str().map(str::to_string))
+        .collect();
+    let folder = vault_name.map(str::to_string);
+
+    // Login fields are `{designation, value}`; sections carry everything else.
+    let mut custom: Vec<ImportedField> = Vec::new();
+    let mut username = String::new();
+    let mut password = String::new();
+    let mut totp = String::new();
+    let mut website = String::new();
+    let mut card = ImportedCard::default();
+    let mut identity = ImportedIdentity::default();
+
+    let mut consume = |field: &Value, known: bool| {
+        let label = field
+            .get("title")
+            .and_then(Value::as_str)
+            .or_else(|| field.get("name").and_then(Value::as_str))
+            .or_else(|| field.get("id").and_then(Value::as_str))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let designation = field
+            .get("designation")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_lowercase();
+        let raw = field.get("value").cloned().unwrap_or(Value::Null);
+        let (value, kind) = op_scalar(&raw);
+        if value.is_empty() {
+            return;
+        }
+        let lowered = label.to_lowercase();
+        let key = if !designation.is_empty() { designation } else { lowered.clone() };
+        match key.as_str() {
+            "username" => username = value,
+            "password" => password = value,
+            "totp" | "one-time password" | "one time password" | "otp" => totp = value,
+            "url" | "website" => website = value,
+            _ if key.contains("card number") || lowered == "number" => card.number = value,
+            _ if key.contains("cardholder") => card.cardholder = value,
+            _ if key.contains("expir") => card.expiry = value,
+            _ if key.contains("cvv") || key.contains("verification") || key.contains("security code") => card.cvv = value,
+            _ if lowered == "pin" => card.pin = value,
+            _ if key.contains("first name") || lowered == "firstname" => identity.first = value,
+            _ if key.contains("last name") || lowered == "lastname" => identity.last = value,
+            _ if key.contains("middle") => identity.middle = value,
+            _ if key == "email" => identity.email = value,
+            _ if key == "phone" || key.contains("phone") => identity.phone = value,
+            _ if key.contains("company") || key.contains("organization") => identity.company = value,
+            _ if key.contains("job title") || key == "title" => identity.job_title = value,
+            _ if key.contains("social security") || lowered == "ssn" => identity.ssn = value,
+            _ if key.contains("address") => {
+                identity.addresses.push(ImportedAddress {
+                    label: if label.is_empty() { "Address".into() } else { label },
+                    line1: value,
+                    ..ImportedAddress::default()
+                });
+            }
+            _ => {
+                if !known && !label.is_empty() {
+                    custom.push(ImportedField { label, kind, value });
+                }
+            }
+        }
+    };
+
+    if let Some(login_fields) = item
+        .get("details")
+        .and_then(|d| d.get("loginFields"))
+        .and_then(Value::as_array)
+    {
+        for field in login_fields {
+            consume(field, true);
+        }
+    }
+    if let Some(sections) = item
+        .get("details")
+        .and_then(|d| d.get("sections"))
+        .and_then(Value::as_array)
+    {
+        for section in sections {
+            for field in section.get("fields").and_then(Value::as_array).into_iter().flatten() {
+                consume(field, false);
+            }
+        }
+    }
+    // Alternate URLs live on the overview in 1Password's export.
+    if let Some(urls) = item.get("overview").and_then(|o| o.get("URLs")).and_then(Value::as_array) {
+        for entry in urls {
+            if let Some(url) = entry.as_str().map(str::to_string).or_else(|| {
+                entry.get("url").and_then(Value::as_str).map(str::to_string)
+            }) {
+                if website.is_empty() {
+                    website = url;
+                }
+            }
+        }
+    }
+
+    match type_name.as_str() {
+        "login" | "password" => {
+            parsed.entries.push(ImportedEntry {
+                name: if title.is_empty() { website.clone() } else { title },
+                url: website,
+                username,
+                password,
+                notes: note,
+                totp,
+                kind: EntryKind::Login,
+                folder,
+                tags,
+                fields: custom,
+                ..ImportedEntry::default()
+            });
+        }
+        "securenote" | "note" => {
+            parsed.entries.push(ImportedEntry {
+                name: title,
+                notes: note,
+                kind: EntryKind::Note,
+                folder,
+                tags,
+                fields: custom,
+                ..ImportedEntry::default()
+            });
+        }
+        "creditcard" => {
+            parsed.entries.push(ImportedEntry {
+                name: title,
+                notes: note,
+                kind: EntryKind::Card,
+                folder,
+                tags,
+                fields: custom,
+                card,
+                ..ImportedEntry::default()
+            });
+        }
+        "identity" => {
+            parsed.entries.push(ImportedEntry {
+                name: title,
+                notes: note,
+                kind: EntryKind::Identity,
+                folder,
+                tags,
+                fields: custom,
+                identity,
+                ..ImportedEntry::default()
+            });
+        }
+        _ => {
+            parsed.skipped_unsupported += 1;
+            parsed.unsupported(if type_name.is_empty() { "unknown item type" } else { "1Password item type" });
+        }
+    }
 }
 
 /// Pick `field`/`field[0]`-style string values off a JSON object.
@@ -661,8 +1139,8 @@ mod tests {
         }"#;
         let parsed = parse_import(data).unwrap();
         assert_eq!(parsed.source, "Bitwarden JSON");
-        assert_eq!(parsed.entries.len(), 2);
-        assert_eq!(parsed.skipped_unsupported, 1);
+        assert_eq!(parsed.entries.len(), 3);
+        assert_eq!(parsed.skipped_unsupported, 0);
 
         let login = &parsed.entries[0];
         assert_eq!(login.kind, EntryKind::Login);
@@ -671,12 +1149,16 @@ mod tests {
         assert_eq!(login.password, "hunter2");
         assert_eq!(login.url, "https://github.com/login");
         assert_eq!(login.totp, "otpauth://totp/x");
-        assert!(login.notes.contains("Folder: Work"));
-        assert!(login.notes.contains("code hosting"));
+        assert_eq!(login.folder.as_deref(), Some("Work"));
+        assert_eq!(login.notes, "code hosting");
 
         let note = &parsed.entries[1];
         assert_eq!(note.kind, EntryKind::Note);
         assert_eq!(note.notes, "abc-123");
+
+        let card = &parsed.entries[2];
+        assert_eq!(card.kind, EntryKind::Card);
+        assert_eq!(card.card.number, "4111");
     }
 
     #[test]
@@ -826,6 +1308,133 @@ mod tests {
         assert_eq!(parsed.entries.len(), 1);
         assert_eq!(parsed.entries[0].totp, "");
         assert_eq!(parsed.entries[0].notes, "note");
+    }
+
+    #[test]
+    fn bitwarden_cards_identities_fields_and_extra_urls_survive() {
+        let data = r#"{
+            "encrypted": false,
+            "folders": [{ "id": "f1", "name": "Work" }],
+            "items": [
+                { "type": 3, "name": "Visa", "favorite": true, "folderId": "f1",
+                  "card": { "cardholderName": "Alex", "number": "4111111111111111",
+                            "expMonth": "08", "expYear": "2029", "code": "123", "brand": "Visa" },
+                  "fields": [{ "name": "PIN", "value": "4321", "type": 1 }] },
+                { "type": 4, "name": "Alex Demo",
+                  "identity": { "firstName": "Alex", "lastName": "Demo", "email": "a@b.c",
+                                "phone": "+1", "address1": "1 Test St", "city": "X",
+                                "state": "Y", "postalCode": "123", "country": "US" } },
+                { "type": 1, "name": "GitHub",
+                  "login": { "username": "octo", "password": "pw",
+                             "uris": [{ "uri": "https://github.com" },
+                                      { "uri": "https://gist.github.com" }] },
+                  "fields": [{ "name": "Recovery", "value": "R-1", "type": 0 },
+                             { "name": "Hidden", "value": "H", "type": 1 },
+                             { "name": "Flag", "value": "true", "type": 2 }] }
+            ]
+        }"#;
+        let parsed = parse_import(data).unwrap();
+        assert_eq!(parsed.entries.len(), 3);
+        assert_eq!(parsed.source, "Bitwarden JSON");
+        assert!(parsed.unsupported.contains_key("card brand"));
+
+        let card = &parsed.entries[0];
+        assert_eq!(card.kind, EntryKind::Card);
+        assert!(card.favorite);
+        assert_eq!(card.folder.as_deref(), Some("Work"));
+        assert_eq!(card.card.number, "4111111111111111");
+        assert_eq!(card.card.expiry, "08/2029");
+        assert_eq!(card.fields.len(), 1);
+        assert_eq!(card.fields[0].kind, FieldKind::Concealed);
+
+        let identity = &parsed.entries[1];
+        assert_eq!(identity.kind, EntryKind::Identity);
+        assert_eq!(identity.identity.email, "a@b.c");
+        assert_eq!(identity.identity.addresses.len(), 1);
+        assert_eq!(identity.identity.addresses[0].line1, "1 Test St");
+
+        let login = &parsed.entries[2];
+        assert_eq!(login.extra_urls, vec!["https://gist.github.com"]);
+        assert_eq!(login.fields.len(), 3);
+        assert_eq!(login.fields[1].kind, FieldKind::Concealed);
+        assert_eq!(login.fields[2].kind, FieldKind::Boolean);
+    }
+
+    #[test]
+    fn one_password_1pux_reads_logins_cards_identities_and_tags() {
+        use std::io::Write;
+        let export = serde_json::json!({
+            "accounts": [{
+                "vaults": [{
+                    "attrs": { "name": "Personal" },
+                    "items": [
+                        {
+                            "typeName": "Login", "title": "GitHub", "tags": ["dev"],
+                            "overview": { "URLs": [{ "url": "https://github.com" }] },
+                            "details": {
+                                "loginFields": [
+                                    { "designation": "username", "value": "octo" },
+                                    { "designation": "password", "value": "pw" }
+                                ],
+                                "sections": [{ "title": "Extra", "fields": [
+                                    { "title": "Recovery", "value": { "string": "R-1" } },
+                                    { "title": "Secret", "value": { "concealed": "S" } }
+                                ] }]
+                            }
+                        },
+                        {
+                            "typeName": "CreditCard", "title": "Visa",
+                            "details": { "sections": [{ "title": "Card", "fields": [
+                                { "title": "number", "value": { "string": "4111" } },
+                                { "title": "cardholder name", "value": { "string": "Alex" } },
+                                { "title": "expiry date", "value": { "monthYear": "08/2029" } },
+                                { "title": "cvv", "value": { "concealed": "123" } }
+                            ] }] }
+                        },
+                        {
+                            "typeName": "Identity", "title": "Me",
+                            "details": { "sections": [{ "title": "Identity", "fields": [
+                                { "title": "first name", "value": { "string": "Alex" } },
+                                { "title": "last name", "value": { "string": "Demo" } },
+                                { "title": "email", "value": { "email": "a@b.c" } },
+                                { "title": "address", "value": { "address": {
+                                    "street": "1 Test St", "city": "X", "zip": "123", "country": "US"
+                                } } }
+                            ] }] }
+                        }
+                    ]
+                }]
+            }]
+        });
+        let mut bytes = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
+            writer.start_file("export.data", zip::write::SimpleFileOptions::default()).unwrap();
+            writer.write_all(export.to_string().as_bytes()).unwrap();
+            writer.finish().unwrap();
+        }
+        let parsed = parse_import_bytes(&bytes).unwrap();
+        assert_eq!(parsed.source, "1Password (.1pux)");
+        assert_eq!(parsed.entries.len(), 3);
+
+        let login = &parsed.entries[0];
+        assert_eq!(login.url, "https://github.com");
+        assert_eq!(login.username, "octo");
+        assert_eq!(login.folder.as_deref(), Some("Personal"));
+        assert_eq!(login.tags, vec!["dev"]);
+        assert_eq!(login.fields.len(), 2);
+        assert_eq!(login.fields[1].kind, FieldKind::Concealed);
+
+        let card = &parsed.entries[1];
+        assert_eq!(card.kind, EntryKind::Card);
+        assert_eq!(card.card.number, "4111");
+        assert_eq!(card.card.expiry, "08/2029");
+        assert_eq!(card.card.cvv, "123");
+
+        let identity = &parsed.entries[2];
+        assert_eq!(identity.identity.first, "Alex");
+        assert_eq!(identity.identity.email, "a@b.c");
+        assert_eq!(identity.identity.addresses[0].line1, "1 Test St, X, 123, US");
     }
 
     #[test]

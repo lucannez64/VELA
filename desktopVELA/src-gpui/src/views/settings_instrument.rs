@@ -599,7 +599,7 @@ impl SettingsScreen {
             ))
             .child(row(
                 "Import vault",
-                "Bring items in from another password manager.",
+                "Bitwarden, 1Password (.1pif/.1pux), KeePass, Chrome/Edge/Safari or Proton Pass. Folders, tags and rich fields are preserved or reported.",
                 pill("import-vault", "Import", false, &t)
                     .h(px(32.))
                     .on_click(cx.listener(|this, _, _, cx| this.import_vault(cx))),

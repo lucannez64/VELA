@@ -166,6 +166,19 @@ pub async fn import_vault_file(
     Ok(result)
 }
 
+/// Import a text or binary export (JSON/CSV/.1pif/.1pux). The frontend reads
+/// the bytes so a ZIP archive never has to pass through a UTF-8 string.
+#[command]
+pub async fn import_vault_archive(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    data: Vec<u8>,
+) -> Result<ImportResult, String> {
+    let result = vela_desktop_core::commands::vault::import_vault_bytes(&state, &data)?;
+    emit_vault_items_changed(&app);
+    Ok(result)
+}
+
 #[command]
 pub async fn export_vault_csv(state: State<'_, Arc<AppState>>) -> Result<String, String> {
     vela_desktop_core::commands::vault::export_vault_csv(&state)
