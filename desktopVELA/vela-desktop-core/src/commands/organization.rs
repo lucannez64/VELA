@@ -29,7 +29,11 @@ pub async fn activate_rich_items(state: &Arc<AppState>) -> Result<OrganizationSt
     if !backup.exists() {
         std::fs::copy(state.store.store_path().join("vault.enc"), &backup)
             .map_err(|_| "Could not create the encrypted safety backup".to_string())?;
-        std::fs::File::open(&backup)
+        // Windows FlushFileBuffers requires a writable handle. Opening the
+        // existing copy for writing does not truncate the encrypted backup.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&backup)
             .and_then(|f| f.sync_all())
             .map_err(|e| e.to_string())?;
     }
@@ -275,6 +279,21 @@ mod tests {
     }
     fn login() -> VaultItem {
         serde_json::from_value(json!({"item_type":"login","id":"","name":"Test login","url":"https://example.com","username":"test","password":"fixture-password"})).unwrap()
+    }
+
+    #[tokio::test]
+    async fn activation_keeps_decryptable_pre_upgrade_backup() {
+        let (_dir, state) = setup();
+        let item = vault::add_item(&state, login()).await.unwrap();
+        activate_rich_items(&state).await.unwrap();
+        let backup_path = state.store.store_path().join("vault.before-rich-items.enc");
+        let backup = std::fs::read(&backup_path).unwrap();
+        let plaintext = state.crypto.read().as_ref().unwrap().decrypt_vault(&backup).unwrap();
+        let restored: VaultStore = serde_json::from_slice(&plaintext).unwrap();
+        assert_ne!(restored.schema_version, Some(2));
+        assert_eq!(restored.get_item(item.id()).unwrap().name(), item.name());
+        activate_rich_items(&state).await.unwrap();
+        assert_eq!(std::fs::read(backup_path).unwrap(), backup);
     }
 
     #[tokio::test]

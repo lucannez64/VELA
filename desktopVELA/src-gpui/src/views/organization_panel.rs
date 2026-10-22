@@ -1140,21 +1140,23 @@ mod tests {
                 });
                 cx.run_until_parked();
             }
-            server.join().unwrap();
-            assert_eq!(state.vault.read().schema_version == Some(2), success);
+            // Report a local activation failure before waiting for a request
+            // that never reached the mock server (for example, a backup error).
             panel.read_with(cx, |panel, _| {
                 if success {
+                    assert!(panel.error.is_none(), "activation failed: {:?}", panel.error);
                     assert!(panel.dialog.is_none());
-                    assert!(panel.error.is_none());
                 } else {
                     assert!(panel.dialog == Some(Dialog::Setup));
-                    assert!(panel
-                        .error
-                        .as_ref()
-                        .unwrap()
-                        .contains("Update the VELA server"));
+                    assert!(
+                        panel.error.as_ref().is_some_and(|error| error.contains("Update the VELA server")),
+                        "expected recoverable server error, got {:?}",
+                        panel.error
+                    );
                 }
             });
+            server.join().unwrap();
+            assert_eq!(state.vault.read().schema_version == Some(2), success);
             assert!(directory
                 .path()
                 .join("vault.before-rich-items.enc")
