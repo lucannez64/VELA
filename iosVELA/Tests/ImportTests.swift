@@ -26,8 +26,10 @@ final class ImportTests: XCTestCase {
         let vm = VaultViewModel(repo: VaultRepository(directory: directory))
         try vm.createVault()
 
+        let fieldsJSON = #"[{"name":"Recovery","value":"R-1","type":0}]"#
+        let csvFields = "\"" + fieldsJSON.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         let csv = "folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n" +
-            "Work,1,login,GitHub,,\"[{\"name\":\"Recovery\",\"value\":\"R-1\",\"type\":0}]\",0,https://github.com,octo,hunter2,\n"
+            "Work,1,login,GitHub,," + csvFields + ",0,https://github.com,octo,hunter2,\n"
         let summary = vm.importVault(data: Data(csv.utf8))
 
         XCTAssertEqual(summary.added, 1)
