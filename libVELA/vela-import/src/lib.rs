@@ -1020,6 +1020,123 @@ pub fn parse_1pif(text: &str) -> Result<ParsedImport, String> {
     Ok(parsed)
 }
 
+/// Parse a picker request (`{"dataBase64": "..."}`) and return the JSON the
+/// mobile bridges hand to their UI: source, unsupported fields and entries.
+pub fn parse_import_request(request: &str) -> Result<serde_json::Value, String> {
+    use base64::Engine as _;
+    let request: serde_json::Value =
+        serde_json::from_str(request).map_err(|error| format!("Invalid import request: {error}"))?;
+    let encoded = request
+        .get("dataBase64")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format!("Import data is not base64: {error}"))?;
+    let parsed = parse_import_bytes(&bytes)?;
+    Ok(response_json(&parsed))
+}
+
+/// Serialize a [`ParsedImport`] for the mobile bridges. Secrets stay in the
+/// entries because the caller is the vault owner's own device.
+pub fn response_json(parsed: &ParsedImport) -> serde_json::Value {
+    let entries: Vec<serde_json::Value> = parsed.entries.iter().map(entry_json).collect();
+    serde_json::json!({
+        "source": parsed.source,
+        "skippedUnsupported": parsed.skipped_unsupported,
+        "unsupported": parsed.unsupported,
+        "entries": entries,
+    })
+}
+
+fn entry_json(entry: &ImportedEntry) -> serde_json::Value {
+    let kind = match entry.kind {
+        EntryKind::Login => "login",
+        EntryKind::Note => "note",
+        EntryKind::Card => "card",
+        EntryKind::Identity => "identity",
+    };
+    let fields: Vec<serde_json::Value> = entry
+        .fields
+        .iter()
+        .map(|field| {
+            serde_json::json!({
+                "label": field.label,
+                "kind": match field.kind {
+                    FieldKind::Text => "text",
+                    FieldKind::Concealed => "concealed",
+                    FieldKind::Boolean => "boolean",
+                },
+                "value": field.value,
+            })
+        })
+        .collect();
+    let addresses: Vec<serde_json::Value> = entry
+        .identity
+        .addresses
+        .iter()
+        .map(|address| {
+            serde_json::json!({
+                "label": address.label,
+                "line1": address.line1,
+                "line2": address.line2,
+                "city": address.city,
+                "region": address.region,
+                "postal": address.postal,
+                "country": address.country,
+            })
+        })
+        .collect();
+    let attachments: Vec<serde_json::Value> = entry
+        .attachments
+        .iter()
+        .map(|attachment| {
+            serde_json::json!({
+                "fileName": attachment.file_name,
+                "mime": attachment.mime,
+                "note": encode_attachment_note(
+                    &attachment.file_name,
+                    &attachment.mime,
+                    &attachment.bytes,
+                ),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "name": entry.name,
+        "kind": kind,
+        "url": entry.url,
+        "username": entry.username,
+        "password": entry.password,
+        "notes": entry.notes,
+        "totp": entry.totp,
+        "favorite": entry.favorite,
+        "folder": entry.folder,
+        "tags": entry.tags,
+        "fields": fields,
+        "extraUrls": entry.extra_urls,
+        "card": {
+            "number": entry.card.number,
+            "cardholder": entry.card.cardholder,
+            "expiry": entry.card.expiry,
+            "cvv": entry.card.cvv,
+            "pin": entry.card.pin,
+        },
+        "identity": {
+            "first": entry.identity.first,
+            "last": entry.identity.last,
+            "middle": entry.identity.middle,
+            "email": entry.identity.email,
+            "phone": entry.identity.phone,
+            "company": entry.identity.company,
+            "jobTitle": entry.identity.job_title,
+            "ssn": entry.identity.ssn,
+            "addresses": addresses,
+        },
+        "attachments": attachments,
+    })
+}
+
 /// Wrap attachment bytes as an encrypted note body. The vault has no file-blob
 /// viewer yet, so a base64 note is the honest way to keep the bytes rather
 /// than lose them; mobile and desktop decode the same header.
