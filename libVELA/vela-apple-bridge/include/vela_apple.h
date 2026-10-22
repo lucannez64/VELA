@@ -77,6 +77,7 @@ char *vela_ffi_plan_recovery_publication_json(const char *request_json);
 char *vela_ffi_seal_share_json(const char *request_json);
 
 char *vela_ffi_rich_items_json(const char *request_json);
+char *vela_ffi_parse_import_json(const char *request_json);
 
 #ifdef __cplusplus
 }
