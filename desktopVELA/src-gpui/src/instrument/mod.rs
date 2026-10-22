@@ -438,6 +438,49 @@ pub fn avatar(name: &str, size: f32, t: &Tok) -> Div {
         .child(initials(name))
 }
 
+/// Instrument avatar with the site favicon when the item has a usable URL.
+/// The initials tile is the loading and failure state.
+pub fn favicon_avatar(
+    url: Option<&str>,
+    name: &str,
+    size: f32,
+    t: &Tok,
+    cache: &crate::favicon_ui::FaviconCache,
+    app: &mut App,
+    on_loaded: impl FnOnce(&mut gpui::AsyncApp) + 'static,
+) -> gpui::AnyElement {
+    let tile = div()
+        .size(px(size))
+        .flex_shrink_0()
+        .rounded(px(size * 0.3))
+        .bg(t.panel3)
+        .border_1()
+        .border_color(t.line2)
+        .flex()
+        .items_center()
+        .justify_center()
+        .font_family(fonts::MONO)
+        .text_size(px(size * 0.32))
+        .text_color(t.text);
+    if let Some(url) = url.filter(|u| !u.is_empty()) {
+        if let Some(image) =
+            crate::favicon_ui::cached_or_fetch(url, px(size * 0.56), cache, app, on_loaded)
+        {
+            // Many favicons are dark-on-transparent (GitHub, X). Give them a
+            // quiet light chip so they stay legible on the dark tiles.
+            let backing = div()
+                .size(px(size * 0.72))
+                .rounded(px(size * 0.2))
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(if t.dark { gpui::white() } else { t.panel2 });
+            return tile.child(backing.child(image)).into_any_element();
+        }
+    }
+    tile.child(initials(name)).into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
