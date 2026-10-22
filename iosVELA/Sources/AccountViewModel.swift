@@ -182,7 +182,10 @@ final class AccountViewModel: ObservableObject {
             await ensureShareKey(client: client)
             let engine = SyncEngine(
                 client: client, repo: VaultRepository(), keyEpoch: localEpoch)
-            let merged = try await engine.sync(rms: rms, localStore: vault.currentStore)
+            // Checked and read in one synchronous step on the main actor.
+            guard vault.hasLoadedVault else { throw Failure("open VELA to sync") }
+            let localStore = vault.currentStore
+            let merged = try await engine.sync(rms: rms, localStore: localStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
             AuditLog.shared.record("vault_sync", "\(merged.items.count) item(s)")
@@ -643,9 +646,11 @@ final class AccountViewModel: ObservableObject {
             try store.save(state)
             account = state
 
+            guard vault.hasLoadedVault else { throw Failure("open VELA to finish syncing") }
+            let localStore = vault.currentStore
             let merged = try await SyncEngine(
                 client: client, repo: VaultRepository(), keyEpoch: recoverResp.keyEpoch
-            ).sync(rms: rms, localStore: vault.currentStore)
+            ).sync(rms: rms, localStore: localStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
             AuditLog.shared.record("account_recovered", String(deviceID.prefix(8)))
@@ -711,9 +716,11 @@ final class AccountViewModel: ObservableObject {
             account = state
 
             // First sync pulls the vault down.
+            guard vault.hasLoadedVault else { throw Failure("open VELA to finish syncing") }
+            let localStore = vault.currentStore
             let merged = try await SyncEngine(
                 client: client, repo: VaultRepository(), keyEpoch: epochAfterCapsule.epoch
-            ).sync(rms: rms, localStore: vault.currentStore)
+            ).sync(rms: rms, localStore: localStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
             AuditLog.shared.record("device_enrolled", String(payload.device_id.prefix(8)))

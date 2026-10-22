@@ -455,6 +455,7 @@ async fn a_bot_wall_falls_back_to_the_browser_tier() {
         .write()
         .add_item(crate::vault::VaultItem::Login {
             meta: crate::vault::VaultMeta {
+                rich: Default::default(),
                 id: "i1".to_string(),
                 name: "Bot-walled".to_string(),
                 notes: None,

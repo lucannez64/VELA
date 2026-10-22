@@ -31,24 +31,36 @@ class LocalVaultRepository(
     private val _items = MutableStateFlow<List<VaultItem>>(emptyList())
     val items: StateFlow<List<VaultItem>> = _items
     private var store = VaultStore()
+    private val _organization = MutableStateFlow(VaultOrganization())
+    val organization: StateFlow<VaultOrganization> = _organization
+    private fun publish() { _items.value = store.items; _organization.value = VaultOrganization(store.schemaVersion == 2, store.richEnvelope) }
+
 
     fun loadFromUnlockedSession() {
         val rms = secureVaultManager.currentRmsCopy() ?: return
         try {
             store = encryptedVaultStore.load(rms)
-            _items.value = store.items
+            publish()
+        } catch (error: Exception) {
+            // An unreadable vault (corrupt, or written by a newer VELA) must not
+            // leave an unlocked, empty vault behind: the first save would then
+            // overwrite vault.enc. Lock again and surface the error.
+            store = VaultStore()
+            publish()
+            secureVaultManager.lock()
+            throw error
         } finally {
             rms.fill(0)
         }
     }
 
     fun snapshot(): VaultStore {
-        return VaultStore(_items.value, store.tombstones)
+        return VaultStore(_items.value, store.tombstones, store.schemaVersion, store.richEnvelope, store.opaqueItems)
     }
 
     fun replaceAll(store: VaultStore) {
         this.store = store
-        _items.value = store.items
+        publish()
         persistIfUnlocked()
     }
 
@@ -80,31 +92,50 @@ class LocalVaultRepository(
         return VaultJson.decode(vaultJson.toByteArray(Charsets.UTF_8))
     }
 
+    val richerVaultReadOnly: Boolean get() = store.schemaVersion > 2
+    private fun ensureWritable() { check(!richerVaultReadOnly) { "Upgrade VELA to edit this vault" }; check(secureVaultManager.currentRmsCopy()?.also { it.fill(0) } != null) { "Unlock the vault first" } }
+    private fun commit(candidate: VaultStore) {
+        val rms = secureVaultManager.currentRmsCopy() ?: error("Unlock the vault first")
+        try { encryptedVaultStore.save(rms, candidate) } finally { rms.fill(0) }
+        store = candidate; publish(); onLocalChange?.invoke()
+    }
+    private fun candidate() = VaultStore(store.items, store.tombstones, store.schemaVersion, store.richEnvelope, store.opaqueItems)
+    fun enableRichItems() {
+        ensureWritable()
+        NativeVelaCore.richItems(org.json.JSONObject().put("operation","capabilities"))
+        persistIfUnlocked(); encryptedVaultStore.safetyBackup()
+        commit(VaultStore(store.items,store.tombstones,2,store.richEnvelope,store.opaqueItems))
+    }
+    fun mutateOrganization(action: org.json.JSONObject) {
+        ensureWritable(); check(store.schemaVersion == 2) { "Enable collections first" }
+        val organization = _organization.value.mutate(action, encryptedVaultStore.organizationWriterId())
+        val now = Instant.now()
+        val repaired = store.items.map { item ->
+            val rich = organization.repair(item.rich)
+            if (rich == item.rich) item else item.withRich(rich).withUpdatedAt(now)
+        }
+        commit(VaultStore(repaired,store.tombstones,2,organization.data,store.opaqueItems))
+    }
+    private fun checked(item: VaultItem) {
+        val old = store.getItem(item.id)
+        if (item.rich.hasData || store.schemaVersion == 2) {
+            check(store.schemaVersion == 2) { "Enable collections first" }
+            _organization.value.validate(item.rich,old?.rich ?: RichData())
+        }
+    }
     fun addItem(item: VaultItem) {
-        store.addItem(item)
-        _items.value = store.items
-        onLocalChange?.invoke()
-        persistIfUnlocked()
+        ensureWritable(); checked(item)
+        check(store.getItem(item.id) == null) { "Item already exists" }
+        val next = candidate(); next.addItem(item); commit(next)
     }
-
     fun updateItem(item: VaultItem) {
-        store.updateItem(item)
-        _items.value = store.items
-        onLocalChange?.invoke()
-        onItemUpdated?.invoke(item)
-        persistIfUnlocked()
+        ensureWritable(); checked(item)
+        val next = candidate(); next.updateItem(item); commit(next); onItemUpdated?.invoke(item)
     }
-
     fun deleteItem(id: String) {
-        store.deleteItem(id)
-        _items.value = store.items
-        onLocalChange?.invoke()
-        persistIfUnlocked()
+        ensureWritable(); val next = candidate(); next.deleteItem(id); commit(next)
     }
-
-    fun clearMemory() {
-        _items.value = emptyList()
-    }
+    fun clearMemory() { store = VaultStore(); publish() }
 
     fun search(query: String): List<VaultItem> {
         val normalized = query.trim().lowercase(Locale.US)
@@ -115,6 +146,7 @@ class LocalVaultRepository(
                 when (item) {
                     is VaultItem.Login -> item.url.lowercase(Locale.US).contains(normalized) ||
                         item.username.lowercase(Locale.US).contains(normalized)
+                    is VaultItem.Identity -> (item.firstName + " " + item.lastName).lowercase(Locale.US).contains(normalized)
                     is VaultItem.CreditCard -> item.cardholderName.lowercase(Locale.US).contains(normalized)
                     is VaultItem.SecureNote -> item.content.lowercase(Locale.US).contains(normalized)
                     is VaultItem.FileBlob -> item.fileName.lowercase(Locale.US).contains(normalized) ||
@@ -195,13 +227,15 @@ class LocalVaultRepository(
         val kept = login.appIds.filter {
             !AppAssociations.packageFromUri(it).equals(packageName.lowercase(Locale.US), ignoreCase = true)
         }
-        updateItem(
-            login.copy(
-                appIds = kept + link,
-                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+        // A rejected write (e.g. validation) reports failure instead of crashing the UI.
+        return runCatching {
+            updateItem(
+                login.copy(
+                    appIds = kept + link,
+                    meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+                )
             )
-        )
-        return true
+        }.isSuccess
     }
 
     /** Revoke a grant. The link string is what the UI listed, so it round-trips. */
@@ -209,12 +243,14 @@ class LocalVaultRepository(
         val login = _items.value.filterIsInstance<VaultItem.Login>().firstOrNull { it.id == itemId }
             ?: return
         if (link !in login.appIds) return
-        updateItem(
-            login.copy(
-                appIds = login.appIds - link,
-                meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+        runCatching {
+            updateItem(
+                login.copy(
+                    appIds = login.appIds - link,
+                    meta = login.meta.copy(updatedAt = Instant.now(), lastModifiedDevice = "android-local"),
+                )
             )
-        )
+        }
     }
 
     /**
@@ -245,7 +281,7 @@ class LocalVaultRepository(
         val rms = secureVaultManager.currentRmsCopy() ?: return
         try {
             store.pruneTombstones()
-            encryptedVaultStore.save(rms, VaultStore(store.items, store.tombstones))
+            encryptedVaultStore.save(rms, VaultStore(store.items, store.tombstones, store.schemaVersion, store.richEnvelope, store.opaqueItems))
         } finally {
             rms.fill(0)
         }
@@ -272,6 +308,9 @@ object VelaRepositories {
         private set
 
     lateinit var audit: AuditLogRepository
+        private set
+
+    lateinit var recent: RecentItemStore
         private set
 
     lateinit var autoLock: AutoLockStore
@@ -310,6 +349,7 @@ object VelaRepositories {
             }
         }
         audit = AuditLogRepository(context.applicationContext)
+        recent = RecentItemStore(context.applicationContext)
 
         autoLock = AutoLockStore(context.applicationContext)
         theme = com.vela.android.ui.theme.ThemeStore(context.applicationContext)

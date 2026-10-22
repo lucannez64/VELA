@@ -43,6 +43,8 @@ h3-quinn          = "0.0.10"
 stoolap = "0.4"
 # Target backend for the stoolap -> Turso migration (SQLite-compatible).
 turso = "0.7"
+# Recent nightly removed core::intrinsics::abort; use the upstream std path.
+branches = { version = "0.4.6", default-features = false, features = ["std"] }
 
 # ── Embedded KV store ─────────────────────────────────────────────────────────
 sled = "0.34"

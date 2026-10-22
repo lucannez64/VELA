@@ -13,13 +13,14 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.ui.theme.VelaColors
+import com.vela.android.ui.theme.InstrumentMono
 
 @Composable
 fun StatusBadge(
     text: String,
     modifier: Modifier = Modifier,
-    backgroundColor: Color = VelaColors.Green.copy(alpha = 0.12f),
-    textColor: Color = VelaColors.Green
+    backgroundColor: Color = VelaColors.Violet.copy(alpha = 0.08f),
+    textColor: Color = VelaColors.Violet
 ) {
     Text(
         text = text.uppercase(),
@@ -29,7 +30,8 @@ fun StatusBadge(
             .padding(horizontal = 8.dp, vertical = 3.dp),
         color = textColor,
         fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.5.sp
+        fontFamily = InstrumentMono,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = .5.sp
     )
 }

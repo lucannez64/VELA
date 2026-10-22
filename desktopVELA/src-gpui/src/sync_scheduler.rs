@@ -37,9 +37,9 @@ use vela_desktop_core::AppState;
 /// a settings-change subscription.
 const TICK: Duration = Duration::from_secs(30);
 
-/// Start the scheduler. `cx` is AppShell's context; the task outlives the
-/// call and must be held by the caller.
-pub fn start(app_state: Arc<AppState>, cx: &mut Context<'_, crate::views::app_shell::AppShell>) -> Task<()> {
+/// Start the scheduler. `cx` is the owning shell's context (classic or
+/// instrument); the task outlives the call and must be held by the caller.
+pub fn start<T: 'static>(app_state: Arc<AppState>, cx: &mut Context<'_, T>) -> Task<()> {
     cx.spawn(async move |_this, cx| {
         // Live sync: local saves are pushed immediately, and the server's
         // vault event stream pulls other devices' writes. Runs on Tokio via

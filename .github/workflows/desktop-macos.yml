@@ -10,17 +10,21 @@ on:
     paths:
       - "desktopVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-core/**"
       - "extension/native-messaging/**"
       - ".github/workflows/desktop-macos.yml"
       - ".github/scripts/ipc_ping.py"
+      - ".github/scripts/smoke_gpui_macos.sh"
   pull_request:
     branches: [main]
     paths:
       - "desktopVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-core/**"
       - "extension/native-messaging/**"
       - ".github/workflows/desktop-macos.yml"
       - ".github/scripts/ipc_ping.py"
+      - ".github/scripts/smoke_gpui_macos.sh"
 
 # One run per ref; cancel superseded in-progress runs to avoid pile-ups.
 concurrency:
@@ -80,6 +84,15 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: desktopVELA
+          # Tauri hides bundle_dmg.sh stdout/stderr at the default log level.
+          args: --verbose
+
+      - name: Diagnose failed macOS packaging
+        if: failure()
+        run: |
+          df -h
+          hdiutil info
+          ls -la target/release/bundle/macos target/release/bundle/dmg || true
 
       # Launch the built app on the runner, screenshot it, and confirm it didn't
       # crash on startup. The screenshot is uploaded so the UI can be eyeballed.
@@ -134,4 +147,35 @@ jobs:
             target/release/bundle/dmg/*.dmg
             target/release/bundle/macos/*.app
             smoke.png
+          if-no-files-found: warn
+
+
+  gpui-build-and-launch:
+    name: GPUI macOS preview
+    runs-on: macos-14
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktopVELA -> ../target
+          cache-workspace-crates: true
+          shared-key: gpui-macos-preview
+      - name: Build GPUI and native messaging host
+        working-directory: desktopVELA
+        run: cargo build --locked --release -p vela-desktop-gpui -p vela-nm-host
+      - name: Test GPUI and shared core on macOS
+        working-directory: desktopVELA
+        run: cargo test --locked --release -p vela-desktop-gpui -p vela-desktop-core
+      - name: Launch Instrument demo and capture screenshot
+        run: bash .github/scripts/smoke_gpui_macos.sh "$GITHUB_WORKSPACE/target/release/vela-desktop" "$RUNNER_TEMP/vela-gpui-preview"
+      - name: Upload GPUI preview and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vela-gpui-macos-arm64-preview
+          path: ${{ runner.temp }}/vela-gpui-preview
           if-no-files-found: warn

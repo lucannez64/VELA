@@ -20,6 +20,7 @@ fn login(i: usize, device: Option<&str>) -> VaultItem {
     let now = Utc::now();
     VaultItem::Login {
         meta: VaultMeta {
+                rich: Default::default(),
             id: format!("item-{i:06}"),
             name: format!("Account number {i} at example{}.com", i % 97),
             notes: Some("some notes about this account".to_string()),
@@ -105,7 +106,7 @@ fn bench_merge() {
     let server = vault_with(N, Some("other-device"));
     bench("merge_server_vaults", 50, || {
         let mut local = local.clone();
-        crate::sync::merge_server_vaults(&mut local, server.clone(), "test-device").len()
+        crate::sync::merge_server_vaults(&mut local, server.clone(), "test-device").unwrap().len()
     });
 }
 

@@ -21,12 +21,14 @@ pub static malloc_conf: &[u8] =
 
 mod animation;
 mod background;
+mod demo;
 mod clipboard;
 mod favicon_ui;
 mod fonts;
 mod host;
 mod layout;
 mod modal;
+mod ui;
 #[cfg(test)]
 mod modal_test_support;
 // Windows global shortcut (RegisterHotKey via `global-hotkey`, see the
@@ -35,6 +37,7 @@ mod modal_test_support;
 #[cfg(target_os = "windows")]
 mod hotkey;
 mod icon;
+mod instrument;
 mod keyboard;
 mod qr;
 mod quick_search;
@@ -52,6 +55,7 @@ use gpui::{
     div, prelude::*, px, rgba, size, App, Bounds, Context, Entity, IntoElement, MouseButton,
     Render, Subscription, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
+#[cfg(not(target_os = "macos"))]
 use ksni::TrayMethods;
 
 use crate::icon::icon;
@@ -68,17 +72,20 @@ enum Screen {
     Setup(Entity<SetupScreen>),
     BiometricGate(Entity<BiometricGate>),
     App(Entity<AppShell>),
+    /// The default Instrument shell (see `instrument/mod.rs`).
+    Instrument(Entity<instrument::shell::InstrumentShell>),
 }
 
 struct RootView {
     app_state: Arc<AppState>,
+    demo_mode: bool,
     screen: Screen,
     title_bar: Entity<TitleBar>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl RootView {
-    fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
+    fn new(app_state: Arc<AppState>, demo_mode: bool, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<ActiveTheme>(|_, cx| cx.notify())
             .detach();
         cx.observe_global::<toast::ToastGlobal>(|_, cx| cx.notify())
@@ -97,8 +104,11 @@ impl RootView {
             // A pick against a locked vault carries no item — the popup's
             // "press Enter to open VELA" path — and just raising the window
             // (already done by the popup) is the whole action there.
-            if let Screen::App(app) = &this.screen {
-                let id = item.id().to_string();
+            let id = item.id().to_string();
+            if let Screen::Instrument(shell) = &this.screen {
+                shell.update(cx, |shell, cx| shell.open_item(id, cx));
+                cx.activate(true);
+            } else if let Screen::App(app) = &this.screen {
                 app.update(cx, |app, cx| app.open_item(id, cx));
                 // The popup just closed itself; without this the main window
                 // stays behind whatever the user was actually looking at when
@@ -107,11 +117,19 @@ impl RootView {
             }
         })
         .detach();
+        // Switching interface at runtime rebuilds whichever shell is showing.
+        cx.observe_global::<instrument::ActiveInterface>(|this, cx| {
+            if matches!(this.screen, Screen::App(_) | Screen::Instrument(_)) {
+                this.show_app(cx);
+            }
+        })
+        .detach();
         let title_bar = cx.new({
             let app_state = app_state.clone();
             move |cx| TitleBar::new(app_state, cx)
         });
         let mut this = Self {
+            demo_mode,
             app_state: app_state.clone(),
             // Placeholder until show_welcome/show_biometric_gate below sets
             // the real first screen — both always run before this value is
@@ -135,7 +153,9 @@ impl RootView {
         // means we're a returning user (show the unlock gate), otherwise
         // first-launch (show Welcome). Same on-disk store as the shipped
         // Tauri app — this reads/unlocks the real vault, not a fixture.
-        if session::check_vault_exists(&app_state) {
+        if demo_mode {
+            this.show_app(cx);
+        } else if session::check_vault_exists(&app_state) {
             this.show_biometric_gate(cx);
         } else {
             this.show_welcome(cx);
@@ -204,11 +224,7 @@ impl RootView {
     }
 
     fn show_app(&mut self, cx: &mut Context<Self>) {
-        let app = cx.new({
-            let app_state = self.app_state.clone();
-            move |cx| AppShell::new(app_state, cx)
-        });
-        let subscription = cx.subscribe(&app, |this, _app, event, cx| match event {
+        let on_event = |this: &mut Self, event: &AppShellEvent, cx: &mut Context<Self>| match event {
             AppShellEvent::ThemeChanged(theme_id) => {
                 cx.set_global(ActiveTheme(*theme_id));
             }
@@ -220,15 +236,37 @@ impl RootView {
                 tracing::info!("Vault deleted — showing Welcome");
                 this.show_welcome(cx);
             }
-        });
-        self.screen = Screen::App(app);
-        self._subscriptions.push(subscription);
+        };
+        if instrument::is_instrument(cx) {
+            let shell = cx.new({
+                let app_state = self.app_state.clone();
+                move |cx| instrument::shell::InstrumentShell::new(app_state, cx)
+            });
+            let subscription = cx.subscribe(&shell, move |this, _, event, cx| on_event(this, event, cx));
+            self.screen = Screen::Instrument(shell);
+            self._subscriptions.push(subscription);
+        } else {
+            let app = cx.new({
+                let app_state = self.app_state.clone();
+                move |cx| AppShell::new(app_state, cx)
+            });
+            let subscription = cx.subscribe(&app, move |this, _, event, cx| on_event(this, event, cx));
+            self.screen = Screen::App(app);
+            self._subscriptions.push(subscription);
+        }
         cx.notify();
     }
 }
 
 impl Render for RootView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus = window
+            .use_keyed_state("root-keyboard-focus", cx, |_, cx| cx.focus_handle().tab_stop(false))
+            .read(cx)
+            .clone();
+        if window.focused(cx).is_none() {
+            window.focus(&focus, cx);
+        }
         let palette = theme::current_palette(cx);
 
         let content: gpui::AnyElement = match &self.screen {
@@ -236,6 +274,7 @@ impl Render for RootView {
             Screen::Setup(setup) => setup.clone().into_any_element(),
             Screen::BiometricGate(gate) => gate.clone().into_any_element(),
             Screen::App(app) => app.clone().into_any_element(),
+            Screen::Instrument(shell) => shell.clone().into_any_element(),
         };
 
         div()
@@ -250,8 +289,25 @@ impl Render for RootView {
             // one screen, and because a key listener only sees keystrokes on
             // the focused element's dispatch path — anything shallower than
             // the root would miss fields rendered outside its subtree.
+            .track_focus(&focus)
             .on_key_down(keyboard::navigate_on_tab)
+            // Ctrl+Alt+U flips between the classic and instrument interfaces.
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let m = event.keystroke.modifiers;
+                if m.control && m.alt && event.keystroke.key == "u" {
+                    let next = cx
+                        .try_global::<instrument::ActiveInterface>()
+                        .map(|a| a.0)
+                        .unwrap_or_default()
+                        .toggled();
+                    instrument::switch_interface(&this.app_state, next, cx);
+                    cx.stop_propagation();
+                } else if let Screen::Instrument(shell) = &this.screen {
+                    shell.update(cx, |shell, cx| shell.handle_key(event, window, cx));
+                }
+            }))
             .child(self.title_bar.clone())
+            .when(self.demo_mode, |el| el.child(div().flex_shrink_0().px_4().py_2().bg(palette.surface_container_highest).text_color(palette.on_surface).text_sm().child("DEMO VAULT · Fake data · Local only · Restart with --demo to reset")))
             .child(
                 // `.overflow_hidden()` is load-bearing, not decorative: without
                 // it, a tall child (e.g. AppShell with a long VaultBrowser
@@ -468,7 +524,9 @@ fn main() {
         .expect("failed to build tokio runtime");
     let _runtime_guard = async_runtime.enter();
 
-    let app_state = Arc::new(AppState::default());
+    let demo_mode = std::env::args().any(|arg| arg == "--demo");
+    let demo_vault = demo_mode.then(|| demo::DemoVault::new().expect("could not create demo vault"));
+    let app_state = demo_vault.as_ref().map(|demo|demo.state.clone()).unwrap_or_else(||Arc::new(AppState::default()));
 
     // Claim our portal app id *before* gpui starts. This ordering is
     // load-bearing, not cosmetic: `ashpd` caches one process-wide session-bus
@@ -487,7 +545,7 @@ fn main() {
     // zbus backend workspace-wide, and async-io self-starts its own reactor
     // thread on first use regardless of which executor polls it.
     #[cfg(target_os = "linux")]
-    if vela_desktop_core::wayland_shortcut::is_wayland_session() {
+    if !demo_mode && vela_desktop_core::wayland_shortcut::is_wayland_session() {
         futures::executor::block_on(vela_desktop_core::wayland_shortcut::register_app_id(
             host::APP_IDENTIFIER,
         ));
@@ -520,11 +578,15 @@ fn main() {
     // `tokio::task::spawn_blocking` work to an already-dead runtime and gets
     // an immediate "task was cancelled" error.
     let runtime_handle = async_runtime.handle().clone();
+    let initial_interface = instrument::initial_mode(Some(app_state.store.store_path()));
 
-    gpui_platform::application().run(move |cx: &mut App| {
+    gpui_platform::application().with_assets(instrument::icons::IconAssets).run(move |cx: &mut App| {
+        if demo_mode { cx.set_global(demo::DemoMode); }
+        #[cfg(not(target_os = "macos"))]
         let tray_runtime_handle = runtime_handle.clone();
         gpui_tokio::init_from_handle(cx, runtime_handle);
         cx.set_global(ActiveTheme(initial_theme));
+        cx.set_global(instrument::ActiveInterface(initial_interface));
         if let Some(seconds) = initial_clipboard_clear_seconds {
             clipboard::set_clear_seconds(cx, seconds);
         }
@@ -541,9 +603,23 @@ fn main() {
                 .unwrap_or_else(|e| panic!("failed to load font {font_file}: {e}"));
         }
 
+        if cfg!(target_os = "macos") && demo_mode {
+            // A launch alone can succeed with GPUI's no-op text backend.
+            // Require the embedded families so CI catches a missing font-kit feature.
+            let families = cx.text_system().all_font_names();
+            for family in [fonts::HEADLINE, fonts::BODY, fonts::LABEL, fonts::MONO] {
+                assert!(
+                    families.iter().any(|name| name == family),
+                    "macOS native text backend did not register {family}"
+                );
+            }
+            tracing::info!("GPUI native text fonts registered");
+        }
+
         cx.activate(true);
 
-        let bounds = Bounds::centered(None, size(px(1024.), px(720.)), cx);
+        let bounds = Bounds::centered(None, if demo_mode {size(px(1280.), px(800.))} else {size(px(1024.), px(720.))}, cx);
+        #[cfg(not(target_os = "macos"))]
         let app_state_for_tray = app_state.clone();
         let app_state_for_auto_lock = app_state.clone();
         let app_state_for_ipc = app_state.clone();
@@ -555,7 +631,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(360.), px(480.))),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("VELA".into()),
+                        title: Some(if demo_mode {"VELA · Demo vault"} else {"VELA"}.into()),
                         appears_transparent: true,
                         traffic_light_position: None,
                     }),
@@ -563,7 +639,7 @@ fn main() {
                     is_movable: true,
                     ..Default::default()
                 },
-                move |_, cx| cx.new(|cx| RootView::new(app_state, cx)),
+                move |_, cx| cx.new(|cx| RootView::new(app_state, demo_mode, cx)),
             )
             .expect("failed to open main window");
 
@@ -573,6 +649,11 @@ fn main() {
             }
         })
         .detach();
+
+        tracing::info!("GPUI main window opened");
+
+        // Demo profiles never register IPC, shortcuts, a tray or account watchdog.
+        if demo_mode { return; }
 
         // System tray: registers a real StatusNotifierItem over D-Bus (see
         // tray.rs's module doc for why the async-io-backed `.spawn().await`
@@ -599,6 +680,7 @@ fn main() {
             );
         }
 
+        #[cfg(not(target_os = "macos"))]
         cx.spawn(async move |_cx| {
             let vela_tray = tray::VelaTray::new(app_state_for_tray, tray_runtime_handle, tray_tx);
             match vela_tray.spawn().await {

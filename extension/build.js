@@ -173,6 +173,9 @@ function buildBrowser(browser) {
   copyRecursive(join(ROOT, "src", "popup"), join(browserDist, "popup"));
   copyRecursive(join(ROOT, "src", "shared", "autofill-utils.js"), join(browserDist, "shared", "autofill-utils.js"));
 
+  copyRecursive(join(ROOT, "src", "shared", "fonts"), join(browserDist, "shared", "fonts"));
+  copyFileSync(join(ROOT, "src", "shared", "instrument-ui.js"), join(browserDist, "shared", "instrument-ui.js"));
+  copyFileSync(join(ROOT, "src", "shared", "instrument-fonts.css"), join(browserDist, "shared", "instrument-fonts.css"));
   copyRecursive(join(ROOT, "_locales"), join(browserDist, "_locales"));
   copyRecursive(join(ROOT, "icons"), join(browserDist, "icons"));
 

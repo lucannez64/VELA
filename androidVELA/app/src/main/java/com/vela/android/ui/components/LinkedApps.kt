@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -33,6 +34,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -68,47 +72,18 @@ fun LinkedAppsSection(
     var showPicker by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    VelaCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Linked apps",
-                color = VelaColors.TextSecondary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { showPicker = true }) {
-                Icon(Icons.Filled.Add, "Link an app", tint = VelaColors.Green)
-            }
-        }
-
-        error?.let { message ->
-            Text(
-                message,
-                color = VelaColors.WarningAmber,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-        }
-
-        if (appIds.isEmpty()) {
-            Text(
-                "No apps can fill this login. Saving it from an app links it, " +
-                    "or add one here.",
-                color = VelaColors.TextMuted,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-        } else {
+    InstrumentGroup {
+        Column(Modifier.padding(16.dp)) {
+            InstrumentFine("Choose which installed apps may autofill this login. Remove a link to revoke access.")
+            InstrumentPill("Choose apps", { showPicker = true }, Modifier.padding(vertical = 12.dp), icon = InstrumentIcons.Device)
+            error?.let { Text(it, color = VelaColors.WarningAmber, fontSize = 12.sp) }
+            if (appIds.isEmpty()) InstrumentFine("No apps linked yet.")
             for (link in appIds) {
                 val pkg = AppAssociations.packageFromUri(link) ?: continue
                 key(link) {
-                    LinkedAppRow(
-                        entry = remember(pkg) { InstalledApps.describe(context, pkg) },
-                        pinned = AppAssociations.certFromUri(link) != null,
-                        installed = remember(pkg) { InstalledApps.isInstalled(context, pkg) },
-                        onUnlink = { onUnlink(link) },
-                    )
+                    LinkedAppRow(remember(pkg) { InstalledApps.describe(context, pkg) },
+                        AppAssociations.certFromUri(link) != null,
+                        remember(pkg) { InstalledApps.isInstalled(context, pkg) }, { onUnlink(link) })
                 }
             }
         }
@@ -197,12 +172,9 @@ private fun AppPickerDialog(
         apps = withContext(Dispatchers.IO) { InstalledApps.launchable(context) }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = VelaColors.Surface,
-        title = { Text("Link an app", color = VelaColors.TextPrimary) },
-        text = {
-            Column {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false,
+        decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.Inherit)) {
+        InstrumentSheet(true, "Choose apps", onDismiss) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Verify signing key", color = VelaColors.TextPrimary, fontSize = 14.sp)
@@ -217,7 +189,7 @@ private fun AppPickerDialog(
                             fontSize = 11.sp,
                         )
                     }
-                    VelaSwitch(checked = pinSigningKey, onCheckedChange = { pinSigningKey = it })
+                    InstrumentToggle(pinSigningKey, { pinSigningKey = it }, "Verify signing key")
                 }
 
                 Spacer(Modifier.size(12.dp))
@@ -245,12 +217,8 @@ private fun AppPickerDialog(
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done", color = VelaColors.Green) }
-        },
-    )
+        }
+    }
 }
 
 @Composable

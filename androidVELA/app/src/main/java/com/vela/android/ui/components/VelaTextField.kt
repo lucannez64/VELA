@@ -32,6 +32,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.ui.theme.VelaColors
+import com.vela.android.ui.theme.InstrumentBody
+import com.vela.android.ui.theme.InstrumentMono
 
 @Composable
 fun VelaTextField(
@@ -51,9 +53,9 @@ fun VelaTextField(
     var isFocused by remember { mutableStateOf(false) }
 
     val textStyle = if (isMono) {
-        TextStyle.Default.copy(fontSize = 14.sp)
+        TextStyle(fontFamily = InstrumentMono, fontSize = 14.sp)
     } else {
-        TextStyle.Default
+        TextStyle(fontFamily = InstrumentBody, fontSize = 14.sp)
     }
 
     OutlinedTextField(
@@ -75,7 +77,7 @@ fun VelaTextField(
                 IconButton(onClick = { passwordVisible = !passwordVisible }) {
                     Icon(
                         if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                        null,
+                        if (passwordVisible) "Hide password" else "Reveal password",
                         modifier = Modifier.size(20.dp),
                         tint = VelaColors.TextMuted
                     )
@@ -89,13 +91,13 @@ fun VelaTextField(
             focusedTextColor = VelaColors.TextPrimary,
             unfocusedTextColor = VelaColors.TextPrimary,
             disabledTextColor = VelaColors.TextMuted,
-            focusedBorderColor = if (isFocused) VelaColors.Green.copy(alpha = 0.4f) else VelaColors.Outline.copy(alpha = 0.15f),
+            focusedBorderColor = if (isFocused) VelaColors.Violet else VelaColors.Outline.copy(alpha = 0.15f),
             unfocusedBorderColor = VelaColors.Outline.copy(alpha = 0.15f),
-            focusedContainerColor = VelaColors.SurfaceHighest,
-            unfocusedContainerColor = VelaColors.SurfaceHighest,
+            focusedContainerColor = VelaColors.SurfaceLow,
+            unfocusedContainerColor = VelaColors.SurfaceLow,
             disabledContainerColor = VelaColors.SurfaceHigh,
-            cursorColor = VelaColors.Green,
-            focusedLabelColor = VelaColors.Green,
+            cursorColor = VelaColors.Violet,
+            focusedLabelColor = VelaColors.Violet,
             unfocusedLabelColor = VelaColors.TextMuted,
             focusedPlaceholderColor = VelaColors.TextMuted.copy(alpha = 0.5f),
             unfocusedPlaceholderColor = VelaColors.TextMuted.copy(alpha = 0.3f)
@@ -128,19 +130,19 @@ fun VelaSearchField(
         trailingIcon = {
             if (query.isNotEmpty()) {
                 IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Filled.Close, null, modifier = Modifier.size(18.dp), tint = VelaColors.TextMuted)
+                    Icon(Icons.Filled.Close, "Clear search", modifier = Modifier.size(18.dp), tint = VelaColors.TextMuted)
                 }
             }
         },
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(50),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = VelaColors.TextPrimary,
             unfocusedTextColor = VelaColors.TextPrimary,
-            focusedBorderColor = VelaColors.Green.copy(alpha = 0.35f),
+            focusedBorderColor = VelaColors.Violet,
             unfocusedBorderColor = VelaColors.SurfaceHighest,
-            focusedContainerColor = VelaColors.SurfaceDarkest,
-            unfocusedContainerColor = VelaColors.SurfaceDarkest,
-            cursorColor = VelaColors.Green
+            focusedContainerColor = VelaColors.SurfaceLow,
+            unfocusedContainerColor = VelaColors.SurfaceLow,
+            cursorColor = VelaColors.Violet
         )
     )
 }

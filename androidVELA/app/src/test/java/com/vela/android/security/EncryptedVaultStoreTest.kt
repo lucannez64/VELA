@@ -13,6 +13,32 @@ import javax.crypto.AEADBadTagException
 
 class EncryptedVaultStoreTest {
     @Test
+    fun organizationWriterIsStablePerInstallAndDistinctAcrossInstalls() {
+        val first = Files.createTempDirectory("vela-writer-a").toFile()
+        val second = Files.createTempDirectory("vela-writer-b").toFile()
+        try {
+            val id = EncryptedVaultStore(first).organizationWriterId()
+            assertEquals(id, EncryptedVaultStore(first).organizationWriterId())
+            assertTrue(id != EncryptedVaultStore(second).organizationWriterId())
+        } finally { first.deleteRecursively(); second.deleteRecursively() }
+    }
+
+    @Test
+    fun resetRemovesTheEncryptedSafetyCopy() {
+        val dir = Files.createTempDirectory("vela-reset").toFile()
+        try {
+            val store = EncryptedVaultStore(dir)
+            store.save(ByteArray(32), VaultStore())
+            store.safetyBackup()
+            val backup = java.io.File(dir, "vault.before-rich-items.enc")
+            assertTrue(backup.exists())
+            store.delete()
+            assertFalse(store.exists())
+            assertFalse(backup.exists())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test
     fun encryptedVaultRoundTripPreservesItems() {
         val dir = Files.createTempDirectory("vela-vault").toFile()
         val store = EncryptedVaultStore(dir)

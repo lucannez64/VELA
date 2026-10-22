@@ -1,0 +1,5 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/vela_icon_bg" />
+    <item android:width="288dp" android:height="288dp" android:gravity="center" android:drawable="@drawable/vela_icon_fg" />
+    <item android:width="200dp" android:height="80dp" android:gravity="bottom|center_horizontal" android:bottom="28dp" android:drawable="@drawable/vela_wordmark" />
+</layer-list>

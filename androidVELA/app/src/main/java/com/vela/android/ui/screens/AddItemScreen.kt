@@ -2,6 +2,7 @@ package com.vela.android.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -35,8 +36,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.MainActivity
+import com.vela.android.core.*
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultMeta
+import com.vela.android.ui.components.*
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
 import com.vela.android.ui.components.VelaCard
@@ -51,23 +54,31 @@ import java.util.UUID
 fun AddItemScreen(
     editItem: VaultItem? = null,
     onSave: (VaultItem) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    initialPassword: String = "",
+    readOnly: Boolean = com.vela.android.core.VelaRepositories.vault.richerVaultReadOnly,
+    organization: VaultOrganization = VelaRepositories.vault.organization.value
 ) {
     val activity = LocalContext.current as? MainActivity
     val initialType = when (editItem) {
         is VaultItem.CreditCard -> "card"
         is VaultItem.SecureNote -> "note"
+        is VaultItem.Identity -> "identity"
+        is VaultItem.Passkey -> "passkey"
+        is VaultItem.FileBlob -> "file"
+        is VaultItem.BreachMonitor -> "breach"
         else -> "login"
     }
+    var richData by remember(editItem?.id) { mutableStateOf(editItem?.rich ?: RichData()) }
+    var firstName by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Identity)?.firstName.orEmpty()) }
+    var lastName by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Identity)?.lastName.orEmpty()) }
+    var ssn by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Identity)?.ssn.orEmpty()) }
+    var saveError by remember { mutableStateOf<String?>(null) }
     var selectedType by remember(editItem?.id) { mutableStateOf(initialType) }
     var name by remember(editItem?.id) { mutableStateOf(editItem?.name.orEmpty()) }
     var url by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Login)?.url.orEmpty()) }
     var username by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Login)?.username.orEmpty()) }
-    var password by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Login)?.password.orEmpty()) }
-    var passwordLength by remember { mutableStateOf("20") }
-    var includeUppercase by remember { mutableStateOf(true) }
-    var includeNumbers by remember { mutableStateOf(true) }
-    var includeSymbols by remember { mutableStateOf(true) }
+    var password by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Login)?.password ?: initialPassword) }
     var totp by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.Login)?.totp.orEmpty()) }
     var notes by remember(editItem?.id) {
         mutableStateOf(
@@ -75,7 +86,8 @@ fun AddItemScreen(
                 is VaultItem.Login -> editItem.notes.orEmpty()
                 is VaultItem.SecureNote -> editItem.content
                 is VaultItem.CreditCard -> editItem.notes.orEmpty()
-                else -> ""
+                // Identities, passkeys and other types keep their notes on edit.
+                else -> editItem?.notes.orEmpty()
             }
         )
     }
@@ -86,156 +98,58 @@ fun AddItemScreen(
     var pin by remember(editItem?.id) { mutableStateOf((editItem as? VaultItem.CreditCard)?.pin.orEmpty()) }
     var totpScanMessage by remember(editItem?.id) { mutableStateOf<String?>(null) }
 
-    val types = listOf(
-        "login" to Icons.Filled.Key,
-        "card" to Icons.Filled.CreditCard,
-        "note" to Icons.Filled.Description
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(VelaColors.SurfaceBase)
-    ) {
-        VelaTopBar(title = if (editItem == null) "Add Item" else "Edit Item", onBack = onBack)
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-        ) {
-            Spacer(Modifier.height(16.dp))
-
-            Text("Type", color = VelaColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp)
-            Spacer(Modifier.height(10.dp))
-
-            if (editItem == null) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    types.forEach { (type, icon) ->
-                        val selected = selectedType == type
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .background(
-                                    if (selected) VelaColors.Green.copy(alpha = 0.12f) else VelaColors.SurfaceLow,
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-                                .clickable { selectedType = type }
-                                .padding(12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(
-                                icon, type,
-                                modifier = Modifier.size(24.dp),
-                                tint = if (selected) VelaColors.Green else VelaColors.TextSecondary
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                type.replaceFirstChar { it.uppercase() },
-                                fontSize = 11.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (selected) VelaColors.Green else VelaColors.TextSecondary
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
+    var advanced by remember { mutableStateOf(false) }
+    var generatorOpen by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
+        InstrumentSheet(true, if (editItem == null) "Something worth keeping." else "Edit item", onBack) {
+            if (editItem == null) ChipRow(listOf("Login", "Card", "Note", "Identity"), selectedType.replaceFirstChar { it.uppercase() },
+                { selectedType = it.lowercase() })
+            SheetInput("Name", name, { name = it }, "Give it a name")
             when (selectedType) {
                 "login" -> {
-                    VelaTextField(value = name, onValueChange = { name = it }, label = "Name")
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = url, onValueChange = { url = it }, label = "URL")
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = username, onValueChange = { username = it }, label = "Username")
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = password, onValueChange = { password = it }, label = "Password", isPassword = true)
-                    Spacer(Modifier.height(12.dp))
-                    VelaCard {
-                        Text("Password Generator", color = VelaColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.5.sp)
-                        Spacer(Modifier.height(12.dp))
-                        VelaTextField(
-                            value = passwordLength,
-                            onValueChange = { passwordLength = it.filter(Char::isDigit).take(2) },
-                            label = "Length",
-                            keyboardType = KeyboardType.Number
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        GeneratorOption("Uppercase", includeUppercase) { includeUppercase = it }
-                        GeneratorOption("Numbers", includeNumbers) { includeNumbers = it }
-                        GeneratorOption("Symbols", includeSymbols) { includeSymbols = it }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    VelaButton(
-                        text = "Generate Password",
-                        onClick = {
-                            password = generatePassword(
-                                length = passwordLength.toIntOrNull()?.coerceIn(8, 64) ?: 20,
-                                uppercase = includeUppercase,
-                                numbers = includeNumbers,
-                                symbols = includeSymbols
-                            )
-                        },
-                        style = VelaButtonStyle.Surface
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = totp, onValueChange = { totp = it }, label = "TOTP Secret", placeholder = "Base32 secret or otpauth:// URL")
-                    Spacer(Modifier.height(10.dp))
-                    VelaButton(
-                        text = "Scan TOTP QR",
-                        onClick = {
-                            if (activity == null) {
-                                totpScanMessage = "Unable to open QR scanner"
-                            } else {
-                                activity.launchQrScanner("Scan TOTP QR code") { contents ->
-                                    when {
-                                        contents.isNullOrEmpty() -> totpScanMessage = "Scan cancelled"
-                                        isSupportedTotpQr(contents) -> {
-                                            totp = contents
-                                            totpScanMessage = "TOTP QR scanned"
-                                        }
-                                        else -> totpScanMessage = "Unsupported QR code"
-                                    }
+                    SheetInput("Username", username, { username = it }, "name@example.test", keyboard = KeyboardType.Email)
+                    SheetInput("Password", password, { password = it }, "A strong password", secret = true)
+                    InstrumentPill("Generate password", { generatorOpen = true },
+                        Modifier.padding(top = 10.dp), icon = InstrumentIcons.Dice)
+                    SheetInput("Website", url, { url = it }, "https://example.test", keyboard = KeyboardType.Uri)
+                    InstrumentPill(if (advanced) "Fewer options" else "Authenticator & notes", { advanced = !advanced }, Modifier.padding(top = 16.dp))
+                    if (advanced || totp.isNotBlank() || notes.isNotBlank()) {
+                        SheetInput("TOTP secret", totp, { totp = it }, "Base32 secret or otpauth:// URL", secret = true)
+                        InstrumentPill("Scan TOTP QR", {
+                            if (activity == null) totpScanMessage = "QR scanning is available in the main app."
+                            else activity.launchQrScanner("Scan TOTP QR code") { contents ->
+                                when {
+                                    contents.isNullOrEmpty() -> totpScanMessage = "Scan cancelled"
+                                    isSupportedTotpQr(contents) -> { totp = contents; totpScanMessage = "TOTP QR scanned" }
+                                    else -> totpScanMessage = "Unsupported QR code"
                                 }
                             }
-                        },
-                        style = VelaButtonStyle.Surface,
-                        icon = Icons.Filled.QrCodeScanner
-                    )
-                    totpScanMessage?.let {
-                        Spacer(Modifier.height(8.dp))
-                        Text(it, color = VelaColors.TextMuted, fontSize = 12.sp)
+                        }, Modifier.padding(top = 10.dp), icon = InstrumentIcons.Grid)
+                        totpScanMessage?.let { InstrumentFine(it) }
+                        SheetInput("Notes", notes, { notes = it }, "Only you can read these.", multiline = true)
                     }
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = notes, onValueChange = { notes = it }, label = "Notes", singleLine = false)
                 }
                 "card" -> {
-                    VelaTextField(value = cardholder, onValueChange = { cardholder = it }, label = "Cardholder Name")
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = cardNumber, onValueChange = { cardNumber = it }, label = "Card Number", isMono = true)
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = expiration, onValueChange = { expiration = it }, label = "Expiry (MM/YY)")
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = cvv, onValueChange = { cvv = it }, label = "CVV", isPassword = true)
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = pin, onValueChange = { pin = it }, label = "PIN", isPassword = true)
+                    SheetInput("Cardholder", cardholder, { cardholder = it }, "Name on the card")
+                    SheetInput("Card number", cardNumber, { cardNumber = it }, "0000 0000 0000 0000", mono = true, keyboard = KeyboardType.Number)
+                    SheetInput("Expires", expiration, { expiration = it }, "MM/YY")
+                    SheetInput("CVV", cvv, { cvv = it }, secret = true, keyboard = KeyboardType.Number)
+                    SheetInput("PIN", pin, { pin = it }, secret = true, keyboard = KeyboardType.Number)
+                    SheetInput("Notes", notes, { notes = it }, multiline = true)
                 }
-                "note" -> {
-                    VelaTextField(value = name, onValueChange = { name = it }, label = "Title")
-                    Spacer(Modifier.height(14.dp))
-                    VelaTextField(value = notes, onValueChange = { notes = it }, label = "Notes", singleLine = false)
+                "identity" -> {
+                    SheetInput("First name", firstName, { firstName = it })
+                    SheetInput("Last name", lastName, { lastName = it })
+                    SheetInput("Identity number", ssn, { ssn = it }, secret = true)
+                    SheetInput("Notes", notes, { notes = it }, multiline = true)
                 }
+                "note" -> SheetInput("Notes", notes, { notes = it }, "Write anything. It stays encrypted.", multiline = true)
             }
-
+            RichItemEditor(richData, organization, selectedType) { richData = it }
+            saveError?.let { androidx.compose.material3.Text(it, color = VelaColors.ErrorRed) }
             Spacer(Modifier.height(24.dp))
-
             VelaButton(
-                text = "Save",
+                text = if (readOnly) "Read-only: edit on desktop" else if (editItem == null) "Add to vault" else "Save changes",
                 onClick = {
                     val item = when (selectedType) {
                         "login" -> VaultItem.Login(
@@ -253,12 +167,13 @@ fun AddItemScreen(
                             url = url,
                             username = username,
                             password = password,
-                            totp = totp.ifBlank { null }
+                            totp = totp.ifBlank { null },
+                            appIds = (editItem as? VaultItem.Login)?.appIds.orEmpty()
                         )
                         "card" -> VaultItem.CreditCard(
                             meta = VaultMeta(
                                 id = editItem?.id ?: UUID.randomUUID().toString(),
-                                name = cardholder.ifBlank { "Card" },
+                                name = name.ifBlank { cardholder.ifBlank { "Card" } },
                                 notes = notes.ifBlank { null },
                                 createdAt = editItem?.createdAt ?: Instant.now(),
                                 updatedAt = Instant.now(),
@@ -287,21 +202,21 @@ fun AddItemScreen(
                             ),
                             content = notes
                         )
-                        else -> VaultItem.Login(
-                            meta = VaultMeta(
-                                id = UUID.randomUUID().toString(),
-                                name = name.ifBlank { "Untitled" },
-                                favorite = false
-                            ),
-                            url = url,
-                            username = username,
-                            password = password
+                        "identity" -> VaultItem.Identity(
+                            meta = editItem?.meta?.copy(name = name.ifBlank { "Identity" }, notes = notes.ifBlank { null }, updatedAt = Instant.now())
+                                ?: VaultMeta(name = name.ifBlank { "Identity" }, notes = notes.ifBlank { null }),
+                            firstName = firstName, lastName = lastName, ssn = ssn
                         )
+                        else -> editItem?.withMeta { it.copy(name = name, notes = notes.ifBlank { null }, updatedAt = Instant.now()) }
+                            ?: error("Unsupported item type")
                     }
-                    onSave(item)
+                    try {
+                        if (organization.enabled) organization.validate(richData, editItem?.rich ?: RichData())
+                        onSave(item.withRich(richData))
+                    } catch (e: Exception) { saveError = e.message ?: "Could not save item" }
                 },
                 style = VelaButtonStyle.Gradient,
-                enabled = when (selectedType) {
+                enabled = !readOnly && when (selectedType) {
                     "login" -> username.isNotBlank() || password.isNotBlank() || name.isNotBlank()
                     "card" -> cardNumber.isNotBlank()
                     "note" -> notes.isNotBlank() || name.isNotBlank()
@@ -311,48 +226,14 @@ fun AddItemScreen(
 
             Spacer(Modifier.height(32.dp))
         }
+        if (generatorOpen) InstrumentSheet(true, "Generate a password", { generatorOpen = false }) {
+            GeneratorScreen(onSaveLogin = { generated -> password = generated; generatorOpen = false },
+                embedded = true, useLabel = "Use this password")
+        }
     }
 }
 
 private fun isSupportedTotpQr(contents: String): Boolean {
     if (contents.startsWith("otpauth://", ignoreCase = true)) return true
     return contents.matches(Regex("^[A-Z2-7=\\s-]{16,}$", RegexOption.IGNORE_CASE))
-}
-
-@Composable
-private fun GeneratorOption(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-        Text(label, color = VelaColors.TextPrimary, fontSize = 14.sp)
-    }
-}
-
-private fun generatePassword(
-    length: Int = 20,
-    uppercase: Boolean = true,
-    numbers: Boolean = true,
-    symbols: Boolean = true
-): String {
-    val lower = "abcdefghijkmnopqrstuvwxyz"
-    val upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
-    val digits = "23456789"
-    val symbolChars = "!@#$%^&*"
-    val alphabet = buildString {
-        append(lower)
-        if (uppercase) append(upper)
-        if (numbers) append(digits)
-        if (symbols) append(symbolChars)
-    }.ifBlank { lower }
-    val random = SecureRandom()
-    return buildString {
-        repeat(length) {
-            append(alphabet[random.nextInt(alphabet.length)])
-        }
-    }
 }

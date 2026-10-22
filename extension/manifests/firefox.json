@@ -25,6 +25,7 @@
       "js": [
         "shared/browser-polyfill.js",
         "shared/autofill-utils.js",
+        "shared/instrument-ui.js",
         "content/content-script.js",
         "content/passkey-bridge.js"
       ],
@@ -68,7 +69,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "content/webauthn-shim.js"
+        "content/webauthn-shim.js",
+        "shared/fonts/*.woff2"
       ],
       "matches": [
         "https://*/*",

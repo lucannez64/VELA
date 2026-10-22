@@ -88,6 +88,7 @@ fuzz_target!(|data: &[u8]| {
     let now = chrono::Utc::now();
     store.add_item(VaultItem::Login {
         meta: VaultMeta {
+                rich: Default::default(),
             id: "1".into(),
             name: "t".into(),
             notes: None,

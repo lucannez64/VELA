@@ -212,6 +212,17 @@ function handleExtensionMessage(message, sender, sendResponse) {
   const { command, ...data } = message;
 
   switch (command) {
+    case "vaultManage": {
+      const managerPath = browser.runtime.getManifest().action?.default_popup?.replace(/popup\.html$/, "manager.html")
+        || browser.runtime.getManifest().browser_action?.default_popup?.replace(/popup\.html$/, "manager.html");
+      if (sender.id !== browser.runtime.id || !managerPath || sender.url !== browser.runtime.getURL(managerPath)) {
+        sendResponse({ success: false, error: "Vault management is only available in the extension editor" });
+        return false;
+      }
+      sendNativeMessage({ action: "vaultManage", request: data.request }, 120000)
+        .then(sendResponse).catch(() => sendResponse({ success: false, error: "Could not reach VELA Desktop" }));
+      return true;
+    }
     case "collectPageDetails":
       handleCollectPageDetails(data, sender, sendResponse);
       break;
@@ -224,6 +235,12 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "getAvailableLogins":
       handleGetAvailableLogins(data, sender, sendResponse);
       break;
+    case "getIdentities":
+      handleGetIdentities(data, sender, sendResponse);
+      return true;
+    case "fillVaultItem":
+      handleFillVaultItem(data, sender, sendResponse);
+      return true;
     case "getCards":
       handleGetCards(data, sender, sendResponse);
       return true;
@@ -426,14 +443,14 @@ async function handleGetCards(data, sender, sendResponse) {
     // Same authorisation as a login request: only the active, top-frame page
     // may ask. Unlike logins there is no domain to match — a card works at any
     // merchant — so the page is the *release target* the desktop audits, not
-    // the card's identity. The content script only calls this after the user
-    // clicks the shield on a payment field, never on passive focus.
+    // the card's identity. Focus gets metadata; selection gets full details.
     const auth = await authorizeCredentialRequest(data, sender);
     if (!auth.ok) {
       sendResponse({ success: false, error: auth.error, cards: [] });
       return;
     }
-    const response = await sendNativeMessage({ action: "getCards", url: data.url || "" });
+    // Metadata unless the caller explicitly marks a user-chosen fill.
+    const response = await sendNativeMessage({ action: "getCards", url: data.url || "", userInitiated: data.userInitiated === true });
     if (response && response.success && Array.isArray(response.cards)) {
       sendResponse({ success: true, cards: response.cards });
     } else if (response && response.requires_biometric) {
@@ -444,6 +461,31 @@ async function handleGetCards(data, sender, sendResponse) {
   } catch (error) {
     sendResponse({ success: false, error: error.message, cards: [] });
   }
+}
+
+async function handleGetIdentities(data, sender, sendResponse) {
+  try {
+    const auth = await authorizeCredentialRequest(data, sender);
+    if (!auth.ok) { sendResponse({success:false, error:auth.error, identities:[]}); return; }
+    const response = await sendNativeMessage({action:"getIdentities", url:data.url, userInitiated:data.userInitiated === true});
+    sendResponse(response || {success:false, identities:[]});
+  } catch (error) { sendResponse({success:false, error:error.message, identities:[]}); }
+}
+
+async function handleFillVaultItem(data, sender, sendResponse) {
+  try {
+    const auth = await authorizeCredentialRequest(data, sender);
+    if (!auth.ok) { sendResponse({success:false, error:auth.error}); return; }
+    if (!["card", "identity"].includes(data.itemType)) { sendResponse({success:false}); return; }
+    // Resolve by ID again rather than trusting a credential supplied by UI code.
+    const key = data.itemType === "card" ? "cards" : "identities";
+    const response = await sendNativeMessage({action:data.itemType === "card" ? "getCards" : "getIdentities", url:data.url, userInitiated:true});
+    const item = response?.success && response[key]?.find(i => String(i.id) === String(data.itemId));
+    if (!item) { sendResponse({success:false, error:"Unlock VELA Desktop and retry."}); return; }
+    const active = await getActiveTab();
+    if (active?.id !== auth.tabId || active.url !== data.url) { sendResponse({success:false, error:"The active page changed."}); return; }
+    sendResponse(await tabs.sendMessage(auth.tabId, {command:"fillVaultItem", itemType:data.itemType, item, addressId:data.addressId, url:data.url}, {frameId:0}) || {success:false});
+  } catch (error) { sendResponse({success:false, error:error.message}); }
 }
 
 function getHttpDomain(url) {

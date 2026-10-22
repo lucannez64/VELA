@@ -53,6 +53,7 @@ enum Content {
 pub struct AppShell {
     app_state: Arc<AppState>,
     sidebar: Entity<Sidebar>,
+    organization_panel: Entity<crate::views::organization_panel::OrganizationPanel>,
     nav: NavView,
     content: Content,
     /// A separate overlay from `VaultBrowser`'s own "Add Item" modal — this
@@ -79,16 +80,44 @@ impl AppShell {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
             .detach();
         let sidebar = cx.new(Sidebar::new);
-        let sync_scheduler = crate::sync_scheduler::start(app_state.clone(), cx);
-        let recovery_reminder = Self::start_recovery_reminder(app_state.clone(), cx);
+        let organization_panel = cx.new(|cx| {
+            crate::views::organization_panel::OrganizationPanel::new(app_state.clone(), cx)
+        });
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_collections(organization_panel.clone(), cx)
+        });
+        let organization_subscription =
+            cx.subscribe(&organization_panel, |this: &mut Self, _, event, cx| {
+                if matches!(
+                    event,
+                    crate::views::organization_panel::OrganizationPanelEvent::Filter
+                ) && !matches!(this.content, Content::Vault(_))
+                {
+                    this.nav = NavView::Vault;
+                    this.sidebar
+                        .update(cx, |sidebar, cx| sidebar.set_active(NavView::Vault, cx));
+                    this.show_vault(cx);
+                }
+            });
+        let sync_scheduler = if cx.has_global::<crate::demo::DemoMode>() {
+            cx.spawn(async |_, _| {})
+        } else {
+            crate::sync_scheduler::start(app_state.clone(), cx)
+        };
+        let recovery_reminder = if cx.has_global::<crate::demo::DemoMode>() {
+            cx.spawn(async |_, _| {})
+        } else {
+            Self::start_recovery_reminder(app_state.clone(), cx)
+        };
         let mut this = Self {
             app_state,
             sidebar,
+            organization_panel,
             nav: NavView::Vault,
             content: Content::Placeholder(""),
             edit_modal: None,
             _edit_subscription: None,
-            _subscriptions: Vec::new(),
+            _subscriptions: vec![organization_subscription],
             _sync_scheduler: sync_scheduler,
             recovery_status: None,
             _recovery_reminder: recovery_reminder,
@@ -207,7 +236,8 @@ impl AppShell {
     fn show_vault(&mut self, cx: &mut Context<Self>) {
         let browser = cx.new({
             let app_state = self.app_state.clone();
-            move |cx| VaultBrowser::new(app_state, cx)
+            let organization_panel = self.organization_panel.clone();
+            move |cx| VaultBrowser::new(app_state, organization_panel, cx)
         });
         let subscription = cx.subscribe(&browser, |this, _browser, event, cx| match event {
             VaultBrowserEvent::ItemSelected(id) => this.show_item_detail(id.clone(), cx),
@@ -517,4 +547,104 @@ fn placeholder(palette: &Palette, name: &'static str) -> impl IntoElement {
                 .text_color(palette.on_surface_variant)
                 .child(format!("{name} isn't ported yet")),
         )
+}
+
+#[cfg(test)]
+mod organization_tests {
+    use super::*;
+    use crate::modal_test_support as ui;
+    use gpui::{size, Modifiers, TestAppContext};
+    use vela_desktop_core::vault::VaultItem;
+
+    #[gpui::test]
+    fn collections_use_sidebar_on_desktop_and_header_on_small_windows(cx: &mut TestAppContext) {
+        let demo = crate::demo::DemoVault::new().unwrap();
+        cx.update(|cx| cx.set_global(crate::demo::DemoMode));
+        let (shell, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            AppShell::new(demo.state.clone(), cx)
+        });
+        for (width, height) in [(1280., 820.), (800., 700.), (360., 480.), (1280., 820.)] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            let lock = ui::bounds(cx, "sidebar-lock");
+            assert!(lock.bottom() <= px(height));
+            if width >= 1024. {
+                assert!(
+                    cx.debug_bounds("collections").is_none(),
+                    "desktop must not duplicate the collection navigator"
+                );
+                let create = ui::bounds(cx, "new-folder");
+                assert!(create.right() <= px(256.));
+                cx.simulate_mouse_move(create.center(), None, Modifiers::default());
+                cx.simulate_click(create.center(), Modifiers::default());
+                cx.run_until_parked();
+                assert!(ui::bounds(cx, "collections-dialog").right() <= px(width));
+                let close = ui::bounds(cx, "close-collections");
+                cx.simulate_mouse_move(close.center(), None, Modifiers::default());
+                cx.simulate_click(close.center(), Modifiers::default());
+                cx.run_until_parked();
+            } else {
+                assert!(cx.debug_bounds("new-folder").is_none());
+                let browse = ui::bounds(cx, "collections");
+                assert!(
+                    browse.left() >= px(64.) && browse.right() <= px(width),
+                    "collection picker overflow at {width}: {browse:?}"
+                );
+            }
+        }
+        let panel = shell.read_with(cx, |shell, _| shell.organization_panel.clone());
+        let folder = demo.state.vault.read().organization.folders[0].id;
+        let selector: &'static str = Box::leak(format!("org-folder-{folder}").into_boxed_str());
+        let bounds = ui::bounds(cx, selector);
+        cx.simulate_mouse_move(bounds.center(), None, Modifiers::default());
+        cx.simulate_click(bounds.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.new_item_organization().folder_id),
+            Some(folder.to_string())
+        );
+        let scope = ui::bounds(cx, "include-subfolders");
+        assert!(
+            scope.size.height <= px(28.) && scope.size.width < px(300.),
+            "subfolder checkbox should stay compact: {scope:?}"
+        );
+        let matching_count = |panel: &crate::views::organization_panel::OrganizationPanel| {
+            let vault = demo.state.vault.read();
+            vault
+                .items
+                .iter()
+                .filter(|item| panel.matches(item, &vault.organization))
+                .count()
+        };
+        let before = panel.read_with(cx, |panel, _| matching_count(panel));
+        cx.simulate_mouse_move(scope.center(), None, Modifiers::default());
+        cx.simulate_click(scope.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert!(panel.read_with(cx, |panel, _| matching_count(panel)) < before);
+        // Exercise detail navigation without starting the login's perpetual
+        // TOTP refresh task: run_until_parked must be able to reach idle.
+        let note_id = {
+            let vault = demo.state.vault.read();
+            vault
+                .items
+                .iter()
+                .find(|item| matches!(item, VaultItem::SecureNote { .. }))
+                .expect("demo vault contains a secure note")
+                .id()
+                .to_string()
+        };
+        shell.update(cx, |shell, cx| shell.show_item_detail(note_id, cx));
+        cx.run_until_parked();
+        assert!(shell.read_with(cx, |shell, _| matches!(shell.content, Content::ItemDetail(_))));
+        let all = ui::bounds(cx, "org-filter-all");
+        cx.simulate_mouse_move(all.center(), None, Modifiers::default());
+        cx.simulate_click(all.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert!(shell.read_with(cx, |shell, _| matches!(shell.content, Content::Vault(_))));
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.new_item_organization().folder_id),
+            Some(String::new())
+        );
+    }
 }

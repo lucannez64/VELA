@@ -4,100 +4,150 @@ import SwiftUI
 struct DevicesView: View {
     @StateObject private var vm: DevicesViewModel
 
+    @Environment(\.ink) private var ink
+    @Environment(\.dismiss) private var dismiss
+
     init(account: AccountViewModel) {
         _vm = StateObject(wrappedValue: DevicesViewModel(account: account))
     }
 
     var body: some View {
-        List {
-            Section("Enrolled Devices") {
-                if vm.devices.isEmpty {
-                    Text("No devices").foregroundStyle(.secondary)
-                }
-                ForEach(vm.devices) { device in
-                    row(device)
-                }
-            }
+        ZStack {
+            ink.bg.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    BackHead(title: "More / Devices") { dismiss() }
+                        .arrive(0)
 
-            Section("Temporary Web Sessions") {
-                if vm.webSessions.isEmpty {
-                    Text("No active web sessions").foregroundStyle(.secondary)
-                }
-                ForEach(vm.webSessions) { session in
-                    webSessionRow(session)
-                }
-            }
+                    HStack(alignment: .center) {
+                        InstrumentHeading(eyebrow: "03 / This device",
+                                          title: "Your devices.",
+                                          subtitle: "Every device that can open your vault.")
+                        InstrumentIconButton(icon: .refresh, label: "Refresh") { vm.refresh() }
+                            .disabled(vm.busy)
+                            .accessibilityIdentifier("refreshDevicesButton")
+                    }
+                    .arrive(1)
 
-            if !vm.status.isEmpty {
-                Section { Text(vm.status).font(.callout).foregroundStyle(.secondary) }
+                    GroupLabel(text: "01 / Enrolled devices")
+                        .arrive(2)
+                    InstrumentGroup {
+                        if vm.devices.isEmpty {
+                            FineText("No devices yet.").padding(15)
+                        } else {
+                            ForEach(vm.devices.indices, id: \.self) { index in
+                                if index > 0 { GroupDivider() }
+                                deviceRow(vm.devices[index])
+                            }
+                        }
+                    }
+                    .disabled(vm.busy)
+                    .arrive(3)
+
+                    GroupLabel(text: "02 / Web sessions")
+                        .arrive(4)
+                    InstrumentGroup {
+                        if vm.webSessions.isEmpty {
+                            FineText("No active web sessions.").padding(15)
+                        } else {
+                            ForEach(vm.webSessions.indices, id: \.self) { index in
+                                if index > 0 { GroupDivider() }
+                                webSessionRow(vm.webSessions[index])
+                            }
+                        }
+                    }
+                    .disabled(vm.busy)
+                    .arrive(5)
+
+                    if !vm.status.isEmpty {
+                        FineText(vm.status, size: 10)
+                            .padding(.top, 2)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+                .padding(.bottom, 32)
             }
+            .scrollIndicators(.hidden)
         }
-        .navigationTitle("Devices")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { vm.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .accessibilityIdentifier("refreshDevicesButton")
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear { vm.refresh() }
         // Auto-refresh web sessions every 30 s so a session approved by another
         // enrolled device becomes visible without a manual refresh.
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             vm.refresh()
         }
-        .disabled(vm.busy)
     }
 
-    private func row(_ device: VelaClient.DeviceInfo) -> some View {
+    private func deviceRow(_ device: VelaClient.DeviceInfo) -> some View {
         let isCurrent = device.id == vm.currentDeviceID
-        return HStack {
-            Image(systemName: device.device_type == "ios" ? "iphone" : "desktopcomputer")
-                .foregroundStyle(device.revoked ? Color.secondary : Color.green)
-            VStack(alignment: .leading, spacing: 2) {
+        let glyph: InstrumentIconName = (device.device_type == "ios" || device.device_type == "android")
+            ? .phone : .device
+        return HStack(spacing: 11) {
+            InstrumentAvatar(icon: glyph)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(device.name)
+                    .font(InstrumentFont.medium(13))
+                    .foregroundColor(ink.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 HStack(spacing: 6) {
-                    Text(device.name)
-                    if isCurrent { tag("This device", .green) }
-                    if device.pending { tag("Pending", .orange) }
-                    if device.revoked { tag("Revoked", .red) }
+                    Text(device.device_type)
+                        .font(InstrumentFont.body(10))
+                        .foregroundColor(ink.muted)
+                        .lineLimit(1)
+                    if isCurrent { InstrumentTag(text: "This device", kind: .ok) }
+                    if device.pending { InstrumentTag(text: "Pending", kind: .plain) }
+                    if device.revoked { InstrumentTag(text: "Revoked", kind: .risk) }
                 }
-                Text(device.device_type).font(.caption).foregroundStyle(.secondary)
             }
-            Spacer()
+            Spacer(minLength: 8)
             if !isCurrent && !device.revoked {
-                Button("Revoke", role: .destructive) { vm.revoke(device) }
-                    .buttonStyle(.bordered)
+                revokeButton { vm.revoke(device) }
             }
         }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .frame(minHeight: 63)
     }
 
     private func webSessionRow(_ session: VelaClient.WebSessionInfo) -> some View {
-        HStack {
-            Image(systemName: "globe")
-                .foregroundStyle(session.mode == "rw" ? Color.purple : Color.green)
-            VStack(alignment: .leading, spacing: 2) {
+        let readWrite = session.mode == "rw"
+        return HStack(spacing: 11) {
+            InstrumentAvatar(icon: .globe)
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text("Web Browser")
-                    tag(session.mode == "rw" ? "RW" : "RO",
-                        session.mode == "rw" ? .purple : .green)
+                    Text("Web browser")
+                        .font(InstrumentFont.medium(13))
+                        .foregroundColor(ink.text)
+                        .lineLimit(1)
+                    InstrumentTag(text: readWrite ? "RW" : "RO",
+                                  kind: readWrite ? TagKind.risk : TagKind.ok)
                 }
                 if let exp = session.expires_at {
-                    Text("Expires \(exp.prefix(16).replacingOccurrences(of: "T", with: " "))")
-                        .font(.caption).foregroundStyle(.secondary)
+                    FineText("Expires \(exp.prefix(16).replacingOccurrences(of: "T", with: " "))", size: 10)
+                } else {
+                    FineText("No expiry set", size: 10)
                 }
             }
-            Spacer()
-            Button("Revoke", role: .destructive) { vm.revokeWebSession(session) }
-                .buttonStyle(.bordered)
+            Spacer(minLength: 8)
+            revokeButton { vm.revokeWebSession(session) }
         }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .frame(minHeight: 63)
     }
 
-    private func tag(_ text: String, _ color: Color) -> some View {
-        Text(text)
-            .font(.caption2.bold())
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(color.opacity(0.2))
-            .foregroundStyle(color)
-            .clipShape(Capsule())
+    private func revokeButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("Revoke")
+                .font(InstrumentFont.body(11))
+                .foregroundColor(ink.red)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .overlay(Capsule().stroke(ink.red.opacity(0.3), lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(PressScaleStyle())
     }
 }

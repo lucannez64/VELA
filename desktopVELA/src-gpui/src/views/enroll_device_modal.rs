@@ -249,7 +249,7 @@ impl EnrollDeviceModal {
 
 impl Render for EnrollDeviceModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = crate::theme::current_palette(cx);
+        let palette = crate::modal::palette(cx);
         let close = crate::modal::close_button("enroll-v3-close", &palette).on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _, _, cx| this.close(cx)),
@@ -354,7 +354,8 @@ impl Render for EnrollDeviceModal {
                             this.close(cx);
                         }
                     },
-                )),
+                ))
+                .map(|card| crate::modal::animate(card, palette.instrument, false)),
             );
         crate::modal::present(window, overlay)
     }
@@ -372,7 +373,12 @@ impl EnrollDeviceModal {
         let expired = secs == Some(0);
 
         let qr_edge = (f32::from(window.viewport_size().height) - 300.).clamp(144., 280.);
-        el        .when_some(self.qr_image.clone(), |el, image| {
+        el.when(palette.instrument, |el| el.child(
+            div().py(px(8.))
+                .child(crate::instrument::mono("01 / CONNECT A DEVICE", palette.on_surface_variant))
+                .child(div().text_size(px(30.)).font_family(fonts::HEADLINE).mt(px(12.)).child("Your vault. Another device."))
+                .child(div().mt(px(8.)).text_size(px(13.)).text_color(palette.on_surface_variant).child("Scan to join, then verify the matching codes."))))
+        .when_some(self.qr_image.clone(), |el, image| {
             el.child(
                 div()
                     .w_full().max_w(px(qr_edge + 24.)).self_center()
@@ -705,6 +711,7 @@ fn modal_button(
         .min_h(px(44.))
         .py_3()
         .rounded_xl()
+        .when(palette.instrument, |el| el.rounded_full().border_1().border_color(palette.outline_variant).text_size(px(13.)))
         .flex()
         .items_center()
         .justify_center()
@@ -750,12 +757,16 @@ mod modal_tests {
             .unwrap();
         let _guard = runtime.enter();
         let directory = tempfile::tempdir().unwrap();
+        for instrument in [false, true] {
         for stage in 0..7 {
             for (width, height) in [(945., 508.), (360., 480.)] {
                 let state = ui::state(&directory);
                 let closes = Rc::new(Cell::new(0));
                 let (host, cx) = cx.add_window_view(|_, cx| {
                     ui::fonts(cx);
+                    cx.set_global(crate::instrument::ActiveInterface(if instrument {
+                        crate::instrument::InterfaceMode::Instrument
+                    } else { crate::instrument::InterfaceMode::Classic }));
                     let child = cx.new(|_| {
                         let code = "VELA-ENROLL:v3:synthetic-layout-verification";
                         EnrollDeviceModal {
@@ -833,6 +844,7 @@ mod modal_tests {
                 );
                 drop(host);
             }
+        }
         }
     }
 }

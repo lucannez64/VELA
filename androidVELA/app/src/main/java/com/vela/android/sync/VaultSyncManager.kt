@@ -7,6 +7,8 @@ import com.vela.android.core.Tombstone
 import com.vela.android.core.VaultItem
 import com.vela.android.core.VaultJson
 import com.vela.android.core.VaultStore
+import com.vela.android.core.rich
+import com.vela.android.core.withRich
 import com.vela.android.security.SecureVaultManager
 import com.vela.android.security.WebAuthnCeremony
 import kotlinx.coroutines.async
@@ -916,6 +918,7 @@ class VaultSyncManager(
         manifest: SyncManifest,
         baseLamport: Long
     ): RemoteVaultUpload = coroutineScope {
+        val uploadToken = if (vault.snapshot().schemaVersion == 2) client.activateRichSchema(startToken) ?: startToken else startToken
         val chunks = splitUtf8Chunks(VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8))
         val manifestById = manifest.chunks.associateBy { it.chunkId }
 
@@ -927,7 +930,7 @@ class VaultSyncManager(
             lamport
         }
 
-        var tokenRef = startToken
+        var tokenRef = uploadToken
         val tokenMutex = Mutex()
 
         val results = chunks.mapIndexed { index, chunk ->
@@ -1109,9 +1112,26 @@ internal fun mergeVaultStores(local: VaultStore, remote: VaultStore): VaultStore
         }
     }
 
+    val schemaVersion = maxOf(local.schemaVersion, remote.schemaVersion)
+    val organization = com.vela.android.core.VaultOrganization.merge(
+        com.vela.android.core.VaultOrganization(local.schemaVersion == 2,local.richEnvelope),
+        com.vela.android.core.VaultOrganization(remote.schemaVersion == 2,remote.richEnvelope))
+    // Items assigned to a folder or tag that the merged organization no longer
+    // has (deleted on another device) become unfiled/untagged, as on desktop
+    // and iOS. Otherwise every later save of them fails validation.
+    // Deterministic on every client, so timestamps are left alone.
+    val items = mergedItems.values.map { item ->
+        if (schemaVersion < 2 || (item.rich.folderId.isEmpty() && item.rich.tagIds.isEmpty())) item
+        else com.vela.android.core.VaultOrganization(true, organization.data).repair(item.rich)
+            .let { repaired -> if (repaired == item.rich) item else item.withRich(repaired) }
+    }
+
     return VaultStore(
-        items = mergedItems.values.sortedBy { it.name.lowercase() },
-        tombstones = pruneTombstones(tombstones)
+        items = items.sortedBy { it.name.lowercase() },
+        tombstones = pruneTombstones(tombstones),
+        schemaVersion = schemaVersion,
+        richEnvelope = organization.data,
+        opaqueItems = mergeOpaqueItems(local.opaqueItems, remote.opaqueItems, tombstoneById)
     )
 }
 
@@ -1232,4 +1252,18 @@ data class V3EnrollmentLocator(val grantId: String, val serverUrl: String) {
             )
         }
     }
+}
+
+private fun mergeOpaqueItems(local: List<String>, remote: List<String>, deleted: Map<String, com.vela.android.core.Tombstone>): List<String> {
+    val values = linkedMapOf<String,String>()
+    (local + remote).forEach { raw ->
+        val record = org.json.JSONObject(raw); val id = record.getString("id")
+        fun stamp(value: org.json.JSONObject): java.time.Instant = java.time.Instant.parse(value.optString("updatedAt", value.optString("updated_at")))
+        val now = stamp(record)
+        if (deleted[id]?.deletedAt?.let { it >= now } != true) {
+            val old = values[id]
+            if (old == null || now >= stamp(org.json.JSONObject(old))) values[id] = raw
+        }
+    }
+    return values.values.toList()
 }

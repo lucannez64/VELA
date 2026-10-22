@@ -1,3 +1,4 @@
+use crate::rich_items as vela_core_rich;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -27,6 +28,8 @@ pub enum ItemType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultMeta {
+    #[serde(default, flatten)]
+    pub rich: vela_core_rich::RichItemData,
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -92,7 +95,7 @@ pub enum VaultItem {
         cvv: String,
         #[serde(default)]
         pin: Option<String>,
-        #[serde(default, alias = "cardholder_name")]
+        #[serde(default, alias = "cardholderName")]
         cardholder_name: Option<String>,
     },
     SecureNote {
@@ -104,9 +107,9 @@ pub enum VaultItem {
     Identity {
         #[serde(flatten)]
         meta: VaultMeta,
-        #[serde(alias = "first_name")]
+        #[serde(alias = "firstName")]
         first_name: String,
-        #[serde(alias = "last_name")]
+        #[serde(alias = "lastName")]
         last_name: String,
         ssn: String,
     },
@@ -395,6 +398,10 @@ impl VaultItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "VaultStoreRepr")]
 pub struct VaultStore {
+    #[serde(default, rename = "schemaVersion", skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
+    #[serde(default, flatten)]
+    pub organization: vela_core_rich::OrganizationData,
     pub items: Vec<VaultItem>,
     #[serde(default)]
     pub tombstones: Vec<Tombstone>,
@@ -411,6 +418,7 @@ pub struct VaultStore {
 impl PartialEq for VaultStore {
     fn eq(&self, other: &Self) -> bool {
         self.items == other.items && self.tombstones == other.tombstones
+            && self.schema_version == other.schema_version && self.organization == other.organization
     }
 }
 
@@ -424,6 +432,10 @@ impl PartialEq for VaultStore {
 /// it O(1).
 #[derive(Deserialize)]
 struct VaultStoreRepr {
+    #[serde(default, rename = "schemaVersion")]
+    schema_version: Option<u32>,
+    #[serde(default, flatten)]
+    organization: vela_core_rich::OrganizationData,
     items: Vec<VaultItem>,
     #[serde(default)]
     tombstones: Vec<Tombstone>,
@@ -432,6 +444,8 @@ struct VaultStoreRepr {
 impl From<VaultStoreRepr> for VaultStore {
     fn from(repr: VaultStoreRepr) -> Self {
         let mut store = Self {
+            schema_version: repr.schema_version,
+            organization: repr.organization,
             items: repr.items,
             tombstones: repr.tombstones,
             item_index: HashMap::new(),
@@ -450,6 +464,8 @@ impl Default for VaultStore {
 impl VaultStore {
     pub fn new() -> Self {
         Self {
+            schema_version: None,
+            organization: Default::default(),
             items: Vec::new(),
             tombstones: Vec::new(),
             item_index: HashMap::new(),
@@ -741,6 +757,7 @@ mod tests {
         let now = Utc::now();
         VaultItem::Login {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: id.to_string(),
                 name: url.to_string(),
                 notes: Some("note".to_string()),
@@ -768,6 +785,7 @@ mod tests {
     fn zeroizing_an_item_clears_every_secret_field() {
         let now = Utc::now();
         let meta = |id: &str| VaultMeta {
+                rich: Default::default(),
             id: id.to_string(),
             name: "Bank".into(),
             notes: None,
@@ -828,6 +846,7 @@ mod tests {
     fn debug_never_prints_a_secret() {
         let now = Utc::now();
         let meta = |id: &str| VaultMeta {
+                rich: Default::default(),
             id: id.to_string(),
             name: "Bank".into(),
             notes: None,

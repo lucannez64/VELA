@@ -21,10 +21,17 @@ targets:
     sources:
       - path: Sources
       - path: Shared
+      - path: Resources
     info:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: VELA
+        # Instrument typefaces (same files as Android's res/font).
+        UIAppFonts:
+          - Inter-Regular.ttf
+          - Inter-Medium.ttf
+          - SpaceGrotesk-Medium.ttf
+          - JetBrainsMono-Regular.ttf
         NSFaceIDUsageDescription: VELA uses Face ID to unlock your vault.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:

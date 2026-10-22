@@ -5,6 +5,15 @@ import VelaCore
 /// vended by VelaCore.xcframework). All payloads are UTF-8 JSON; every returned
 /// pointer is freed here.
 enum VelaCoreFFI {
+    static func richItems(_ request: [String: Any]) throws -> [String: Any] {
+        let raw = json(request).withCString { consume(vela_ffi_rich_items_json($0)) }
+        guard let data = raw.data(using: .utf8), let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "VELA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not process richer-item data"])
+        }
+        if let error = result["error"] as? String { throw NSError(domain: "VELA", code: 1, userInfo: [NSLocalizedDescriptionKey: error]) }
+        return result
+    }
+
     private static func consume(_ ptr: UnsafeMutablePointer<CChar>?) -> String {
         guard let ptr = ptr else { return "" }
         defer { vela_ffi_free_string(ptr) }

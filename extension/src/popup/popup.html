@@ -703,85 +703,28 @@
       to   { opacity: 1; transform: translateX(-50%) translateY(0); }
     }
   </style>
+<link rel="stylesheet" href="../shared/instrument-fonts.css"><link rel="stylesheet" href="instrument.css">
 </head>
-<body>
-  <!-- Header -->
-  <div class="header">
-    <div class="header-logo">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-        <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7l-9-5z" fill="currentColor"/>
-      </svg>
-    </div>
-    <div class="header-brand">
-      <div class="header-title">VELA</div>
-      <div class="header-subtitle">Password Manager</div>
-    </div>
-  </div>
-
-  <!-- Status Bar -->
-  <div class="status-bar" id="statusBar">
-    <div class="status-indicator disconnected" id="statusIndicator"></div>
-    <span id="statusText">Checking connection…</span>
-  </div>
-
-  <!-- Lookalike / homograph warning -->
-  <div class="phish-warning" id="phishWarning" hidden>
-    <span class="phish-warning-icon">⚠</span>
-    <span id="phishWarningText"></span>
-  </div>
-
-  <!-- Main Content -->
-  <div class="main-content" id="mainContent">
-    <div class="loading-spinner" id="loadingSpinner">
-      <div class="spinner"></div>
-    </div>
-  </div>
-
-  <!-- Email alias providers -->
-  <div class="alias-section" id="aliasSection">
-    <div class="alias-header" id="aliasToggle">
-      <span>Email aliases</span>
-      <span class="alias-badge" id="aliasBadge">Off</span>
-      <svg class="alias-header-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-    </div>
-    <div class="alias-body" id="aliasBody" hidden>
-      <div class="alias-hint">
-        Mint a throwaway address with the password generator, so sites never
-        see your real email. Your token stays in this browser and is sent only
-        to the provider you pick.
-      </div>
-      <div>
-        <div class="alias-field-label">Provider</div>
-        <select class="alias-select" id="aliasProvider">
-          <option value="">None</option>
-          <option value="addyio">addy.io</option>
-          <option value="simplelogin">SimpleLogin</option>
-          <option value="relay">Firefox Relay</option>
-        </select>
-      </div>
-      <div id="aliasConfigRows" hidden>
-        <div class="alias-field-label" id="aliasKeyLabel">API token</div>
-        <input class="alias-input" id="aliasKey" type="password" placeholder="" autocomplete="off"/>
-        <div class="alias-field-label" style="margin-top:8px">Server (optional, for self-hosted)</div>
-        <input class="alias-input" id="aliasBase" type="url" placeholder="Official server" autocomplete="off"/>
-        <div class="alias-hint" id="aliasKeyHint" style="margin-top:4px"></div>
-      </div>
-      <div class="alias-actions" id="aliasActions" hidden>
-        <button class="alias-btn alias-btn-primary" id="aliasSave">Connect</button>
-        <button class="alias-btn alias-btn-ghost" id="aliasDisconnect">Disconnect</button>
-      </div>
-      <div class="alias-status" id="aliasStatus"></div>
-    </div>
-  </div>
-
+<body data-view="site">
+  <header class="instrument-header"><span class="instrument-mark" id="instrumentMark"></span><strong>VELA</strong><span class="header-spacer"></span><div class="status-bar" id="statusBar"><span class="status-indicator disconnected" id="statusIndicator"></span><span id="statusText">Connecting…</span></div></header>
+  <main class="instrument-scroll">
+    <section id="siteView" class="instrument-view" aria-label="This site">
+      <label class="instrument-search"><span id="searchIcon"></span><input id="loginSearch" type="search" placeholder="Search this site’s accounts" aria-label="Search this site's accounts" autocomplete="off"><kbd>/</kbd></label>
+      <div class="phish-warning" id="phishWarning" hidden><span class="phish-warning-icon">!</span><span id="phishWarningText"></span></div>
+      <div class="instrument-hero" id="siteHero"><span class="instrument-mono">THIS SITE</span><h1 id="siteDomain">Your active page</h1><span class="hero-match" id="siteMatch">Waiting for your vault</span><div class="hero-bottom"><span id="siteCount">00</span><span id="siteCountLabel">Saved accounts</span></div></div>
+      <div class="instrument-types" role="group" aria-label="Item type"><button type="button" data-item-type="login" aria-pressed="true">Logins</button><button type="button" data-item-type="card" aria-pressed="false">Cards</button><button type="button" data-item-type="identity" aria-pressed="false">Identities</button></div>
+      <div class="main-content" id="mainContent"><div class="loading-spinner" id="loadingSpinner"><div class="spinner"></div></div></div>
+      <div class="instrument-quick"><button data-view="generate" id="quickGenerator"></button><button data-view="more" id="quickAliases"></button></div>
+    </section>
+    <section id="generateView" class="instrument-view" hidden aria-label="Password generator"><div class="instrument-page-head"><span class="instrument-mono">03 / GENERATOR</span><h2>Make it hard to guess.</h2></div>
   <!-- Password generator -->
   <div class="alias-section" id="genSection">
-    <div class="alias-header" id="genToggle">
+    <div class="alias-header" id="genToggle" role="button" tabindex="0" aria-expanded="true">
       <span>Password generator</span>
       <span class="alias-badge" id="genBadge">Random</span>
       <svg class="alias-header-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="alias-body" id="genBody" hidden>
+    <div class="alias-body" id="genBody">
       <div class="gen-mode">
         <button class="gen-mode-btn active" id="genModeRandom" type="button">Random</button>
         <button class="gen-mode-btn" id="genModePassphrase" type="button">Passphrase</button>
@@ -844,7 +787,7 @@
     </div>
   </div>
 
-  <!-- Per-site autofill settings -->
+</section><section id="moreView" class="instrument-view" hidden aria-label="More"><div class="instrument-page-head"><span class="instrument-mono">04 / THIS BROWSER</span><h2>A little more control.</h2></div><button id="manageVaultBtn" class="footer-btn">Folders, tags &amp; rich items ↗</button><label class="instrument-theme-label" for="instrumentTheme">Appearance<select id="instrumentTheme"><option value="night">Night</option><option value="paper">Paper</option><option value="macchiato">Catppuccin Macchiato</option><option value="latte">Catppuccin Latte</option></select></label>  <!-- Per-site autofill settings -->
   <div class="alias-section" id="siteSection">
     <div class="alias-header" id="siteToggle">
       <span>This site</span>
@@ -859,6 +802,43 @@
         <label><input type="checkbox" id="siteNeverSave"/> Never save logins here</label>
       </div>
       <div class="alias-status" id="siteStatus"></div>
+    </div>
+  </div>
+
+  <!-- Email alias providers -->
+  <div class="alias-section" id="aliasSection">
+    <div class="alias-header" id="aliasToggle">
+      <span>Email aliases</span>
+      <span class="alias-badge" id="aliasBadge">Off</span>
+      <svg class="alias-header-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="alias-body" id="aliasBody" hidden>
+      <div class="alias-hint">
+        Mint a throwaway address with the password generator, so sites never
+        see your real email. Your token stays in this browser and is sent only
+        to the provider you pick.
+      </div>
+      <div>
+        <div class="alias-field-label">Provider</div>
+        <select class="alias-select" id="aliasProvider">
+          <option value="">None</option>
+          <option value="addyio">addy.io</option>
+          <option value="simplelogin">SimpleLogin</option>
+          <option value="relay">Firefox Relay</option>
+        </select>
+      </div>
+      <div id="aliasConfigRows" hidden>
+        <div class="alias-field-label" id="aliasKeyLabel">API token</div>
+        <input class="alias-input" id="aliasKey" type="password" placeholder="" autocomplete="off"/>
+        <div class="alias-field-label" style="margin-top:8px">Server (optional, for self-hosted)</div>
+        <input class="alias-input" id="aliasBase" type="url" placeholder="Official server" autocomplete="off"/>
+        <div class="alias-hint" id="aliasKeyHint" style="margin-top:4px"></div>
+      </div>
+      <div class="alias-actions" id="aliasActions" hidden>
+        <button class="alias-btn alias-btn-primary" id="aliasSave">Connect</button>
+        <button class="alias-btn alias-btn-ghost" id="aliasDisconnect">Disconnect</button>
+      </div>
+      <div class="alias-status" id="aliasStatus"></div>
     </div>
   </div>
 
@@ -878,9 +858,5 @@
     </button>
   </div>
 
-  <script src="../shared/browser-polyfill.js"></script>
-  <script src="../shared/autofill-utils.js"></script>
-  <script src="wordlist.js"></script>
-  <script src="popup.js"></script>
-</body>
-</html>
+</section></main><nav class="instrument-dock" aria-label="Extension navigation"><button data-view="site" aria-current="page" id="navSite"></button><button data-view="search" id="navSearch"></button><button data-view="generate" id="navGenerate"></button><button data-view="more" id="navMore"></button></nav>
+<script src="../shared/browser-polyfill.js"></script><script src="../shared/autofill-utils.js"></script><script src="../shared/instrument-ui.js"></script><script src="wordlist.js"></script><script src="popup.js"></script></body></html>

@@ -20,6 +20,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
+import com.vela.android.ui.components.CredentialConfirmation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,7 +95,8 @@ class PasskeyPromptActivity : FragmentActivity() {
         }
 
         setContent {
-            VelaTheme {
+            val themeSetting by VelaRepositories.theme.theme.collectAsState()
+            VelaTheme(themeSetting) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     when (val shown = ceremony) {
                         is Ceremony.Get -> CeremonyScreen(
@@ -125,20 +128,14 @@ class PasskeyPromptActivity : FragmentActivity() {
 
     private fun showLockedDialog() {
         setContent {
-            VelaTheme {
-                AlertDialog(
-                    onDismissRequest = { finish() },
-                    title = { Text("VELA is locked") },
-                    text = { Text("Unlock VELA, then try the passkey again.") },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            startActivity(Intent(this, MainActivity::class.java))
-                            finish()
-                        }) { Text("Open VELA") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { finish() }) { Text("Cancel") }
-                    },
+            val themeSetting by VelaRepositories.theme.theme.collectAsState()
+            VelaTheme(themeSetting) {
+                CredentialConfirmation(
+                    title = "Your vault is locked.", relyingParty = "Unlock VELA to continue", account = "",
+                    detail = "Open your vault, then return to the app or website and try your passkey again.",
+                    approveLabel = "Open VELA",
+                    onApprove = { startActivity(Intent(this, MainActivity::class.java)); finish() },
+                    onCancel = { finish() }
                 )
             }
         }
@@ -438,34 +435,13 @@ private fun CeremonyScreen(
     onApprove: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-        Text(rpId, style = MaterialTheme.typography.bodyLarge)
-        Text(
-            "For $account, requested by $detail.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        if (errorText != null) {
-            Text(errorText, color = MaterialTheme.colorScheme.error)
-        }
-        Spacer(Modifier.height(8.dp))
-        when (stage) {
-            PasskeyPromptActivity.Stage.Working -> CircularProgressIndicator()
-            PasskeyPromptActivity.Stage.Done -> {}
-            else -> {
-                Button(
-                    onClick = onApprove,
-                    enabled = stage == PasskeyPromptActivity.Stage.Confirm,
-                ) {
-                    Text("Approve")
-                }
-                OutlinedButton(onClick = onCancel) { Text("Cancel") }
-            }
-        }
-    }
+    CredentialConfirmation(
+        title = title, relyingParty = rpId, account = account, detail = "Requested by $detail.",
+        error = errorText,
+        busy = stage == PasskeyPromptActivity.Stage.Verifying || stage == PasskeyPromptActivity.Stage.Working,
+        approveEnabled = stage == PasskeyPromptActivity.Stage.Confirm,
+        showActions = stage != PasskeyPromptActivity.Stage.Working && stage != PasskeyPromptActivity.Stage.Done,
+        approveLabel = if (title.startsWith("Create")) "Create passkey" else "Sign in with passkey",
+        onApprove = onApprove, onCancel = onCancel
+    )
 }

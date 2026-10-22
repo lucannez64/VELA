@@ -59,7 +59,17 @@ class MainActivity : FragmentActivity() {
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The OS owns the launch window; the app switches to its normal theme
+        // immediately. No timer keeps the splash up after content is ready.
+        setTheme(R.style.Theme_VELA)
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            splashScreen.setOnExitAnimationListener { splash ->
+                splash.animate().alpha(0f)
+                    .setDuration(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 160L else 0L)
+                    .withEndAction { splash.remove() }.start()
+            }
+        }
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         VelaRepositories.security.onLocked = { cancelBackgroundSync() }
         pendingAutofillFill = parseAutofillRequest(intent)
@@ -84,19 +94,47 @@ class MainActivity : FragmentActivity() {
                     itemCount = items.size,
                     items = items,
                     onAddItem = { item ->
-                        VelaRepositories.vault.addItem(item)
-                        VelaRepositories.audit.record("item_added", item.type.name.lowercase())
-                        requestSync("after-save")
+                        if (VelaRepositories.vault.richerVaultReadOnly) {
+                            android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                            false
+                        } else {
+                            // A rejected write (validation, storage) is shown, never a crash.
+                            runCatching { VelaRepositories.vault.addItem(item) }
+                                .onSuccess {
+                                    VelaRepositories.audit.record("item_added", item.type.name.lowercase())
+                                    requestSync("after-save")
+                                }
+                                .onFailure { showWriteError(it) }
+                                .isSuccess
+                        }
                     },
                     onUpdateItem = { item ->
-                        VelaRepositories.vault.updateItem(item)
-                        VelaRepositories.audit.record("item_updated", item.type.name.lowercase())
-                        requestSync("after-save")
+                        if (VelaRepositories.vault.richerVaultReadOnly) {
+                            android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                            false
+                        } else {
+                            runCatching { VelaRepositories.vault.updateItem(item) }
+                                .onSuccess {
+                                    VelaRepositories.audit.record("item_updated", item.type.name.lowercase())
+                                    requestSync("after-save")
+                                }
+                                .onFailure { showWriteError(it) }
+                                .isSuccess
+                        }
                     },
                     onDeleteItem = { id ->
-                        VelaRepositories.vault.deleteItem(id)
-                        VelaRepositories.audit.record("item_deleted", id.take(8))
-                        requestSync("after-save")
+                        if (VelaRepositories.vault.richerVaultReadOnly) {
+                            android.widget.Toast.makeText(this@MainActivity, "Upgrade VELA to edit this vault.", android.widget.Toast.LENGTH_LONG).show()
+                            false
+                        } else {
+                            runCatching { VelaRepositories.vault.deleteItem(id) }
+                                .onSuccess {
+                                    VelaRepositories.audit.record("item_deleted", id.take(8))
+                                    requestSync("after-save")
+                                }
+                                .onFailure { showWriteError(it) }
+                                .isSuccess
+                        }
                     },
                     onLock = {
                         VelaRepositories.audit.record("vault_locked")
@@ -447,6 +485,10 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun showWriteError(error: Throwable) {
+        android.widget.Toast.makeText(this, error.message ?: "Could not save this change.", android.widget.Toast.LENGTH_LONG).show()
+    }
+
     /** Push a local edit now instead of waiting for the next timer tick. */
     private fun requestSync(why: String) {
         if (!VelaRepositories.security.session.value.unlocked) return
@@ -661,7 +703,8 @@ class MainActivity : FragmentActivity() {
                         VelaRepositories.security.setError("Biometric prompt did not return a cipher")
                         return
                     }
-                    onCipher(authenticatedCipher)
+                    runCatching { onCipher(authenticatedCipher) }
+                        .onFailure { VelaRepositories.security.setError(it.message ?: "Could not open the vault") }
                 }
 
                 override fun onAuthenticationFailed() {

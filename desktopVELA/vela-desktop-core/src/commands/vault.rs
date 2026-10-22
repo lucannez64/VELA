@@ -38,6 +38,30 @@ fn save_vault(state: &AppState) -> Result<(), String> {
         .map_err(|e| format!("Failed to save vault: {e}"))
 }
 
+fn validate_rich_item(state: &AppState, item: &VaultItem) -> Result<(), String> {
+    let vault = state.vault.read();
+    if vault.schema_version.unwrap_or(1) > 2 { return Err("Upgrade VELA to edit this vault".into()); }
+    let rich = &item.meta().rich;
+    if rich.has_data() && vault.schema_version != Some(2) { return Err("Enable folders and richer items first".into()); }
+    let mut checked = rich.clone();
+    let existing = vault.get_item(item.id()).map(|i| &i.meta().rich);
+    // Future field types are read-only, but an unrelated edit must preserve them.
+    if let Some(fields) = &mut checked.custom_fields {
+        fields.retain(|f| !matches!(f.kind, vela_core::rich_items::CustomFieldType::Unknown(_))
+            || !existing.and_then(|r| r.custom_fields.as_ref()).is_some_and(|old| old.contains(f)));
+    }
+    if let Some(urls) = &mut checked.additional_urls {
+        urls.retain(|u| !matches!(u.match_mode, vela_core::rich_items::UrlMatch::Unknown(_))
+            || !existing.and_then(|r| r.additional_urls.as_ref()).is_some_and(|old| old.contains(u)));
+    }
+    checked.validate_for_write().map_err(|e| e.to_string())?;
+    if let Some(folder) = rich.folder_id.as_ref().filter(|s| !s.is_empty()) {
+        if uuid::Uuid::parse_str(folder).ok().and_then(|id| vault.organization.folder(id)).is_none() { return Err("Folder no longer exists".into()); }
+    }
+    if rich.tag_ids.as_ref().is_some_and(|tags| tags.iter().any(|id| vault.organization.tag(*id).is_none())) { return Err("A selected tag no longer exists".into()); }
+    Ok(())
+}
+
 pub async fn add_item(state: &Arc<AppState>, item: VaultItem) -> Result<VaultItem, String> {
     // Without this, a locked vault silently no-ops the persist step below
     // (save_vault is a no-op with no crypto key) while still mutating the
@@ -45,14 +69,14 @@ pub async fn add_item(state: &Arc<AppState>, item: VaultItem) -> Result<VaultIte
     // item is then lost on next unlock/reload with no error surfaced.
     require_unlocked(state)?;
 
-    let mut vault = state.vault.write();
+    validate_rich_item(state, &item)?;
     let now = Utc::now();
     let new_id = Uuid::new_v4().to_string();
     let new_item = item.with_id(new_id).with_updated_at(now);
-    vault.add_item(new_item.clone());
-    drop(vault);
-
-    save_vault(state)?;
+    super::organization::transaction(state, |vault| {
+        vault.add_item(new_item.clone());
+        Ok(())
+    })?;
 
     record_audit_event(
         state,
@@ -82,6 +106,11 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
         match vault.get_item(item.id()) {
             Some(existing) if existing.is_received_share() => {
                 return Err("Cannot modify a received shared item".to_string());
+            }
+            // An edit never changes what an item is. Replacing a passkey with
+            // a login of the same ID would destroy its private key.
+            Some(existing) if existing.item_type() != item.item_type() => {
+                return Err("This item's type cannot be changed".to_string());
             }
             Some(existing) => item.preserving_app_ids(existing),
             None => item,
@@ -114,15 +143,13 @@ pub async fn update_item(state: &Arc<AppState>, item: VaultItem) -> Result<Vault
             None => item,
         }
     };
-    let (updated, item_type) = {
-        let mut vault = state.vault.write();
+    validate_rich_item(state, &item)?;
+    let (updated, item_type) = super::organization::transaction(state, |vault| {
         let updated = item.with_updated_at(Utc::now());
         let item_type = format!("{:?}", updated.item_type()).to_lowercase();
         vault.update_item(updated.clone());
-        (updated, item_type)
-    };
-
-    save_vault(state)?;
+        Ok((updated, item_type))
+    })?;
     let _ = crate::sharing::push_sent_share_update_inner(state, &updated).await;
 
     record_audit_event(state, AuditAction::ItemUpdated { item_type });
@@ -141,6 +168,11 @@ pub async fn delete_item(state: &Arc<AppState>, id: &str) -> Result<(), String> 
 
     let item_type = {
         let vault = state.vault.read();
+        // Re-saving a newer-schema vault here would drop fields this build
+        // does not know, exactly like an edit would.
+        if vault.schema_version.unwrap_or(1) > 2 {
+            return Err("Upgrade VELA to edit this vault".to_string());
+        }
         if let Some(item) = vault.get_item(id) {
             if item.is_received_share() {
                 return Err("Cannot delete a received shared item".to_string());
@@ -156,11 +188,10 @@ pub async fn delete_item(state: &Arc<AppState>, id: &str) -> Result<(), String> 
         session.get_device_id().map(|s| s.to_string())
     };
 
-    let mut vault = state.vault.write();
-    vault.delete_item(id, device_id.as_deref());
-    drop(vault);
-
-    save_vault(state)?;
+    super::organization::transaction(state, |vault| {
+        vault.delete_item(id, device_id.as_deref());
+        Ok(())
+    })?;
 
     record_audit_event(state, AuditAction::ItemDeleted { item_type: item_type.clone() });
 
@@ -656,6 +687,7 @@ pub fn import_vault_bitwarden_json(state: &Arc<AppState>, data: &str) -> Result<
 
             let item = VaultItem::Login {
                 meta: crate::vault::VaultMeta {
+                rich: Default::default(),
                     id: Uuid::new_v4().to_string(),
                     name,
                     notes: entry.description,
@@ -788,6 +820,7 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
                     };
                     let item = VaultItem::Login {
                         meta: crate::vault::VaultMeta {
+                rich: Default::default(),
                             id: Uuid::new_v4().to_string(),
                             name,
                             notes,
@@ -814,6 +847,7 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
                     // note twice yields two notes rather than a lost one.
                     let item = VaultItem::SecureNote {
                         meta: crate::vault::VaultMeta {
+                rich: Default::default(),
                             id: Uuid::new_v4().to_string(),
                             name,
                             notes: None,
@@ -868,6 +902,12 @@ pub fn import_vault_file(state: &Arc<AppState>, data: &str) -> Result<ImportResu
 
 #[derive(Debug, Serialize, Deserialize)]
 struct VelaArchive {
+    #[serde(default, rename = "schemaVersion")]
+    schema_version: Option<u32>,
+    #[serde(default, flatten)]
+    organization: vela_core::rich_items::OrganizationData,
+    #[serde(default)]
+    tombstones: Vec<crate::vault::Tombstone>,
     kind: String,
     version: u32,
     items: Vec<VaultItem>,
@@ -894,11 +934,14 @@ pub fn export_vault_encrypted(state: &Arc<AppState>, passphrase: &str) -> Result
         ));
     }
 
-    let items = state.vault.read().items.clone();
+    let vault = state.vault.read().clone();
     let payload = VelaArchive {
+        schema_version: vault.schema_version,
+        organization: vault.organization,
+        tombstones: vault.tombstones,
         kind: ARCHIVE_KIND.to_string(),
         version: ARCHIVE_VERSION,
-        items,
+        items: vault.items,
     };
     let plaintext =
         serde_json::to_vec(&payload).map_err(|e| format!("Failed to serialize export: {e}"))?;
@@ -910,7 +953,7 @@ pub fn export_vault_encrypted(state: &Arc<AppState>, passphrase: &str) -> Result
 /// Open a `.vela` archive and return its items without touching the vault —
 /// separated from [`import_vela_archive`] so the UI can validate the
 /// passphrase before choosing what to do with the contents.
-pub fn open_vela_archive(data: &[u8], passphrase: &str) -> Result<Vec<VaultItem>, String> {
+fn open_archive(data: &[u8], passphrase: &str) -> Result<VelaArchive, String> {
     let plaintext = zeroize::Zeroizing::new(
         vela_crypto::password_kdf::open_with_password(passphrase.as_bytes(), data)
             .map_err(|_| "Wrong passphrase, or not a VELA archive".to_string())?,
@@ -923,7 +966,11 @@ pub fn open_vela_archive(data: &[u8], passphrase: &str) -> Result<Vec<VaultItem>
             archive.kind, archive.version
         ));
     }
-    Ok(archive.items)
+    Ok(archive)
+}
+
+pub fn open_vela_archive(data: &[u8], passphrase: &str) -> Result<Vec<VaultItem>, String> {
+    Ok(open_archive(data, passphrase)?.items)
 }
 
 /// Restore a `.vela` archive. Dedup is by item id: the archive is the same
@@ -935,7 +982,10 @@ pub fn import_vela_archive(
     data: &[u8],
     passphrase: &str,
 ) -> Result<ImportResult, String> {
-    let items = open_vela_archive(data, passphrase)?;
+    let archive = open_archive(data, passphrase)?;
+    if archive.schema_version.unwrap_or(1) > 2 { return Err("Upgrade VELA to restore this archive".into()); }
+    if archive.schema_version == Some(2) && state.vault.read().schema_version != Some(2) { return Err("Enable folders and richer items before restoring this archive".into()); }
+    let items = archive.items;
     require_unlocked(state)?;
 
     let total_count = items.len() as u32;
@@ -943,6 +993,9 @@ pub fn import_vela_archive(
     let mut duplicates_count = 0u32;
     {
         let mut vault = state.vault.write();
+        vault.organization = vault.organization.merged(&archive.organization).map_err(|e| e.to_string())?;
+        vault.schema_version = vault.schema_version.max(archive.schema_version);
+        if vault.items.is_empty() { vault.tombstones = archive.tombstones; }
         for item in items {
             if vault.get_item(item.id()).is_some() {
                 duplicates_count += 1;
@@ -1057,10 +1110,64 @@ mod tests {
         (dir, state)
     }
 
+    fn passkey(id: &str) -> VaultItem {
+        serde_json::from_value(serde_json::json!({
+            "item_type": "passkey", "id": id, "name": "Key", "rp_id": "example.test",
+            "private_key": "never-lose-this"
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_edit_cannot_turn_a_passkey_into_another_type() {
+        let (_dir, state) = unlocked_state();
+        state.vault.write().add_item(passkey("pk"));
+        let replacement = login("Key", "https://example.test", "user", "pass").with_id("pk".into());
+        assert!(update_item(&state, replacement).await.is_err());
+        let vault = state.vault.read();
+        match vault.get_item("pk") {
+            Some(VaultItem::Passkey { private_key, .. }) => assert_eq!(private_key, "never-lose-this"),
+            other => panic!("passkey was replaced: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_desktop_edit_does_not_pin_later_remote_changes_as_conflicts() {
+        let (_dir, state) = unlocked_state();
+        state.store.save_device_id("desktop-test-device").unwrap();
+        let item = add_item(&state, login("Original", "https://example.test", "u", "p")).await.unwrap();
+        let edited = update_item(&state, item.with_name("Desktop edit".into())).await.unwrap();
+        let mut local = state.vault.read().clone();
+        let mut remote = crate::vault::VaultStore::new();
+        remote.add_item(edited.with_name("Later remote edit".into())
+            .with_updated_at(edited.updated_at() + chrono::Duration::seconds(1)));
+        let conflicts = crate::sync::merge_server_vaults(&mut local, remote, "desktop-test-device").unwrap();
+        assert!(conflicts.is_empty());
+        assert_eq!(local.get_item(edited.id()).unwrap().name(), "Later remote edit");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_future_schema_vault_is_rejected() {
+        let (_dir, state) = unlocked_state();
+        state.vault.write().add_item(passkey("pk"));
+        state.vault.write().schema_version = Some(3);
+        assert!(delete_item(&state, "pk").await.unwrap_err().contains("Upgrade VELA"));
+        assert!(state.vault.read().get_item("pk").is_some());
+    }
+
+    #[tokio::test]
+    async fn passkeys_cannot_be_shared() {
+        let (_dir, state) = unlocked_state();
+        state.vault.write().add_item(passkey("pk"));
+        let error = crate::sharing::send_share(&state, "pk", "recipient", false).await.unwrap_err();
+        assert!(error.contains("Passkeys cannot be shared"));
+    }
+
     fn login(name: &str, url: &str, user: &str, pass: &str) -> VaultItem {
         let now = Utc::now();
         VaultItem::Login {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: Uuid::new_v4().to_string(),
                 name: name.into(),
                 notes: None,
@@ -1282,6 +1389,7 @@ mod tests {
         let stored_key = "c2VjcmV0LXNjYWxhcg";
         let added = add_item(&state, VaultItem::Passkey {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: Uuid::new_v4().to_string(),
                 name: "github.com".into(),
                 notes: None,
@@ -1493,6 +1601,7 @@ mod tests {
             let now = Utc::now();
             vault.add_item(VaultItem::SecureNote {
                 meta: VaultMeta {
+                rich: Default::default(),
                     id: "note-1".into(),
                     name: "Recovery codes".into(),
                     notes: None,
@@ -1508,6 +1617,7 @@ mod tests {
             });
             vault.add_item(VaultItem::Passkey {
                 meta: VaultMeta {
+                rich: Default::default(),
                     id: "pk-1".into(),
                     name: "github".into(),
                     notes: None,
@@ -1581,6 +1691,7 @@ mod tests {
             vault.add_item(login("=HYPERLINK(evil)", "https://evil.example", "bob", "+1234"));
             vault.add_item(VaultItem::SecureNote {
                 meta: VaultMeta {
+                rich: Default::default(),
                     id: "note-1".into(),
                     name: "note".into(),
                     notes: None,
@@ -1621,6 +1732,7 @@ mod tests {
             // Non-login items are excluded from the export.
             vault.add_item(VaultItem::SecureNote {
                 meta: crate::vault::VaultMeta {
+                rich: Default::default(),
                     id: "n1".into(),
                     name: "note".into(),
                     notes: None,

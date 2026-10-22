@@ -18,6 +18,8 @@ interface SendPayload {
 }
 
 interface Secret {
+  custom_fields?: {label:string;type:string;value:unknown}[];
+  additional_urls?: {url:string;match:string}[];
   v?: number;
   kind?: string;
   name?: string;
@@ -117,6 +119,14 @@ function renderSecret(secret: Secret, meta: SendPayload): void {
     children.push(el('div', { class: 'field' }, [el('div', { class: 'field-label' }, ['Website']), link]));
   }
   if (secret.notes) children.push(field('Notes', secret.notes));
+  for (const entry of secret.custom_fields ?? []) {
+    if (['text','concealed','boolean'].includes(entry.type)) {
+      const node=field(entry.label,entry.type==='concealed'?'••••••••':String(entry.value ?? ''),{copy:entry.type!=='concealed'});
+      if(entry.type==='concealed'){const reveal=el('button',{type:'button',class:'ghost'},['Reveal']);let shown=false;reveal.onclick=()=>{shown=!shown;node.querySelector('.field-value')!.textContent=shown?String(entry.value ?? ''):'••••••••';reveal.textContent=shown?'Hide':'Reveal';};node.append(reveal);}
+      children.push(node);
+    }
+  }
+  for (const site of secret.additional_urls ?? []) children.push(field(`Additional site (${site.match})`,site.url,{copy:true}));
 
   const notices: string[] = [];
   if (meta.view_once) notices.push('This link was view-once, so the server has already deleted it.');

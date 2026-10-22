@@ -181,18 +181,20 @@ struct SyncEngine {
         }
         recordSeenClocks(manifest.chunks.filter { readIDs.contains($0.chunk_id) })
         var remoteStore = VaultStore(items: [])
-        if !remoteJSON.isEmpty,
-           let store = try? JSONDecoder().decode(VaultStore.self, from: Data(remoteJSON.utf8)) {
-            remoteStore = store
+        if !remoteJSON.isEmpty {
+            remoteStore = try JSONDecoder().decode(VaultStore.self, from: Data(remoteJSON.utf8))
         }
 
         // ── 2. Merge (tombstone-aware) and persist locally.
-        let merged = VaultMerge.mergeStores(local: localStore, remote: remoteStore)
+        let merged = try VaultMerge.mergeStores(local: localStore, remote: remoteStore)
         try repo.save(merged, rms: rms)
 
         // ── 3. Push when the vault changed, or to migrate off a legacy layout.
         let alreadyDataLayout = !dataIDs.isEmpty
         if !alreadyDataLayout || merged != remoteStore {
+            // A schema-2 vault (folders, custom fields) first raises the
+            // account floor so older clients cannot overwrite it.
+            if merged.schemaVersion >= 2 { try await client.activateRichSchema() }
             let full = String(decoding: try JSONEncoder().encode(merged), as: UTF8.self)
             let pieces = Self.splitUtf8(full, Self.chunkPlaintextSize)
             var lamport = manifest.chunks.map { $0.lamport_clock }.max() ?? 0

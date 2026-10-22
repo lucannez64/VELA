@@ -290,17 +290,16 @@ pub fn handle_get_logins(message: &Value) -> Value {
 }
 
 pub fn handle_get_cards(message: &Value) -> Value {
-    // Cards are never offered passively: the extension only asks after it has
-    // seen a payment form and the user explicitly invoked VELA. The page URL
-    // still travels along because the desktop keys the release (cap + audit)
-    // to the site it was filled on.
+    // Focus requests metadata; selecting a suggestion releases the full card.
+    // A missing flag means metadata only; full details need an explicit choice.
+    let user_initiated = message.get("userInitiated").and_then(Value::as_bool).unwrap_or(false);
     let response = send_to_desktop(
         json!({
             "msg_type": "autofill_request",
             "payload": {
                 "credential_type": "card",
                 "domain": message.get("url").cloned().unwrap_or(Value::Null),
-                "user_initiated": true,
+                "user_initiated": user_initiated,
             },
         }),
         false,
@@ -332,12 +331,46 @@ pub fn handle_get_cards(message: &Value) -> Value {
             "id": item.get("id"),
             "name": item.get("name"),
             "cardholderName": item.get("cardholder_name").cloned().unwrap_or(Value::Null),
-            "number": item.get("number").cloned().unwrap_or(Value::Null),
+            "last4": item.get("last4").cloned().unwrap_or(Value::Null),
+            "number": if user_initiated { item.get("number").cloned().unwrap_or(Value::Null) } else { Value::Null },
             "exp": item.get("exp").cloned().unwrap_or(Value::Null),
-            "cvv": item.get("cvv").cloned().unwrap_or(Value::Null),
+            "cvv": if user_initiated { item.get("cvv").cloned().unwrap_or(Value::Null) } else { Value::Null },
         }));
     }
     json!({ "success": true, "cards": cards })
+}
+
+pub fn handle_get_identities(message: &Value) -> Value {
+    // A missing flag means metadata only; full details need an explicit choice.
+    let user_initiated = message.get("userInitiated").and_then(Value::as_bool).unwrap_or(false);
+    let response = send_to_desktop(json!({
+        "msg_type": "autofill_request",
+        "payload": { "credential_type": "identity", "domain": message.get("url"), "user_initiated": user_initiated }
+    }), false);
+    let Some(response) = response else { return json!({"success": false, "identities": []}); };
+    if !matches!(response.get("msg_type").and_then(Value::as_str), Some("AutofillResponse") | Some("autofill_response")) {
+        return json!({"success": false, "identities": []});
+    }
+    let payload = &response["payload"];
+    if payload["requires_biometric"].as_bool().unwrap_or(false) {
+        return json!({"success": false, "requires_biometric": true, "identities": []});
+    }
+    let identities: Vec<_> = payload["items"].as_array().into_iter().flatten()
+        .filter(|i| i["item_type"] == "identity" || (!user_initiated && i["item_type"] == "item"))
+        .map(|i| {
+            let mut identity = serde_json::Map::new();
+            for key in ["id", "name"] { identity.insert(key.to_string(), i[key].clone()); }
+            if user_initiated {
+                for key in ["firstName", "lastName", "middleName", "email", "phone", "company", "addresses"] {
+                    identity.insert(key.to_string(), i[key].clone());
+                }
+            } else {
+                let addresses: Vec<_> = i["addresses"].as_array().into_iter().flatten().map(|a| json!({"id":a["id"], "label":a["label"]})).collect();
+                identity.insert("addresses".into(), json!(addresses));
+            }
+            Value::Object(identity)
+        }).collect();
+    json!({"success": true, "identities": identities})
 }
 
 pub fn handle_get_totp_code(message: &Value) -> Value {
@@ -618,10 +651,12 @@ pub fn handle_not_implemented(_message: &Value) -> Value {
 pub fn handle_message(message: &Value) -> Value {
     let action = message.get("action").and_then(Value::as_str).unwrap_or("");
     let handler = match action {
+        "vaultManage" => handle_vault_manage,
         "ping" => handle_ping,
         "openVault" | "openSettings" => handle_open_vault,
         "getLogins" | "getAvailableLogins" => handle_get_logins,
         "getCards" => handle_get_cards,
+        "getIdentities" => handle_get_identities,
         "getTotpCode" => handle_get_totp_code,
         "saveCredentials" => handle_save_credentials,
         "passkeyCreate" => handle_passkey_create,
@@ -636,4 +671,13 @@ pub fn handle_message(message: &Value) -> Value {
         }
     };
     handler(message)
+}
+
+
+pub fn handle_vault_manage(message: &Value) -> Value {
+    match send_to_desktop(json!({"msg_type":"vault_manage", "payload":message["request"]}), true) {
+        Some(response) if response["msg_type"] == "vault_manage_response" => json!({"success":true,"data":response["payload"]}),
+        Some(response) => json!({"success":false,"error":response["payload"]["message"].as_str().unwrap_or("Editor request failed")}),
+        None => json!({"success":false,"error":"Open and unlock VELA Desktop first"}),
+    }
 }

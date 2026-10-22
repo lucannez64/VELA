@@ -270,14 +270,13 @@ fun DevicesScreen(onBack: () -> Unit, onWebAccess: () -> Unit = {}) {
 
 @Composable
 internal fun ScreenHeader(title: String, onBack: () -> Unit, trailing: @Composable (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Column {
-            Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Desktop parity", color = VelaColors.TextMuted, fontSize = 12.sp)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            VelaButton("Back", onBack, style = VelaButtonStyle.TextOnly, fullWidth = false)
             trailing?.invoke()
-            VelaButton("Back", onBack, style = VelaButtonStyle.Surface, fullWidth = false)
         }
+        Spacer(Modifier.height(12.dp))
+        com.vela.android.ui.components.InstrumentHeading("THIS DEVICE / ${title.uppercase()}", title)
+        Spacer(Modifier.height(10.dp))
     }
 }

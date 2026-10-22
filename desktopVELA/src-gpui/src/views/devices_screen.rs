@@ -8,6 +8,9 @@
 //! `qrcode`+`image` crates) plus an out-of-band verification code and a
 //! manual-entry fallback, mirroring the original's QR-carousel modal.
 
+#[path = "devices_instrument.rs"]
+mod instrument_view;
+
 use std::sync::Arc;
 
 use chrono::{DateTime, Local, Utc};
@@ -98,13 +101,16 @@ impl DevicesScreen {
     pub fn new(app_state: Arc<AppState>, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<crate::theme::ActiveTheme>(|_, cx| cx.notify())
             .detach();
-        Self::load_devices(&app_state, cx);
-        Self::load_web_sessions(&app_state, cx);
+        let demo = cx.has_global::<crate::demo::DemoMode>();
+        if !demo {
+            Self::load_devices(&app_state, cx);
+            Self::load_web_sessions(&app_state, cx);
+        }
 
         Self {
             app_state,
-            devices: None,
-            web_sessions: None,
+            devices: demo.then(crate::demo::devices),
+            web_sessions: demo.then(Vec::new),
             error: None,
             hide_revoked: false,
             revoke_confirm: None,
@@ -125,7 +131,7 @@ impl DevicesScreen {
             granting_web_access: false,
             web_access_error: None,
             web_access_success: None,
-            _pulse_task: animation::spawn_pulse_ticker(cx),
+            _pulse_task: if crate::instrument::is_instrument(cx) { Task::ready(()) } else { animation::spawn_pulse_ticker(cx) },
         }
     }
 
@@ -453,7 +459,9 @@ impl Render for DevicesScreen {
         div()
             .relative()
             .size_full()
-            .child(
+            .child(if crate::instrument::is_instrument(cx) {
+                self.render_instrument(window, cx)
+            } else {
                 div()
                     .id("devices-scroll")
                     .size_full()
@@ -646,8 +654,8 @@ impl Render for DevicesScreen {
                         narrow,
                         window,
                         cx,
-                    )),
-            )
+                    )).into_any_element()
+            })
             .when_some(self.revoke_confirm.clone(), |el, device| {
                 el.child(revoke_modal(
                     &palette,
@@ -1878,7 +1886,10 @@ fn web_access_modal(
     screen: &DevicesScreen,
     window: &mut Window,
     cx: &mut Context<DevicesScreen>,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
+    if crate::instrument::is_instrument(cx) {
+        return screen.instrument_web_access_modal(window, cx);
+    }
     let show_advanced = screen.web_access_show_advanced;
     let mode = screen.web_access_mode;
     let ttl_secs = screen.web_access_ttl_secs;
@@ -2156,7 +2167,7 @@ fn web_access_modal(
                                 }),
                         ),
                 ),
-        )
+        ).into_any_element()
 }
 
 fn mode_button(

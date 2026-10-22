@@ -9,6 +9,12 @@ object NativeVelaCore {
     }.exceptionOrNull()
     private val loaded: Boolean = loadFailure == null
 
+    fun richItems(request: JSONObject): JSONObject {
+        val raw = callNative { nativeRichItemsJson(request.toString()) } ?: error("Update the native VELA bridge to edit richer items")
+        return JSONObject(raw).also { result -> result.optString("error").takeIf { it.isNotEmpty() }?.let { error(it) } }
+    }
+    private external fun nativeRichItemsJson(request: String): String
+
     fun isAvailable(): Boolean = loaded
 
     fun versionOrNull(): String? {

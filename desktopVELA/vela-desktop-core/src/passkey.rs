@@ -231,6 +231,7 @@ pub fn make_credential(
     let item_id = uuid::Uuid::new_v4().to_string();
     let item = VaultItem::Passkey {
         meta: VaultMeta {
+                rich: Default::default(),
             id: item_id.clone(),
             name: if request.rp_name.is_empty() {
                 request.rp_id.clone()

@@ -11,16 +11,16 @@ use gpui::{
     div, prelude::*, px, Context, Entity, EventEmitter, IntoElement, MouseButton, Render,
     SharedString, Window,
 };
-use gpui_elements::editable_text::{text_area, text_input, EditableTextState, StringStorage};
+use gpui_elements::editable_text::{text_area, EditableTextState, StringStorage};
 
 use vela_desktop_core::commands::vault::add_item;
 use vela_desktop_core::vault::{VaultItem, VaultMeta};
 use vela_desktop_core::AppState;
 
 use crate::animation;
-use crate::background::GuardedSpawn;
 use crate::fonts;
 use crate::theme::Palette;
+use crate::ui::{self, labeled_field, toggle_row};
 use crate::views::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -28,6 +28,7 @@ enum ItemKind {
     Login,
     CreditCard,
     SecureNote,
+    Identity,
 }
 
 pub enum AddItemModalEvent {
@@ -43,7 +44,12 @@ impl EventEmitter<AddItemModalEvent> for AddItemModal {}
 
 pub struct AddItemModal {
     app_state: Arc<AppState>,
+    rich_editor: Entity<crate::views::rich_editor::RichEditor>,
+    first_name: Entity<EditableTextState>,
+    last_name: Entity<EditableTextState>,
+    ssn: Entity<EditableTextState>,
     kind: ItemKind,
+    choosing_kind: bool,
     name: Entity<EditableTextState>,
     username: Entity<EditableTextState>,
     password: Entity<EditableTextState>,
@@ -80,7 +86,19 @@ impl AddItemModal {
         let field = |cx: &mut Context<Self>| {
             cx.new(|cx| EditableTextState::new(StringStorage::default(), cx))
         };
+        let rich_editor = cx.new(|cx| {
+            crate::views::rich_editor::RichEditor::new(
+                app_state.clone(),
+                Default::default(),
+                "login",
+                cx,
+            )
+        });
         Self {
+            rich_editor,
+            first_name: field(cx),
+            last_name: field(cx),
+            ssn: field(cx),
             app_state,
             kind: ItemKind::Login,
             name: field(cx),
@@ -102,14 +120,42 @@ impl AddItemModal {
             needs_reauth: false,
             allow_downgrade: false,
             editing: None,
+            choosing_kind: true,
         }
+    }
+
+    pub fn new_in_collection(
+        app_state: Arc<AppState>,
+        rich: vela_desktop_core::rich_items::RichItemData,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new(app_state, cx);
+        this.rich_editor = cx.new(|cx| {
+            crate::views::rich_editor::RichEditor::new(this.app_state.clone(), rich, "login", cx)
+        });
+        this
     }
 
     /// Pre-fills the form from an existing item and switches `submit` to
     /// call `update_item` instead of `add_item`.
     pub fn new_edit(app_state: Arc<AppState>, item: VaultItem, cx: &mut Context<Self>) -> Self {
         let mut this = Self::new(app_state, cx);
+        this.rich_editor = cx.new(|cx| {
+            crate::views::rich_editor::RichEditor::new(
+                this.app_state.clone(),
+                item.meta().rich.clone(),
+                if item.item_type() == vela_desktop_core::vault::ItemType::Identity {
+                    "identity"
+                } else if item.item_type() == vela_desktop_core::vault::ItemType::Login {
+                    "login"
+                } else {
+                    "other"
+                },
+                cx,
+            )
+        });
         this.editing = Some(item.meta().clone());
+        this.choosing_kind = false;
         this.name.update(cx, |s, cx| s.emplace(item.name(), cx));
         if let Some(notes) = item.notes() {
             this.notes.update(cx, |s, cx| s.emplace(notes, cx));
@@ -158,6 +204,18 @@ impl AddItemModal {
                 this.secure_note_content
                     .update(cx, |s, cx| s.emplace(content, cx));
             }
+            VaultItem::Identity {
+                first_name,
+                last_name,
+                ssn,
+                ..
+            } => {
+                this.kind = ItemKind::Identity;
+                this.first_name
+                    .update(cx, |s, cx| s.emplace(first_name, cx));
+                this.last_name.update(cx, |s, cx| s.emplace(last_name, cx));
+                this.ssn.update(cx, |s, cx| s.emplace(ssn, cx));
+            }
             _ => {}
         }
         this
@@ -202,9 +260,10 @@ impl AddItemModal {
             (!n.trim().is_empty()).then_some(n)
         };
         let now = Utc::now();
-        let meta = match &self.editing {
+        let mut meta = match &self.editing {
             // Preserve everything the form doesn't itself edit.
             Some(original) => VaultMeta {
+                rich: Default::default(),
                 id: original.id.clone(),
                 name,
                 notes,
@@ -216,6 +275,7 @@ impl AddItemModal {
                 share_recipient: original.share_recipient.clone(),
             },
             None => VaultMeta {
+                rich: Default::default(),
                 id: String::new(), // replaced by add_item's own new UUID
                 name,
                 notes,
@@ -227,6 +287,7 @@ impl AddItemModal {
                 share_recipient: None,
             },
         };
+        meta.rich = self.rich_editor.read(cx).value(cx);
         let item = match self.kind {
             ItemKind::Login => {
                 let totp = {
@@ -261,6 +322,12 @@ impl AddItemModal {
                     (!c.trim().is_empty()).then_some(c)
                 },
             },
+            ItemKind::Identity => VaultItem::Identity {
+                meta,
+                first_name: self.first_name.read(cx).as_str().into(),
+                last_name: self.last_name.read(cx).as_str().into(),
+                ssn: self.ssn.read(cx).as_str().into(),
+            },
             ItemKind::SecureNote => VaultItem::SecureNote {
                 title: meta.name.clone(),
                 meta,
@@ -275,18 +342,17 @@ impl AddItemModal {
         let app_state = self.app_state.clone();
         let is_edit = self.editing.is_some();
         cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn_guarded("save item", async move {
-                    if is_edit {
-                        vela_desktop_core::commands::vault::update_item(&app_state, item)
-                            .await
-                            .map(|_| ())
-                    } else {
-                        add_item(&app_state, item).await.map(|_| ())
-                    }
-                })
-                .await
-                .unwrap_or_else(|| Err("Saving the item failed unexpectedly".to_string()));
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                if is_edit {
+                    vela_desktop_core::commands::vault::update_item(&app_state, item)
+                        .await
+                        .map(|_| ())
+                } else {
+                    add_item(&app_state, item).await.map(|_| ())
+                }
+            })
+            .await
+            .unwrap_or_else(|_| Err("Saving the item failed unexpectedly".to_string()));
             this.update(cx, |this, cx| {
                 this.saving = false;
                 match result {
@@ -307,23 +373,13 @@ impl AddItemModal {
 
 impl Render for AddItemModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = crate::theme::current_palette(cx);
+        let palette = crate::modal::palette(cx);
+        let choosing = palette.instrument && self.choosing_kind;
 
         let mut body = div().flex().flex_col().gap_4().child(labeled_field(
             &palette,
             "NAME *",
-            text_input("field-name")
-                .state(self.name.downgrade())
-                .placeholder("Item name")
-                .caret_blink_interval_500ms()
-                .bg(palette.surface_container_highest)
-                .text_color(palette.on_surface)
-                .rounded_lg()
-                .p_3()
-                .w_full()
-                .min_h_auto()
-                .whitespace_nowrap()
-                .overflow_x_scroll(),
+            ui::text_field("field-name", &self.name, &palette).placeholder("Item name"),
         ));
 
         body = match self.kind {
@@ -331,18 +387,8 @@ impl Render for AddItemModal {
                 .child(labeled_field(
                     &palette,
                     "USERNAME",
-                    text_input("field-username")
-                        .state(self.username.downgrade())
-                        .placeholder("username@email.com")
-                        .caret_blink_interval_500ms()
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_lg()
-                        .p_3()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                    ui::text_field("field-username", &self.username, &palette)
+                        .placeholder("username@email.com"),
                 ))
                 .child(
                     div()
@@ -356,25 +402,14 @@ impl Render for AddItemModal {
                             // reveal toggle here (unlike SetupScreen's shared
                             // `passwordVisible`), so this stays permanently
                             // masked to match.
-                            text_input("field-password")
-                                .state(self.password.downgrade())
+                            ui::text_field("field-password", &self.password, &palette)
                                 .placeholder("Password")
-                                .caret_blink_interval_500ms()
                                 // Single-byte ASCII mask char — see
                                 // biometric_gate.rs's `mask_char` comment for
                                 // why '•' (multi-byte in UTF-8) misplaces the
                                 // caret against ordinary ASCII passwords.
                                 .mask_char(Some('*'))
-                                .font_family(fonts::MONO)
-                                .bg(palette.surface_container_highest)
-                                .text_color(palette.on_surface)
-                                .caret_color(palette.on_surface)
-                                .rounded_lg()
-                                .p_3()
-                                .w_full()
-                                .min_h_auto()
-                                .whitespace_nowrap()
-                                .overflow_x_scroll(),
+                                .font_family(fonts::MONO),
                         ))
                         .child(
                             div()
@@ -411,35 +446,15 @@ impl Render for AddItemModal {
                 .child(labeled_field(
                     &palette,
                     "WEBSITE URL",
-                    text_input("field-url")
-                        .state(self.url.downgrade())
-                        .placeholder("https://example.com")
-                        .caret_blink_interval_500ms()
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_lg()
-                        .p_3()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                    ui::text_field("field-url", &self.url, &palette)
+                        .placeholder("https://example.com"),
                 ))
                 .child(labeled_field(
                     &palette,
                     "TOTP SECRET",
-                    text_input("field-totp")
-                        .state(self.totp.downgrade())
+                    ui::text_field("field-totp", &self.totp, &palette)
                         .placeholder("Base32 secret or OTPAUTH URL")
-                        .caret_blink_interval_500ms()
-                        .font_family(fonts::MONO)
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_lg()
-                        .p_3()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                        .font_family(fonts::MONO),
                 ))
                 // M9a sign-in behaviour (same controls as the webview UI's
                 // AddItemModal "Sign-in behaviour" block). Without these the
@@ -506,19 +521,9 @@ impl Render for AddItemModal {
                 .child(labeled_field(
                     &palette,
                     "CARD NUMBER",
-                    text_input("field-card-number")
-                        .state(self.card_number.downgrade())
+                    ui::text_field("field-card-number", &self.card_number, &palette)
                         .placeholder("•••• •••• •••• ••••")
-                        .caret_blink_interval_500ms()
-                        .font_family(fonts::MONO)
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_lg()
-                        .p_3()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                        .font_family(fonts::MONO),
                 ))
                 .child(
                     div()
@@ -527,71 +532,38 @@ impl Render for AddItemModal {
                         .child(labeled_field(
                             &palette,
                             "EXPIRY",
-                            text_input("field-card-exp")
-                                .state(self.card_exp.downgrade())
+                            ui::text_field("field-card-exp", &self.card_exp, &palette)
                                 .placeholder("MM/YY")
-                                .caret_blink_interval_500ms()
                                 .font_family(fonts::MONO)
-                                .bg(palette.surface_container_highest)
-                                .text_color(palette.on_surface)
-                                .rounded_lg()
-                                .p_3()
-                                .flex_1()
-                                .min_h_auto()
-                                .whitespace_nowrap()
-                                .overflow_x_scroll(),
+                                .flex_1(),
                         ))
                         .child(labeled_field(
                             &palette,
                             "CVV",
-                            text_input("field-card-cvv")
-                                .state(self.card_cvv.downgrade())
+                            ui::text_field("field-card-cvv", &self.card_cvv, &palette)
                                 .placeholder("•••")
-                                .caret_blink_interval_500ms()
                                 .font_family(fonts::MONO)
-                                .bg(palette.surface_container_highest)
-                                .text_color(palette.on_surface)
-                                .rounded_lg()
-                                .p_3()
-                                .flex_1()
-                                .min_h_auto()
-                                .whitespace_nowrap()
-                                .overflow_x_scroll(),
+                                .flex_1(),
                         ))
                         .child(labeled_field(
                             &palette,
                             "PIN",
-                            text_input("field-card-pin")
-                                .state(self.card_pin.downgrade())
+                            ui::text_field("field-card-pin", &self.card_pin, &palette)
                                 .placeholder("••••")
-                                .caret_blink_interval_500ms()
                                 .font_family(fonts::MONO)
-                                .bg(palette.surface_container_highest)
-                                .text_color(palette.on_surface)
-                                .rounded_lg()
-                                .p_3()
-                                .flex_1()
-                                .min_h_auto()
-                                .whitespace_nowrap()
-                                .overflow_x_scroll(),
+                                .flex_1(),
                         )),
                 )
                 .child(labeled_field(
                     &palette,
                     "CARDHOLDER NAME",
-                    text_input("field-cardholder")
-                        .state(self.cardholder_name.downgrade())
-                        .placeholder("JOHN DOE")
-                        .caret_blink_interval_500ms()
-                        .bg(palette.surface_container_highest)
-                        .text_color(palette.on_surface)
-                        .rounded_lg()
-                        .p_3()
-                        .w_full()
-                        .min_h_auto()
-                        .whitespace_nowrap()
-                        .overflow_x_scroll(),
+                    ui::text_field("field-cardholder", &self.cardholder_name, &palette)
+                        .placeholder("JOHN DOE"),
                 )),
+            ItemKind::Identity => body
+                .child(labeled_field(&palette,"FIRST NAME",ui::text_field("identity-first",&self.first_name,&palette)))
+                .child(labeled_field(&palette,"LAST NAME",ui::text_field("identity-last",&self.last_name,&palette)))
+                .child(labeled_field(&palette,"IDENTITY NUMBER / SSN",ui::text_field("identity-ssn",&self.ssn,&palette).mask_char(Some('*')))),
             ItemKind::SecureNote => body.child(labeled_field(
                 &palette,
                 "CONTENT",
@@ -611,6 +583,17 @@ impl Render for AddItemModal {
             )),
         };
 
+        let rich_kind = match self.kind {
+            ItemKind::Login => "login",
+            ItemKind::Identity => "identity",
+            _ => "other",
+        };
+        self.rich_editor.update(cx, |rich, cx| {
+            if rich.set_kind(rich_kind) {
+                cx.notify();
+            }
+        });
+        body = body.child(self.rich_editor.clone());
         let close = crate::modal::close_button("close-modal", &palette).on_mouse_down(
             MouseButton::Left,
             cx.listener(|_this, _, _, cx| {
@@ -664,7 +647,25 @@ impl Render for AddItemModal {
                     cx.notify();
                 },
             ));
+        let tabs = tabs.child(kind_tab(
+            &palette,
+            "Identity",
+            self.kind == ItemKind::Identity,
+            window,
+            cx,
+            |this, cx| {
+                this.kind = ItemKind::Identity;
+                cx.notify();
+            },
+        ));
         let content = div()
+            .when(palette.instrument, |el| el.child(
+                div().pt(px(8.)).pb(px(24.))
+                    .child(crate::instrument::mono("01 / ITEM DETAILS", palette.on_surface_variant))
+                    .child(div().mt(px(12.)).font_family(fonts::HEADLINE).text_size(px(34.)).child(
+                        if self.editing.is_some() { "Make it current." } else { "Give it a place." }))
+                    .child(div().mt(px(8.)).text_size(px(13.)).text_color(palette.on_surface_variant)
+                        .child("Choose a type and add the details you want to keep in your vault."))))
             .child(tabs)
             .child(body)
             .when_some(self.error.clone(), |el, error| {
@@ -676,90 +677,74 @@ impl Render for AddItemModal {
                         .child(error),
                 )
             });
+        let content = if choosing {
+            let choices = [
+                (ItemKind::Login, "Login", "Username, password and sign-in details", "key"),
+                (ItemKind::CreditCard, "Card", "Payment details, always close at hand", "credit_card"),
+                (ItemKind::SecureNote, "Secure Note", "Private notes and recovery codes", "note"),
+                (ItemKind::Identity, "Identity", "Personal details for your forms", "person"),
+            ];
+            let mut grid = div().flex().flex_col().gap(px(12.));
+            for row in choices.chunks(2) {
+                grid = grid.child(div().flex().gap(px(12.)).children(row.iter().map(|(kind, label, description, glyph)| {
+                    let kind = *kind;
+                    div().id(SharedString::from(format!("choose-{label}"))).debug_selector(move || format!("choose-{label}"))
+                        .flex_1().min_w_0().p(px(18.)).rounded(px(20.)).bg(palette.surface_container_high)
+                        .border_1().border_color(palette.outline_variant).cursor_pointer()
+                        .hover(|el| el.border_color(palette.primary))
+                        .child(crate::instrument::icons::icon(glyph, px(24.), palette.on_surface))
+                        .child(div().mt(px(26.)).text_size(px(16.)).child(*label))
+                        .child(div().mt(px(6.)).text_size(px(12.)).line_height(px(18.)).text_color(palette.on_surface_variant).child(*description))
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                            this.kind = kind; this.choosing_kind = false; cx.notify();
+                        }))
+                })));
+            }
+            div().pt(px(12.))
+                .child(div().font_family(fonts::HEADLINE).text_size(px(34.)).child("What are you saving?"))
+                .child(div().mt(px(10.)).mb(px(24.)).text_size(px(13.)).text_color(palette.on_surface_variant)
+                    .child("Pick a type. You can add custom fields to any of them."))
+                .child(grid)
+        } else { content };
         let footer = div()
             .flex()
             .gap_4()
             .flex_shrink_0()
-            .child({
-                let hover_t = animation::hover_transition("cancel", window, cx);
-                let t = *hover_t.evaluate(window, cx);
-                let bg = animation::lerp_hsla(
-                    palette.surface_container_highest,
-                    palette.surface_bright,
-                    t,
-                );
-                div()
-                    .id("cancel")
+            .when(palette.instrument, |el| el.justify_end().gap(px(8.)))
+            .child(
+                ui::secondary_button("cancel".into(), "Cancel", &palette)
                     .flex_1()
-                    .py_3()
-                    .rounded_xl()
-                    .bg(bg)
-                    .text_color(palette.on_surface)
-                    .font_family(fonts::BODY)
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .child("Cancel")
-                    .on_hover(move |is_hovered, _, cx| {
-                        hover_t.update(cx, |v, cx| {
-                            *v = *is_hovered as u8 as f32;
-                            cx.notify();
-                        });
-                    })
+                    .when(palette.instrument, |el| el.flex_initial())
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|_this, _, _, cx| {
-                            cx.emit(AddItemModalEvent::Close);
+                        cx.listener(|this, _, _, cx| {
+                            if !this.saving {
+                                cx.emit(AddItemModalEvent::Close);
+                            }
                         }),
-                    )
-            })
-            .child({
-                let hover_t = animation::hover_transition("submit", window, cx);
-                let t = *hover_t.evaluate(window, cx);
-                let bg = animation::lerp_hsla(
-                    palette.primary,
-                    gpui::Hsla {
-                        a: 0.9,
-                        ..palette.primary
-                    },
-                    t,
-                );
-                div()
-                    .id("submit")
-                    .flex_1()
-                    .py_3()
-                    .rounded_xl()
-                    .bg(bg)
-                    .text_color(palette.on_primary)
-                    .font_family(fonts::BODY)
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .child(if self.saving {
+                    ),
+            )
+            .when(!choosing, |el| el.child(
+                ui::primary_button(
+                    "submit".into(),
+                    if self.saving {
                         "Saving…"
                     } else if self.editing.is_some() {
                         "Save Changes"
                     } else {
                         "Create Item"
-                    })
-                    .on_hover(move |is_hovered, _, cx| {
-                        hover_t.update(cx, |v, cx| {
-                            *v = *is_hovered as u8 as f32;
-                            cx.notify();
-                        });
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.submit(cx);
-                        }),
-                    )
-            });
+                    },
+                    &palette,
+                )
+                .flex_1()
+                .when(palette.instrument, |el| el.flex_initial())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| this.submit(cx)),
+                ),
+            ));
         let overlay = crate::modal::backdrop("add-item-backdrop")
+            .when(palette.instrument, |el| el.justify_end())
             .font_family(fonts::LABEL)
             .on_mouse_down(
                 MouseButton::Left,
@@ -768,8 +753,8 @@ impl Render for AddItemModal {
             .child(
                 crate::modal::frame(
                     "add-item-card",
-                    560.,
-                    640.,
+                    if palette.instrument { 620. } else { 560. },
+                    if palette.instrument { f32::from(window.viewport_size().height) } else { 640. },
                     header,
                     crate::modal::scroll_body("add-item-content", content),
                     footer,
@@ -777,7 +762,7 @@ impl Render for AddItemModal {
                 )
                 .map(|el| crate::keyboard::trap_tab(el, "add-item-card-trap", window, cx))
                 .on_key_down(crate::keyboard::submit_on_enter(cx, |this, _, cx| {
-                    if !this.saving {
+                    if !this.saving && !(crate::instrument::is_instrument(cx) && this.choosing_kind) {
                         this.submit(cx);
                     }
                 }))
@@ -788,88 +773,11 @@ impl Render for AddItemModal {
                             cx.emit(AddItemModalEvent::Close);
                         }
                     },
-                )),
+                ))
+                .map(|card| crate::modal::animate(card, palette.instrument, true)),
             );
         crate::modal::present(window, overlay)
     }
-}
-
-fn labeled_field(
-    palette: &Palette,
-    label: &'static str,
-    field: impl IntoElement,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            fonts::tracked_text(label, px(12.), 0.1)
-                .font_family(fonts::LABEL)
-                .text_xs()
-                .text_color(palette.outline),
-        )
-        .child(field)
-}
-
-/// One sign-in-behaviour toggle: label + subtitle on the left, a Material-style
-/// switch on the right, the whole row clickable. Mirrors settings_screen's
-/// switch rows; kept local because the visual is slightly denser here.
-fn toggle_row(
-    palette: &Palette,
-    id: &'static str,
-    checked: bool,
-    label: &'static str,
-    subtitle: &'static str,
-    on_toggle: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .flex()
-        .items_start()
-        .gap_3()
-        .py_2()
-        .cursor_pointer()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .flex_1()
-                .child(div().text_sm().text_color(palette.on_surface).child(label))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(palette.on_surface_variant)
-                        .child(subtitle),
-                ),
-        )
-        .child(switch_thumb(palette, checked))
-        .on_mouse_down(MouseButton::Left, on_toggle)
-}
-
-fn switch_thumb(palette: &Palette, checked: bool) -> impl IntoElement {
-    div()
-        .w(px(40.))
-        .h(px(24.))
-        .rounded_full()
-        .bg(if checked {
-            palette.primary
-        } else {
-            palette.surface_container_highest
-        })
-        .flex()
-        .items_center()
-        .px(px(2.))
-        .when(checked, |el| el.justify_end())
-        .when(!checked, |el| el.justify_start())
-        .child(
-            div()
-                .w(px(16.))
-                .h(px(16.))
-                .rounded_full()
-                .bg(gpui::rgb(0xffffff)),
-        )
 }
 
 fn kind_tab(
@@ -898,6 +806,7 @@ fn kind_tab(
         .flex_1()
         .py_2()
         .rounded_lg()
+        .when(palette.instrument, |el| el.rounded_full().border_1().border_color(if active { palette.primary } else { palette.outline_variant }))
         .bg(bg)
         .text_color(text)
         .font_family(fonts::LABEL)
@@ -945,6 +854,92 @@ mod modal_tests {
                     .overflow_hidden()
                     .child(self.child.clone()),
             )
+        }
+    }
+
+    #[gpui::test]
+    fn instrument_editor_is_a_drawer_with_fixed_actions(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let state = ui::state(&directory);
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            cx.set_global(crate::instrument::ActiveInterface(crate::instrument::InterfaceMode::Instrument));
+            let child = cx.new(|cx| { let mut editor = AddItemModal::new(state, cx); editor.choosing_kind = false; editor });
+            ui::Host { child }
+        });
+        for (width, height) in [(1440., 900.), (945., 1025.), (390., 620.)] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            // GPUI element animations use wall time, unlike executor timers.
+            // Let the 220 ms entrance finish before checking settled geometry.
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            let card = ui::bounds(cx, "add-item-card");
+            assert!(
+                (card.right() - px(width - 12.)).abs() < px(2.),
+                "drawer not right-aligned at {width}×{height}: {card:?}"
+            );
+            assert!(card.size.width <= px(620.));
+            let footer = ui::bounds(cx, "add-item-card-footer");
+            assert!(footer.bottom() <= px(height));
+            let content = ui::bounds(cx, "add-item-content");
+            cx.simulate_event(ScrollWheelEvent {
+                position: content.center(),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-2000.))),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            assert_eq!(ui::bounds(cx, "add-item-card-footer"), footer);
+        }
+    }
+
+    #[gpui::test]
+    fn rich_editor_actions_remain_readable_inside_scrolling_modal(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let state = ui::state(&directory);
+        state.vault.write().schema_version = Some(2);
+        let rich=serde_json::from_value(serde_json::json!({"customFields":[{"id":vela_desktop_core::Uuid::new_v4(),"label":"Recovery","type":"concealed","value":""}],"additionalUrls":[{"id":vela_desktop_core::Uuid::new_v4(),"url":"","match":"origin"}]})).unwrap();
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            ui::fonts(cx);
+            cx.set_global(crate::theme::ActiveTheme(crate::theme::ThemeId::Macchiato));
+            let child = cx.new(|cx| AddItemModal::new_in_collection(state, rich, cx));
+            ui::Host { child }
+        });
+        for (width, height) in [
+            (1280., 820.),
+            (945., 1025.),
+            (640., 600.),
+            (480., 480.),
+            (360., 480.),
+            (320., 480.),
+        ] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            let body = ui::bounds(cx, "add-item-content");
+            cx.simulate_event(ScrollWheelEvent {
+                position: body.center(),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-4000.))),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            for (id, min_width) in [
+                ("add-rich-field-label", 100.),
+                ("url-mode-0-label", 80.),
+                ("remove-url-0-label", 70.),
+                ("add-url-label", 50.),
+            ] {
+                let bounds = crate::ui::action_label_bounds(cx, id);
+                assert!(
+                    bounds.size.width >= px(min_width),
+                    "collapsed rich action at {width}×{height}: {id}: {bounds:?}"
+                );
+                assert!(
+                    bounds.left() >= px(0.) && bounds.right() <= px(width),
+                    "action overflow at {width}×{height}: {id}: {bounds:?}"
+                );
+            }
+            assert!(ui::bounds(cx, "add-item-card-footer").bottom() <= px(height));
         }
     }
 

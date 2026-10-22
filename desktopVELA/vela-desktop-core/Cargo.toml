@@ -65,6 +65,7 @@ zeroize = { version = "1", features = ["derive"] }
 # ECDSA stack. See src/credential_key.rs.
 p256 = { version = "0.13", features = ["ecdsa"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
+vela-core = { path = "../../libVELA/vela-core" }
 vela-client-recovery-policy = { path = "../../libVELA/vela-client-recovery-policy" }
 vela-sync-policy = { path = "../../libVELA/vela-sync-policy" }
 directories = "5"
@@ -153,7 +154,7 @@ security-framework = "3"
 # the raw Security keys so the evaluated LAContext can be handed to the Keychain
 # read (one prompt instead of two).
 security-framework-sys = "2"
-core-foundation = "0.10"
+core-foundation = "=0.10.0"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
 objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "LABiometryType"] }

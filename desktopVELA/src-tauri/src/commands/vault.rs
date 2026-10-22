@@ -228,3 +228,23 @@ pub async fn check_all_vault_passwords(
 ) -> Result<Vec<PasswordBreachResult>, String> {
     vela_desktop_core::breach::check_all_vault_passwords(&state).await
 }
+
+#[command]
+pub async fn get_organization(state: State<'_, Arc<AppState>>) -> Result<vela_desktop_core::commands::organization::OrganizationStatus, String> {
+    vela_desktop_core::commands::organization::get_organization(&state)
+}
+#[command]
+pub async fn activate_rich_items(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<vela_desktop_core::commands::organization::OrganizationStatus, String> {
+    let result = vela_desktop_core::commands::organization::activate_rich_items(&state).await?;
+    emit_vault_items_changed(&app); Ok(result)
+}
+#[command]
+pub async fn mutate_organization(app: AppHandle, state: State<'_, Arc<AppState>>, action: vela_desktop_core::commands::organization::OrganizationAction) -> Result<vela_desktop_core::commands::organization::OrganizationStatus, String> {
+    let result = vela_desktop_core::commands::organization::mutate_organization(&state, action)?;
+    emit_vault_items_changed(&app); Ok(result)
+}
+#[command]
+pub async fn assign_items(app: AppHandle, state: State<'_, Arc<AppState>>, changes: vela_desktop_core::commands::organization::AssignItems) -> Result<(), String> {
+    vela_desktop_core::commands::organization::assign_items(&state, changes)?;
+    emit_vault_items_changed(&app); Ok(())
+}

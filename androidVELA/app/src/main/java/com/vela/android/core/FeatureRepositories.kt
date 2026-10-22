@@ -351,6 +351,27 @@ class AuditLogRepository(context: Context) {
     }
 }
 
+/**
+ * Last-opened timestamps per item.
+ *
+ * Kept outside the audit log: opening the same login twice is not an event
+ * worth recording in the activity feed, but the overview needs an honest
+ * "recently opened" order.
+ */
+class RecentItemStore(context: Context) {
+    private val prefs = context.getSharedPreferences("vela_recent_items", Context.MODE_PRIVATE)
+
+    fun touch(itemId: String) {
+        prefs.edit().putLong(itemId, System.currentTimeMillis()).apply()
+    }
+
+    /** Item ids, most recently opened first. */
+    fun orderedIds(): List<String> = prefs.all.entries
+        .mapNotNull { (id, value) -> (value as? Long)?.let { id to it } }
+        .sortedByDescending { it.second }
+        .map { it.first }
+}
+
 object BreachCheckService {
     fun checkEmail(email: String): List<BreachEntry> {
         val encoded = URLEncoder.encode(email, Charsets.UTF_8.name())

@@ -81,6 +81,7 @@
 
   let velaActiveField = null;
   let velaDropdownEl = null;
+  let velaTotpTimer = null;
   let velaFieldIconEl = null;
   let velaSaveBarEl = null;
   let velaCurrentLogins = null;
@@ -142,6 +143,8 @@
       lastLocationHref = globalThis.location.href;
       pageDetails = null;
       velaCurrentLogins = null;
+      velaCurrentCards = null;
+      velaHideDropdown();
       velaLoadHostRisk();
       velaLoadSiteSettings();
     }
@@ -169,6 +172,15 @@
           handleFillForm(message);
           sendResponse({ success: true });
           break;
+        case "fillVaultItem": {
+          if (message.url !== location.href) { sendResponse({success:false, error:"The page changed."}); break; }
+          const kind = message.itemType === "card" ? velaIsCardField : velaIsIdentityField;
+          const fields = Array.from(document.querySelectorAll("input,select,textarea")).filter(el => kind(el) && velaVisibleField(el));
+          const anchor = fields.includes(document.activeElement) ? document.activeElement : fields[0];
+          const count = anchor ? (message.itemType === "card" ? velaFillCard(message.item, anchor) : velaFillIdentity(message.item, anchor, message.addressId)) : 0;
+          sendResponse({success:count > 0, error:count ? undefined : "No matching form fields on this page."});
+          break;
+        }
         case "fillWithLogin":
           fillWithLogin(message.login);
           sendResponse({ success: true });
@@ -1022,7 +1034,7 @@
       if (type === "checkbox") {
         element.checked = value === "true" || value === "✓";
       } else {
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(tagName === "textarea" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, "value")?.set;
         if (nativeInputValueSetter) {
           nativeInputValueSetter.call(element, value);
         } else {
@@ -1035,6 +1047,7 @@
       for (let i = 0; i < element.options.length; i++) {
         if (element.options[i].value === value || element.options[i].text === value) {
           element.selectedIndex = i;
+          element.dispatchEvent(new Event("input", { bubbles: true }));
           element.dispatchEvent(new Event("change", { bubbles: true }));
           break;
         }
@@ -1129,15 +1142,26 @@
     // Payment fields first: the card heuristics are deliberately narrow, but
     // they must win over the login ones so a cardholder field (which contains
     // "account") is not mistaken for a username.
+    // Cards and identities are not tied to a site, so focus alone (which a
+    // page can trigger itself) only shows the icon. The chooser, and the
+    // vault request behind it, wait for a click on the icon or ArrowDown.
     if (velaIsCardField(el)) {
       velaActiveField = el;
       velaCurrentCards = null;
-      if (velaHoveredField !== el) {
-        velaInjectFieldIcon(el);
-      }
+      velaInjectFieldIcon(el);
       return;
     }
 
+    if (velaIsIdentityField(el)) {
+      velaActiveField = el;
+      velaInjectFieldIcon(el);
+      return;
+    }
+    if (velaIsTotpInput(el)) {
+      velaActiveField = el;
+      velaInjectFieldIcon(el);
+      return;
+    }
     if (!velaIsAutofillable(el)) return;
 
     velaActiveField = el;
@@ -1173,7 +1197,7 @@
     setTimeout(() => {
       if (!velaDropdownEl) return;
       const active = document.activeElement;
-      if (active && velaDropdownEl.contains(active)) return;
+      if (active && (velaDropdownEl.contains(active) || velaFieldIconEl?.contains(active))) return;
       if (active && active === velaActiveField) return;
       velaHideDropdown();
     }, 200);
@@ -1182,8 +1206,8 @@
   function velaOnMouseOver(e) {
     if (velaSiteSettings.neverAutofill) return;
     const el = e.target;
-    if (!velaIsAutofillable(el) && !velaIsCardField(el)) return;
-    if (velaActiveField === el) return;
+    if (!velaIsAutofillable(el) && !velaIsCardField(el) && !velaIsTotpInput(el) && !velaIsIdentityField(el)) return;
+    if (velaActiveField === el || velaDropdownEl) return;
     if (velaHoveredField === el) return;
     velaHoveredField = el;
     if (!velaActiveField) velaRemoveFieldIcon();
@@ -1200,6 +1224,21 @@
     velaRemoveFieldIcon();
   }
 
+  // Releasing a credential needs a real user gesture. Page scripts can call
+  // `.click()` on our rows (the dropdown lives in the page DOM), so a row
+  // only acts on a trusted click, or on a click we dispatch ourselves from a
+  // trusted Enter/Space keypress.
+  let velaKeyboardActivation = null;
+  function velaActivateFromKey(e, item) {
+    if (!e.isTrusted || !item) return;
+    e.stopPropagation(); // The row and document key handlers must not activate twice.
+    velaKeyboardActivation = item;
+    try { item.click(); } finally { velaKeyboardActivation = null; }
+  }
+  function velaIsUserActivation(e) {
+    return e.isTrusted || (velaKeyboardActivation !== null && velaKeyboardActivation === e.currentTarget);
+  }
+
   function velaOnKeyDown(e) {
     if (e.key === "Escape" && velaDropdownEl) {
       e.stopPropagation();
@@ -1207,7 +1246,16 @@
       return;
     }
 
-    if (!velaDropdownEl) return;
+    if (!velaDropdownEl) {
+      // Cards and identities never open on focus alone (a page can focus a
+      // field itself). The keyboard equivalent of clicking the field icon:
+      if (e.key === "ArrowDown" && e.isTrusted && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        const field = e.target;
+        if (field === velaActiveField && velaIsCardField(field)) { e.preventDefault(); velaShowCardsForField(field); }
+        else if (field === velaActiveField && velaIsIdentityField(field)) { e.preventDefault(); velaShowIdentityDropdown(field); }
+      }
+      return;
+    }
 
     const items = Array.from(velaDropdownEl.querySelectorAll(".vela-dd-item"));
     if (!items.length) return;
@@ -1229,7 +1277,7 @@
         if (velaSelectedIndex >= 0 && items[velaSelectedIndex]) {
           e.preventDefault();
           e.stopPropagation();
-          items[velaSelectedIndex].click();
+          velaActivateFromKey(e, items[velaSelectedIndex]);
         }
         break;
       case "Tab":
@@ -1241,6 +1289,7 @@
   function velaUpdateSelection(items) {
     items.forEach((item, i) => {
       item.classList.toggle("vela-dd-item--selected", i === velaSelectedIndex);
+      item.setAttribute("aria-selected", String(i === velaSelectedIndex));
       if (i === velaSelectedIndex) {
         item.scrollIntoView({ block: "nearest" });
       }
@@ -1250,7 +1299,8 @@
   function velaOnDocClick(e) {
     if (!velaDropdownEl) return;
     const t = e.target;
-    if (t && t.hasAttribute("data-vela-ui")) return;
+    if (e.composedPath().some(node => node === velaDropdownEl || node === velaFieldIconEl)) return;
+    if (t?.closest?.("[data-vela-ui]")) return;
     if (!velaDropdownEl.contains(t) && t !== velaActiveField && t !== velaFieldIconEl) {
       velaHideDropdown();
     }
@@ -1263,6 +1313,9 @@
   // --- Field Icon ---
 
   function velaInjectFieldIcon(field) {
+    // Keep a hovered icon attached during the focus caused by its own press.
+    // Replacing it between mousedown and click retargets the click to the page.
+    if (velaFieldIconEl?._velaField === field && velaFieldIconEl.isConnected) return;
     velaRemoveFieldIcon();
     const icon = document.createElement("button");
     icon.setAttribute("data-vela-ui", "true");
@@ -1270,16 +1323,31 @@
     icon.setAttribute("tabindex", "-1");
     icon.setAttribute("title", "VELA – autofill");
     icon.className = "vela-field-icon";
-    icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7l-9-5z" fill="currentColor"/></svg>`;
+    icon._velaField = field;
+    icon.innerHTML = globalThis.VelaInstrument.icon(velaIsCardField(field) ? "card" : velaIsTotpInput(field) ? "key" : "shield", 14);
 
     icon.addEventListener("mousedown", (e) => {
       e.preventDefault();
-      if (velaDropdownEl) {
-        velaHideDropdown();
-      } else {
+      e.stopPropagation();
+      if (!e.isTrusted) return;
+      // Focusing a field opens its chooser. Clicking any part of its icon
+      // keeps that chooser open rather than toggling it shut.
+      if (velaDropdownEl && velaActiveField === field) return;
+      if (document.activeElement !== field) {
+        field.focus({preventScroll:true});
+        if (velaDropdownEl && velaActiveField === field) return;
+      }
+      {
         velaActiveField = field;
-        if (velaIsCardField(field)) {
+        if (velaIsIdentityField(field)) {
+          velaShowIdentityDropdown(field);
+          return;
+        } else if (velaIsCardField(field)) {
           velaShowCardsForField(field);
+          return;
+        }
+        if (velaIsTotpInput(field)) {
+          velaShowTotpDropdown(field);
           return;
         }
         if (velaCurrentLogins !== null) {
@@ -1308,6 +1376,8 @@
         }
       }
     });
+
+    icon.addEventListener("click", e => e.stopPropagation());
 
     const rect = field.getBoundingClientRect();
     const scrollX = window.scrollX || window.pageXOffset;
@@ -1363,6 +1433,7 @@
   // --- Dropdown ---
 
   function velaShowDropdown(field, logins, isNewPassword) {
+    clearInterval(velaTotpTimer); velaTotpTimer = null;
     if (velaDropdownEl) {
       velaDropdownEl.remove();
       velaDropdownEl = null;
@@ -1392,7 +1463,7 @@
           Unlock VELA Desktop to show logins for <strong>${velaEscapeHtml(velaExtractDomain(location.href))}</strong>
         </div>
         <button class="vela-dd-action-btn" data-vela-action="unlock-logins">
-          <span class="vela-dd-action-icon">🔒</span>
+          <span class="vela-dd-action-icon">${globalThis.VelaInstrument.icon("lock",18)}</span>
           Open VELA Desktop
         </button>`;
     } else if (isNewPassword) {
@@ -1402,7 +1473,7 @@
           <span class="vela-dd-title">VELA</span>
         </div>
         <button class="vela-dd-action-btn" data-vela-action="generate-password">
-          <span class="vela-dd-action-icon">🔑</span>
+          <span class="vela-dd-action-icon">${globalThis.VelaInstrument.icon("dice",18)}</span>
           Generate strong password
         </button>
         ${logins && logins.length > 0 ? `
@@ -1411,14 +1482,14 @@
         ${velaLoginListItems(logins)}` : ""}
         <div class="vela-dd-divider"></div>
         <button class="vela-dd-action-btn" data-vela-action="save-new">
-          <span class="vela-dd-action-icon">＋</span>
+          <span class="vela-dd-action-icon">${globalThis.VelaInstrument.icon("plus",18)}</span>
           Save new account to VELA
         </button>`;
     } else if (logins && logins.length > 0) {
       dd.innerHTML = `
         <div class="vela-dd-header">
           <span class="vela-dd-logo">${velaShieldSvg(14)}</span>
-          <span class="vela-dd-title">VELA – ${velaExtractDomain(location.href)}</span>
+          <span class="vela-dd-title">FILL A LOGIN</span>
         </div>
         ${velaLoginListItems(logins)}`;
     } else {
@@ -1431,7 +1502,7 @@
           No saved logins for <strong>${velaEscapeHtml(velaExtractDomain(location.href))}</strong>
         </div>
         <button class="vela-dd-action-btn" data-vela-action="save-new">
-          <span class="vela-dd-action-icon">＋</span>
+          <span class="vela-dd-action-icon">${globalThis.VelaInstrument.icon("plus",18)}</span>
           Add to VELA vault
         </button>`;
     }
@@ -1444,10 +1515,12 @@
     document.documentElement.appendChild(dd);
     velaDropdownEl = dd;
     velaSelectedIndex = -1;
+    velaPrepareDropdown(dd);
     velaPositionDropdown(field);
 
     dd.querySelectorAll("[data-vela-login-id]").forEach((item) => {
-      item.addEventListener("click", async () => {
+      item.addEventListener("click", async (e) => {
+        if (!velaIsUserActivation(e)) return;
         const loginId = item.getAttribute("data-vela-login-id");
         let login = (logins || []).find((l) => String(l.id) === loginId);
         if (!login) return;
@@ -1542,11 +1615,11 @@
   }
 
   function velaCardFieldKind(el) {
-    if (!el || el.tagName.toLowerCase() !== "input") return null;
+    if (!el || !["input", "select"].includes(el.tagName.toLowerCase())) return null;
     if (el.hasAttribute("data-vela-ui") || el.hasAttribute("data-bwignore")) return null;
     if (el.disabled || el.readOnly) return null;
     const type = (el.type || "text").toLowerCase();
-    if (!["text", "tel", "number"].includes(type)) return null;
+    if (el.tagName !== "SELECT" && !["text", "tel", "number", "password", "month"].includes(type)) return null;
 
     const t = velaCardText(el);
     if (!t) return null;
@@ -1574,16 +1647,16 @@
     if (!kind) return null;
     if (kind !== "name") return kind;
     const scope = el.form || el.closest("form") || document;
-    const hasPayment = Array.from(scope.querySelectorAll("input")).some((field) => {
+    const hasPayment = Array.from(scope.querySelectorAll("input,select")).some((field) => {
       const k = velaCardFieldKind(field);
       return k && k !== "name";
     });
     return hasPayment ? kind : null;
   }
 
-  async function getCardsForPage() {
+  async function getCardsForPage(userInitiated = false) {
     try {
-      const response = await sendExtensionMessage("getCards", { url: globalThis.location.href });
+      const response = await sendExtensionMessage("getCards", { url: globalThis.location.href, userInitiated });
       if (response && response.success && Array.isArray(response.cards)) return response.cards;
     } catch (_) {}
     return [];
@@ -1595,7 +1668,10 @@
       return;
     }
     velaShowCardDropdown(field, null);
+    const pageUrl = location.href;
+    const dropdown = velaDropdownEl;
     getCardsForPage().then((cards) => {
+      if (location.href !== pageUrl || velaDropdownEl !== dropdown || velaActiveField !== field) return;
       velaCurrentCards = cards;
       if (velaActiveField === field) velaShowCardDropdown(field, cards);
     }).catch(() => {
@@ -1608,7 +1684,7 @@
     return cards.map((card) => {
       const name = velaEscapeHtml(card.name || "Card");
       const digits = String(card.number || "").replace(/\D/g, "");
-      const last4 = digits.slice(-4);
+      const last4 = card.last4 || digits.slice(-4);
       const sub = [card.cardholderName, last4 ? `•••• ${last4}` : ""]
         .filter(Boolean).map(velaEscapeHtml).join(" · ");
       const initial = name.charAt(0).toUpperCase();
@@ -1618,6 +1694,7 @@
           <div class="vela-dd-item-info">
             <div class="vela-dd-item-name">${name}</div>
             ${sub ? `<div class="vela-dd-item-user">${sub}</div>` : ""}
+            ${card.exp ? `<div class="vela-card-expiry">EXP ${velaEscapeHtml(card.exp)}</div>` : ""}
           </div>
           <div class="vela-dd-item-fill-hint">Fill ↵</div>
         </div>`;
@@ -1625,6 +1702,7 @@
   }
 
   function velaShowCardDropdown(field, cards) {
+    clearInterval(velaTotpTimer); velaTotpTimer = null;
     if (velaDropdownEl) {
       velaDropdownEl.remove();
       velaDropdownEl = null;
@@ -1637,7 +1715,7 @@
     const header = `
       <div class="vela-dd-header">
         <span class="vela-dd-logo">${velaShieldSvg(14)}</span>
-        <span class="vela-dd-title">VELA – cards</span>
+        <span class="vela-dd-title">PAYMENT CARDS</span>
       </div>`;
 
     if (cards === null) {
@@ -1656,14 +1734,14 @@
     document.documentElement.appendChild(dd);
     velaDropdownEl = dd;
     velaSelectedIndex = -1;
+    velaPrepareDropdown(dd);
     velaPositionDropdown(field);
 
     dd.querySelectorAll("[data-vela-card-id]").forEach((item) => {
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (e) => {
+        if (!velaIsUserActivation(e)) return;
         const id = item.getAttribute("data-vela-card-id");
-        const card = (velaCurrentCards || []).find((c) => String(c.id) === id);
-        velaHideDropdown();
-        if (card) velaFillCard(card, field);
+        velaFillChosenItem("card", id, field, undefined, dd);
       });
       item.addEventListener("mousedown", (e) => e.preventDefault());
     });
@@ -1695,6 +1773,7 @@
 
   function velaYearString(field, exp) {
     const max = parseInt(field.getAttribute("maxlength") || "0", 10);
+    if (field.tagName === "SELECT" && Array.from(field.options).some(o => o.value === exp.yy)) return exp.yy;
     return (max > 0 && max <= 2) ? exp.yy : exp.yyyy;
   }
 
@@ -1703,43 +1782,249 @@
   // month/year).
   function velaFillCard(card, anchor) {
     const scope = (anchor && (anchor.form || anchor.closest("form"))) || document;
+    const section = velaFieldSection(anchor);
     const byKind = {};
-    for (const el of scope.querySelectorAll("input")) {
+    for (const el of scope.querySelectorAll("input,select")) {
       const kind = velaCardFieldKind(el);
-      if (kind && !byKind[kind]) byKind[kind] = el;
+      if (kind && velaVisibleField(el) && velaSameSection(section, el) && !byKind[kind]) byKind[kind] = el;
     }
     const exp = velaParseExpiry(card.exp);
+    let count = 0;
+    const put = (field, value) => { if (field && value) { if (velaFillValue(field, value)) count++; } };
 
-    if (card.cardholderName && byKind.name) fillElement(byKind.name, card.cardholderName);
-    if (card.number && byKind.number) fillElement(byKind.number, String(card.number).replace(/\s+/g, ""));
+    put(byKind.name, card.cardholderName);
+    put(byKind.number, String(card.number || "").replace(/\s+/g, ""));
     if (exp) {
-      if (byKind.exp) fillElement(byKind.exp, velaExpiryString(byKind.exp, exp));
-      if (byKind.expMonth) fillElement(byKind.expMonth, exp.mm);
-      if (byKind.expYear) fillElement(byKind.expYear, velaYearString(byKind.expYear, exp));
+      put(byKind.exp, byKind.exp?.type === "month" ? `${exp.yyyy}-${exp.mm}` : byKind.exp ? velaExpiryString(byKind.exp, exp) : "");
+      put(byKind.expMonth, exp.mm);
+      put(byKind.expYear, byKind.expYear ? velaYearString(byKind.expYear, exp) : "");
     }
-    if (card.cvv && byKind.cvv) fillElement(byKind.cvv, card.cvv);
+    put(byKind.cvv, card.cvv);
+    velaHideDropdown();
+    return count;
+  }
+
+  function velaVisibleField(el) {
+    return !el.disabled && !el.readOnly && el.type !== "hidden" && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+  }
+
+  function velaFillValue(el, value) {
+    if (!velaVisibleField(el)) return false;
+    if (el.tagName === "SELECT") {
+      const text = String(value).toLowerCase();
+      const option = Array.from(el.options).find(o => o.value && (o.value.toLowerCase() === text || o.text.trim().toLowerCase() === text || (/^\d+$/.test(text) && /^\d+$/.test(o.value) && Number(o.value) === Number(text))));
+      if (!option) return false;
+      value = option.value;
+    }
+    fillElement(el, String(value));
+    return true;
+  }
+
+  const velaIdentityTokens = {"name":"fullName", "given-name":"firstName", "additional-name":"middleName", "family-name":"lastName", "email":"email", "tel":"phone", "organization":"company", "street-address":"street", "address-line1":"line1", "address-line2":"line2", "address-level2":"city", "address-level1":"region", "postal-code":"postalCode", "country":"countryCode", "country-name":"countryName"};
+  function velaIdentityFieldKind(el) {
+    if (!el || !["INPUT","SELECT","TEXTAREA"].includes(el.tagName) || el.closest("[data-vela-ui]") || el.hasAttribute("data-bwignore") || el.disabled || el.readOnly) return null;
+    if (el.tagName === "INPUT" && !["text","email","tel"].includes(el.type)) return null;
+    const tokens = (el.autocomplete || "").toLowerCase().split(/\s+/);
+    if (tokens.includes("username") || tokens.some(t => /password|cc-|one-time-code/.test(t))) return null;
+    const token = tokens.find(t => velaIdentityTokens[t]);
+    if (token) return velaIdentityTokens[token];
+    const names = [el.name,el.id].filter(Boolean).map(n => n.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    const aliases = {firstname:"firstName", givenname:"firstName", lastname:"lastName", surname:"lastName", fullname:"fullName", middlename:"middleName", address:"street", address1:"line1", address2:"line2", state:"region", province:"region", zip:"postalCode", telephone:"phone", company:"company", addressline2:"line2", addresslineone:"line1", addressline1:"line1", streetaddress:"street", postalcode:"postalCode", zipcode:"postalCode", city:"city", country:"countryCode", phone:"phone", email:"email"};
+    return names.map(n => aliases[n]).find(Boolean) || null;
+  }
+  function velaIsIdentityField(el) {
+    const kind = velaIdentityFieldKind(el);
+    if (!kind) return false;
+    // A login email remains a login. Contact fields join identity forms only
+    // when a name/address field exists in the same form.
+    if (["email","phone"].includes(kind)) {
+      const scope = el.form || el.closest("form");
+      return !!scope && Array.from(scope.querySelectorAll("input,select,textarea")).some(f => {
+        const k = velaIdentityFieldKind(f); return k && !["email","phone","company"].includes(k);
+      });
+    }
+    return true;
+  }
+  function velaIdentityChoices(identities) {
+    return identities.flatMap(identity => (identity.addresses?.length ? identity.addresses : [null]).map(address => ({identity, address})));
+  }
+  async function velaShowIdentityDropdown(field) {
+    clearInterval(velaTotpTimer); velaTotpTimer = null;
+    velaSelectedIndex = -1;
+    const dd = document.createElement("div");
+    dd.className = "vela-inline-dropdown vela-autofill-animate-slide-up"; dd.dataset.velaUi = "true";
+    if (velaDropdownEl) velaDropdownEl.remove();
+    velaDropdownEl = dd;
+    dd.innerHTML = '<div class="vela-dd-header"><span class="vela-dd-title">IDENTITIES</span></div><div class="vela-dd-loading">Searching vault…</div>';
+    document.documentElement.appendChild(dd); velaPrepareDropdown(dd); velaPositionDropdown(field);
+    let response;
+    const pageUrl = location.href;
+    try { response = await sendExtensionMessage("getIdentities", {url:pageUrl, userInitiated:false}); } catch (_) {}
+    if (velaDropdownEl !== dd || velaActiveField !== field || location.href !== pageUrl) return;
+    const choices = velaIdentityChoices(response?.success ? response.identities || [] : []);
+    dd.innerHTML = '<div class="vela-dd-header"><span class="vela-dd-title">IDENTITIES</span></div>' + (choices.length ? choices.map(({identity:i,address:a}, index) => `<div class="vela-dd-item" data-identity-index="${velaEscapeHtml(String(index))}"><div class="vela-dd-item-avatar">${globalThis.VelaInstrument.icon("user",18)}</div><div class="vela-dd-item-info"><div class="vela-dd-item-name">${velaEscapeHtml(i.name || [i.firstName,i.lastName].filter(Boolean).join(" "))}</div><div class="vela-dd-item-user">${velaEscapeHtml([a?.label,a?.line1,a?.city,i.email].filter(Boolean).join(" · "))}</div></div><div class="vela-dd-item-fill-hint">Fill ↵</div></div>`).join("") : `<div class="vela-dd-empty">${response?.requires_biometric ? "Unlock VELA Desktop and try again." : response?.success ? "No saved identities. Add one in VELA Desktop." : "Could not load identities. Open VELA Desktop and retry."}</div>`);
+    velaPrepareDropdown(dd); velaPositionDropdown(field);
+    dd.querySelectorAll("[data-identity-index]").forEach(row => {
+      row.addEventListener("mousedown", e => e.preventDefault());
+      row.addEventListener("click", (e) => { if (!velaIsUserActivation(e)) return; const c = choices[Number(row.dataset.identityIndex)]; velaFillChosenItem("identity", c.identity.id, field, c.address?.id, dd); });
+    });
+  }
+  async function velaFillChosenItem(type, id, field, addressId, dropdown) {
+    if (dropdown.dataset.filling) return;
+    dropdown.dataset.filling = "true";
+    const url = location.href;
+    try {
+      const response = await sendExtensionMessage(type === "card" ? "getCards" : "getIdentities", {url, userInitiated:true});
+      if (velaDropdownEl !== dropdown || velaActiveField !== field || location.href !== url || !field.isConnected) return;
+      const item = response?.success && response[type === "card" ? "cards" : "identities"]?.find(item => String(item.id) === String(id));
+      if (!item) { velaShowToast("Unlock VELA Desktop and try again.", true); return; }
+      velaHideDropdown();
+      if (type === "card") velaFillCard(item,field); else velaFillIdentity(item,field,addressId);
+    } catch (_) { velaShowToast("Could not fill this item. Try again.", true); }
+    finally { delete dropdown.dataset.filling; }
+  }
+  /** Same autofill section, or the anchor has none (e.g. a plain email field
+   *  next to `shipping …` address fields), so the whole form still fills. */
+  function velaSameSection(anchorSection, el) {
+    const section = velaFieldSection(el);
+    return section === anchorSection || section === "" || anchorSection === "";
+  }
+  function velaFieldSection(el) {
+    return (el?.autocomplete || "").split(/\s+/).filter(t => t.startsWith("section-") || ["shipping","billing"].includes(t)).join(" ");
+  }
+  function velaFillIdentity(identity, anchor, addressId) {
+    const addresses = identity.addresses || [];
+    // A chosen address that no longer exists is an error, not a cue to fill another one.
+    if (addressId && !addresses.some(a => a.id === addressId)) { velaShowToast("That address was removed. Choose it again.", true); return 0; }
+    const address = addresses.find(a => a.id === addressId) || addresses[0] || {};
+    const values = {...address, ...identity, fullName:[identity.firstName,identity.middleName,identity.lastName].filter(Boolean).join(" "), street:[address.line1,address.line2].filter(Boolean).join("\n")};
+    try { values.countryName = new Intl.DisplayNames([document.documentElement.lang || "en"], {type:"region"}).of(address.countryCode); } catch (_) {}
+    const scope = anchor.form || anchor.closest("form") || document;
+    const section = velaFieldSection(anchor);
+    let count = 0;
+    for (const el of scope.querySelectorAll("input,select,textarea")) {
+      const kind = velaIdentityFieldKind(el);
+      if (kind && velaSameSection(section, el) && values[kind] && velaVisibleField(el)) {
+        if (velaFillValue(el,values[kind])) count++;
+        else if (kind === "countryCode" && values.countryName && velaFillValue(el,values.countryName)) count++;
+      }
+    }
+    velaHideDropdown(); return count;
   }
 
   function velaPositionDropdown(field) {
     if (!velaDropdownEl || !field) return;
     const rect = field.getBoundingClientRect();
-    const scrollX = window.scrollX || window.pageXOffset;
-    const scrollY = window.scrollY || window.pageYOffset;
-    const ddWidth = Math.max(rect.width, 260);
+    const sx = window.scrollX || 0, sy = window.scrollY || 0;
+    const width = Math.max(0, Math.min(Math.max(336, rect.width), 360, window.innerWidth - 16));
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    Object.assign(velaDropdownEl.style, {position:"absolute",width:width+"px",left:(sx+left)+"px",zIndex:"2147483647",maxHeight:Math.min(480,window.innerHeight-16)+"px"});
+    const height = velaDropdownEl.getBoundingClientRect().height;
+    const below = window.innerHeight - rect.bottom - 8, above = rect.top - 8;
+    const up = below < Math.min(height,220) && above > below;
+    velaDropdownEl.style.maxHeight = Math.max(60,Math.min(480,up?above:below))+"px";
+    const h = velaDropdownEl.getBoundingClientRect().height;
+    velaDropdownEl.style.top = (sy + Math.max(8, up ? rect.top-h-6 : rect.bottom+6))+"px";
+  }
 
-    let left = rect.left + scrollX;
-    const maxLeft = scrollX + window.innerWidth - ddWidth - 8;
-    if (left > maxLeft) left = maxLeft;
-    if (left < scrollX + 8) left = scrollX + 8;
+  function velaPrepareDropdown(dd) {
+    if (!dd.querySelector(".vela-dd-warning")) {
+      const warning = velaPhishingWarningHtml();
+      if (warning) dd.insertAdjacentHTML("afterbegin", warning);
+    }
+    const header = dd.querySelector(".vela-dd-header");
+    if (header) {
+      const close = document.createElement("button");
+      close.type = "button"; close.className = "vela-dd-close";
+      close.setAttribute("aria-label", "Close suggestions"); close.innerHTML = globalThis.VelaInstrument.icon("x",14);
+      close.addEventListener("mousedown", e => e.preventDefault());
+      close.addEventListener("click", velaHideDropdown); header.appendChild(close);
+    }
+    const origin = document.createElement("div"); origin.className = "vela-dd-origin";
+    origin.textContent = velaExtractDomain(location.href); dd.appendChild(origin);
+    const footer = document.createElement("div"); footer.className = "vela-dd-footer";
+    footer.innerHTML = '<span>↑ ↓ Choose · ↵ Fill</span><button type="button">Open vault ↗</button>';
+    footer.querySelector("button").addEventListener("mousedown", e => e.preventDefault());
+    footer.querySelector("button").addEventListener("click", () => sendExtensionMessage("openVault"));
+    dd.appendChild(footer);
+    dd.querySelectorAll(".vela-dd-item").forEach((item,index) => {
+      item.setAttribute("role", "option"); item.tabIndex = 0; item.setAttribute("aria-selected", "false");
+      item.addEventListener("mouseenter", () => { velaSelectedIndex = index; velaUpdateSelection(Array.from(dd.querySelectorAll(".vela-dd-item"))); });
+      item.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); velaActivateFromKey(e, item); } });
+    });
+  }
 
-    velaDropdownEl.style.position = "absolute";
-    velaDropdownEl.style.top = (rect.bottom + scrollY + 4) + "px";
-    velaDropdownEl.style.left = left + "px";
-    velaDropdownEl.style.width = ddWidth + "px";
-    velaDropdownEl.style.zIndex = "2147483647";
+  function velaPrepareModal(overlay) {
+    velaHideDropdown();
+    const modal = overlay.querySelector(".vela-modal"); if (!modal) return;
+    modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", modal.querySelector(".vela-modal-title")?.textContent || "VELA");
+    overlay.addEventListener("keydown", e => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); modal.querySelector(".vela-modal-close")?.click(); }
+      if (e.key !== "Tab") return;
+      const fields = Array.from(modal.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),[tabindex="0"]')).filter(x => x.getClientRects().length);
+      const first=fields[0],last=fields[fields.length-1];
+      if (e.shiftKey && document.activeElement===first) {e.preventDefault();last?.focus();}
+      else if (!e.shiftKey && document.activeElement===last) {e.preventDefault();first?.focus();}
+    });
+    queueMicrotask(() => modal.querySelector('input:not([type="range"]),.vela-modal-close')?.focus());
+  }
+
+  function velaIsTotpInput(el) {
+    if (!el || el.tagName !== "INPUT" || el.disabled || el.readOnly || el.hasAttribute("data-vela-ui")) return false;
+    if (!['text','tel','number','password',''].includes(el.type || '')) return false;
+    const ac = (el.autocomplete || "").toLowerCase();
+    if (ac.includes("one-time-code")) return true;
+    const text=[el.name,el.id,el.placeholder,el.getAttribute("aria-label")].filter(Boolean).join(" ").toLowerCase().replace(/[^a-z0-9]/g,"");
+    return /totp|onetimecode|verificationcode|authenticatorcode|2facode|mfacode|otp/.test(text);
+  }
+
+  async function velaShowTotpDropdown(field) {
+    clearInterval(velaTotpTimer); velaTotpTimer=null;
+    velaDropdownEl?.remove(); velaActiveField=field;
+    const dd=document.createElement("div"); dd.setAttribute("data-vela-ui","true"); dd.className="vela-inline-dropdown vela-autofill-animate-slide-up";
+    dd.innerHTML=`<div class="vela-dd-header"><span class="vela-dd-logo">${velaShieldSvg(14)}</span><span class="vela-dd-title">ONE-TIME CODE</span></div><div class="vela-dd-loading">Loading authenticator codes…</div>`;
+    document.documentElement.appendChild(dd); velaDropdownEl=dd; velaPrepareDropdown(dd); velaPositionDropdown(field);
+    const alive=()=>velaDropdownEl===dd && dd.isConnected;
+    let result;
+    try { result=await velaRequestLogins(false); } catch (_) { result={logins:[]}; }
+    if(!alive())return;
+    dd.querySelector(".vela-dd-loading")?.remove();
+    const entries=[];
+    for(const login of result.logins || []) {
+      let response;
+      try { response=await sendExtensionMessage("getTotpCode",{loginId:login.id,url:location.href}); } catch (_) { continue; }
+      if(!alive())return;
+      if(!response?.success || !response.code)continue;
+      const item=document.createElement("div");item.className="vela-dd-item";item.setAttribute("role","option");item.tabIndex=0;
+      const ttl=response.remainingSecs == null ? 30 : Math.max(0,Number(response.remainingSecs)||0);
+      const entry={login,item,code:response.code,remaining:ttl,expiresAt:Date.now()+ttl*1000,pending:false}; entries.push(entry);
+      item.innerHTML=`<div class="vela-dd-item-info"><div class="vela-dd-item-name">${velaEscapeHtml(login.name || "Authenticator")}</div><div class="vela-dd-item-user">${velaEscapeHtml(login.username || "")}</div><div class="vela-dd-totp-code"><span class="vela-code-readout"></span><span class="vela-totp-timer"></span></div></div>`;
+      item.setAttribute("aria-selected","false");
+      const update=()=>{item.querySelector(".vela-code-readout").innerHTML=globalThis.VelaInstrument.dots(entry.code,4);const timer=item.querySelector(".vela-totp-timer");timer.textContent=entry.remaining+"s";timer.dataset.expiring=entry.remaining<6;}; entry.update=update;update();
+      item.addEventListener("mousedown",e=>e.preventDefault());
+      item.addEventListener("mouseenter",()=>{velaSelectedIndex=entries.indexOf(entry);velaUpdateSelection(entries.map(x=>x.item));});
+      item.addEventListener("click",(e)=>{if(!velaIsUserActivation(e))return;if(!entry.code||entry.remaining<=0||Date.now()>=entry.expiresAt)return;const code=entry.code;velaHideDropdown();fillElement(field,code);});
+      item.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();velaActivateFromKey(e,item);}});
+      dd.insertBefore(item,dd.querySelector(".vela-dd-origin"));
+    }
+    if(!alive())return;
+    if(!entries.length){const empty=document.createElement("div");empty.className="vela-dd-empty";empty.textContent=result.requiresBiometric?"Unlock VELA Desktop to access your authenticator codes.":"No authenticator codes available for this site.";dd.insertBefore(empty,dd.querySelector(".vela-dd-origin"));}
+    velaPositionDropdown(field);
+    if(!entries.length)return;
+    velaTotpTimer=setInterval(async()=>{
+      if(!alive()){clearInterval(velaTotpTimer);velaTotpTimer=null;return;}
+      for(const entry of entries){
+        if(entry.pending || (entry.retryAt && Date.now()<entry.retryAt))continue;
+        entry.remaining=Math.max(0,Math.ceil((entry.expiresAt-Date.now())/1000));
+        if(entry.remaining===0){entry.code="";entry.pending=true;entry.update();try{const response=await sendExtensionMessage("getTotpCode",{loginId:entry.login.id,url:location.href});if(!alive())return;if(response?.success&&response.code){entry.code=response.code;entry.remaining=response.remainingSecs == null ? 30 : Math.max(0,Number(response.remainingSecs)||0);entry.expiresAt=Date.now()+entry.remaining*1000;entry.retryAt=0;}else{entry.retryAt=Date.now()+15000;}}catch(_){entry.retryAt=Date.now()+15000;}finally{entry.pending=false;}}
+        if(alive())entry.update();
+      }
+    },1000);
   }
 
   function velaHideDropdown() {
+    clearInterval(velaTotpTimer); velaTotpTimer = null;
     if (velaDropdownEl) {
       velaDropdownEl.remove();
       velaDropdownEl = null;
@@ -1787,6 +2072,7 @@
       </div>`;
 
     document.documentElement.appendChild(overlay);
+    velaPrepareModal(overlay);
 
     overlay.querySelector("[data-vela-action='close']").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
@@ -2035,12 +2321,12 @@
       <div class="vela-save-bar-inner">
         <span class="vela-save-bar-logo">${velaShieldSvg(18)}</span>
         <span class="vela-save-bar-text">
-          ${isRegistration ? "Save new account" : "Save login"} to VELA?
+          <strong>${isRegistration ? "A new account. A place in your vault." : "Save this login to VELA?"}</strong><small>${velaEscapeHtml(velaExtractDomain(location.href))}${username ? " · " + velaEscapeHtml(username) : ""}</small>
         </span>
         <div class="vela-save-bar-actions">
-          <button class="vela-save-bar-btn vela-save-bar-never" data-vela-action="never">Never</button>
+          <button class="vela-save-bar-btn vela-save-bar-never" data-vela-action="never">Never for this site</button>
           <button class="vela-save-bar-btn vela-save-bar-dismiss" data-vela-action="dismiss">Not now</button>
-          <button class="vela-save-bar-btn vela-save-bar-save" data-vela-action="save">Save</button>
+          <button class="vela-save-bar-btn vela-save-bar-save" data-vela-action="save">Review & save</button>
         </div>
         <button class="vela-save-bar-close" data-vela-action="close" title="Close">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -2055,9 +2341,7 @@
       velaShowSaveDialog(username, password);
     });
     bar.querySelector("[data-vela-action='never']").addEventListener("click", () => {
-      velaHideSaveBar();
-      velaAddNeverSave(velaExtractDomain(location.href));
-      velaShowToast("VELA will never ask to save for this site.");
+      velaConfirmNeverSave();
     });
     bar.querySelector("[data-vela-action='dismiss']").addEventListener("click", velaHideSaveBar);
     bar.querySelector("[data-vela-action='close']").addEventListener("click", velaHideSaveBar);
@@ -2082,11 +2366,11 @@
       <div class="vela-save-bar-inner">
         <span class="vela-save-bar-logo">${velaShieldSvg(18)}</span>
         <span class="vela-save-bar-text">
-          Password changed for <strong>${velaEscapeHtml(name)}</strong> — update item?
+          <strong>A new password. Same account.</strong><small>${velaEscapeHtml(name)} · ${velaEscapeHtml(velaExtractDomain(location.href))}</small>
         </span>
         <div class="vela-save-bar-actions">
           <button class="vela-save-bar-btn vela-save-bar-dismiss" data-vela-action="dismiss">Not now</button>
-          <button class="vela-save-bar-btn vela-save-bar-save" data-vela-action="update">Update</button>
+          <button class="vela-save-bar-btn vela-save-bar-save" data-vela-action="update">Review update</button>
         </div>
         <button class="vela-save-bar-close" data-vela-action="close" title="Close">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -2114,6 +2398,15 @@
     // Whatever the prompt's fate (saved, dismissed, expired), the credentials
     // were offered once; do not let them resurface on the next page.
     velaClearPendingCapture();
+  }
+
+  function velaConfirmNeverSave() {
+    const overlay=document.createElement("div");overlay.className="vela-overlay";overlay.setAttribute("data-vela-ui","true");
+    overlay.innerHTML=`<div class="vela-modal"><div class="vela-modal-header"><h2 class="vela-modal-title">SITE PREFERENCE</h2><button class="vela-modal-close" aria-label="Close">${globalThis.VelaInstrument.icon("x")}</button></div><div class="vela-modal-intro">No more nudges here?</div><p class="vela-modal-subtitle">VELA will stop asking to save logins on ${velaEscapeHtml(velaExtractDomain(location.href))}. Your existing items and click-to-fill stay available.</p><div class="vela-modal-actions"><button class="vela-btn vela-btn-ghost" data-cancel>Cancel</button><button class="vela-btn vela-btn-primary" data-confirm>Turn off prompts</button></div></div>`;
+    const close=()=>overlay.remove();overlay.querySelector(".vela-modal-close").onclick=close;overlay.querySelector("[data-cancel]").onclick=close;
+    overlay.addEventListener("click",e=>{if(e.target===overlay)close();});
+    overlay.querySelector("[data-confirm]").onclick=async()=>{const button=overlay.querySelector("[data-confirm]");button.disabled=true;try{await velaAddNeverSave(velaExtractDomain(location.href));velaHideSaveBar();close();velaShowToast("Save prompts turned off for this site.");}catch(_){button.disabled=false;velaShowToast("Could not save this preference. Try again.",true);}};
+    document.documentElement.appendChild(overlay);velaPrepareModal(overlay);
   }
 
   // --- Save to Vault Dialog ---
@@ -2177,6 +2470,7 @@
       </div>`;
 
     document.documentElement.appendChild(overlay);
+    velaPrepareModal(overlay);
     velaSaveModal = overlay;
 
     const close = () => { overlay.remove(); velaSaveModal = null; };
@@ -2265,6 +2559,7 @@
             </button>
           </div>
 
+          <div class="vela-modal-intro">Make it hard to guess.</div>
           <div class="vela-gen-preview-wrap">
             <div class="vela-gen-preview" id="vela-gen-preview">${velaEscapeHtml(currentPassword)}</div>
             <div class="vela-gen-preview-actions">
@@ -2292,26 +2587,24 @@
 
             <div class="vela-gen-option-row">
               <label class="vela-gen-toggle-label">
-                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="uppercase" ${opts.uppercase ? "checked" : ""}/>
+                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="uppercase" aria-label="Uppercase letters" ${opts.uppercase ? "checked" : ""}/>
                 <span class="vela-gen-checkbox-custom"></span>
-                <span>Uppercase (A-Z)</span>
+                <span>A–Z</span>
               </label>
               <label class="vela-gen-toggle-label">
-                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="lowercase" ${opts.lowercase ? "checked" : ""}/>
+                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="lowercase" aria-label="Lowercase letters" ${opts.lowercase ? "checked" : ""}/>
                 <span class="vela-gen-checkbox-custom"></span>
-                <span>Lowercase (a-z)</span>
-              </label>
-            </div>
-            <div class="vela-gen-option-row">
-              <label class="vela-gen-toggle-label">
-                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="numbers" ${opts.numbers ? "checked" : ""}/>
-                <span class="vela-gen-checkbox-custom"></span>
-                <span>Numbers (0-9)</span>
+                <span>a–z</span>
               </label>
               <label class="vela-gen-toggle-label">
-                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="symbols" ${opts.symbols ? "checked" : ""}/>
+                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="numbers" aria-label="Numbers" ${opts.numbers ? "checked" : ""}/>
                 <span class="vela-gen-checkbox-custom"></span>
-                <span>Symbols (!@#…)</span>
+                <span>0–9</span>
+              </label>
+              <label class="vela-gen-toggle-label">
+                <input class="vela-gen-checkbox" data-vela-ui="true" type="checkbox" data-opt="symbols" aria-label="Symbols" ${opts.symbols ? "checked" : ""}/>
+                <span class="vela-gen-checkbox-custom"></span>
+                <span>!@#</span>
               </label>
             </div>
           </div>
@@ -2342,6 +2635,7 @@
       const refresh = () => {
         currentPassword = velaGeneratePassword(opts);
         overlay.querySelector("#vela-gen-preview").textContent = currentPassword;
+        globalThis.VelaInstrument.animateReadout(overlay.querySelector("#vela-gen-preview"));
         overlay.querySelector("#vela-gen-strength").innerHTML = velaStrengthBar(currentPassword);
       };
 
@@ -2398,6 +2692,7 @@
 
     renderModal();
     document.documentElement.appendChild(overlay);
+    velaPrepareModal(overlay);
     velaGenModal = overlay;
   }
 
@@ -2583,11 +2878,11 @@
     if (/[^A-Za-z0-9]/.test(password)) score++;
 
     const levels = [
-      { max: 1, label: "Very weak", color: "#ef4444" },
-      { max: 2, label: "Weak", color: "#f97316" },
-      { max: 3, label: "Fair", color: "#eab308" },
-      { max: 4, label: "Good", color: "#22c55e" },
-      { max: 6, label: "Strong", color: "#10b981" }
+      { max: 1, label: "Very weak", color: "var(--vela-error)" },
+      { max: 2, label: "Weak", color: "var(--vela-error)" },
+      { max: 3, label: "Fair", color: "var(--vela-violet)" },
+      { max: 4, label: "Good", color: "var(--vela-signal)" },
+      { max: 6, label: "Strong", color: "var(--vela-signal)" }
     ];
     const level = levels.find((l) => score <= l.max) || levels[levels.length - 1];
     const pct = Math.round((score / 6) * 100);
@@ -2600,35 +2895,15 @@
 
   // --- Never-save blocklist ---
 
-  function velaIsNeverSave(domain) {
-    const api = getBrowserAPI();
-    if (!api) return Promise.resolve(false);
-
-    return new Promise((resolve) => {
-      try {
-        api.storage.local.get("velaNeverSaveDomains", (data) => {
-          const domains = (data && data.velaNeverSaveDomains) || [];
-          resolve(domains.includes(domain));
-        });
-      } catch (_) {
-        resolve(false);
-      }
-    });
+  async function velaIsNeverSave(domain) {
+    try { const data=await getBrowserAPI()?.storage.local.get("velaNeverSaveDomains");return Array.isArray(data?.velaNeverSaveDomains) && data.velaNeverSaveDomains.includes(domain); } catch (_) {return false;}
   }
 
-  function velaAddNeverSave(domain) {
-    const api = getBrowserAPI();
-    if (!api) return;
-
-    try {
-      api.storage.local.get("velaNeverSaveDomains", (data) => {
-        const domains = (data && data.velaNeverSaveDomains) || [];
-        if (!domains.includes(domain)) {
-          domains.push(domain);
-          api.storage.local.set({ velaNeverSaveDomains: domains });
-        }
-      });
-    } catch (_) {}
+  async function velaAddNeverSave(domain) {
+    const api=getBrowserAPI(); if(!api)throw Error("Extension disconnected");
+    const data=await api.storage.local.get("velaNeverSaveDomains");
+    const domains=Array.isArray(data?.velaNeverSaveDomains)?data.velaNeverSaveDomains:[];
+    if(!domains.includes(domain))await api.storage.local.set({velaNeverSaveDomains:[...domains,domain]});
   }
 
   // --- Helpers ---
@@ -2694,7 +2969,7 @@
   }
 
   function velaShieldSvg(size) {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7l-9-5z" fill="currentColor"/></svg>`;
+    return globalThis.VelaInstrument.mark();
   }
 
   if (document.readyState === "loading") {

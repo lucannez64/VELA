@@ -19,7 +19,11 @@ final class VELAUITests: XCTestCase {
         sleep(2)
         createButton.tap()
 
-        // 2) Empty vault → add the first login
+        // 2) Empty vault → open the Vault tab and add the first login
+        let vaultTab = app.buttons["dock-vault"]
+        XCTAssertTrue(vaultTab.waitForExistence(timeout: 15), "dock")
+        sleep(1)
+        vaultTab.tap()
         let addButton = app.buttons["addItemButton"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 15), "vault list")
         sleep(1)
@@ -46,6 +50,10 @@ final class VELAUITests: XCTestCase {
         let deleteButton = app.buttons["deleteButton"]
         XCTAssertTrue(deleteButton.waitForExistence(timeout: 15), "delete button")
         deleteButton.tap()
+        let confirmDelete = app.buttons["confirmDeleteButton"]
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 15), "delete confirmation")
+        sleep(1)
+        confirmDelete.tap()
         sleep(2)
         XCTAssertTrue(app.staticTexts["Proton Mail"].waitForExistence(timeout: 15), "back on list")
         XCTAssertFalse(app.staticTexts["GitHub"].exists, "GitHub deleted")
@@ -70,9 +78,10 @@ final class VELAUITests: XCTestCase {
         let urlField = app.textFields["urlField"]
         urlField.tap(); urlField.typeText(url); sleep(1)
         let userField = app.textFields["usernameField"]
-        userField.tap(); userField.typeText(username); sleep(1)
+        // Return moves focus to the password field and scrolls it above the keyboard.
+        userField.tap(); userField.typeText(username + "\n"); sleep(1)
         let passField = app.secureTextFields["passwordField"]
-        passField.tap(); passField.typeText(password); sleep(1)
+        passField.typeText(password); sleep(1)
         app.buttons["saveButton"].tap()
     }
 }

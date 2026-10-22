@@ -19,6 +19,7 @@
 
 # ── Vault data. This is what a web session is for. ──────────────────────────
 get_sync
+get_schema              # read-only compatibility metadata for the granted vault; activation remains DeviceSession-only
 get_chunk
 put_chunk
 delete_chunk

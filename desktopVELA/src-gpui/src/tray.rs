@@ -19,13 +19,6 @@
 //! (no close-to-tray interception exists there either — closing the window
 //! quits, same as this port).
 
-use std::sync::mpsc::Sender;
-use std::sync::Arc;
-
-use ksni::menu::{MenuItem, StandardItem};
-use ksni::{Icon, ToolTip};
-use vela_desktop_core::AppState;
-
 pub enum TrayCommand {
     /// Raise and focus the main window ("Open VELA" menu item, or left-click
     /// on the tray icon itself).
@@ -43,6 +36,17 @@ pub enum TrayCommand {
     Locked,
     Quit,
 }
+
+#[cfg(not(target_os = "macos"))]
+mod platform {
+use super::TrayCommand;
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+
+use ksni::menu::{MenuItem, StandardItem};
+use ksni::{Icon, ToolTip};
+use vela_desktop_core::AppState;
+
 
 pub struct VelaTray {
     app_state: Arc<AppState>,
@@ -161,3 +165,8 @@ impl ksni::Tray for VelaTray {
         ]
     }
 }
+
+}
+
+#[cfg(not(target_os = "macos"))]
+pub use platform::VelaTray;

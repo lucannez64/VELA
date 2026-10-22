@@ -787,7 +787,10 @@ pub(crate) fn merge_server_vaults(
     local: &mut crate::vault::VaultStore,
     server: crate::vault::VaultStore,
     device_id: &str,
-) -> Vec<ConflictItem> {
+) -> Result<Vec<ConflictItem>, String> {
+    if local.schema_version.max(server.schema_version).unwrap_or(1) > 2 { return Err("Upgrade VELA to sync this vault".into()); }
+    local.organization = local.organization.merged(&server.organization).map_err(|e| e.to_string())?;
+    local.schema_version = local.schema_version.max(server.schema_version);
     use crate::vault::Tombstone;
 
     let mut conflicts = Vec::new();
@@ -871,6 +874,10 @@ pub(crate) fn merge_server_vaults(
     }
 
     local.replace_items(final_items.into_values().collect());
+    // Assignments to folders/tags the merged organization no longer has
+    // (deleted on another device) become unfiled/untagged, as on every
+    // client, so later edits of those items still validate.
+    crate::commands::organization::repair_assignments(local, None);
 
     // ── 4. Merge tombstones, keeping newest timestamp per ID ────────────────
     let mut merged_tombstones: HashMap<String, Tombstone> = HashMap::new();
@@ -892,7 +899,7 @@ pub(crate) fn merge_server_vaults(
     // ── 5. Prune old tombstones to prevent unbounded growth ────────────────
     local.prune_tombstones(chrono::Duration::days(TOMBSTONE_RETENTION_DAYS));
 
-    conflicts
+    Ok(conflicts)
 }
 
 fn is_vault_data_chunk(chunk_id: &str) -> bool {
@@ -1488,6 +1495,16 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
         }
     }
 
+    let local_rich = state.vault.read().schema_version == Some(2);
+    let server_rich = matches!(&downloaded, Ok(ServerVault::Available(v, _)) if v.schema_version == Some(2));
+    if local_rich || server_rich {
+        client.ensure_rich_schema(&token).await.map_err(|e| e.to_string())?;
+    }
+    if server_rich && !local_rich {
+        // This sync upgrades the local vault to schema 2: keep the same
+        // encrypted pre-upgrade copy an explicit activation would.
+        crate::commands::organization::ensure_safety_backup(state)?;
+    }
     match downloaded? {
         ServerVault::Available(server_vault, server_lamport) => {
             state.ensure_unlocked_since(generation)?;
@@ -1500,7 +1517,7 @@ pub async fn trigger_sync(state: &Arc<AppState>) -> Result<SyncStatus, String> {
             let conflicts = {
                 let mut vault_guard = state.vault.write();
                 let mut local_vault = vault_guard.clone();
-                let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id);
+                let conflicts = merge_server_vaults(&mut local_vault, server_vault, &device_id)?;
                 *vault_guard = local_vault;
                 conflicts
             };
@@ -2511,6 +2528,7 @@ mod tests {
     fn login(id: &str, updated_at: DateTime<Utc>, last_modified_device: Option<&str>) -> VaultItem {
         VaultItem::Login {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: id.to_string(),
                 name: format!("item-{id}"),
                 notes: None,
@@ -2547,7 +2565,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t_old, Some("this-device"))]);
         let server = store_with(vec![login("a", t_new, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert_eq!(conflicts.len(), 1, "unsynced local edit must conflict");
         assert_eq!(conflicts[0].item_id, "a");
@@ -2573,7 +2591,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t_old, Some("other-device"))]);
         let server = store_with(vec![login("a", t_new, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty(), "remote edit must not conflict");
         let kept = local
@@ -2593,7 +2611,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t_new, Some("this-device"))]);
         let server = store_with(vec![login("a", t_old, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         assert_eq!(
@@ -2623,7 +2641,7 @@ mod tests {
         });
         let server = store_with(vec![login("a", t_item, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         assert!(
@@ -2653,7 +2671,7 @@ mod tests {
         });
         let server = store_with(vec![login("a", t_recreated, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         let kept = local
@@ -2685,10 +2703,38 @@ mod tests {
             deleted_by: Some("srv".into()),
         });
 
-        merge_server_vaults(&mut local, server, "this-device");
+        merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert_eq!(local.tombstones.len(), 1);
         assert_eq!(local.tombstones[0].deleted_at, t_new);
+    }
+
+    /// A folder or tag deleted on another device is cleared from items during
+    /// the merge (without touching timestamps), so they stay editable.
+    #[test]
+    fn merge_repairs_assignments_to_deleted_folders_and_tags() {
+        use vela_core::rich_items::{OrganizationKind, OrganizationTombstone};
+        let t = Utc::now() - chrono::Duration::hours(1);
+        let (tag, folder) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        let item = login("x", t, None);
+        let mut rich = item.meta().rich.clone();
+        rich.tag_ids = Some(vec![tag]);
+        rich.folder_id = Some(folder.to_string());
+        let mut local = store_with(vec![item.with_rich(rich)]);
+        local.schema_version = Some(2);
+        let mut server = store_with(vec![]);
+        server.schema_version = Some(2);
+        server.organization.organization_tombstones.extend([
+            OrganizationTombstone { kind: OrganizationKind::Tag, id: tag },
+            OrganizationTombstone { kind: OrganizationKind::Folder, id: folder },
+        ]);
+
+        merge_server_vaults(&mut local, server, "this-device").unwrap();
+
+        let merged = local.get_item("x").unwrap();
+        assert_eq!(merged.meta().rich.tag_ids.as_deref(), Some(&[][..]));
+        assert_eq!(merged.meta().rich.folder_id.as_deref(), Some(""));
+        assert_eq!(merged.updated_at(), t);
     }
 
     /// Items present on only one side are unioned into the merged vault.
@@ -2698,7 +2744,7 @@ mod tests {
         let mut local = store_with(vec![login("local-only", t, Some("this-device"))]);
         let server = store_with(vec![login("server-only", t, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         assert_eq!(local.items.len(), 2);
@@ -2713,7 +2759,7 @@ mod tests {
         let mut local = store_with(vec![login("a", t, Some("this-device"))]);
         let server = store_with(vec![login("a", t, Some("other-device"))]);
 
-        let conflicts = merge_server_vaults(&mut local, server, "this-device");
+        let conflicts = merge_server_vaults(&mut local, server, "this-device").unwrap();
 
         assert!(conflicts.is_empty());
         let kept = local.items.iter().find(|i| i.id() == "a").unwrap();

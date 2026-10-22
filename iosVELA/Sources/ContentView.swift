@@ -4,6 +4,17 @@ struct ContentView: View {
     @StateObject private var vm: VaultViewModel
     @StateObject private var accountVM: AccountViewModel
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(InstrumentThemeStore.key) private var themeID = InstrumentThemeID.night.rawValue
+
+    private var palette: InstrumentPalette {
+        #if DEBUG
+        // CI screenshots can force a theme without touching saved settings.
+        if let forced = ProcessInfo.processInfo.environment["VELA_THEME"], let theme = InstrumentThemeID(rawValue: forced) {
+            return theme.palette
+        }
+        #endif
+        return (InstrumentThemeID(rawValue: themeID) ?? .night).palette
+    }
 
     init() {
         let vault = VaultViewModel()
@@ -29,14 +40,15 @@ struct ContentView: View {
             Group {
                 switch vm.lockState {
                 case .unlocked:
-                    VaultListView(vm: vm, accountVM: accountVM)
+                    InstrumentRootView(vm: vm, accountVM: accountVM, themeID: $themeID)
                 case .locked:
                     UnlockView(vm: vm, accountVM: accountVM)
                 case .noVault:
                     WelcomeView(vm: vm, accountVM: accountVM)
                 }
             }
-            .preferredColorScheme(.dark)
+            .environment(\.ink, palette)
+            .preferredColorScheme(vm.lockState == .noVault ? .dark : (palette.isDark ? .dark : .light))
             .onChange(of: vm.lockState) { newValue in
                 if newValue == .unlocked {
                     if autoSyncEnabled, accountVM.isRegistered { accountVM.syncNow() } // sync-on-unlock

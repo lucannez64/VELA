@@ -10,4 +10,5 @@ pub mod provider;
 pub mod session;
 pub mod settings;
 pub mod vault;
+pub mod organization;
 pub mod web_session;

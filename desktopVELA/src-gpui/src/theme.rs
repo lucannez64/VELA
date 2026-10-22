@@ -23,14 +23,30 @@ impl Global for ActiveTheme {}
 /// hasn't been set yet (shouldn't happen post-startup, but render() must
 /// never panic).
 pub fn current_palette(cx: &App) -> Palette {
-    cx.try_global::<ActiveTheme>()
-        .map(|t| t.0.palette())
-        .unwrap_or_else(|| ThemeId::Vela.palette())
+    let id = cx.try_global::<ActiveTheme>().map(|t| t.0).unwrap_or(ThemeId::Vela);
+    // The instrument preview recolours VELA Dark as "Night" so the classic
+    // screens it hosts match its frame. Other themes are left as they are.
+    if id == ThemeId::Vela && crate::instrument::is_instrument(cx) {
+        return Palette::night();
+    }
+    if id == ThemeId::Paper && crate::instrument::is_instrument(cx) {
+        let t=crate::instrument::tokens_for(ThemeId::Paper);
+        let mut p=Palette::latte();
+        p.primary=t.primary_bg;p.primary_dim=t.muted;p.on_primary=t.primary_fg;
+        p.secondary=t.signal;p.on_secondary=t.on_signal;p.error=t.risk;p.accent_violet=t.violet;
+        p.surface=t.bg;p.surface_dim=t.bg;p.surface_container_lowest=t.bg;p.surface_container_low=t.panel;
+        p.surface_container=t.panel;p.surface_container_high=t.panel2;p.surface_container_highest=t.panel3;
+        p.surface_bright=t.panel3;p.surface_variant=t.panel2;p.on_surface=t.text;p.on_surface_variant=t.muted;
+        p.outline=t.faint;p.outline_variant=t.line2;
+        return p;
+    }
+    id.palette()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeId {
     Vela,
+    Paper,
     Macchiato,
     Latte,
     Gruvbox,
@@ -47,6 +63,7 @@ impl ThemeId {
     pub fn label(self) -> &'static str {
         match self {
             ThemeId::Vela => "VELA Dark",
+            ThemeId::Paper => "Paper",
             ThemeId::Macchiato => "Macchiato",
             ThemeId::Latte => "Latte",
             ThemeId::Gruvbox => "Gruvbox",
@@ -56,6 +73,7 @@ impl ThemeId {
     pub fn description(self) -> &'static str {
         match self {
             ThemeId::Vela => "Default obsidian look",
+            ThemeId::Paper => "Warm paper — light",
             ThemeId::Macchiato => "Catppuccin Macchiato",
             ThemeId::Latte => "Catppuccin Latte — light",
             ThemeId::Gruvbox => "Retro groove, warm dark",
@@ -63,12 +81,13 @@ impl ThemeId {
     }
 
     pub fn is_dark(self) -> bool {
-        !matches!(self, ThemeId::Latte)
+        !matches!(self, ThemeId::Latte | ThemeId::Paper)
     }
 
     pub fn palette(self) -> Palette {
         match self {
             ThemeId::Vela => Palette::vela(),
+            ThemeId::Paper => Palette::latte(),
             ThemeId::Macchiato => Palette::macchiato(),
             ThemeId::Latte => Palette::latte(),
             ThemeId::Gruvbox => Palette::gruvbox(),
@@ -76,7 +95,8 @@ impl ThemeId {
     }
 
     /// Maps a stored `Settings::Theme` (including the legacy `Dark`/`Light`
-    /// values and `System`) to a concrete palette id. `System` doesn't query
+    /// values and `System`) to a concrete palette id. The legacy Light value
+    /// stores Paper in the opt-in preview; its classic palette remains Latte. `System` doesn't query
     /// the OS light/dark preference yet (unlike `themes.ts`'s
     /// `systemPreferredTheme`) — resolves to `Vela`, documented simplification.
     pub fn from_setting(theme: &vela_desktop_core::settings::Theme) -> ThemeId {
@@ -84,7 +104,8 @@ impl ThemeId {
         match theme {
             Theme::Vela | Theme::Dark | Theme::System => ThemeId::Vela,
             Theme::Macchiato => ThemeId::Macchiato,
-            Theme::Latte | Theme::Light => ThemeId::Latte,
+            Theme::Latte => ThemeId::Latte,
+            Theme::Light => ThemeId::Paper,
             Theme::Gruvbox => ThemeId::Gruvbox,
         }
     }
@@ -93,6 +114,7 @@ impl ThemeId {
         use vela_desktop_core::settings::Theme;
         match self {
             ThemeId::Vela => Theme::Vela,
+            ThemeId::Paper => Theme::Light,
             ThemeId::Macchiato => Theme::Macchiato,
             ThemeId::Latte => Theme::Latte,
             ThemeId::Gruvbox => Theme::Gruvbox,
@@ -103,6 +125,8 @@ impl ThemeId {
 /// Maps 1:1 to the `--color-*` custom properties in `index.css`.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
+    /// Presentation hint used only by shared dialog controls.
+    pub instrument: bool,
     pub primary: Hsla,
     pub primary_dim: Hsla,
     pub secondary: Hsla,
@@ -128,6 +152,7 @@ pub struct Palette {
 impl Palette {
     pub fn vela() -> Palette {
         Palette {
+            instrument: false,
             primary: rgb(0x73db9a).into(),
             primary_dim: rgb(0x1c8f56).into(),
             secondary: rgb(0x44e2cd).into(),
@@ -151,8 +176,37 @@ impl Palette {
         }
     }
 
+    /// VELA Dark as seen through the instrument preview: ink surfaces, lime
+    /// signal, violet accent. Only used while that preview is active.
+    pub fn night() -> Palette {
+        Palette {
+            instrument: false,
+            primary: rgb(0xd9f36a).into(),
+            primary_dim: rgb(0x9db040).into(),
+            secondary: rgb(0xb6a9ff).into(),
+            error: rgb(0xff5d4a).into(),
+            accent_violet: rgb(0x9c8bff).into(),
+            surface: rgb(0x0e0e14).into(),
+            surface_dim: rgb(0x060609).into(),
+            surface_bright: rgb(0x2a2a36).into(),
+            surface_container_lowest: rgb(0x060609).into(),
+            surface_container_low: rgb(0x0e0e14).into(),
+            surface_container: rgb(0x15151d).into(),
+            surface_container_high: rgb(0x1c1c26).into(),
+            surface_container_highest: rgb(0x252532).into(),
+            surface_variant: rgb(0x252532).into(),
+            on_surface: rgb(0xf3f2ef).into(),
+            on_surface_variant: rgb(0xa9a8b2).into(),
+            on_primary: rgb(0x14160a).into(),
+            on_secondary: rgb(0x0b0b0f).into(),
+            outline: rgb(0x6e6d78).into(),
+            outline_variant: rgb(0x2c2c38).into(),
+        }
+    }
+
     pub fn macchiato() -> Palette {
         Palette {
+            instrument: false,
             primary: rgb(0xa6da95).into(),
             primary_dim: rgb(0x6c8e61).into(),
             secondary: rgb(0x8bd5ca).into(),
@@ -178,6 +232,7 @@ impl Palette {
 
     pub fn latte() -> Palette {
         Palette {
+            instrument: false,
             primary: rgb(0x40a02b).into(),
             primary_dim: rgb(0x2d701e).into(),
             secondary: rgb(0x179299).into(),
@@ -203,6 +258,7 @@ impl Palette {
 
     pub fn gruvbox() -> Palette {
         Palette {
+            instrument: false,
             primary: rgb(0xb8bb26).into(),
             primary_dim: rgb(0x98971a).into(),
             secondary: rgb(0x8ec07c).into(),
@@ -248,7 +304,7 @@ mod tests {
         assert_eq!(ThemeId::from_setting(&Theme::Gruvbox), ThemeId::Gruvbox);
         // Legacy stored values keep their documented meaning.
         assert_eq!(ThemeId::from_setting(&Theme::Dark), ThemeId::Vela);
-        assert_eq!(ThemeId::from_setting(&Theme::Light), ThemeId::Latte);
+        assert_eq!(ThemeId::from_setting(&Theme::Light), ThemeId::Paper);
         // System resolves to Vela in the gpui build (documented simplification).
         assert_eq!(ThemeId::from_setting(&Theme::System), ThemeId::Vela);
     }

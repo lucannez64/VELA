@@ -88,6 +88,8 @@ pub enum IpcMessageType {
     #[serde(alias = "ProviderSyncCredentialsResponse")]
     #[serde(alias = "providerSyncCredentialsResponse")]
     ProviderSyncCredentialsResponse,
+    VaultManage,
+    VaultManageResponse,
     SessionStatus,
     SyncStatus,
     OpenVault,
@@ -281,6 +283,10 @@ pub mod server {
         info!("Processing IPC message: {:?}", message.msg_type);
 
         match message.msg_type {
+            IpcMessageType::VaultManage => match crate::extension_management::handle(host, peer, &message.payload).await {
+                Ok(payload) => IpcMessage { msg_type: IpcMessageType::VaultManageResponse, payload, capability: None },
+                Err(error) => IpcMessage::error(error),
+            },
             IpcMessageType::Ping => IpcMessage::pong(),
             IpcMessageType::OpenVault => {
                 host.focus_main_window();
@@ -936,15 +942,15 @@ pub mod server {
             .get("user_initiated")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // Credit cards are not scoped to a domain — the same card is spent at
-        // any merchant — so the caller asks for them explicitly with
-        // `credential_type: "card"`, and only after it has seen a payment form.
-        // Everything else keeps the login behaviour.
-        let wants_cards = message
+        // Cards and identities apply across sites. Their release is explicit
+        // and is still audited against the destination domain. Login queries
+        // retain their domain matching behaviour.
+        let credential_type = message
             .payload
             .get("credential_type")
-            .and_then(|v| v.as_str())
-            == Some("card");
+            .and_then(|v| v.as_str());
+        let wants_cards = credential_type == Some("card");
+        let wants_identities = credential_type == Some("identity");
         let state = host.state();
 
         {
@@ -970,11 +976,15 @@ pub mod server {
         // signatures and in-core logins, which sign the user in elsewhere —
         // still ask the human every time through `crate::presence`.
         let vault = state.vault.read();
-        let items: Vec<VaultItem> = if wants_cards {
+        let items: Vec<VaultItem> = if wants_cards || wants_identities {
             vault
                 .items_snapshot()
                 .iter()
-                .filter(|item| matches!(item, VaultItem::CreditCard { .. }))
+                .filter(|item| match item {
+                    VaultItem::CreditCard { .. } => wants_cards,
+                    VaultItem::Identity { .. } => wants_identities,
+                    _ => false,
+                })
                 .cloned()
                 .collect()
         } else {
@@ -1036,6 +1046,28 @@ pub mod server {
                     host.show_toast(&format!("Filled {base_domain} for {}", peer.describe()));
                 }
             }
+            if wants_identities {
+                let values: Vec<_> = items.iter().map(|item| match item {
+                    VaultItem::Identity { meta, first_name, last_name, .. } => {
+                        let details = meta.rich.identity_details.as_ref();
+                        let addresses: Vec<_> = details.into_iter().flat_map(|d| &d.addresses).map(|a| serde_json::json!({
+                            "id": a.id, "label": a.label, "line1": a.line1, "line2": a.line2,
+                            "city": a.city, "region": a.region, "postalCode": a.postal_code,
+                            "countryCode": a.country_code,
+                        })).collect();
+                        serde_json::json!({
+                            "item_type": "identity", "id": meta.id, "name": meta.name,
+                            "firstName": first_name, "lastName": last_name,
+                            "middleName": details.and_then(|d| d.middle_name.as_ref()),
+                            "email": details.and_then(|d| d.email.as_ref()),
+                            "phone": details.and_then(|d| d.phone.as_ref()),
+                            "company": details.and_then(|d| d.company.as_ref()), "addresses": addresses,
+                        })
+                    },
+                    _ => serde_json::Value::Null,
+                }).collect();
+                return autofill_value_response(serde_json::json!(values), false);
+            }
             return autofill_response(items, false);
         }
 
@@ -1049,12 +1081,17 @@ pub mod server {
                     "username": item.username(),
                     "url": item.url(),
                 }),
-                VaultItem::CreditCard { exp, cardholder_name, .. } => serde_json::json!({
+                VaultItem::CreditCard { number, exp, cardholder_name, .. } => serde_json::json!({
                     "item_type": "creditCard",
                     "id": item.id(),
                     "name": item.name(),
                     "exp": exp,
+                    "last4": number.chars().filter(|c| c.is_ascii_digit()).collect::<String>().chars().rev().take(4).collect::<String>().chars().rev().collect::<String>(),
                     "cardholder_name": cardholder_name,
+                }),
+                VaultItem::Identity { meta, .. } => serde_json::json!({
+                    "item_type": "identity", "id": meta.id, "name": meta.name,
+                    "addresses": meta.rich.identity_details.as_ref().map(|d| d.addresses.iter().map(|a| serde_json::json!({"id":a.id, "label":a.label})).collect::<Vec<_>>()).unwrap_or_default(),
                 }),
                 other => serde_json::json!({
                     "item_type": "item",
@@ -1249,6 +1286,7 @@ pub mod server {
         let now = chrono::Utc::now();
         let new_item = VaultItem::Login {
             meta: crate::vault::VaultMeta {
+                rich: Default::default(),
                 id: uuid::Uuid::new_v4().to_string(),
                 name: if name.is_empty() {
                     extract_base_domain(&url)
@@ -2199,6 +2237,7 @@ pub mod server {
                 let now = chrono::Utc::now();
                 mock.state.vault.write().add_item(VaultItem::Login {
                     meta: VaultMeta {
+                rich: Default::default(),
                         id: "1".into(),
                         name: "GH".into(),
                         notes: None,
@@ -2255,6 +2294,7 @@ pub mod server {
             let (_dir, mock) = MockHost::new(true);
             let now = chrono::Utc::now();
             let meta = |id: &str, name: &str| VaultMeta {
+                rich: Default::default(),
                 id: id.into(),
                 name: name.into(),
                 notes: None,
@@ -2319,6 +2359,38 @@ pub mod server {
             assert_eq!(items[0]["item_type"], "login");
         }
 
+        #[tokio::test]
+        async fn autofill_identity_is_explicit_and_excludes_sensitive_extras() {
+            let (_dir, mock) = MockHost::new(true);
+            let now = chrono::Utc::now();
+            let rich = serde_json::from_value(serde_json::json!({
+                "identityDetails": {"email":"ada@example.test", "addresses":[{
+                    "id":"00000000-0000-0000-0000-000000000001", "line1":"12 Computing Lane", "countryCode":"GB", "privateExtra":"not-for-browser"
+                }]}
+            })).unwrap();
+            mock.state.vault.write().add_item(VaultItem::Identity {
+                meta: VaultMeta {rich, id:"identity1".into(), name:"Ada".into(), notes:Some("private notes".into()), created_at:now, updated_at:now, last_modified_device:None, favorite:false, shared:false, share_recipient:None},
+                first_name:"Ada".into(), last_name:"Lovelace".into(), ssn:"SECRET-SSN".into(),
+            });
+            let host: Arc<dyn Host> = mock.clone();
+            let peer = test_peer();
+            let request = |initiated| message(IpcMessageType::AutofillRequest, serde_json::json!({"domain":"https://shop.example", "credential_type":"identity", "user_initiated":initiated}), "cap");
+            let passive = process_message(request(false), &host, &peer).await;
+            assert!(passive.payload["items"][0].get("email").is_none());
+            let response = process_message(request(true), &host, &peer).await;
+            let items = response.payload["items"].as_array().unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0]["firstName"], "Ada");
+            assert_eq!(items[0]["email"], "ada@example.test");
+            assert_eq!(items[0]["addresses"][0]["countryCode"], "GB");
+            let json = response.payload.to_string();
+            for secret in ["SECRET-SSN", "private notes", "not-for-browser"] { assert!(!json.contains(secret)); }
+            mock.state.session.write().active = false;
+            let locked = process_message(request(true), &host, &peer).await;
+            assert!(locked.payload["requires_biometric"].as_bool().unwrap());
+            assert!(locked.payload["items"].as_array().unwrap().is_empty());
+        }
+
         /// Issue #149, D: a drain should be visible while it happens, not
         /// discoverable afterwards. Every actual plaintext release leaves an
         /// encrypted audit entry naming who got it and for what site.
@@ -2329,6 +2401,7 @@ pub mod server {
                 let now = chrono::Utc::now();
                 mock.state.vault.write().add_item(VaultItem::Login {
                     meta: VaultMeta {
+                rich: Default::default(),
                         id: "1".into(),
                         name: "GH".into(),
                         notes: None,
@@ -2393,6 +2466,7 @@ pub mod server {
                 let now = chrono::Utc::now();
                 mock.state.vault.write().add_item(VaultItem::Login {
                     meta: VaultMeta {
+                rich: Default::default(),
                         id: "1".into(),
                         name: "GH".into(),
                         notes: None,
@@ -2487,6 +2561,7 @@ pub mod server {
                     let now = chrono::Utc::now();
                     vault.add_item(VaultItem::Login {
                         meta: VaultMeta {
+                rich: Default::default(),
                             id: format!("item{i}"),
                             name: format!("Site{i}"),
                             notes: None,
@@ -2617,6 +2692,7 @@ pub mod server {
                 let mut vault = mock.state.vault.write();
                 vault.add_item(VaultItem::Login {
                     meta: VaultMeta {
+                rich: Default::default(),
                         id: "login-1".into(),
                         name: "GitHub".into(),
                         notes: Some("personal".into()),
@@ -2707,6 +2783,7 @@ pub mod server {
                 let mut vault = mock.state.vault.write();
                 vault.add_item(VaultItem::Login {
                     meta: VaultMeta {
+                rich: Default::default(),
                         id: "shared-1".into(),
                         name: "Shared".into(),
                         notes: None,
@@ -2781,6 +2858,7 @@ pub mod server {
             let now = chrono::Utc::now();
             let item = VaultItem::Login {
                 meta: crate::vault::VaultMeta {
+                rich: Default::default(),
                     id: "login-1".to_string(),
                     name: "Test site".to_string(),
                     notes: None,

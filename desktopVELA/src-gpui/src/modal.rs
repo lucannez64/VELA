@@ -1,7 +1,24 @@
 //! Shared modal chrome. Only the middle region scrolls; controls keep their
 //! hitboxes and position even when the hosting view is shorter than the window.
-use crate::{fonts, icon::icon, theme::Palette};
-use gpui::{div, prelude::*, px, Div, IntoElement, MouseButton, SharedString, Stateful};
+use crate::{fonts, theme::Palette};
+use gpui::{AnimationExt, div, prelude::*, px, Div, IntoElement, MouseButton, SharedString, Stateful};
+
+/// Dialog surfaces follow the preview tokens without changing classic screens.
+pub fn palette(cx: &gpui::App) -> Palette {
+    let mut p = crate::theme::current_palette(cx);
+    if crate::instrument::is_instrument(cx) {
+        let t = crate::instrument::tokens(cx);
+        p.instrument = true;
+        p.primary = t.primary_bg; p.on_primary = t.primary_fg;
+        p.secondary = t.signal; p.on_secondary = t.on_signal;
+        p.surface = t.bg; p.surface_container = t.panel;
+        p.surface_container_low = t.panel; p.surface_container_high = t.panel2;
+        p.surface_container_highest = t.panel2; p.surface_bright = t.panel3;
+        p.on_surface = t.text; p.on_surface_variant = t.muted;
+        p.outline = t.faint; p.outline_variant = t.line2; p.error = t.risk;
+    }
+    p
+}
 
 pub fn backdrop(id: &'static str) -> Stateful<Div> {
     div()
@@ -36,24 +53,34 @@ pub fn present(window: &gpui::Window, backdrop: impl IntoElement) -> gpui::Defer
     .with_priority(100)
 }
 
+/// Short entrance for preview dialogs; reduced motion is respected.
+pub fn animate(card: Stateful<Div>, enabled: bool, drawer: bool) -> gpui::AnyElement {
+    if enabled {
+        card.relative().with_animation("instrument-dialog-enter",
+            gpui::Animation::new(crate::instrument::ms(220)).with_easing(crate::instrument::ease_out),
+            move |el, d| el.opacity(d).left(px(if drawer { 24. * (1. - d) } else { 0. })))
+            .into_any_element()
+    } else { card.into_any_element() }
+}
+
 pub fn close_button(id: &'static str, palette: &Palette) -> Stateful<Div> {
-    div()
-        .id(id)
-        .debug_selector(move || id.to_owned())
+    if palette.instrument {
+        return div().id(id).debug_selector(move || id.to_owned()).size(px(34.))
+            .rounded_full().border_1().border_color(palette.outline_variant)
+            .flex().items_center().justify_center().cursor_pointer().occlude()
+            .hover(|el| el.bg(palette.surface_bright).text_color(palette.on_surface))
+            .child(crate::instrument::icons::icon("close", px(16.), palette.on_surface_variant));
+    }
+    crate::ui::icon_button(id, "close", px(20.), palette.on_surface_variant)
         .size(px(40.))
         .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_lg()
-        .text_color(palette.on_surface_variant)
-        .cursor_pointer()
         .occlude()
-        .child(icon("close", px(20.), palette.on_surface_variant))
 }
 
 pub fn header(title: impl Into<SharedString>, close: impl IntoElement, palette: &Palette) -> Div {
+    let title: SharedString = title.into();
     div()
+        .when(palette.instrument, |el| el.px(px(20.)).py(px(14.)))
         .flex()
         .items_center()
         .gap_3()
@@ -67,7 +94,8 @@ pub fn header(title: impl Into<SharedString>, close: impl IntoElement, palette: 
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_xl()
                 .text_color(palette.on_surface)
-                .child(title.into()),
+                .when(palette.instrument, |el| el.font_family(fonts::MONO).font_weight(gpui::FontWeight::NORMAL).text_size(px(11.)).text_color(palette.on_surface_variant))
+                .child(if palette.instrument { title.to_uppercase().into() } else { title }),
         )
         .child(close)
 }
@@ -109,10 +137,14 @@ pub fn frame(
         .flex_col()
         .overflow_hidden()
         .rounded_2xl()
+        .when(palette.instrument, |el| el.rounded(px(26.)))
+        .font_family(fonts::LABEL)
+        .text_base()
+        .text_color(palette.on_surface)
         .bg(palette.surface_container)
         .border_1()
         .border_color(gpui::Hsla {
-            a: 0.2,
+            a: if palette.instrument { palette.outline_variant.a } else { 0.2 },
             ..palette.outline_variant
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -121,7 +153,7 @@ pub fn frame(
                 .flex_shrink_0()
                 .border_b_1()
                 .border_color(gpui::Hsla {
-                    a: 0.12,
+                    a: if palette.instrument { palette.outline_variant.a } else { 0.12 },
                     ..palette.outline_variant
                 })
                 .child(header),
@@ -142,7 +174,7 @@ pub fn frame(
                 .py_3()
                 .border_t_1()
                 .border_color(gpui::Hsla {
-                    a: 0.12,
+                    a: if palette.instrument { palette.outline_variant.a } else { 0.12 },
                     ..palette.outline_variant
                 })
                 .child(footer),

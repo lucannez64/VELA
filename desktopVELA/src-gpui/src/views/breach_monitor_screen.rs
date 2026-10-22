@@ -7,6 +7,9 @@
 //! "Check & Add" flow performs a real `add_item` with the result, exactly
 //! matching the original's `handleAddEmail`.
 
+#[path="breach_instrument.rs"]
+mod instrument_view;
+
 use std::sync::Arc;
 
 use chrono::{DateTime, Local, Utc};
@@ -68,7 +71,7 @@ impl BreachMonitorScreen {
             checking_passwords: false,
             adding_email: false,
             status_message: None,
-            _pulse_task: animation::spawn_pulse_ticker(cx),
+            _pulse_task: if crate::instrument::is_instrument(cx){Task::ready(())}else{animation::spawn_pulse_ticker(cx)},
         }
     }
 
@@ -190,6 +193,7 @@ impl BreachMonitorScreen {
             let breach_count = breaches.len() as u32;
             let item = VaultItem::BreachMonitor {
                 meta: vela_desktop_core::vault::VaultMeta {
+                rich: Default::default(),
                     id: String::new(),
                     name: email_for_item.clone(),
                     notes: None,
@@ -241,6 +245,7 @@ fn format_checked_at(dt: Option<DateTime<Utc>>) -> String {
 
 impl Render for BreachMonitorScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::instrument::is_instrument(cx) { return self.render_instrument(window,cx); }
         let palette = crate::theme::current_palette(cx);
         // Matches the original's `md:` breakpoint (768px) intent for the two
         // title+button header rows on this screen — below it they stack
@@ -355,6 +360,7 @@ impl Render for BreachMonitorScreen {
             })
             .child(password_breach_section(&palette, header_stacked, self.checking_passwords, window, cx))
             .child(how_it_works(&palette))
+            .into_any_element()
     }
 }
 

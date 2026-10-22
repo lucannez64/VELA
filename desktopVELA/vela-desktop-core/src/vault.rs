@@ -1,3 +1,4 @@
+use vela_core::rich_items as vela_core_rich;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -27,6 +28,8 @@ pub enum ItemType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultMeta {
+    #[serde(default, flatten)]
+    pub rich: vela_core_rich::RichItemData,
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -45,7 +48,7 @@ pub struct VaultMeta {
     pub share_recipient: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "item_type", rename_all = "camelCase")]
 pub enum VaultItem {
     Login {
@@ -98,7 +101,7 @@ pub enum VaultItem {
         cvv: String,
         #[serde(default)]
         pin: Option<String>,
-        #[serde(default, alias = "cardholder_name")]
+        #[serde(default, alias = "cardholderName")]
         cardholder_name: Option<String>,
     },
     SecureNote {
@@ -110,9 +113,9 @@ pub enum VaultItem {
     Identity {
         #[serde(flatten)]
         meta: VaultMeta,
-        #[serde(alias = "first_name")]
+        #[serde(alias = "firstName")]
         first_name: String,
-        #[serde(alias = "last_name")]
+        #[serde(alias = "lastName")]
         last_name: String,
         ssn: String,
     },
@@ -297,7 +300,7 @@ pub struct Tombstone {
     pub deleted_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BreachEntry {
     #[serde(default)]
     pub name: String,
@@ -502,6 +505,14 @@ impl VaultItem {
         }
     }
 
+    pub fn with_rich(&self, rich: vela_core_rich::RichItemData) -> Self {
+        let mut new = self.clone(); new.meta_mut().rich = rich; new
+    }
+
+    pub fn without_personal_organization(&self) -> Self {
+        let mut rich = self.meta().rich.clone(); rich.strip_personal_organization(); self.with_rich(rich)
+    }
+
     pub fn with_id(&self, new_id: String) -> Self {
         let mut new = self.clone();
         new.meta_mut().id = new_id;
@@ -521,6 +532,7 @@ impl VaultItem {
     /// "unchanged", not "unlink". Without this, editing a login on a laptop
     /// would quietly detach every phone app from it on the next sync.
     pub fn preserving_app_ids(mut self, existing: &VaultItem) -> Self {
+        self.meta_mut().rich.preserve_omitted(&existing.meta().rich);
         if let (
             VaultItem::Login {
                 app_ids,
@@ -582,6 +594,10 @@ impl VaultItem {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(from = "VaultStoreRepr")]
 pub struct VaultStore {
+    #[serde(default, rename = "schemaVersion", skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
+    #[serde(default, flatten)]
+    pub organization: vela_core_rich::OrganizationData,
     pub items: Vec<VaultItem>,
     #[serde(default)]
     pub tombstones: Vec<Tombstone>,
@@ -622,6 +638,10 @@ pub struct VaultStore {
 /// Building it here costs one pass at load and makes the lookups after it O(1).
 #[derive(Deserialize)]
 struct VaultStoreRepr {
+    #[serde(default, rename = "schemaVersion")]
+    schema_version: Option<u32>,
+    #[serde(default, flatten)]
+    organization: vela_core_rich::OrganizationData,
     items: Vec<VaultItem>,
     #[serde(default)]
     tombstones: Vec<Tombstone>,
@@ -630,6 +650,8 @@ struct VaultStoreRepr {
 impl From<VaultStoreRepr> for VaultStore {
     fn from(repr: VaultStoreRepr) -> Self {
         let mut store = Self {
+            schema_version: repr.schema_version,
+            organization: repr.organization,
             items: repr.items,
             tombstones: repr.tombstones,
             generation: 0,
@@ -644,6 +666,8 @@ impl From<VaultStoreRepr> for VaultStore {
 impl Clone for VaultStore {
     fn clone(&self) -> Self {
         Self {
+            schema_version: self.schema_version,
+            organization: self.organization.clone(),
             items: self.items.clone(),
             tombstones: self.tombstones.clone(),
             generation: self.generation,
@@ -666,6 +690,8 @@ impl Default for VaultStore {
 impl VaultStore {
     pub fn new() -> Self {
         Self {
+            schema_version: None,
+            organization: Default::default(),
             items: Vec::new(),
             tombstones: Vec::new(),
             generation: 0,
@@ -1125,6 +1151,7 @@ mod tests {
     fn meta(id: &str, name: &str) -> VaultMeta {
         let now = Utc::now();
         VaultMeta {
+                rich: Default::default(),
             id: id.into(),
             name: name.into(),
             notes: None,
@@ -1658,6 +1685,7 @@ mod tests {
         let now = chrono::Utc::now();
         VaultItem::Passkey {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: id.to_string(),
                 name: rp_id.to_string(),
                 notes: None,

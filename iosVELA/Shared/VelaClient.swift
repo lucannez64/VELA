@@ -168,6 +168,28 @@ actor VelaClient {
         return FetchedChunk(ciphertextBase64: ciphertextB64, version: version, lamportClock: lamport)
     }
 
+    /// This client preserves folders, tags and richer fields (vault schema 2).
+    static let writeSchema = "2"
+
+    struct SchemaStatus: Decodable {
+        let minimum_write_schema: Int
+        let supported_schema: Int
+    }
+
+    /// Raise the account's schema floor so clients that would drop folders
+    /// and richer fields can no longer overwrite this vault.
+    func activateRichSchema() async throws {
+        let status: SchemaStatus
+        do {
+            status = try await request("POST", "/vault/schema", auth: true)
+        } catch let error as ServerError where error.status == 404 {
+            throw ServerError(status: 404, body: "Update the server to sync folders and custom fields")
+        }
+        guard status.supported_schema >= 2 else {
+            throw ServerError(status: 0, body: "This server does not support folders and custom fields")
+        }
+    }
+
     /// Delete a stale chunk (used when the vault shrinks or migrates chunk ids).
     func deleteChunk(_ chunkID: String, ifMatch: Int, keyEpoch: Int) async throws {
         guard keyEpoch >= 1 else {
@@ -175,7 +197,8 @@ actor VelaClient {
         }
         _ = try await requestRaw("DELETE", "/vault/chunk/\(Self.pathComponent(chunkID))", body: nil,
                                  headers: ["If-Match": String(ifMatch),
-                                           "X-Vela-Epoch": String(keyEpoch)])
+                                           "X-Vela-Epoch": String(keyEpoch),
+                                           "X-Vela-Write-Schema": Self.writeSchema])
     }
 
     /// Upload a chunk. `ifMatch` = 0 to insert, else the current version. Returns the new version.
@@ -191,6 +214,7 @@ actor VelaClient {
             "PUT", "/vault/chunk/\(Self.pathComponent(chunkID))", body: raw,
             headers: ["If-Match": String(ifMatch), "X-Lamport-Clock": String(lamportClock),
                       "X-Vela-Epoch": String(keyEpoch),
+                      "X-Vela-Write-Schema": Self.writeSchema,
                       "Content-Type": "application/octet-stream"]
         )
         struct PutResp: Decodable { let version: Int }

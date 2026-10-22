@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#73DB9A"
-        android:pathData="M54,18L84,36V72L54,90L24,72V36L54,18ZM39,42L54,70L69,42H59L54,55L49,42H39Z" />
+<!-- The Instrument V uses the same eight dot rows as Compose BrandMark.
+     All dots remain inside the adaptive icon's central 66dp safe circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:name="row0" android:fillColor="#A28AFF" android:pathData="M35.370,29.850a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M67.570,29.850a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
+    <path android:name="row1" android:fillColor="#A28AFF" android:pathData="M35.370,36.750a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M67.570,36.750a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
+    <path android:name="row2" android:fillColor="#A28AFF" android:pathData="M35.370,43.650a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M67.570,43.650a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
+    <path android:name="row3" android:fillColor="#A28AFF" android:pathData="M35.370,50.550a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M67.570,50.550a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
+    <path android:name="row4" android:fillColor="#A28AFF" android:pathData="M35.370,57.450a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M67.570,57.450a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
+    <path android:name="row5" android:fillColor="#A28AFF" android:pathData="M39.970,64.350a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M62.970,64.350a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
+    <path android:name="row6" android:fillColor="#A28AFF" android:pathData="M44.570,71.250a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M58.370,71.250a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
+    <path android:name="row7" android:fillColor="#A28AFF" android:pathData="M49.170,78.150a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z M53.770,78.150a2.530,2.530 0,1 0 5.060,0a2.530,2.530 0,1 0 -5.060,0Z" />
 </vector>

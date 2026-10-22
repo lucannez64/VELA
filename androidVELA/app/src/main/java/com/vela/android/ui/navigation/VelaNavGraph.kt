@@ -1,5 +1,11 @@
 package com.vela.android.ui.navigation
 
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import com.vela.android.core.accountsNeedingAttention
+
+import com.vela.android.core.withMeta
+
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -8,12 +14,9 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,16 +26,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vela.android.core.VaultItem
+import com.vela.android.core.VelaRepositories
 import com.vela.android.sync.SyncSettings
 import com.vela.android.sync.V3EnrollmentLocator
 import com.vela.android.sync.SyncState
@@ -58,7 +63,24 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Casino
+import androidx.compose.material.icons.outlined.MoreHoriz
+import com.vela.android.ui.components.InstrumentDock
+import com.vela.android.ui.components.InstrumentDockItem
+import com.vela.android.ui.screens.OverviewScreen
+import com.vela.android.ui.screens.GeneratorScreen
+import com.vela.android.ui.screens.MoreScreen
+
 object VelaRoutes {
+    const val OVERVIEW = "overview"
+    const val GENERATOR = "generator"
+    const val MORE = "more"
     const val WELCOME = "welcome"
     const val UNLOCK = "unlock"
     const val VAULT = "vault"
@@ -87,9 +109,10 @@ data class BottomNavItem(
 )
 
 val bottomNavItems = listOf(
-    BottomNavItem(VelaRoutes.VAULT, "Vault", Icons.Filled.Shield, Icons.Outlined.Shield),
-    BottomNavItem(VelaRoutes.SHARING, "Sharing", Icons.Filled.Share, Icons.Outlined.Share),
-    BottomNavItem(VelaRoutes.SETTINGS, "Settings", Icons.Filled.Settings, Icons.Outlined.Settings)
+    BottomNavItem(VelaRoutes.OVERVIEW, "Overview", com.vela.android.ui.components.InstrumentIcons.Grid, com.vela.android.ui.components.InstrumentIcons.Grid),
+    BottomNavItem(VelaRoutes.VAULT, "Vault", com.vela.android.ui.components.InstrumentIcons.Vault, com.vela.android.ui.components.InstrumentIcons.Vault),
+    BottomNavItem(VelaRoutes.GENERATOR, "Generate", com.vela.android.ui.components.InstrumentIcons.Dice, com.vela.android.ui.components.InstrumentIcons.Dice),
+    BottomNavItem(VelaRoutes.MORE, "More", com.vela.android.ui.components.InstrumentIcons.Dots, com.vela.android.ui.components.InstrumentIcons.Dots)
 )
 
 @Composable
@@ -99,9 +122,9 @@ fun VelaNavHost(
     hasPasswordVault: Boolean,
     itemCount: Int,
     items: List<com.vela.android.core.VaultItem>,
-    onAddItem: (com.vela.android.core.VaultItem) -> Unit,
-    onUpdateItem: (com.vela.android.core.VaultItem) -> Unit,
-    onDeleteItem: (String) -> Unit,
+    onAddItem: (com.vela.android.core.VaultItem) -> Boolean,
+    onUpdateItem: (com.vela.android.core.VaultItem) -> Boolean,
+    onDeleteItem: (String) -> Boolean,
     onLock: () -> Unit,
     onReset: () -> Unit,
     onCreateBiometricVault: () -> Unit,
@@ -136,21 +159,29 @@ fun VelaNavHost(
     themeSetting: String,
     onThemeChange: (String) -> Unit
 ) {
+    val organization by VelaRepositories.vault.organization.collectAsState()
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
     val hasVault = hasBiometricVault || hasPasswordVault
+    var generatedPassword by remember { mutableStateOf("") }
+    var favoritesOnly by remember { mutableStateOf(false) }
+    var attentionOnly by remember { mutableStateOf(false) }
+    var recentVersion by remember { mutableStateOf(0) }
     var preselectedShareItemId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(isUnlocked) { if (!isUnlocked) { generatedPassword = ""; favoritesOnly = false; attentionOnly = false } }
 
     val authRoute = when {
         !hasVault -> VelaRoutes.WELCOME
         !isUnlocked -> VelaRoutes.UNLOCK
-        else -> VelaRoutes.VAULT
+        else -> VelaRoutes.OVERVIEW
     }
 
     LaunchedEffect(authRoute, currentRoute) {
         val routeRequiresUnlockedVault = currentRoute in listOf(
+            VelaRoutes.OVERVIEW, VelaRoutes.GENERATOR, VelaRoutes.MORE,
             VelaRoutes.VAULT,
             VelaRoutes.SHARING,
             VelaRoutes.SETTINGS,
@@ -159,14 +190,14 @@ fun VelaNavHost(
             VelaRoutes.EDIT_ITEM,
             VelaRoutes.DEVICES,
             VelaRoutes.AUDIT_LOG,
-            VelaRoutes.BREACH_MONITOR
+            VelaRoutes.BREACH_MONITOR, VelaRoutes.RECOVERY_SETUP, VelaRoutes.WEB_ACCESS
         )
         val isEnrollRoute = currentRoute == VelaRoutes.ENROLL || currentRoute == VelaRoutes.RECOVER
 
         val shouldRedirect = when (authRoute) {
             VelaRoutes.WELCOME -> currentRoute != VelaRoutes.WELCOME && !isEnrollRoute
             VelaRoutes.UNLOCK -> currentRoute != VelaRoutes.UNLOCK && routeRequiresUnlockedVault
-            VelaRoutes.VAULT -> currentRoute == null || currentRoute == VelaRoutes.WELCOME || currentRoute == VelaRoutes.UNLOCK || isEnrollRoute
+            VelaRoutes.OVERVIEW -> currentRoute == null || currentRoute == VelaRoutes.WELCOME || currentRoute == VelaRoutes.UNLOCK || isEnrollRoute
             else -> false
         }
 
@@ -178,61 +209,38 @@ fun VelaNavHost(
         }
     }
 
-    val showBottomBar = isUnlocked && currentRoute in listOf(VelaRoutes.VAULT, VelaRoutes.SHARING, VelaRoutes.SETTINGS)
+    val showBottomBar = isUnlocked && currentRoute in listOf(VelaRoutes.OVERVIEW, VelaRoutes.VAULT, VelaRoutes.GENERATOR, VelaRoutes.MORE)
 
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar(
-                    containerColor = VelaColors.SurfaceLow,
-                    contentColor = VelaColors.TextPrimary,
-                    tonalElevation = 0.dp
-                ) {
-                    bottomNavItems.forEach { item ->
-                        val selected = navBackStackEntry?.destination?.hierarchy?.any {
-                            it.route == item.route
-                        } == true
-
-                        NavigationBarItem(
-                            icon = {
-                                Icon(
-                                    if (selected) item.selectedIcon else item.unselectedIcon,
-                                    item.label
-                                )
-                            },
-                            label = {
-                                Text(
-                                    item.label,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                                )
-                            },
-                            selected = selected,
-                            onClick = {
-                                navController.navigate(item.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = VelaColors.Green,
-                                selectedTextColor = VelaColors.Green,
-                                unselectedIconColor = VelaColors.TextMuted,
-                                unselectedTextColor = VelaColors.TextMuted,
-                                indicatorColor = VelaColors.Green.copy(alpha = 0.12f)
-                            )
-                        )
-                    }
-                }
+                val selectedRoute = bottomNavItems.firstOrNull { item ->
+                    navBackStackEntry?.destination?.hierarchy?.any { it.route == item.route } == true
+                }?.route ?: VelaRoutes.OVERVIEW
+                InstrumentDock(
+                    items = bottomNavItems.map { InstrumentDockItem(it.route, it.label, it.selectedIcon) },
+                    selectedRoute = selectedRoute,
+                    onSelect = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    modifier = Modifier.navigationBarsPadding()
+                )
             }
         }
     ) { padding ->
         NavHost(
             navController = navController,
             startDestination = authRoute,
+            enterTransition = { fadeIn(tween(250)) + slideInVertically(tween(250, easing = com.vela.android.ui.components.InstrumentEase), initialOffsetY = { it / 60 }) },
+            exitTransition = { fadeOut(tween(150)) },
+            popEnterTransition = { fadeIn(tween(250)) },
+            popExitTransition = { fadeOut(tween(150)) + slideOutVertically(tween(200), targetOffsetY = { it / 80 }) },
             modifier = Modifier.padding(padding)
         ) {
             composable(VelaRoutes.WELCOME) {
@@ -376,6 +384,34 @@ fun VelaNavHost(
                 )
             }
 
+            composable(VelaRoutes.OVERVIEW) {
+                OverviewScreen(items, syncState,
+                    onItem = {
+                        VelaRepositories.recent.touch(it.id)
+                        recentVersion++
+                        navController.navigate(VelaRoutes.itemDetail(it.id))
+                    },
+                    onVault = { favoritesOnly = false; attentionOnly = false; navController.navigate(VelaRoutes.VAULT) },
+                    onFavorites = { favoritesOnly = true; attentionOnly = false; navController.navigate(VelaRoutes.VAULT) },
+                    onAttention = { favoritesOnly = false; attentionOnly = true; navController.navigate(VelaRoutes.VAULT) },
+                    onGenerate = { navController.navigate(VelaRoutes.GENERATOR) }, onLock = onLock,
+                    recentIds = remember(recentVersion) { VelaRepositories.recent.orderedIds() })
+            }
+            composable(VelaRoutes.GENERATOR) {
+                GeneratorScreen({ password -> generatedPassword = password; navController.navigate(VelaRoutes.ADD_ITEM) }, syncState)
+            }
+            composable(VelaRoutes.MORE) {
+                MoreScreen(userId, onNavigate = { route ->
+                    when (route) {
+                        "favorites" -> { favoritesOnly = true; attentionOnly = false; navController.navigate(VelaRoutes.VAULT) }
+                        "attention" -> { favoritesOnly = false; attentionOnly = true; navController.navigate(VelaRoutes.VAULT) }
+                        else -> navController.navigate(route)
+                    }
+                }, onLock = onLock, syncState = syncState,
+                    favorites = items.count { it.favorite },
+                    attention = remember(items) { items.accountsNeedingAttention().size })
+            }
+
             composable(VelaRoutes.VAULT) {
                 VaultBrowserScreen(
                     items = items,
@@ -384,33 +420,49 @@ fun VelaNavHost(
                         navController.navigate(VelaRoutes.itemDetail(item.id))
                     },
                     onAddItem = {
+                        generatedPassword = ""
                         navController.navigate(VelaRoutes.ADD_ITEM)
                     },
-                    onLock = onLock
+                    onLock = onLock,
+                    initialFavoritesOnly = favoritesOnly,
+                    initialAttentionOnly = attentionOnly,
+                    syncState = syncState,
+                    organization = organization,
+                    onEnableCollections = { VelaRepositories.vault.enableRichItems() },
+                    onMutateOrganization = { VelaRepositories.vault.mutateOrganization(it) }
                 )
             }
 
-            composable(VelaRoutes.ADD_ITEM) {
+            dialog(VelaRoutes.ADD_ITEM, dialogProperties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.Inherit)) {
                 AddItemScreen(
                     editItem = null,
+                    initialPassword = generatedPassword,
+                    organization = organization,
                     onSave = { item ->
-                        onAddItem(item)
-                        navController.popBackStack()
+                        if (onAddItem(item)) {
+                            generatedPassword = ""
+                            navController.popBackStack()
+                        }
                     },
-                    onBack = { navController.popBackStack() }
+                    onBack = { generatedPassword = ""; navController.popBackStack() }
                 )
             }
 
             composable(VelaRoutes.ITEM_DETAIL) { backStackEntry ->
                 val itemId = backStackEntry.arguments?.getString("itemId") ?: return@composable
                 val item = items.find { it.id == itemId }
+                LaunchedEffect(itemId) { VelaRepositories.recent.touch(itemId); recentVersion++ }
                 ItemDetailScreen(
                     item = item,
+                    organization = organization,
                     onBack = { navController.popBackStack() },
                     onEdit = { navController.navigate(VelaRoutes.editItem(itemId)) },
                     onDelete = {
-                        onDeleteItem(itemId)
-                        navController.popBackStack()
+                        if (onDeleteItem(itemId)) navController.popBackStack()
+                    },
+                    onToggleFavorite = { current ->
+                        // A newer timestamp so the change survives the next merge.
+                        onUpdateItem(current.withMeta { it.copy(favorite = !it.favorite, updatedAt = java.time.Instant.now()) })
                     },
                     onShare = {
                         preselectedShareItemId = itemId
@@ -425,14 +477,14 @@ fun VelaNavHost(
                 )
             }
 
-            composable(VelaRoutes.EDIT_ITEM) { backStackEntry ->
-                val itemId = backStackEntry.arguments?.getString("itemId") ?: return@composable
-                val item = items.find { it.id == itemId } ?: return@composable
+            dialog(VelaRoutes.EDIT_ITEM, dialogProperties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.Inherit)) { backStackEntry ->
+                val itemId = backStackEntry.arguments?.getString("itemId") ?: return@dialog
+                val item = items.find { it.id == itemId } ?: return@dialog
                 AddItemScreen(
                     editItem = item,
+                    organization = organization,
                     onSave = { updated ->
-                        onUpdateItem(updated)
-                        navController.popBackStack()
+                        if (onUpdateItem(updated)) navController.popBackStack()
                     },
                     onBack = { navController.popBackStack() }
                 )
@@ -462,7 +514,9 @@ fun VelaNavHost(
                     onUpdateAutoLockMinutes = onUpdateAutoLockMinutes,
                     onUpdateClipboardClearSeconds = onUpdateClipboardClearSeconds,
                     themeSetting = themeSetting,
-                    onThemeChange = onThemeChange
+                    onThemeChange = onThemeChange,
+                    onBack = { navController.popBackStack() },
+                    biometricUnlockEnabled = hasBiometricVault
                 )
             }
 

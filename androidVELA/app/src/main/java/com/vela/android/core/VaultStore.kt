@@ -4,7 +4,10 @@ import java.time.Instant
 
 class VaultStore(
     items: List<VaultItem> = emptyList(),
-    tombstones: List<Tombstone> = emptyList()
+    tombstones: List<Tombstone> = emptyList(),
+    val schemaVersion: Int = 1,
+    val richEnvelope: PreservedJson = PreservedJson(),
+    val opaqueItems: List<String> = emptyList()
 ) {
     var items: List<VaultItem> = items
         private set
@@ -88,12 +91,15 @@ class VaultStore(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is VaultStore) return false
-        return items == other.items && tombstones == other.tombstones
+        return items == other.items && tombstones == other.tombstones && schemaVersion == other.schemaVersion && richEnvelope == other.richEnvelope && opaqueItems == other.opaqueItems
     }
 
     override fun hashCode(): Int {
         var result = items.hashCode()
         result = 31 * result + tombstones.hashCode()
+        result = 31 * result + schemaVersion
+        result = 31 * result + richEnvelope.hashCode()
+        result = 31 * result + opaqueItems.hashCode()
         return result
     }
 

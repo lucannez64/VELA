@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -55,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vela.android.sync.SyncSettings
 import com.vela.android.sync.SyncState
+import com.vela.android.ui.components.*
 import com.vela.android.ui.components.VelaButton
 import com.vela.android.ui.components.VelaButtonStyle
 import com.vela.android.ui.components.VelaCard
@@ -92,8 +94,11 @@ fun SettingsScreen(
     onUpdateAutoLockMinutes: (Int) -> Unit,
     onUpdateClipboardClearSeconds: (Int) -> Unit,
     themeSetting: String,
-    onThemeChange: (String) -> Unit
+    onThemeChange: (String) -> Unit,
+    onBack: (() -> Unit)? = null,
+    biometricUnlockEnabled: Boolean? = null
 ) {
+    var choice by remember { mutableStateOf<String?>(null) }
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var syncOnStartup by remember(syncSettings.syncOnStartup) { mutableStateOf(syncSettings.syncOnStartup) }
     var backgroundSyncMinutes by remember(syncSettings.backgroundSyncMinutes) { mutableStateOf(syncSettings.backgroundSyncMinutes) }
@@ -112,85 +117,49 @@ fun SettingsScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
         ) {
         item {
-            Spacer(Modifier.height(16.dp))
-            Text("Settings", fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Spacer(Modifier.height(4.dp))
-            Text("Vault, security and appearance", color = VelaColors.TextMuted, fontSize = 14.sp)
-            Spacer(Modifier.height(24.dp))
+            if (onBack != null) BackHead("THIS DEVICE / SETTINGS", onBack)
+            Spacer(Modifier.height(20.dp))
+            com.vela.android.ui.components.InstrumentHeading("07 / PREFERENCES", "Make it yours.", "Your preferences, your devices, your keys.")
         }
 
-        // Appearance — placed first because it's the most visible UX control.
         item {
             SectionHeader("Appearance")
-            Spacer(Modifier.height(12.dp))
-            VelaCard {
-                Text(
-                    "Theme",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = VelaColors.TextPrimary
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "Pick a look — VELA, Macchiato, Gruvbox or Latte (light). Use System to follow your device.",
-                    fontSize = 12.sp,
-                    color = VelaColors.TextMuted
-                )
-                Spacer(Modifier.height(16.dp))
-
-                ThemeOptionRow(
-                    id = VelaThemes.SYSTEM,
-                    label = "System",
-                    description = "Follow device light/dark",
-                    swatches = listOf(0xFF121416, 0xFFEFF1F5, 0xFF73DB9A, 0xFF8B5CF6),
-                    selected = themeSetting == VelaThemes.SYSTEM,
-                    onSelect = onThemeChange,
-                    leadingIcon = Icons.Filled.Smartphone
-                )
-                Spacer(Modifier.height(10.dp))
-                VelaThemes.ALL.forEach { meta ->
-                    ThemeOptionRow(
-                        id = meta.id,
-                        label = meta.label,
-                        description = meta.description,
-                        swatches = meta.swatches,
-                        selected = themeSetting == meta.id,
-                        onSelect = onThemeChange
-                    )
-                    Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(14.dp))
+            val themes = VelaThemes.ALL + VelaThemes.Meta(VelaThemes.SYSTEM, "System", "Follow device", false,
+                listOf(0xFF0B0B10, 0xFFF7F6F2, 0xFFA28AFF))
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                themes.chunked(2).forEach { pair ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        pair.forEach { meta -> ThemeTile(meta, themeSetting == meta.id, { onThemeChange(meta.id) }, Modifier.weight(1f)) }
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))
         }
-
-        // Security
         item {
             SectionHeader("Security")
-            Spacer(Modifier.height(12.dp))
-            VelaCard {
-                VelaListItem(
-                    title = "Lock Vault",
-                    subtitle = "Clear memory and require re-authentication",
-                    icon = Icons.Filled.Lock,
-                    onClick = onLock
-                )
-                Spacer(Modifier.height(12.dp))
-                VelaListItem(
-                    title = "Reset Local Security",
-                    subtitle = "Delete encrypted vault and keystore keys",
-                    icon = Icons.Filled.DeleteForever,
-                    onClick = onReset
-                )
-                Spacer(Modifier.height(16.dp))
-                SegmentedAutoLock(autoLockMinutes, onUpdateAutoLockMinutes)
-                Spacer(Modifier.height(16.dp))
-                SegmentedClipboardClear(clipboardClearSeconds, onUpdateClipboardClearSeconds)
-                Spacer(Modifier.height(16.dp))
-                TrustedBrowsersSection()
+            Spacer(Modifier.height(14.dp))
+            InstrumentGroup {
+                if (biometricUnlockEnabled != null) {
+                    InstrumentControlRow("Unlock with biometrics") {
+                        InstrumentTag(if (biometricUnlockEnabled) "Enabled" else "Not configured")
+                    }
+                    GroupDivider()
+                }
+                InstrumentMenuRow(null, "Auto-lock", "$autoLockMinutes minutes") { choice = "lock" }
+                GroupDivider()
+                InstrumentMenuRow(null, "Clear clipboard", "$clipboardClearSeconds seconds") { choice = "clipboard" }
+                GroupDivider()
+                InstrumentMenuRow(InstrumentIcons.Lock, "Lock vault", onClick = onLock)
             }
+            Spacer(Modifier.height(12.dp))
+        }
+        item {
+            SectionHeader("Trusted browsers")
+            Spacer(Modifier.height(14.dp))
+            VelaCard { TrustedBrowsersSection() }
             Spacer(Modifier.height(24.dp))
         }
-
         // Account
         item {
             SectionHeader("Account")
@@ -336,6 +305,12 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
         }
 
+        item {
+            SectionHeader("Local security")
+            Spacer(Modifier.height(12.dp))
+            VelaButton("Reset local security", onReset, style = VelaButtonStyle.Destructive)
+            Spacer(Modifier.height(24.dp))
+        }
         // About
         item {
             SectionHeader("About")
@@ -354,101 +329,31 @@ fun SettingsScreen(
             Spacer(Modifier.height(40.dp))
         }
         }
-    }
-}
-
-@Composable
-private fun ThemeOptionRow(
-    id: String,
-    label: String,
-    description: String,
-    swatches: List<Long>,
-    selected: Boolean,
-    onSelect: (String) -> Unit,
-    leadingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) VelaColors.Green.copy(alpha = 0.10f) else VelaColors.SurfaceHigh)
-            .then(
-                if (selected) Modifier.border(1.dp, VelaColors.Green.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
-                else Modifier
-            )
-            .clickable { onSelect(id) }
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        SwatchPill(swatches)
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                leadingIcon?.let {
-                    Icon(it, null, modifier = Modifier.size(15.dp), tint = VelaColors.TextSecondary)
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
+        val autoLockOptions = listOf(1, 5, 15, 30)
+        val clipboardOptions = listOf(5, 15, 30, 60)
+        ChoiceSheet(choice != null, if (choice == "lock") "Auto-lock" else "Clear clipboard",
+            if (choice == "lock") autoLockOptions.map { "$it minutes" } else clipboardOptions.map { "$it seconds" },
+            if (choice == "lock") "$autoLockMinutes minutes" else "$clipboardClearSeconds seconds",
+            { choice = null }) { selected ->
+                val value = selected.substringBefore(' ').toInt()
+                if (choice == "lock") onUpdateAutoLockMinutes(value) else onUpdateClipboardClearSeconds(value)
+                choice = null
             }
-            Text(description, fontSize = 11.sp, color = VelaColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        if (selected) {
-            Icon(Icons.Filled.Check, "Selected", modifier = Modifier.size(18.dp), tint = VelaColors.Green)
-        }
     }
 }
 
 @Composable
-private fun SwatchPill(swatches: List<Long>) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(VelaColors.SurfaceDarkest)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        swatches.take(4).forEach { argb ->
-            Box(
-                modifier = Modifier
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .background(Color(argb))
-            )
+private fun ThemeTile(meta: VelaThemes.Meta, selected: Boolean, onSelect: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(22.dp)
+    Column(modifier.heightIn(min = 96.dp).clip(shape).background(Ink.panel)
+        .border(if (selected) 2.dp else 1.dp, if (selected) VelaColors.Violet else Ink.line2, shape)
+        .instrumentClick(onClick = onSelect).padding(14.dp), verticalArrangement = Arrangement.Center) {
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            val swatches = if (meta.swatches.size >= 4) listOf(meta.swatches[0], meta.swatches[3], meta.swatches[2]) else meta.swatches
+            swatches.take(3).forEach { swatch -> Box(Modifier.size(14.dp).clip(RoundedCornerShape(5.dp)).background(Color(swatch))) }
         }
-    }
-}
-
-@Composable
-private fun SegmentedAutoLock(autoLockMinutes: Int, onUpdateAutoLockMinutes: (Int) -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text("Auto-lock", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
-        Spacer(Modifier.height(2.dp))
-        Text("Lock the vault after this long backgrounded", fontSize = 12.sp, color = VelaColors.TextMuted)
-        Spacer(Modifier.height(10.dp))
-        SegmentedControl(
-            options = listOf(1 to "1m", 5 to "5m", 15 to "15m", 30 to "30m"),
-            selected = autoLockMinutes,
-            onSelect = onUpdateAutoLockMinutes
-        )
-    }
-}
-
-@Composable
-private fun SegmentedClipboardClear(seconds: Int, onUpdate: (Int) -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text("Clear clipboard", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VelaColors.TextPrimary)
-        Spacer(Modifier.height(2.dp))
-        Text(
-            "While a copied password sits on the clipboard, any app can read it",
-            fontSize = 12.sp,
-            color = VelaColors.TextMuted,
-        )
-        Spacer(Modifier.height(10.dp))
-        SegmentedControl(
-            options = listOf(5 to "5s", 15 to "15s", 30 to "30s", 60 to "60s"),
-            selected = seconds,
-            onSelect = onUpdate
-        )
+        Spacer(Modifier.height(12.dp))
+        Text(meta.label, fontSize = 12.sp, lineHeight = 17.sp, color = VelaColors.TextPrimary)
     }
 }
 
@@ -465,19 +370,11 @@ private fun ToggleRow(title: String, subtitle: String, on: Boolean, onToggle: ()
             Text(subtitle, fontSize = 12.sp, color = VelaColors.TextMuted)
         }
         Spacer(Modifier.width(16.dp))
-        VelaSwitch(checked = on, onCheckedChange = { onToggle() })
+        InstrumentToggle(on, { onToggle() }, title)
     }
 }
 
 @Composable
 private fun SectionHeader(title: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            title.uppercase(),
-            color = VelaColors.TextMuted,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 2.5.sp
-        )
-    }
+    com.vela.android.ui.components.InstrumentLabel(title)
 }

@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="vela_icon_bg">#101415</color>
+    <color name="vela_icon_bg">#0B0B10</color>
 
     <!-- VELA Dark Theme Palette -->
-    <color name="vela_surface_low">#1A1C1E</color>
-    <color name="vela_surface_base">#121416</color>
-    <color name="vela_surface_high">#282A2C</color>
-    <color name="vela_green">#73DB9A</color>
-    <color name="vela_green_dark">#00391D</color>
-    <color name="vela_text_primary">#E2E2E5</color>
-    <color name="vela_text_secondary">#C4C7C7</color>
-    <color name="vela_text_muted">#8E9192</color>
-    <color name="vela_outline">#444748</color>
-    <color name="vela_error">#FFB4AB</color>
+    <color name="vela_surface_low">#15151D</color>
+    <color name="vela_surface_base">#0B0B10</color>
+    <color name="vela_surface_high">#1D1D27</color>
+    <color name="vela_green">#D9F36A</color>
+    <color name="vela_green_dark">#202709</color>
+    <color name="vela_text_primary">#F3F2EF</color>
+    <color name="vela_text_secondary">#B1AEBC</color>
+    <color name="vela_text_muted">#96949F</color>
+    <color name="vela_outline">#34323F</color>
+    <color name="vela_error">#FF7869</color>
+    <color name="vela_violet">#A28AFF</color>
 </resources>

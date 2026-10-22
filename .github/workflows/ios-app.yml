@@ -91,12 +91,40 @@ jobs:
           APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name 'VELA.app' | head -1)
           test -n "$APP"
           xcrun simctl install "$UDID" "$APP"
-          # VELA_DEMO seeds a sample vault so the screenshot shows the populated list.
-          SIMCTL_CHILD_VELA_DEMO=1 xcrun simctl launch "$UDID" com.vela.vault
-          sleep 8
-          xcrun simctl io "$UDID" screenshot ios-app.png
+          mkdir -p screens
+          # VELA_DEMO seeds the prototype's sample vault; VELA_TAB / VELA_THEME
+          # pick the surface so every Instrument screen is captured.
+          shot() {
+            SIMCTL_CHILD_VELA_DEMO=1 SIMCTL_CHILD_VELA_TAB="$2" SIMCTL_CHILD_VELA_THEME="$3" \
+              SIMCTL_CHILD_VELA_OPEN="${4:-}" SIMCTL_CHILD_VELA_SHEET="${5:-}" \
+              SIMCTL_CHILD_VELA_ROUTE="${6:-}" SIMCTL_CHILD_VELA_DEMO_RICH=1 \
+              xcrun simctl launch "$UDID" com.vela.vault
+            sleep 7
+            xcrun simctl io "$UDID" screenshot "screens/$1.png"
+            xcrun simctl terminate "$UDID" com.vela.vault || true
+          }
+          shot overview overview night
+          shot vault vault night
+          shot generate generate night
+          shot more more night
+          shot overview-paper overview paper
+          shot vault-macchiato vault macchiato
+          shot generate-latte generate latte
+          shot detail-login vault night Proton
+          shot detail-card vault night "Everyday Visa"
+          shot add-sheet vault night "" add
+          shot detail-rich vault night GitHub
+          shot detail-identity vault night "Personal identity"
+          shot collections more night "" "" collections
+          shot settings more night "" settings
+          shot vault-folders vault paper
+          cp screens/overview.png ios-app.png
+          # Relaunch without the seed: the demo vault is now locked.
+          xcrun simctl launch "$UDID" com.vela.vault
+          sleep 6
+          xcrun simctl io "$UDID" screenshot screens/lock.png
           xcrun simctl terminate "$UDID" com.vela.vault || true
-          echo "screenshot captured"
+          ls -la screens
 
       - name: Record UI walkthrough video
         working-directory: iosVELA
@@ -130,5 +158,6 @@ jobs:
           path: |
             iosVELA/build/Build/Products/Debug-iphonesimulator/VELA.app
             iosVELA/ios-app.png
+            iosVELA/screens/*.png
             iosVELA/walkthrough.mp4
           if-no-files-found: warn

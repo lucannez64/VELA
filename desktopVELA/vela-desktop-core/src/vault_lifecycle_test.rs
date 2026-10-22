@@ -14,6 +14,7 @@ use chrono::Utc;
 fn meta(id: &str, name: &str) -> VaultMeta {
     let now = Utc::now();
     VaultMeta {
+                rich: Default::default(),
         id: id.into(),
         name: name.into(),
         notes: None,

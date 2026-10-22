@@ -9,6 +9,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Shared organization/rich-item schema foundation (`vela-core::rich_items`):
+  folder and tag operations, deterministic merge and permanent organization
+  tombstones; custom fields, additional URL records and identity/address types;
+  validation, secret redaction and forward-compatible record fixtures. These
+  types now round-trip through vault sync and encrypted archives. Desktop
+  collections sit in the existing sidebar with direct create/edit forms,
+  folder-scoped counts and contextual bulk actions. New items inherit the
+  selected folder/tag; bulk tag edits preserve untouched mixed values. Rich
+  editors use the app’s rounded controls and Material icons.
+  Activation runs on the network runtime and keeps server errors visible.
+  Enabling saves an encrypted safety copy and enables the server write-version
+  gate; browser access and iOS stay read-only during their UI rollout.
+- Android collection management and rich-item editing: nested folders, tags,
+  custom fields, additional URLs and identity details are editable in the
+  Instrument editor, the vault list filters by folder (with subfolders) or tag,
+  and deleting a collection keeps its items. Schema-2 vaults are writable on
+  Android, with validation and merge handled by the shared Rust core.
 - One-off share links to recipients who do not use VELA (`/send`, `webVELA`
   `send.html`). The sender seals a login or secure note under a random 256-bit
   link key (`vela-crypto::link`) and hands out `…/send.html?id=<id>#<key>`; the
@@ -126,6 +143,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ALLOW_INSECURE_LAN=true`, and plaintext WebAuthn relying-party origins.
 - Android blocks cleartext traffic globally except scoped local development
   hosts (`network_security_config.xml`).
+- Android uses the Instrument interface throughout: overview, vault, item
+  detail, generator, More, Settings, lock, the autofill suggestion cards and
+  the passkey approval sheet, built from the shared button/field/card
+  primitives. The overview greets by time of day, shows sync state beside the
+  wordmark, counts accounts with weak or reused passwords, and lists recently
+  opened items; navigation is the floating icon dock from the mobile
+  reference. Night, Paper, Catppuccin Macchiato/Latte and Gruvbox follow the
+  same palette tokens as desktop, and the active palette now supplies the
+  default text colour so unstyled text stays legible. Android-only settings
+  (autofill provider, trusted browsers, passkey provider, sync, recovery,
+  devices) remain in place. See `docs/ANDROID_INSTRUMENT_IMPLEMENTATION.md`.
 - If `PASETO_SECRET_KEY` is unset, the server generates and persists an
   Ed25519 keypair at `{DATA_DIR}/paseto.key` (0600) so sessions survive
   restarts with no manual step.

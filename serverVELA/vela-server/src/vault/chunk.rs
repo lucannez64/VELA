@@ -100,6 +100,8 @@ pub async fn put_chunk(
     headers_in: HeaderMap,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
+    let _schema_guard = crate::vault::schema::lock(&session.user_id.to_string()).await;
+    crate::vault::schema::check_write(&state, &session.user_id.to_string(), &headers_in)?;
     let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
     if body.len() > state.config.max_chunk_bytes {
         return Err(AppError::BadRequest(format!(
@@ -366,6 +368,8 @@ pub async fn delete_chunk(
     session: AuthSession,
     headers_in: HeaderMap,
 ) -> Result<impl IntoResponse> {
+    let _schema_guard = crate::vault::schema::lock(&session.user_id.to_string()).await;
+    crate::vault::schema::check_write(&state, &session.user_id.to_string(), &headers_in)?;
     let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
     let if_match: i64 = headers_in
         .get("if-match")

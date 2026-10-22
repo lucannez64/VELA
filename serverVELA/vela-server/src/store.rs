@@ -293,6 +293,12 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_durable(&self, key: &str, value: &[u8]) -> Result<()> {
+        self.set(key, value)?;
+        self.persist.flush().map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(())
+    }
+
     fn lookup_tree(&self, key: &str) -> Result<Option<(Vec<u8>, LookupSource)>> {
         if let Some(data) = self.ttl.get(key.as_bytes()).map_err(map_err)? {
             return Ok(Some((data.to_vec(), LookupSource::Ttl)));

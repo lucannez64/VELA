@@ -4,6 +4,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useApp, VaultItem } from '../context/AppContext';
 import { useClipboard } from '../hooks/useClipboard';
 import FaviconIcon from '../components/FaviconIcon';
+import OrganizationPanel from '../components/OrganizationPanel';
+import { OrganizationStatus, matchesOrganization } from '../lib/organization';
 
 interface Props {
   items: VaultItem[];
@@ -19,7 +21,7 @@ interface VaultHealth {
   status: string;
 }
 
-type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote' | 'passkey';
+type FilterType = 'all' | 'login' | 'creditCard' | 'secureNote' | 'passkey' | 'identity';
 
 function getIcon(type: string) {
   switch (type) {
@@ -40,18 +42,21 @@ type Row = { kind: 'header'; letter: string } | { kind: 'item'; item: VaultItem 
 
 interface ItemRowProps {
   item: VaultItem;
+  selected: boolean;
+  onToggle: (id: string) => void;
   onSelect: (item: VaultItem) => void;
   onCopy: (item: VaultItem) => void;
   onOpenUrl: (url: string) => void;
 }
 
-const VaultItemRow = memo(function VaultItemRow({ item, onSelect, onCopy, onOpenUrl }: ItemRowProps) {
+const VaultItemRow = memo(function VaultItemRow({ item, selected, onToggle, onSelect, onCopy, onOpenUrl }: ItemRowProps) {
   return (
     <div
       onClick={() => onSelect(item)}
       className="group flex items-center justify-between gap-2 sm:gap-4 p-3 sm:p-4 bg-surface-container-low rounded-xl hover:bg-surface-container transition-all cursor-pointer"
     >
       <div className="flex flex-1 items-center gap-2 sm:gap-4 min-w-0">
+        <input type="checkbox" aria-label={`Select ${item.name}`} checked={selected} disabled={item.shared && !item.share_recipient} onClick={e => e.stopPropagation()} onChange={() => onToggle(item.id)}/>
         <FaviconIcon
           url={item.url}
           itemType={item.item_type}
@@ -102,9 +107,16 @@ const VaultItemRow = memo(function VaultItemRow({ item, onSelect, onCopy, onOpen
   );
 });
 
-export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, onAddItem }: Props) {
+export default function VaultBrowser({ items: propItems, onRefresh, onAddItem }: Props) {
   const { setSelectedItem, showToast, setCurrentView } = useApp();
   const { copyToClipboard } = useClipboard();
+  const [organization, setOrganization] = useState<OrganizationStatus | null>(null);
+  const [folder, setFolder] = useState('all');
+  const [tag, setTag] = useState('');
+  const [descendants, setDescendants] = useState(true);
+  const [selected, setSelected] = useState<string[]>([]);
+  const reloadOrganization = useCallback(async () => { setOrganization(await invoke<OrganizationStatus>('get_organization')); }, []);
+  useEffect(() => { void reloadOrganization().catch(() => {}); setSelected(current => current.filter(id => propItems.some(i => i.id === id))); }, [propItems, reloadOrganization]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
   const [vaultHealth, setVaultHealth] = useState<VaultHealth | null>(null);
@@ -112,7 +124,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
   const listRef = useRef<HTMLDivElement>(null);
 
   const filteredItems = useMemo(() => {
-    let result = propItems;
+    let result = organization ? propItems.filter(i => matchesOrganization(i, organization.organization, folder, tag, descendants)) : propItems;
 
     if (filter !== 'all') {
       result = result.filter(item => item.item_type === filter);
@@ -128,7 +140,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     }
 
     return result;
-  }, [propItems, filter, searchQuery]);
+  }, [propItems, filter, searchQuery, organization, folder, tag, descendants]);
 
   useEffect(() => {
     const fetchHealth = async () => {
@@ -221,11 +233,13 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
     login: propItems.filter(i => i.item_type === 'login').length,
     creditCard: propItems.filter(i => i.item_type === 'creditCard').length,
     secureNote: propItems.filter(i => i.item_type === 'secureNote').length,
+    identity: propItems.filter(i => i.item_type === 'identity').length,
     passkey: propItems.filter(i => i.item_type === 'passkey').length,
   }), [propItems]);
 
   return (
     <div ref={scrollParentRef} className="flex-1 min-w-0 min-h-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <OrganizationPanel status={organization} reload={async () => {await reloadOrganization();onRefresh();}} folder={folder} setFolder={setFolder} tag={tag} setTag={setTag} descendants={descendants} setDescendants={setDescendants} selected={selected} clearSelection={() => setSelected([])}/>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-6 mb-8">
         <div className="relative w-full min-w-0 md:flex-1 max-w-xl">
           <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline-variant">search</span>
@@ -247,7 +261,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
       </div>
 
       <div className="flex items-center gap-4 sm:gap-8 mb-8 overflow-x-auto pb-2">
-        {(['all', 'login', 'creditCard', 'secureNote', 'passkey'] as FilterType[]).map(type => (
+        {(['all', 'login', 'creditCard', 'secureNote', 'passkey', 'identity'] as FilterType[]).map(type => (
           <button
             key={type}
             onClick={() => setFilter(type)}
@@ -257,7 +271,7 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
                 : 'text-on-surface-variant hover:text-on-surface border-transparent'
             }`}
           >
-            {type === 'all' ? 'All' : type === 'creditCard' ? 'Cards' : type === 'secureNote' ? 'Secure Notes' : type === 'passkey' ? 'Passkeys' : 'Logins'}
+            {type === 'all' ? 'All' : type === 'creditCard' ? 'Cards' : type === 'secureNote' ? 'Secure Notes' : type === 'passkey' ? 'Passkeys' : type === 'identity' ? 'Identities' : 'Logins'}
             <span className={`px-2 py-0.5 rounded text-[10px] ${filter === type ? 'bg-primary/10' : 'bg-surface-container-highest'}`}>
               {typeCounts[type]}
             </span>
@@ -289,6 +303,8 @@ export default function VaultBrowser({ items: propItems, onRefresh: _onRefresh, 
               ) : (
                 <div className="pb-3">
                   <VaultItemRow
+                    selected={selected.includes(row.item.id)}
+                    onToggle={id => setSelected(old => old.includes(id) ? old.filter(x => x !== id) : [...old,id])}
                     item={row.item}
                     onSelect={setSelectedItem}
                     onCopy={handleCopy}

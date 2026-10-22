@@ -5,4 +5,7 @@
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:fontFamily">sans</item>
     </style>
+    <style name="Theme.VELA.Starting" parent="Theme.VELA">
+        <item name="android:windowBackground">@drawable/vela_startup_background</item>
+    </style>
 </resources>

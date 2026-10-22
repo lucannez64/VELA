@@ -30,6 +30,7 @@ pub fn build(state: AppState) -> Router {
         IF_MATCH.clone(),
         X_LAMPORT_CLOCK.clone(),
         X_VELA_EPOCH.clone(),
+        HeaderName::from_static("x-vela-write-schema"),
     ];
 
     let cors = if state.config.cors_origins == ["*"] && state.config.allow_wildcard_cors {
@@ -116,6 +117,7 @@ pub fn build(state: AppState) -> Router {
             post(crate::device::list::post_rekey_capable),
         )
         .route("/vault/sync", get(crate::vault::sync::get_sync))
+        .route("/vault/schema", get(crate::vault::schema::get_schema).post(crate::vault::schema::activate))
         .route("/vault/events", get(crate::vault::events::get_events))
         .route("/vault/epoch", get(crate::vault::rekey::get_epoch))
         .route("/vault/rekey/start", post(crate::vault::rekey::post_start))

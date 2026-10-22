@@ -1,4 +1,6 @@
 pub mod api;
+pub use vela_core::rich_items;
+pub use uuid::Uuid;
 pub mod audit;
 pub mod biometric;
 pub mod breach;
@@ -685,3 +687,5 @@ mod tests {
         assert!(restarted.check_unlock_throttle().is_ok());
     }
 }
+
+pub(crate) mod extension_management;

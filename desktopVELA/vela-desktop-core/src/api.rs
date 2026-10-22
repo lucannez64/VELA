@@ -169,6 +169,40 @@ impl ApiClient {
         }
     }
 
+    pub async fn rich_schema(&self, token: &str, activate: bool) -> Result<()> {
+        let resp = self.send_request(false, |client| {
+            let builder = if activate { client.post(format!("{}/vault/schema", self.base_url)) }
+                else { client.get(format!("{}/vault/schema", self.base_url)) };
+            builder.bearer_auth(token)
+        }).await?;
+        match resp.status() {
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => anyhow::bail!("Your session could not authorize activation. Reconnect to the server and try again."),
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED => anyhow::bail!("This server does not support collections yet. Update the VELA server, then try again."),
+            status if !status.is_success() => anyhow::bail!("The server could not activate collections ({status}). Please try again."),
+            _ => {}
+        }
+        let status: serde_json::Value = resp.json().await?;
+        if status["supported_schema"].as_u64().unwrap_or(0) < 2 { anyhow::bail!("Server does not support richer vaults"); }
+        Ok(())
+    }
+
+    /// Raise the account's schema floor only if the server has not already
+    /// (sync calls this every run; activation is a durable server write).
+    pub async fn ensure_rich_schema(&self, token: &str) -> Result<()> {
+        let resp = self.send_request(false, |client| {
+            client.get(format!("{}/vault/schema", self.base_url)).bearer_auth(token)
+        }).await?;
+        if resp.status().is_success() {
+            let status: serde_json::Value = resp.json().await?;
+            if status["minimum_write_schema"].as_u64().unwrap_or(1) >= 2
+                && status["supported_schema"].as_u64().unwrap_or(0) >= 2
+            {
+                return Ok(());
+            }
+        }
+        self.rich_schema(token, true).await
+    }
+
     pub fn with_url(base_url: String) -> Self {
         Self::new(&base_url)
     }
@@ -431,6 +465,7 @@ impl ApiClient {
                 let mut b = client
                     .put(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
                     .header("Authorization", format!("Bearer {}", token))
+                    .header("X-Vela-Write-Schema", "2")
                     .header("If-Match", format!("{}", version))
                     .header("X-Lamport-Clock", format!("{}", lamport_clock));
                 if let Some(e) = epoch {
@@ -609,6 +644,7 @@ impl ApiClient {
                 let mut request = client
                     .delete(format!("{}/vault/chunk/{}", self.base_url, chunk_id))
                     .header("Authorization", format!("Bearer {}", token))
+                    .header("X-Vela-Write-Schema", "2")
                     .header("If-Match", format!("{}", version));
                 if let Some(epoch) = epoch {
                     request = request.header("X-Vela-Epoch", epoch.to_string());
@@ -1974,6 +2010,19 @@ mod tests {
     use super::*;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn an_active_schema_floor_does_not_need_another_activation_write() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/vault/schema"))
+            .and(header("authorization", "Bearer fixture-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "supported_schema": 2, "minimum_write_schema": 2
+            }))).expect(1).mount(&server).await;
+        Mock::given(method("POST")).and(path("/vault/schema"))
+            .respond_with(ResponseTemplate::new(500)).expect(0).mount(&server).await;
+        ApiClient::new(&server.uri()).ensure_rich_schema("fixture-token").await.unwrap();
+    }
 
     #[tokio::test]
     async fn health_check_reflects_status() {

@@ -14,6 +14,9 @@
 //! Not ported: nothing was actually skipped here — the original has no
 //! actions besides reading/rendering the log.
 
+#[path = "audit_log_instrument.rs"]
+mod instrument_view;
+
 use std::sync::Arc;
 
 use chrono::{DateTime, Local};
@@ -42,6 +45,7 @@ pub struct AuditLogScreen {
     /// cannot read `self` — the same snapshot-by-`Arc` trick `VaultBrowser`
     /// uses for its items.
     entries: Option<Arc<Vec<AuditEntry>>>,
+    instrument_filter: Option<instrument_view::ActivityKind>,
     /// Flattened day-header/entry rows, rebuilt once when the log loads rather
     /// than on every repaint (which is what made a large log expensive).
     rows: Arc<Vec<AuditRow>>,
@@ -70,7 +74,11 @@ impl AuditLogScreen {
                     Some(log) => {
                         let mut entries = log.entries;
                         entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-                        let rows = build_rows(&entries);
+                        let rows = if crate::instrument::is_instrument(cx) {
+                            instrument_view::filtered_rows(&entries, this.instrument_filter)
+                        } else {
+                            build_rows(&entries)
+                        };
                         this.list_state.reset(rows.len());
                         this.rows = Arc::new(rows);
                         this.entries = Some(Arc::new(entries));
@@ -88,6 +96,7 @@ impl AuditLogScreen {
 
         Self {
             entries: None,
+            instrument_filter: None,
             rows: Arc::new(Vec::new()),
             error: None,
             list_state: ListState::new(0, ListAlignment::Top, px(400.)),
@@ -98,7 +107,7 @@ impl AuditLogScreen {
 
 /// (label, icon name) per action, matching the original's `actionLabels`
 /// table. Color is derived separately since it needs a live `&Palette`.
-fn action_label_icon(action: &AuditAction) -> (&'static str, &'static str) {
+pub(crate) fn action_label_icon(action: &AuditAction) -> (&'static str, &'static str) {
     match action {
         AuditAction::VaultSync { .. } => ("Vault synced", "sync"),
         AuditAction::VaultCreated => ("Vault created", "add_circle"),
@@ -140,7 +149,7 @@ fn action_color(action: &AuditAction, palette: &Palette) -> gpui::Hsla {
 }
 
 /// Port of the original's `getActionDetails`.
-fn action_details(action: &AuditAction) -> Option<String> {
+pub(crate) fn action_details(action: &AuditAction) -> Option<String> {
     match action {
         AuditAction::PlaintextIdentityKeysMigrated => Some(
             "This device's signing keys were found in cleartext and have been encrypted. Anything that could read the data directory before now had them — consider re-enrolling this device."
@@ -204,6 +213,9 @@ fn build_rows(entries: &[AuditEntry]) -> Vec<AuditRow> {
 
 impl Render for AuditLogScreen {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::instrument::is_instrument(cx) {
+            return self.render_instrument(cx);
+        }
         let palette = crate::theme::current_palette(cx);
         let rows = self.rows.clone();
         let entries = self.entries.clone();
@@ -316,6 +328,7 @@ impl Render for AuditLogScreen {
             // The error state is rendered by `body` above (there is no log to
             // show), so it isn't appended a second time here.
             .child(body)
+            .into_any_element()
     }
 }
 

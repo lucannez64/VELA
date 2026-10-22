@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Isolated visual review, compiled only in debug. No ceremony is run. -->
+        <activity android:name=".InstrumentReviewActivity" android:exported="true" android:theme="@style/Theme.VELA" />
+    </application>
+</manifest>

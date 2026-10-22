@@ -763,6 +763,7 @@ mod tests {
         let mut vault = VaultStore::new();
         vault.add_item(VaultItem::Login {
             meta: VaultMeta {
+                rich: Default::default(),
                 id: "1".into(),
                 name: "GitHub".into(),
                 notes: None,

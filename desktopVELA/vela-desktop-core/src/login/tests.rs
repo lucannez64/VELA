@@ -43,6 +43,7 @@ fn login_item(id: &str, url: &str, hardened: bool) -> VaultItem {
     let now = Utc::now();
     VaultItem::Login {
         meta: VaultMeta {
+                rich: Default::default(),
             id: id.to_string(),
             name: "Test site".to_string(),
             notes: None,
@@ -1735,6 +1736,7 @@ async fn real_site_login() {
     let now = Utc::now();
     state.vault.write().add_item(VaultItem::Login {
         meta: VaultMeta {
+                rich: Default::default(),
             id: "real".to_string(),
             name: "Real site".to_string(),
             notes: None,

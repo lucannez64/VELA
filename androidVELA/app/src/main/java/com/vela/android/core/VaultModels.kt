@@ -6,10 +6,15 @@ import java.util.UUID
 enum class VaultItemType {
     Login,
     CreditCard,
+    Identity,
     SecureNote,
     Passkey,
     FileBlob,
     BreachMonitor
+}
+
+data class PreservedJson(val values: Map<String, String> = emptyMap()) {
+    override fun toString(): String = "[REDACTED]"
 }
 
 data class VaultMeta(
@@ -22,6 +27,7 @@ data class VaultMeta(
     val favorite: Boolean = false,
     val shared: Boolean = false,
     val shareRecipient: String? = null,
+    val richFields: PreservedJson = PreservedJson(),
 )
 
 sealed interface VaultItem {
@@ -64,6 +70,10 @@ sealed interface VaultItem {
         val pin: String? = null,
     ) : VaultItem {
         override val type: VaultItemType = VaultItemType.CreditCard
+    }
+
+    data class Identity(override val meta: VaultMeta, val firstName: String = "", val lastName: String = "", val ssn: String = "") : VaultItem {
+        override val type = VaultItemType.Identity
     }
 
     data class SecureNote(
@@ -123,6 +133,7 @@ sealed interface VaultItem {
 fun VaultItem.withMeta(transform: (VaultMeta) -> VaultMeta): VaultItem = when (this) {
     is VaultItem.Login -> copy(meta = transform(meta))
     is VaultItem.CreditCard -> copy(meta = transform(meta))
+    is VaultItem.Identity -> copy(meta = transform(meta))
     is VaultItem.SecureNote -> copy(meta = transform(meta))
     is VaultItem.FileBlob -> copy(meta = transform(meta))
     is VaultItem.BreachMonitor -> copy(meta = transform(meta))
@@ -155,6 +166,7 @@ val VaultItem.password: String? get() = when (this) {
 val VaultItem.displayValue: String get() = when (this) {
     is VaultItem.Login -> password
     is VaultItem.CreditCard -> cardNumber
+    is VaultItem.Identity -> listOf(firstName,lastName).filter(String::isNotBlank).joinToString(" ")
     is VaultItem.SecureNote -> "Secure Note"
     is VaultItem.FileBlob -> fileName
     is VaultItem.BreachMonitor -> email
@@ -168,6 +180,7 @@ val VaultItem.maskedValue: String get() = when (this) {
     } else {
         "\u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022"
     }
+    is VaultItem.Identity -> name
     is VaultItem.SecureNote -> "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
     is VaultItem.FileBlob -> fileName
     is VaultItem.BreachMonitor -> email

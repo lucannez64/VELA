@@ -182,6 +182,8 @@ tasks.register("buildRustBridge") {
     inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-android-bridge/src"))
     inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/Cargo.toml"))
     inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/src"))
+    inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-core/src"))
+    inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-core/Cargo.toml"))
     outputs.dir(outputRoot)
 
     doLast {

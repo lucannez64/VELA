@@ -334,6 +334,13 @@ class AndroidVelaApiClient(
         )
     }
 
+    fun activateRichSchema(token: String): String? {
+        val response = request("POST", "/vault/schema", token = token)
+        response.requireSuccess("Update the server to enable collections")
+        check(JSONObject(response.body.toString(Charsets.UTF_8)).optInt("supported_schema") >= 2) { "Server does not support collections" }
+        return response.newToken
+    }
+
     fun putChunk(
         token: String = "",
         chunkId: String,
@@ -349,7 +356,8 @@ class AndroidVelaApiClient(
             body = ciphertext,
             extraHeaders = vaultEpochHeaders(keyEpoch) + mapOf(
                 "If-Match" to ifMatch.toString(),
-                "X-Lamport-Clock" to lamportClock.toString()
+                "X-Lamport-Clock" to lamportClock.toString(),
+                "X-Vela-Write-Schema" to "2"
             )
         )
         response.requireSuccess("Chunk upload failed")
@@ -362,7 +370,7 @@ class AndroidVelaApiClient(
             method = "DELETE",
             path = "/vault/chunk/$chunkId",
             token = token,
-            extraHeaders = vaultEpochHeaders(keyEpoch) + mapOf("If-Match" to ifMatch.toString())
+            extraHeaders = vaultEpochHeaders(keyEpoch) + mapOf("If-Match" to ifMatch.toString(), "X-Vela-Write-Schema" to "2")
         )
         response.requireSuccess("Chunk delete failed")
         return response.newToken

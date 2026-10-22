@@ -20,6 +20,8 @@ import android.util.Log
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
+import androidx.compose.ui.graphics.toArgb
+import com.vela.android.ui.theme.VelaThemes
 import com.vela.android.MainActivity
 import com.vela.android.R
 import com.vela.android.core.VaultItem
@@ -436,7 +438,22 @@ object AutofillDatasetBuilder {
     }
 
     fun presentation(context: Context, title: String, subtitle: String?): RemoteViews {
+        val setting = VelaRepositories.theme.theme.value
+        val light = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_NO
+        val theme = if (setting == VelaThemes.SYSTEM) (if (light) VelaThemes.LATTE else VelaThemes.VELA) else setting
+        val palette = VelaThemes.palette(theme)
+        val background = when (theme) {
+            VelaThemes.PAPER -> R.drawable.autofill_bg_paper
+            VelaThemes.MACCHIATO -> R.drawable.autofill_bg_macchiato
+            VelaThemes.LATTE -> R.drawable.autofill_bg_latte
+            VelaThemes.GRUVBOX -> R.drawable.autofill_bg_gruvbox
+            else -> R.drawable.autofill_bg_night
+        }
         return RemoteViews(context.packageName, R.layout.autofill_dataset).apply {
+            setInt(R.id.autofill_container, "setBackgroundResource", background)
+            setTextColor(R.id.title, palette.TextPrimary.toArgb())
+            setTextColor(R.id.subtitle, palette.TextMuted.toArgb())
+            setTextColor(R.id.type_label, palette.Violet.toArgb())
             setTextViewText(R.id.title, title)
             setTextViewText(R.id.subtitle, subtitle ?: context.getString(R.string.autofill_service_label))
         }

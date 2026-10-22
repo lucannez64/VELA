@@ -5,6 +5,10 @@
 //! concerns outside this crate.
 
 pub mod password;
+/// Organization and richer-item schema. Writers are enabled only after the
+/// compatibility rollout; these types do not migrate a legacy vault on load.
+pub mod rich_items;
+pub mod rich_api;
 pub mod vault;
 
 pub use password::{
