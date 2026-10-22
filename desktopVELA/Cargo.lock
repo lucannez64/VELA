@@ -10700,6 +10700,7 @@ dependencies = [
  "vela-client-recovery-policy",
  "vela-core",
  "vela-crypto",
+ "vela-import",
  "vela-sync-policy",
  "vela-win-passkey",
  "webauthn-rs",
@@ -10709,7 +10710,6 @@ dependencies = [
  "wiremock",
  "wl-clipboard-rs",
  "zeroize",
- "zip",
 ]
 
 [[package]]
@@ -10756,6 +10756,17 @@ dependencies = [
  "vela-core",
  "vela-crypto",
  "vela-desktop-core",
+]
+
+[[package]]
+name = "vela-import"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "csv",
+ "serde",
+ "serde_json",
+ "zip",
 ]
 
 [[package]]

@@ -22,13 +22,13 @@ importer is the place to reuse rather than reimplementing per platform.
 | Source | Imported as | Organization | Field losses |
 |---|---|---|---|
 | Bitwarden JSON | logins, notes, cards, identities | folder per item; tags not native to Bitwarden | collection ids and card brand are counted in the report |
-| 1Password `.1pux` | logins, notes, cards, identities | vault name becomes a folder; item tags become tags | attachments and document/file items are counted; unknown item types are skipped |
+| 1Password `.1pux` | logins, notes, cards, identities | vault name becomes a folder; item tags become tags | attachments up to 8 MiB are stored as encrypted notes; larger ones and unknown item types are reported |
 | 1Password `.1pif` | logins, notes | folder records are metadata only | cards/identities are counted |
 | 1Password CSV | logins, notes | none | cards/identities cannot be represented in the CSV |
-| Bitwarden CSV | logins, notes | folder/group becomes a folder | cards/identities cannot be represented in the CSV |
+| Bitwarden CSV | logins, notes | folder column becomes a folder | custom fields come from the `fields` column; card/identity rows have no payload and are reported |
 | KeePass / KeePassXC CSV | logins, notes | group path becomes a nested folder | attachments and custom fields are not in the CSV |
 | Chrome / Edge / Safari CSV | logins | none | no notes/TOTP/custom fields |
-| Proton Pass JSON | logins, aliases, notes | vault name becomes a folder | card/identity item types are counted as unsupported |
+| Proton Pass JSON | logins, aliases, notes, cards, identities (flat and `data`-wrapped shapes) | vault name becomes a folder | extra fields become custom fields; SSH keys and other item types are reported |
 
 ## The import report
 
@@ -55,6 +55,10 @@ Rich attributes only become first-class when the vault is on schema 2:
 - On an upgraded vault, folders and tags are created as needed, custom fields
   and additional URLs are written into item metadata, and identities carry
   their email/phone/company/address details.
+- Attachments are stored as encrypted notes with a
+  `VELA IMPORTED ATTACHMENT` header (file name, MIME type, size, base64 body)
+  so the bytes survive until the vault grows a native file-blob viewer. The
+  same header is what mobile clients decode if they import the archive.
 - On a schema-1 vault, the same data is appended to the item's notes
   (`Folder:`, `Tags:`, `Custom fields:`, `Additional websites:`, `Identity:`)
   and counted as `converted`. Cards and identities are still created as real

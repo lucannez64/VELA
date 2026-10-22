@@ -70,6 +70,24 @@ pub struct ImportedAddress {
     pub country: String,
 }
 
+/// A file carried by the export (1Password `.1pux` attachments). Bytes are
+/// only kept long enough to be sealed into the vault; never logged.
+#[derive(Clone, Default)]
+pub struct ImportedAttachment {
+    pub file_name: String,
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for ImportedAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ImportedAttachment({}, {} bytes)", self.file_name, self.bytes.len())
+    }
+}
+
+/// Larger attachments are reported instead of inflating the vault silently.
+pub const MAX_IMPORTED_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, Default)]
 pub struct ImportedIdentity {
     pub first: String,
@@ -103,6 +121,7 @@ pub struct ImportedEntry {
     pub extra_urls: Vec<String>,
     pub card: ImportedCard,
     pub identity: ImportedIdentity,
+    pub attachments: Vec<ImportedAttachment>,
 }
 
 impl Default for EntryKind {
@@ -462,79 +481,257 @@ fn first_uri(login: &Value) -> String {
 }
 
 fn push_proton_item(parsed: &mut ParsedImport, item: &Value, vault_name: &str) {
-    let item_type = item.get("type").and_then(Value::as_str).unwrap_or("login");
-    let name = item
-        .get("metadata")
+    // Proton has shipped both a flat shape and a `data`-wrapped shape; read
+    // whichever is present instead of guessing from the version.
+    let data = item.get("data").unwrap_or(item);
+    let metadata = data.get("metadata").or_else(|| item.get("metadata"));
+    let item_type = data
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("type").and_then(Value::as_str))
+        .unwrap_or("login")
+        .to_lowercase();
+    let name = metadata
         .and_then(|m| m.get("name"))
         .and_then(Value::as_str)
+        .or_else(|| data.get("name").and_then(Value::as_str))
         .or_else(|| item.get("name").and_then(Value::as_str))
         .unwrap_or("")
         .trim()
         .to_string();
-    let notes = item
-        .get("metadata")
+    let notes = metadata
         .and_then(|m| m.get("note"))
         .and_then(Value::as_str)
+        .or_else(|| data.get("note").and_then(Value::as_str))
         .or_else(|| item.get("note").and_then(Value::as_str))
         .unwrap_or("")
         .to_string();
-    let vault_note = if vault_name.is_empty() {
+    let folder = if vault_name.is_empty() { None } else { Some(vault_name.to_string()) };
+    let content = data.get("content").unwrap_or(&Value::Null);
+    let fields = proton_fields(data.get("extraFields").or_else(|| item.get("extraFields")));
+    let pick = |keys: &[&str]| -> String {
+        for key in keys {
+            if let Some(value) = content.get(*key).or_else(|| data.get(*key)).or_else(|| item.get(*key)) {
+                if let Some(text) = value.as_str() {
+                    if !text.trim().is_empty() {
+                        return text.trim().to_string();
+                    }
+                }
+            }
+        }
         String::new()
-    } else {
-        format!("Vault: {vault_name}\n")
     };
 
-    match item_type {
+    match item_type.as_str() {
         "login" | "alias" => {
-            let username = item
-                .get("username")
-                .and_then(Value::as_str)
-                .or_else(|| item.get("aliasEmail").and_then(Value::as_str))
-                .unwrap_or("");
-            let url = item
-                .get("itemUrl")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| {
-                    item.get("urls").and_then(Value::as_array).and_then(|urls| {
-                        urls.first().map(|u| match u {
-                            Value::String(s) => s.clone(),
-                            other => other
-                                .get("referrer")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_string(),
-                        })
-                    })
-                })
-                .unwrap_or_default();
-            // Aliases have no password of their own; an empty password keeps
-            // the address importable rather than dropping it.
+            let mut urls: Vec<String> = Vec::new();
+            for source in [content, data, item] {
+                if let Some(list) = source.get("urls").and_then(Value::as_array) {
+                    for entry in list {
+                        if let Some(url) = entry.as_str().map(str::to_string).or_else(|| {
+                            entry.get("url").and_then(Value::as_str).map(str::to_string)
+                        }) {
+                            if !url.trim().is_empty() {
+                                urls.push(url.trim().to_string());
+                            }
+                        }
+                    }
+                    if !urls.is_empty() {
+                        break;
+                    }
+                }
+            }
+            if urls.is_empty() {
+                let single = pick(&["itemUrl", "url", "aliasEmail"]);
+                if !single.is_empty() {
+                    urls.push(single);
+                }
+            }
+            let primary = urls.first().cloned().unwrap_or_default();
+            if !urls.is_empty() {
+                urls.remove(0);
+            }
+            let username = if item_type == "alias" {
+                pick(&["aliasEmail", "username"])
+            } else {
+                pick(&["username", "email"])
+            };
             parsed.entries.push(ImportedEntry {
                 name,
-                url,
-                username: username.into(),
-                password: item.get("password").and_then(Value::as_str).unwrap_or("").into(),
-                notes: format!("{vault_note}{notes}"),
-                totp: item.get("totp").and_then(Value::as_str).unwrap_or("").into(),
+                url: primary,
+                username,
+                password: pick(&["password"]),
+                notes,
+                totp: pick(&["totpUri", "totp"]),
                 kind: EntryKind::Login,
+                folder,
+                fields,
+                extra_urls: urls,
                 ..ImportedEntry::default()
             });
         }
         "note" => {
+            let body = pick(&["note", "content"]);
             parsed.entries.push(ImportedEntry {
                 name,
-                url: String::new(),
-                username: String::new(),
-                password: String::new(),
-                notes: format!("{vault_note}{}", item.get("note").and_then(Value::as_str).unwrap_or(notes.as_str())),
-                totp: String::new(),
+                notes: if body.is_empty() { notes } else { body },
                 kind: EntryKind::Note,
+                folder,
+                fields,
                 ..ImportedEntry::default()
             });
         }
-        _ => parsed.skipped_unsupported += 1, // credit_card, identity, ssh_key, …
+        "credit_card" | "creditcard" => {
+            let expiry = proton_expiry(content, data, item);
+            parsed.entries.push(ImportedEntry {
+                name,
+                notes,
+                kind: EntryKind::Card,
+                folder,
+                fields,
+                card: ImportedCard {
+                    number: pick(&["number", "cardNumber"]),
+                    cardholder: pick(&["cardholderName", "cardholder"]),
+                    expiry,
+                    cvv: pick(&["verificationNumber", "cvv", "securityCode"]),
+                    pin: pick(&["pin"]),
+                },
+                ..ImportedEntry::default()
+            });
+        }
+        "identity" => {
+            let mut identity = ImportedIdentity {
+                first: pick(&["firstName"]),
+                last: pick(&["lastName"]),
+                middle: pick(&["middleName"]),
+                email: pick(&["email"]),
+                phone: pick(&["phoneNumber", "phone"]),
+                company: pick(&["company", "organization"]),
+                job_title: pick(&["jobTitle", "title"]),
+                ssn: pick(&["socialSecurityNumber", "ssn"]),
+                addresses: Vec::new(),
+            };
+            for key in [
+                "personalAddress",
+                "workAddress",
+                "address",
+            ] {
+                if let Some(address) = content.get(key).or_else(|| data.get(key)) {
+                    if let Some(address) = proton_address(address, key) {
+                        identity.addresses.push(address);
+                    }
+                }
+            }
+            for key in ["extraPersonalAddresses", "extraWorkAddresses"] {
+                for address in content
+                    .get(key)
+                    .or_else(|| data.get(key))
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(address) = proton_address(address, key) {
+                        identity.addresses.push(address);
+                    }
+                }
+            }
+            parsed.entries.push(ImportedEntry {
+                name,
+                notes,
+                kind: EntryKind::Identity,
+                folder,
+                fields,
+                identity,
+                ..ImportedEntry::default()
+            });
+        }
+        other => {
+            parsed.skipped_unsupported += 1;
+            parsed.unsupported(if other.is_empty() { "Proton item type" } else { other });
+        }
     }
+}
+
+fn proton_expiry(content: &Value, data: &Value, item: &Value) -> String {
+    for source in [content, data, item] {
+        for key in ["expirationDate", "expiration", "expiryDate"] {
+            if let Some(value) = source.get(key) {
+                if let Some(text) = value.as_str() {
+                    if !text.trim().is_empty() {
+                        return text.trim().to_string();
+                    }
+                }
+                if let Some(object) = value.as_object() {
+                    let month = object.get("month").map(Value::to_string).unwrap_or_default();
+                    let year = object.get("year").map(Value::to_string).unwrap_or_default();
+                    if !month.is_empty() && !year.is_empty() {
+                        return format!("{}/{}", month.trim_matches('"'), year.trim_matches('"'));
+                    }
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+fn proton_address(value: &Value, label: &str) -> Option<ImportedAddress> {
+    let object = value.as_object()?;
+    let get = |keys: &[&str]| -> String {
+        for key in keys {
+            if let Some(text) = object.get(*key).and_then(Value::as_str) {
+                if !text.trim().is_empty() {
+                    return text.trim().to_string();
+                }
+            }
+        }
+        String::new()
+    };
+    let address = ImportedAddress {
+        label: label.to_string(),
+        line1: get(&["line1", "street", "address"]),
+        line2: get(&["line2", "apartment"]),
+        city: get(&["city"]),
+        region: get(&["region", "state"]),
+        postal: get(&["postalCode", "zip"]),
+        country: get(&["countryCode", "country"]),
+    };
+    if address.line1.is_empty() && address.city.is_empty() && address.postal.is_empty() {
+        None
+    } else {
+        Some(address)
+    }
+}
+
+fn proton_fields(fields: Option<&Value>) -> Vec<ImportedField> {
+    let mut out = Vec::new();
+    for field in fields.and_then(Value::as_array).into_iter().flatten() {
+        let label = field
+            .get("fieldName")
+            .and_then(Value::as_str)
+            .or_else(|| field.get("name").and_then(Value::as_str))
+            .or_else(|| field.get("title").and_then(Value::as_str))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if label.is_empty() {
+            continue;
+        }
+        let field_type = field.get("type").and_then(Value::as_str).unwrap_or("text").to_lowercase();
+        let kind = match field_type.as_str() {
+            "hidden" | "totp" => FieldKind::Concealed,
+            "boolean" => FieldKind::Boolean,
+            _ => FieldKind::Text,
+        };
+        let value = field
+            .get("data")
+            .and_then(|d| d.get("content"))
+            .and_then(Value::as_str)
+            .or_else(|| field.get("value").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
+        out.push(ImportedField { label, kind, value });
+    }
+    out
 }
 
 // ── CSV formats ──────────────────────────────────────────────────────────────
@@ -548,7 +745,9 @@ const COL_NOTES: usize = 4;
 const COL_TOTP: usize = 5;
 const COL_GROUP: usize = 6;
 const COL_TYPE: usize = 7;
-const COL_COUNT: usize = 8;
+const COL_FIELDS: usize = 8;
+const COL_FAVORITE: usize = 9;
+const COL_COUNT: usize = 10;
 
 fn canonical_column(header: &str) -> Option<usize> {
     let h = header.trim().to_lowercase();
@@ -569,6 +768,8 @@ fn canonical_column(header: &str) -> Option<usize> {
             Some(COL_GROUP)
         }
         "type" => Some(COL_TYPE),
+        "fields" | "custom fields" => Some(COL_FIELDS),
+        "favorite" | "favourite" => Some(COL_FAVORITE),
         _ => None,
     }
 }
@@ -623,11 +824,12 @@ fn parse_csv_import(text: &str) -> Result<ParsedImport, String> {
         };
 
         // Bitwarden's CSV tags every row with a type. Notes become notes;
-        // cards and identities are counted so the user sees they were not
-        // silently swallowed.
+        // cards and identities have no payload in a CSV (no number, no
+        // address columns), so they are counted rather than half-imported.
         let row_type = cell(COL_TYPE).to_lowercase();
         if row_type == "card" || row_type == "identity" {
             parsed.skipped_unsupported += 1;
+            parsed.unsupported("card/identity row (not representable in CSV)");
             continue;
         }
         let is_note = row_type == "note";
@@ -639,18 +841,19 @@ fn parse_csv_import(text: &str) -> Result<ParsedImport, String> {
         let notes = cell(COL_NOTES);
         let totp = cell(COL_TOTP);
         let group = cell(COL_GROUP);
+        let favorite = matches!(
+            cell(COL_FAVORITE).to_lowercase().as_str(),
+            "1" | "true" | "yes"
+        );
+        let fields = bitwarden_fields_json(&cell(COL_FIELDS));
 
         if name.is_empty() && url.is_empty() && username.is_empty() && password.is_empty() {
             continue; // blank padding row, not data
         }
 
         // KeePass-family group paths ("Email/Personal") carry real structure;
-        // keep them visible rather than flattening them away.
-        let group_note = if group.is_empty() {
-            String::new()
-        } else {
-            format!("Folder: {group}\n")
-        };
+        // keep them as a folder path rather than flattening them away.
+        let folder = if group.is_empty() { None } else { Some(group) };
 
         let fallback_name = if !url.is_empty() {
             url.clone()
@@ -663,9 +866,12 @@ fn parse_csv_import(text: &str) -> Result<ParsedImport, String> {
             url,
             username,
             password,
-            notes: format!("{group_note}{notes}"),
+            notes,
             totp,
             kind: if is_note { EntryKind::Note } else { EntryKind::Login },
+            favorite,
+            folder,
+            fields,
             ..ImportedEntry::default()
         });
     }
@@ -814,6 +1020,25 @@ pub fn parse_1pif(text: &str) -> Result<ParsedImport, String> {
     Ok(parsed)
 }
 
+/// Wrap attachment bytes as an encrypted note body. The vault has no file-blob
+/// viewer yet, so a base64 note is the honest way to keep the bytes rather
+/// than lose them; mobile and desktop decode the same header.
+pub fn encode_attachment_note(file_name: &str, mime: &str, bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let mut out = String::with_capacity(encoded.len() + 128);
+    out.push_str("VELA IMPORTED ATTACHMENT\n");
+    out.push_str(&format!("File: {file_name}\n"));
+    out.push_str(&format!("Type: {}\n", if mime.is_empty() { "application/octet-stream" } else { mime }));
+    out.push_str(&format!("Size: {} bytes\n", bytes.len()));
+    out.push_str("Encoding: base64\n\n");
+    for chunk in encoded.as_bytes().chunks(76) {
+        out.push_str(std::str::from_utf8(chunk).unwrap_or(""));
+        out.push('\n');
+    }
+    out
+}
+
 /// Detect a binary archive (1Password `.1pux`) or fall back to text parsing.
 pub fn parse_import_bytes(data: &[u8]) -> Result<ParsedImport, String> {
     if data.starts_with(&[0x50, 0x4b, 0x03, 0x04]) {
@@ -870,7 +1095,7 @@ pub fn parse_1pux(data: &[u8]) -> Result<ParsedImport, String> {
                 .into_iter()
                 .flatten()
             {
-                push_1pux_item(&mut parsed, item, vault_name.as_deref());
+                push_1pux_item(&mut parsed, item, vault_name.as_deref(), &mut archive);
             }
         }
     }
@@ -910,7 +1135,12 @@ fn op_scalar(value: &Value) -> (String, FieldKind) {
     (String::new(), FieldKind::Text)
 }
 
-fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&str>) {
+fn push_1pux_item(
+    parsed: &mut ParsedImport,
+    item: &Value,
+    vault_name: Option<&str>,
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+) {
     let type_name = item
         .get("typeName")
         .or_else(|| item.get("type_name"))
@@ -947,6 +1177,7 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
     let mut website = String::new();
     let mut card = ImportedCard::default();
     let mut identity = ImportedIdentity::default();
+    let mut attachment_meta: Vec<(String, String, String)> = Vec::new();
 
     let mut consume = |field: &Value, known: bool| {
         let label = field
@@ -963,6 +1194,29 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
             .unwrap_or("")
             .to_lowercase();
         let raw = field.get("value").cloned().unwrap_or(Value::Null);
+        if let Some(file) = raw.get("file") {
+            let file_name = file
+                .get("fileName")
+                .and_then(Value::as_str)
+                .or_else(|| file.get("name").and_then(Value::as_str))
+                .unwrap_or(&label)
+                .to_string();
+            let mime = file
+                .get("contentType")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let document_id = file
+                .get("documentId")
+                .and_then(Value::as_str)
+                .or_else(|| file.get("id").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string();
+            if !document_id.is_empty() || !file_name.is_empty() {
+                attachment_meta.push((file_name, mime, document_id));
+            }
+            return;
+        }
         let (value, kind) = op_scalar(&raw);
         if value.is_empty() {
             return;
@@ -1035,6 +1289,25 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
         }
     }
 
+    let attachments: Vec<ImportedAttachment> = attachment_meta
+        .into_iter()
+        .filter_map(|(file_name, mime, document_id)| {
+            match read_attachment(archive, &document_id, &file_name) {
+                Some(bytes) if bytes.len() <= MAX_IMPORTED_ATTACHMENT_BYTES => {
+                    Some(ImportedAttachment { file_name, mime, bytes })
+                }
+                Some(_) => {
+                    parsed.unsupported("attachment over 8 MiB");
+                    None
+                }
+                None => {
+                    parsed.unsupported("attachment file missing from archive");
+                    None
+                }
+            }
+        })
+        .collect();
+
     match type_name.as_str() {
         "login" | "password" => {
             parsed.entries.push(ImportedEntry {
@@ -1048,6 +1321,7 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
                 folder,
                 tags,
                 fields: custom,
+                attachments,
                 ..ImportedEntry::default()
             });
         }
@@ -1059,6 +1333,7 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
                 folder,
                 tags,
                 fields: custom,
+                attachments,
                 ..ImportedEntry::default()
             });
         }
@@ -1071,6 +1346,7 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
                 tags,
                 fields: custom,
                 card,
+                attachments,
                 ..ImportedEntry::default()
             });
         }
@@ -1083,6 +1359,7 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
                 tags,
                 fields: custom,
                 identity,
+                attachments,
                 ..ImportedEntry::default()
             });
         }
@@ -1091,6 +1368,45 @@ fn push_1pux_item(parsed: &mut ParsedImport, item: &Value, vault_name: Option<&s
             parsed.unsupported(if type_name.is_empty() { "unknown item type" } else { "1Password item type" });
         }
     }
+}
+
+/// Bitwarden's CSV packs custom fields as a JSON array in one cell.
+fn bitwarden_fields_json(raw: &str) -> Vec<ImportedField> {
+    let raw = raw.trim();
+    if !raw.starts_with('[') {
+        return Vec::new();
+    }
+    let Ok(parsed) = serde_json::from_str::<Value>(raw) else {
+        return Vec::new();
+    };
+    bitwarden_fields(Some(&parsed))
+}
+
+/// Read an attachment out of the `.1pux` archive. 1Password stores files
+/// under `files/<documentId>`; fall back to matching the file name.
+fn read_attachment(
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+    document_id: &str,
+    file_name: &str,
+) -> Option<Vec<u8>> {
+    let mut candidate = None;
+    for index in 0..archive.len() {
+        let name = archive.by_index(index).ok()?.name().to_string();
+        if !name.starts_with("files/") {
+            continue;
+        }
+        if (!document_id.is_empty() && name.contains(document_id))
+            || (!file_name.is_empty() && name.ends_with(file_name))
+        {
+            candidate = Some(name);
+            break;
+        }
+    }
+    let name = candidate?;
+    let mut file = archive.by_name(&name).ok()?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
+    Some(bytes)
 }
 
 /// Pick `field`/`field[0]`-style string values off a JSON object.
@@ -1200,28 +1516,34 @@ mod tests {
         }"#;
         let parsed = parse_import(data).unwrap();
         assert_eq!(parsed.source, "Proton Pass JSON");
-        assert_eq!(parsed.entries.len(), 2);
-        assert_eq!(parsed.skipped_unsupported, 1);
+        assert_eq!(parsed.entries.len(), 3);
+        assert_eq!(parsed.skipped_unsupported, 0);
         assert_eq!(parsed.entries[0].url, "https://example.com");
-        assert!(parsed.entries[0].notes.contains("Vault: Personal"));
+        assert_eq!(parsed.entries[0].folder.as_deref(), Some("Personal"));
         assert_eq!(parsed.entries[1].username, "news-abc@simplelogin.fr");
+        assert_eq!(parsed.entries[2].kind, EntryKind::Card);
     }
 
     #[test]
     fn bitwarden_csv_maps_prefixed_columns_and_row_types() {
         let data = "folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n\
-                    ,,login,GitHub,,\"\",0,https://github.com,octo,hunter2,otpauth://x\n\
+                    Work,1,login,GitHub,,\"[{\"\"name\"\":\"\"Recovery\"\",\"\"value\"\":\"\"R-1\"\",\"\"type\"\":0}]\",0,https://github.com,octo,hunter2,otpauth://x\n\
                     ,,note,Codes,abc,,0,,,\n\
                     ,,card,Visa,,,,,,,";
         let parsed = parse_import(data).unwrap();
         assert_eq!(parsed.source, "Bitwarden CSV");
         assert_eq!(parsed.entries.len(), 2);
         assert_eq!(parsed.skipped_unsupported, 1);
+        assert!(parsed.unsupported.contains_key("card/identity row (not representable in CSV)"));
         let login = &parsed.entries[0];
         assert_eq!(login.url, "https://github.com");
         assert_eq!(login.username, "octo");
         assert_eq!(login.password, "hunter2");
         assert_eq!(login.totp, "otpauth://x");
+        assert_eq!(login.folder.as_deref(), Some("Work"));
+        assert!(login.favorite);
+        assert_eq!(login.fields.len(), 1);
+        assert_eq!(login.fields[0].label, "Recovery");
         assert_eq!(parsed.entries[1].kind, EntryKind::Note);
     }
 
@@ -1249,15 +1571,15 @@ mod tests {
     }
 
     #[test]
-    fn keepass_csv_group_lands_in_notes() {
+    fn keepass_csv_group_becomes_a_folder_path() {
         let data = "\"Group\",\"Title\",\"Username\",\"Password\",\"URL\",\"Notes\",\"TOTP\"\n\
                     \"Email/Personal\",\"Fastmail\",\"ada\",\"pw\",\"https://fastmail.com\",\"\",\"\"\n\
                     \"\",\"Loose\",\"bob\",\"pw2\",\"https://example.com\",\"\",\"\"";
         let parsed = parse_import(data).unwrap();
         assert_eq!(parsed.source, "KeePass/KeePassXC CSV");
         assert_eq!(parsed.entries.len(), 2);
-        assert_eq!(parsed.entries[0].notes, "Folder: Email/Personal\n");
-        assert_eq!(parsed.entries[1].notes, "");
+        assert_eq!(parsed.entries[0].folder.as_deref(), Some("Email/Personal"));
+        assert!(parsed.entries[1].folder.is_none());
     }
 
     #[test]
@@ -1378,7 +1700,11 @@ mod tests {
                                 ],
                                 "sections": [{ "title": "Extra", "fields": [
                                     { "title": "Recovery", "value": { "string": "R-1" } },
-                                    { "title": "Secret", "value": { "concealed": "S" } }
+                                    { "title": "Secret", "value": { "concealed": "S" } },
+                                    { "title": "Attachment", "value": { "file": {
+                                        "fileName": "notes.txt", "documentId": "doc-1",
+                                        "contentType": "text/plain"
+                                    } } }
                                 ] }]
                             }
                         },
@@ -1411,6 +1737,8 @@ mod tests {
             let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
             writer.start_file("export.data", zip::write::SimpleFileOptions::default()).unwrap();
             writer.write_all(export.to_string().as_bytes()).unwrap();
+            writer.start_file("files/doc-1", zip::write::SimpleFileOptions::default()).unwrap();
+            writer.write_all(b"attachment body").unwrap();
             writer.finish().unwrap();
         }
         let parsed = parse_import_bytes(&bytes).unwrap();
@@ -1424,6 +1752,16 @@ mod tests {
         assert_eq!(login.tags, vec!["dev"]);
         assert_eq!(login.fields.len(), 2);
         assert_eq!(login.fields[1].kind, FieldKind::Concealed);
+        assert_eq!(login.attachments.len(), 1);
+        assert_eq!(login.attachments[0].file_name, "notes.txt");
+        assert_eq!(login.attachments[0].bytes, b"attachment body");
+        let note = encode_attachment_note(
+            &login.attachments[0].file_name,
+            &login.attachments[0].mime,
+            &login.attachments[0].bytes,
+        );
+        assert!(note.starts_with("VELA IMPORTED ATTACHMENT"));
+        assert!(note.contains("Encoding: base64"));
 
         let card = &parsed.entries[1];
         assert_eq!(card.kind, EntryKind::Card);
