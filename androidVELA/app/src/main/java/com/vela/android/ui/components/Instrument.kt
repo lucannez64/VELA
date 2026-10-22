@@ -9,7 +9,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,6 +37,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
@@ -53,13 +57,17 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vela.android.favicon.FaviconFetcher
 import com.vela.android.sync.SyncState
 import com.vela.android.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 // ── tokens ──────────────────────────────────────────────────────────────
@@ -251,26 +259,58 @@ fun InstrumentTag(text: String, kind: TagKind = TagKind.Plain) {
 
 /** 39dp rounded tile holding an item's glyph (or initials), violet. */
 @Composable
-fun InstrumentAvatar(icon: ImageVector? = null, initials: String? = null, large: Boolean = false) {
+fun InstrumentAvatar(icon: ImageVector? = null, initials: String? = null, large: Boolean = false,
+    faviconUrl: String? = null) {
     val size = if (large) 60.dp else 44.dp
     val shape = RoundedCornerShape(if (large) 20.dp else 15.dp)
     Box(Modifier.size(size).clip(shape).background(Ink.panel2).border(1.dp, Ink.line, shape), contentAlignment = Alignment.Center) {
-        if (icon != null) Icon(icon, null, Modifier.size(if (large) 25.dp else 20.dp), tint = VelaColors.Violet)
-        else Text(initials.orEmpty(), fontFamily = InstrumentMono, fontSize = 12.sp, color = VelaColors.Violet)
+        if (!faviconUrl.isNullOrBlank()) InstrumentFavicon(faviconUrl, icon, initials, large)
+        else AvatarGlyph(icon, initials, large)
     }
+}
+
+@Composable
+private fun AvatarGlyph(icon: ImageVector?, initials: String?, large: Boolean) {
+    if (icon != null) Icon(icon, null, Modifier.size(if (large) 25.dp else 20.dp), tint = VelaColors.Violet)
+    else Text(initials.orEmpty(), fontFamily = InstrumentMono, fontSize = 12.sp, color = VelaColors.Violet)
+}
+
+/** Favicon inside the avatar tile; the glyph stays visible until a bitmap arrives. */
+@Composable
+private fun InstrumentFavicon(url: String, glyph: ImageVector?, initials: String?, large: Boolean) {
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url) {
+        bitmap = withContext(Dispatchers.IO) {
+            FaviconFetcher.fetchDataUrl(url)?.let { dataUrl ->
+                val base64 = dataUrl.substringAfter("base64,", "")
+                if (base64.isEmpty()) null else runCatching {
+                    val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }.getOrNull()
+            }
+        }
+    }
+    val icon = bitmap
+    if (icon != null) {
+        Image(icon.asImageBitmap(), contentDescription = null,
+            modifier = Modifier.fillMaxSize().padding(if (large) 10.dp else 7.dp)
+                .clip(RoundedCornerShape(if (large) 10.dp else 7.dp)),
+            contentScale = ContentScale.Fit)
+    } else AvatarGlyph(glyph, initials, large)
 }
 
 /** List row: avatar, name, subtitle, REVIEW tag or lime star, chevron. */
 @Composable
 fun InstrumentItemRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit,
-    modifier: Modifier = Modifier, needsReview: Boolean = false, favorite: Boolean = false) {
+    modifier: Modifier = Modifier, needsReview: Boolean = false, favorite: Boolean = false,
+    faviconUrl: String? = null) {
     Row(
         modifier.fillMaxWidth().heightIn(min = 76.dp).clip(RoundedCornerShape(14.dp))
             .instrumentClick(onClick = onClick)
             .padding(horizontal = 3.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        InstrumentAvatar(icon)
+        InstrumentAvatar(icon, faviconUrl = faviconUrl)
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,

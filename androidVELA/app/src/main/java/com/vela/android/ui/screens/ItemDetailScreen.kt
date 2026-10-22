@@ -86,7 +86,7 @@ fun ItemDetailScreen(
         // Heading: glyph, favourite, name, site · updated.
         Column(Modifier.padding(top = 12.dp, bottom = 22.dp).arrive(next())) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                InstrumentAvatar(item.glyph, large = true)
+                InstrumentAvatar(item.glyph, large = true, faviconUrl = (item as? VaultItem.Login)?.url?.takeIf { it.isNotBlank() })
                 Spacer(Modifier.weight(1f))
                 InstrumentIconButton(InstrumentIcons.Trash, "Delete item", { confirmDelete = true }, tint = VelaColors.TextMuted)
                 Spacer(Modifier.width(8.dp))
