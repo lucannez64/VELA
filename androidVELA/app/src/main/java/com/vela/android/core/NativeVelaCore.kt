@@ -15,6 +15,12 @@ object NativeVelaCore {
     }
     private external fun nativeRichItemsJson(request: String): String
 
+    fun parseImport(request: JSONObject): JSONObject {
+        val raw = callNative { nativeParseImportJson(request.toString()) } ?: error("Update the native VELA bridge to import vaults")
+        return JSONObject(raw).also { result -> result.optString("error").takeIf { it.isNotEmpty() }?.let { error(it) } }
+    }
+    private external fun nativeParseImportJson(request: String): String
+
     fun isAvailable(): Boolean = loaded
 
     fun versionOrNull(): String? {

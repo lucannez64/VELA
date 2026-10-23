@@ -2131,3 +2131,13 @@ mod tests {
 pub unsafe extern "C" fn vela_ffi_rich_items_json(request: *const c_char) -> *mut c_char {
     json_result(|| Ok(vela_core::rich_api::process(c_str(request)?)?))
 }
+
+/// Parse a password-manager export for the iOS picker. The file arrives
+/// base64-encoded so a `.1pux` ZIP never crosses the FFI boundary as text.
+///
+/// # Safety
+/// The request must be a NUL-terminated UTF-8 string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_parse_import_json(request: *const c_char) -> *mut c_char {
+    json_result(|| vela_import::parse_import_request(c_str(request)?).map_err(Into::into))
+}

@@ -14,6 +14,17 @@ enum VelaCoreFFI {
         return result
     }
 
+    /// Parse a password-manager export (`{"dataBase64": "..."}`). The file
+    /// arrives base64-encoded so `.1pux` ZIPs never cross the FFI as text.
+    static func parseImport(_ request: [String: Any]) throws -> [String: Any] {
+        let raw = json(request).withCString { consume(vela_ffi_parse_import_json($0)) }
+        guard let data = raw.data(using: .utf8), let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "VELA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not parse the import file"])
+        }
+        if let error = result["error"] as? String { throw NSError(domain: "VELA", code: 1, userInfo: [NSLocalizedDescriptionKey: error]) }
+        return result
+    }
+
     private static func consume(_ ptr: UnsafeMutablePointer<CChar>?) -> String {
         guard let ptr = ptr else { return "" }
         defer { vela_ffi_free_string(ptr) }

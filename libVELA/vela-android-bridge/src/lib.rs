@@ -2275,6 +2275,18 @@ mod tests {
     }
 }
 
+/// Parse a password-manager export for the Android picker. The file arrives
+/// base64-encoded so a `.1pux` ZIP never has to cross the JNI boundary as text.
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeParseImportJson(mut env: JNIEnv, _object: JObject, request: JString) -> jstring {
+    let result = jni_json_result(&mut env, request, parse_import_request);
+    jni_string(&mut env, &result)
+}
+
+fn parse_import_request(request: &str) -> anyhow_like::Result<serde_json::Value> {
+    vela_import::parse_import_request(request).map_err(anyhow_like::Error::from)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeRichItemsJson(mut env: JNIEnv, _object: JObject, request: JString) -> jstring {
     let result = jni_json_result(&mut env, request, |s| Ok(vela_core::rich_api::process(s)?));
