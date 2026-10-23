@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
@@ -39,16 +40,20 @@ import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,7 +71,11 @@ import com.vela.android.ui.components.VelaTextField
 import com.vela.android.ui.components.SegmentedControl
 import com.vela.android.ui.components.TrustedBrowsersSection
 import com.vela.android.ui.components.VelaSwitch
+import com.vela.android.core.VelaRepositories
 import com.vela.android.sync.SyncSettingsStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.vela.android.ui.theme.VelaColors
 import com.vela.android.ui.theme.VelaThemes
 
@@ -102,6 +111,30 @@ fun SettingsScreen(
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var syncOnStartup by remember(syncSettings.syncOnStartup) { mutableStateOf(syncSettings.syncOnStartup) }
     var backgroundSyncMinutes by remember(syncSettings.backgroundSyncMinutes) { mutableStateOf(syncSettings.backgroundSyncMinutes) }
+    val context = LocalContext.current
+    val importScope = rememberCoroutineScope()
+    var importing by remember { mutableStateOf(false) }
+    var importStatus by remember { mutableStateOf<String?>(null) }
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            importing = true
+            importStatus = "Reading the export…"
+            importScope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: error("Could not read the selected file")
+                        VelaRepositories.vault.importVaultBytes(bytes)
+                    }
+                }
+                importing = false
+                importStatus = outcome.fold(
+                    onSuccess = { it.summary() },
+                    onFailure = { "Import failed: ${it.message ?: "unknown error"}" },
+                )
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -301,6 +334,29 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+
+        item {
+            SectionHeader("Import")
+            Spacer(Modifier.height(12.dp))
+            VelaListItem(
+                title = "Import vault",
+                subtitle = "Bitwarden, 1Password (.1pif/.1pux), KeePass, browsers or Proton Pass",
+                icon = Icons.Filled.FileDownload,
+                onClick = {
+                    if (!importing) {
+                        importPicker.launch(arrayOf(
+                            "application/json", "text/csv", "text/plain",
+                            "application/zip", "application/octet-stream", "*/*",
+                        ))
+                    }
+                },
+            )
+            importStatus?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = VelaColors.TextMuted, fontSize = 12.sp, lineHeight = 17.sp)
             }
             Spacer(Modifier.height(24.dp))
         }

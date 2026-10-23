@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 
 class LocalVaultRepository(
     private val secureVaultManager: SecureVaultManager,
@@ -116,6 +118,211 @@ class LocalVaultRepository(
         }
         commit(VaultStore(repaired,store.tombstones,2,organization.data,store.opaqueItems))
     }
+    /**
+     * Import a password-manager export (JSON, CSV, .1pif or .1pux). Parsing runs
+     * in the shared Rust crate; this maps the neutral entries onto the Android
+     * vault and writes them in one transaction, creating folders and tags when
+     * collections are enabled and folding them into notes otherwise.
+     */
+    fun importVaultBytes(bytes: ByteArray): ImportReport {
+        ensureWritable()
+        val response = VaultImport.parse(bytes)
+        val entries = response.optJSONArray("entries") ?: JSONArray()
+        val collections = store.schemaVersion == 2
+        val device = encryptedVaultStore.organizationWriterId()
+        var organization = _organization.value
+        val folderCache = mutableMapOf<String, String>()
+        val tagCache = mutableMapOf<String, String>()
+        val seenLogins = store.items.filterIsInstance<VaultItem.Login>()
+            .map { VaultImport.loginKey(it.url, it.name, it.username) }.toMutableSet()
+        val seenCards = store.items.filterIsInstance<VaultItem.CreditCard>()
+            .map { VaultImport.cardKey(it.cardNumber, it.name) }.toMutableSet()
+        val seenIdentities = store.items.filterIsInstance<VaultItem.Identity>()
+            .map { VaultImport.identityKey(it.name, it.notes.orEmpty()) }.toMutableSet()
+        val next = candidate()
+        val now = Instant.now()
+        var added = 0
+        var duplicates = 0
+        var preserved = 0
+        var converted = 0
+
+        fun ensureFolder(path: String): String? {
+            var parent: String? = null
+            var accumulated = ""
+            for (segment in path.split('/').map(String::trim).filter(String::isNotEmpty)) {
+                accumulated = if (accumulated.isEmpty()) segment else "$accumulated/$segment"
+                val cached = folderCache[accumulated]
+                if (cached != null) { parent = cached; continue }
+                val existing = organization.folders.map(::JSONObject)
+                    .firstOrNull { it.optString("name").equals(segment, true) && it.optString("parentId") == (parent ?: "") }
+                    ?.optString("id")
+                val id = existing ?: runCatching {
+                    val action = JSONObject().put("operation", "createFolder").put("name", segment)
+                    if (parent != null) action.put("parentId", parent)
+                    organization = organization.mutate(action, device)
+                    organization.folders.map(::JSONObject)
+                        .first { it.optString("name").equals(segment, true) && it.optString("parentId") == (parent ?: "") }
+                        .optString("id")
+                }.getOrNull() ?: return null
+                folderCache[accumulated] = id
+                parent = id
+            }
+            return parent
+        }
+
+        fun ensureTag(name: String): String? {
+            val trimmed = name.trim()
+            val key = trimmed.lowercase(Locale.US)
+            tagCache[key]?.let { return it }
+            val existing = organization.tags.map(::JSONObject)
+                .firstOrNull { it.optString("name").equals(trimmed, true) }?.optString("id")
+            val id = existing ?: runCatching {
+                organization = organization.mutate(
+                    JSONObject().put("operation", "createTag").put("name", trimmed), device)
+                organization.tags.map(::JSONObject)
+                    .first { it.optString("name").equals(trimmed, true) }.optString("id")
+            }.getOrNull() ?: return null
+            tagCache[key] = id
+            return id
+        }
+
+        for (index in 0 until entries.length()) {
+            val entry = entries.optJSONObject(index) ?: continue
+            val kind = entry.optString("kind")
+            val name = entry.optString("name").ifBlank {
+                entry.optString("url").ifBlank {
+                    entry.optString("username").ifBlank { "Imported item" }
+                }
+            }
+            var rich = JSONObject()
+            var entryPreserved = false
+            if (collections) {
+                entry.optString("folder").takeIf { it.isNotBlank() }?.let { path ->
+                    val id = ensureFolder(path)
+                    if (id != null) { rich.put("folderId", id); entryPreserved = true } else converted++
+                }
+                val tags = entry.optJSONArray("tags")
+                if (tags != null && tags.length() > 0) {
+                    val ids = mutableListOf<String>()
+                    for (tagIndex in 0 until tags.length()) {
+                        val id = ensureTag(tags.optString(tagIndex))
+                        if (id != null) ids += id else converted++
+                    }
+                    if (ids.isNotEmpty()) { rich.put("tagIds", JSONArray(ids)); entryPreserved = true }
+                }
+                val (fields, dropped) = VaultImport.customFieldRecords(entry)
+                converted += dropped
+                if (fields.length() > 0) { rich.put("customFields", fields); entryPreserved = true }
+                val urls = VaultImport.additionalUrlRecords(entry)
+                if (urls.length() > 0) { rich.put("additionalUrls", urls); entryPreserved = true }
+                VaultImport.identityDetails(entry)?.let {
+                    rich.put("identityDetails", it)
+                    entryPreserved = true
+                }
+                if (entryPreserved && runCatching { organization.validate(RichData.from(rich), RichData()) }.isFailure) {
+                    rich = JSONObject()
+                    entryPreserved = false
+                    converted++
+                }
+            }
+            var notes = entry.optString("notes")
+            if (!collections || !entryPreserved) {
+                val folded = VaultImport.foldIntoNotes(entry)
+                if (folded.isNotEmpty()) {
+                    notes = if (notes.isBlank()) folded else "$notes\n$folded"
+                    converted++
+                }
+            }
+            val favorite = entry.optBoolean("favorite")
+            val richFields = RichData.from(rich).fields
+            when (kind) {
+                "login" -> {
+                    val url = entry.optString("url")
+                    val username = entry.optString("username")
+                    if (!seenLogins.add(VaultImport.loginKey(url, name, username))) { duplicates++; continue }
+                    next.addItem(
+                        VaultItem.Login(
+                            VaultMeta(name = name, notes = notes.ifBlank { null }, favorite = favorite,
+                                updatedAt = now, richFields = richFields),
+                            url = url,
+                            username = username,
+                            password = entry.optString("password"),
+                            totp = entry.optString("totp").ifBlank { null },
+                        ),
+                    )
+                    added++
+                }
+                "note" -> {
+                    next.addItem(
+                        VaultItem.SecureNote(
+                            VaultMeta(name = name, favorite = favorite, updatedAt = now, richFields = richFields),
+                            content = notes,
+                        ),
+                    )
+                    added++
+                }
+                "card" -> {
+                    val number = entry.optJSONObject("card")?.optString("number").orEmpty()
+                    if (!seenCards.add(VaultImport.cardKey(number, name))) { duplicates++; continue }
+                    val card = entry.optJSONObject("card") ?: JSONObject()
+                    next.addItem(
+                        VaultItem.CreditCard(
+                            VaultMeta(name = name, notes = notes.ifBlank { null }, favorite = favorite,
+                                updatedAt = now, richFields = richFields),
+                            cardholderName = card.optString("cardholder"),
+                            cardNumber = number,
+                            expiration = card.optString("expiry"),
+                            cvv = card.optString("cvv"),
+                            pin = card.optString("pin").ifBlank { null },
+                        ),
+                    )
+                    added++
+                }
+                "identity" -> {
+                    if (!seenIdentities.add(VaultImport.identityKey(name, notes))) { duplicates++; continue }
+                    val identity = entry.optJSONObject("identity") ?: JSONObject()
+                    next.addItem(
+                        VaultItem.Identity(
+                            VaultMeta(name = name, notes = notes.ifBlank { null }, favorite = favorite,
+                                updatedAt = now, richFields = richFields),
+                            firstName = identity.optString("first"),
+                            lastName = identity.optString("last"),
+                            ssn = identity.optString("ssn"),
+                        ),
+                    )
+                    added++
+                }
+            }
+            if (entryPreserved) preserved++
+
+            val attachments = entry.optJSONArray("attachments")
+            if (attachments != null) {
+                for (attachmentIndex in 0 until attachments.length()) {
+                    val attachment = attachments.optJSONObject(attachmentIndex) ?: continue
+                    next.addItem(
+                        VaultItem.SecureNote(
+                            VaultMeta(name = "$name — ${attachment.optString("fileName")}", updatedAt = now),
+                            content = attachment.optString("note"),
+                        ),
+                    )
+                    added++
+                    preserved++
+                }
+            }
+        }
+
+        commit(
+            VaultStore(
+                next.items,
+                next.tombstones,
+                next.schemaVersion,
+                if (collections) organization.data else next.richEnvelope,
+                next.opaqueItems,
+            ),
+        )
+        return VaultImport.reportFrom(response, added, duplicates, preserved, converted)
+    }
+
     private fun checked(item: VaultItem) {
         val old = store.getItem(item.id)
         if (item.rich.hasData || store.schemaVersion == 2) {

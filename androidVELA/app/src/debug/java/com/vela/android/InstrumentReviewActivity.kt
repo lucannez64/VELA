@@ -230,6 +230,7 @@ private fun AppReview(start: String, theme: String, onTheme: (String) -> Unit) {
                     }, { page = "lock" }, sync, favorites = items.count { it.favorite },
                         attention = items.filterIsInstance<VaultItem.Login>().count { it.password == "summer24" })
                     "activity" -> AuditLogScreen({ page = "more" }, activitySamples())
+                    "import" -> ImportReview()
                     "settings" -> SettingsScreen("", SyncSettings(), sync, null, {}, {}, {}, {},
                         { _, _ -> }, { _, _ -> }, {}, {}, {}, {}, {}, { page = "lock" }, {},
                         autoLock, clipboard, { autoLock = it }, { clipboard = it }, theme, onTheme, { page = "more" }, biometricUnlockEnabled = false)
@@ -279,6 +280,41 @@ private fun AppReview(start: String, theme: String, onTheme: (String) -> Unit) {
         ShareItemSheet(sheet == "share", detail?.name ?: "item", { sheet = null }) { share ->
             sheet = null
             toast.show(if (share.toUser) "Shared with ${share.recipient}." else "Link ready · expires in ${share.expiry}.")
+        }
+    }
+}
+
+/** Debug-only: proves the Rust import parser is reachable through the bridge. */
+@Composable
+private fun ImportReview() {
+    val sample = remember {
+        val csv = "name,url,username,password,folder,favorite\n" +
+            "GitHub,https://github.com,octo,hunter2,Work,1\n" +
+            "Fastmail,https://fastmail.com,ada,pw,Email/Personal,\n"
+        runCatching {
+            val request = org.json.JSONObject()
+                .put("dataBase64", android.util.Base64.encodeToString(csv.toByteArray(), android.util.Base64.NO_WRAP))
+            com.vela.android.core.NativeVelaCore.parseImport(request)
+        }
+    }
+    Column(Modifier.fillMaxSize().background(VelaColors.SurfaceBase).safeDrawingPadding().padding(20.dp)) {
+        InstrumentHeading("Debug / Synthetic review", "Import parser.",
+            "The Rust importer answers through the JNI bridge; no vault is touched.")
+        Spacer(Modifier.height(12.dp))
+        val response = sample.getOrNull()
+        if (response == null) {
+            InstrumentFine("Bridge unavailable: ${sample.exceptionOrNull()?.message}")
+        } else {
+            InstrumentFine("Source: ${response.optString("source")}")
+            Spacer(Modifier.height(8.dp))
+            val entries = response.optJSONArray("entries")
+            InstrumentFine("Entries: ${entries?.length() ?: 0}")
+            if (entries != null) {
+                for (index in 0 until entries.length()) {
+                    val entry = entries.optJSONObject(index) ?: continue
+                    InstrumentFine("• ${entry.optString("kind")} · ${entry.optString("name")} · ${entry.optString("folder")}")
+                }
+            }
         }
     }
 }
